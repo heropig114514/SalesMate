@@ -1,6 +1,6 @@
 """职责：静态核对 Python 声明注释、文件目录与变量索引，不导入业务模块。
 实现：解析 AST 获取实际符号，比较结构化说明；汇总问题并以非零退出码阻止误报通过。
-关联：默认检查 backend/ 和 tools/；格式见 docs/coding-agent-guidelines.md。
+关联：默认检查软件根目录 backend/ 内全部 Python 文件；格式见 docs/coding-agent-guidelines.md。
 
 目录：
 - Inventory：收集声明与赋值名称的 AST 访问器。
@@ -17,7 +17,7 @@
 - main：解析路径、扫描文件、报告问题并返回退出码。
 
 变量索引：
-- PROJECT_ROOT：由脚本位置确定的项目目录。
+- PROJECT_ROOT：由脚本位置确定的软件根目录 backend，不依赖启动目录。
 - MODULE_SECTIONS：模块说明必须包含的标题。
 - DECLARATION_SECTIONS：声明说明可用的标题，函数要求全部提供。
 """
@@ -228,13 +228,13 @@ def check_file(path):
 # 功能：执行只读文档规范检查并返回可用于开发流程的状态码。
 # 输入：`argv` 为可选命令行参数序列；None 表示读取进程参数。
 # 输出：通过返回 0，发现问题返回 1；argparse 参数错误按标准行为退出 2。
-# 逻辑：默认检查项目 backend/ 与 tools/，显式路径可为 Python 文件或目录；输出文件数及全部问题。
+# 逻辑：默认扫描软件根目录 backend，包含移入的 tools；显式路径可为 Python 文件或目录。
 # 约束：缺失路径、空目录或非 Python 文件均失败；不会自动生成说明或修改源码。
 def main(argv=None):
     parser = argparse.ArgumentParser(description="检查 Python 声明说明、目录和变量索引；语义一致性仍需人工审核。")
-    parser.add_argument("paths", nargs="*", type=Path, help="可选 Python 文件或目录，默认 backend/ 和 tools/")
+    parser.add_argument("paths", nargs="*", type=Path, help="可选 Python 文件或目录，默认软件根目录 backend/（包含 tools/）")
     args = parser.parse_args(argv)
-    paths = args.paths or [PROJECT_ROOT / "backend", PROJECT_ROOT / "tools"]
+    paths = args.paths or [PROJECT_ROOT]
     files = set()
     errors = []
     for path in paths:

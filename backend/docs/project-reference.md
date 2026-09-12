@@ -16,7 +16,7 @@ Django + DRF + PostgreSQL 已执行用户及业务迁移，实现不可变邮件
 
 | 来源 | 定位 |
 |---|---|
-| 工作区上一层 README.md，Agent v1.11 | 当前通信对象基准，原文未修改 |
+| SalesMate 仓库上一层 README.md，Agent v1.11 | 当前通信对象基准，原文未修改 |
 | references/product-requirements.md | 产品 0909 版本的页面与功能意图 |
 | references/agent-and-early-design.md | 历史宽范围路线与 Agent 设计摘要 |
 | api-contract.md | 实际 HTTP 路径、版本、领取凭证和失败语义 |

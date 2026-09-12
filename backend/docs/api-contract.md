@@ -1,6 +1,6 @@
 # 当前 API 契约
 
-更新：2026-09-12，版本 0.2.0。通信对象依据工作区上一层 README.md《邮件理解 Agent · 模块设计》v1.11；原始协议文件未修改。数据库结构见 [data-model.md](data-model.md)。
+更新：2026-09-12，版本 0.2.0。通信对象依据 SalesMate 仓库上一层的 README.md《邮件理解 Agent · 模块设计》v1.11；该仓库外原始协议文件未修改。数据库结构见 [data-model.md](data-model.md)。
 
 ## 身份与错误
 
@@ -76,11 +76,11 @@ README 已要求 expected_version，但尚未冻结 HTTP 表示、领取凭证�
 
 列表参数为 q、industry、size_band、signal、crm_status、page、page_size。跨维度 AND，同维度逗号多选 OR。优先级降序、空分最后、同分按最近入站实际时间降序，再以公司 ID 稳定排序。page_size 默认 20，最大 100。统计使用未过滤的授权公司集合，今日时区沿用 DJANGO_TIME_ZONE，当前 UTC。
 
-原健康检查、accounts/me、Admin 和 Schema 路由保留。`contracts/openapi.yaml` 从代码生成，不手工维护：
+原健康检查、accounts/me、Admin 和 Schema 路由保留。`backend/contracts/openapi.yaml` 从代码生成，不手工维护；以下命令从仓库根目录执行：
 
 ```powershell
 cd backend
-python manage.py spectacular --file ../contracts/openapi.yaml --validate --fail-on-warn
+python manage.py spectacular --file contracts/openapi.yaml --validate --fail-on-warn
 python manage.py test tests
 ```
 

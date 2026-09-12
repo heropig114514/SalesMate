@@ -1,6 +1,6 @@
 # 代码注释与一致性检查规范
 
-本文落实 [README 中的 Coding Agent 开发原则](../README.md#coding-agent-必须遵循的开发原则)。当前检查覆盖 `backend/` 和 `tools/` 下全部 `.py` 文件，包含测试、迁移和空包初始化文件；仅忽略 `__pycache__` 缓存目录。检查器只使用 Python 标准库，不导入业务模块，不读取 `.env`，不需要数据库。
+本文落实 [README 中的 Coding Agent 开发原则](../README.md#coding-agent-必须遵循的开发原则)。当前检查覆盖软件根目录 `SalesMate/backend/` 下全部 `.py` 文件（包括 `tools/`），包含测试、迁移和空包初始化文件；仅忽略 `__pycache__` 缓存目录。检查器只使用 Python 标准库，不导入业务模块，不读取 `.env`，不需要数据库。
 
 ## 1. 文件顶部说明
 
@@ -49,7 +49,7 @@ def add(left: int, right: int) -> int:
 
 ## 3. 检查命令与能力边界
 
-在 `SalesMate/` 目录、项目 Python 环境中运行：
+在软件根目录 `SalesMate/backend/`、项目 Python 环境中运行：
 
 ```powershell
 python tools/check_docs.py
@@ -59,7 +59,7 @@ python tools/test_check_docs.py
 修改检查器时必须运行第二条。检查单个文件也可显式传路径，但交付前仍须运行默认全量检查：
 
 ```powershell
-python tools/check_docs.py backend/common/views.py
+python tools/check_docs.py common/views.py
 ```
 
 默认扫描目录由脚本位置确定，不依赖启动目录；显式传入的相对路径按当前工作目录解析。合法检查返回 `0`；发现问题、路径缺失、空扫描目录、源码不可读或语法错误返回 `1`；命令行参数错误沿用 argparse 的 `2`。

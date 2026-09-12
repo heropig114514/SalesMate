@@ -1,6 +1,6 @@
 # 从规则占位切换到 Agent
 
-通信基准是工作区上一层 README.md v1.11。核心 JSON 对象不改名；HTTP 路径、版本与领取凭证扩展见 [api-contract.md](api-contract.md)。
+通信基准是SalesMate 仓库上一层的 README.md v1.11（仓库外原始协议）。核心 JSON 对象不改名；HTTP 路径、版本与领取凭证扩展见 [api-contract.md](api-contract.md)。
 
 ## 规则占位
 
@@ -26,7 +26,7 @@
 7. 未命中则执行真实分析与评分，保存 Analysis、Score，最后回报 JobReport。结果写入均携带 If-Match、X-Job-ID、X-Lease-Token。
 8. 在 backend/.env 设置 `ANALYSIS_PROVIDER=agent` 并重启后端。页面分析只入队，模拟写入入口关闭；独立 Agent 主动消费。旧规则结果仍保留来源标记，直到对应 Agent 结果完成。
 
-规则实现集中在 apps/crm/rules.py。独立 Agent 通过 HTTP 调用，不导入 Django；替换不要求修改页面与数据库。
+规则实现集中在仓库 backend/apps/crm/rules.py；软件侧接入文档和 HTTP 契约随 backend/ 维护。后续 Agent 自身实现放在仓库同级 agent/ 目录。独立 Agent 通过 HTTP 调用，不导入 Django；替换不要求修改页面与数据库。
 
 ## 待对齐边界
 

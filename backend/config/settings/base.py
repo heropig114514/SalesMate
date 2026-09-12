@@ -6,7 +6,7 @@
 - 无
 
 变量索引：
-- BASE_DIR：backend 目录，作为配置、静态文件和媒体路径基准。
+- BASE_DIR：软件根目录 backend，作为配置、前端、静态文件和媒体路径基准。
 - env：具有类型转换能力的环境变量读取器。
 - SECRET_KEY：必需且非空的 Django 密钥，从环境读取，禁止记录其值。
 - DEBUG：共用配置中的调试开关，默认关闭。
@@ -17,7 +17,7 @@
 - ROOT_URLCONF：根路由模块路径。
 - WSGI_APPLICATION：WSGI 应用导入路径。
 - ASGI_APPLICATION：ASGI 应用导入路径。
-- TEMPLATES：Admin 与 frontend/index.html 共用的模板后端及上下文处理器。
+- TEMPLATES：Admin 与软件目录内 frontend/index.html 共用的模板后端及上下文处理器。
 - DATABASES：PostgreSQL 连接参数；连接超时取环境值，缺省为 3 秒。
 - AUTH_USER_MODEL：项目用户模型 accounts.User。
 - AUTH_PASSWORD_VALIDATORS：Django 密码校验器集合。
@@ -86,7 +86,7 @@ ASGI_APPLICATION = "config.asgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR.parent / "frontend"],
+        "DIRS": [BASE_DIR / "frontend"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [

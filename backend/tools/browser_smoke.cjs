@@ -3,7 +3,7 @@
  * 实现：按会话配置直接进入工作台或读取私有账号登录，再导入、筛选、建档和模拟来信。
  * 关联：需要运行中的 Django、PostgreSQL，以及显式配置的 Playwright 模块和浏览器路径。
  * 目录：main（运行浏览器场景）。
- * 变量索引：ROOT 为项目目录；BASE_URL 为被测本地服务；OUTPUT 为被 Git 排除的截图目录。
+ * 变量索引：ROOT 为软件根目录 backend；BASE_URL 为被测本地服务；OUTPUT 为软件目录内被 Git 排除的截图目录。
  * 约束：只对显式演示账号的合成数据写入，不连接 Gmail；输出不包含凭证。
  */
 const fs = require('node:fs');
@@ -28,7 +28,7 @@ async function main() {
     await page.goto(BASE_URL);
     await page.waitForFunction(() => !document.getElementById('login-screen').hidden || !document.getElementById('workspace').hidden);
     if (await page.locator('#login-screen').isVisible()) {
-      const credentials = JSON.parse(fs.readFileSync(path.join(ROOT, 'backend', '.local-access.json'), 'utf8'));
+      const credentials = JSON.parse(fs.readFileSync(path.join(ROOT, '.local-access.json'), 'utf8'));
       await page.locator('[name=username]').fill(credentials.username);
       await page.locator('[name=password]').fill(credentials.password);
       await page.locator('#login-form button[type=submit]').click();

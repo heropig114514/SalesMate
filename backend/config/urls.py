@@ -1,6 +1,6 @@
 """职责：集中声明工作台、业务、管理、健康检查和 API 文档路由。
 实现：按 urlpatterns 分派请求；鉴权由被分派的视图和框架配置执行。
-关联：组合 common.views、apps.accounts、apps.crm 和 frontend；本地静态资源仅在 DEBUG 下提供。
+关联：组合 common.views、apps.accounts、apps.crm 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
 
 目录：
 - 无
@@ -28,4 +28,4 @@ urlpatterns = [
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 ]
-urlpatterns += static(settings.STATIC_URL, document_root=settings.BASE_DIR.parent / "frontend" / "assets")
+urlpatterns += static(settings.STATIC_URL, document_root=settings.BASE_DIR / "frontend" / "assets")
