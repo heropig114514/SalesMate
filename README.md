@@ -42,4 +42,8 @@ python -m uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --reload
 
 所有软件修改须遵循 `backend/README.md` 中的开发原则，代码、注释、目录与文档同步维护。在 `backend/` 执行 `python tools/check_docs.py`；修改检查器时同时执行 `python tools/test_check_docs.py`。
 
-Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。本机保留 PostgreSQL、UTC、rules 和免登录模式；真实 Gmail 与百炼调用需要单独配置并显式运行。
+Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。运行模式、时区和免登录行为按当前配置读取；本轮保留原 PostgreSQL 与现有参数，未替换数据库或分析提供方。
+
+## 销售业务扩展
+
+`/business/` 已提供客户关系、交易单据、跟进、团队授权、附件和动作确认；助手侧栏支持持久化会话与草稿。新增 `backend/apps/sales/` 管理关系 Schema 和业务事务，原 Agent 协议不变。详细模型、接口、验证边界及 Worker/OAuth 配置见 [销售扩展说明](backend/docs/backend-expansion.md)。聊天模型与自主工具选择仍未接入，真实 Gmail 发信和日历执行须完成明确的写权限授权。

@@ -1,6 +1,6 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
 实现：会话路由与 Agent 凭证路由隔离；本机调试可自动建立普通用户会话；校验后交给事务服务。
-关联：urls 注册路由，frontend 仅调用业务查询与显式模拟入口。
+关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
 - AgentAuthenticationSchema.get_security_definition：返回安全方案定义。
@@ -79,6 +79,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
+from apps.sales.models import CompanySettings
+from apps.sales.services import audit
 
 from . import agent_runner, gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
@@ -268,7 +270,7 @@ class CompanyViewSet(ViewSet):
     # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
     # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。
     # 输出：新的公司投影和 revision。
-    # 逻辑：修改外部版本和上下文 revision 后入队重算。
+    # 逻辑：先锁 owner 再锁公司，修改版本并同事务记录审计，提交后按原配置重算。
     # 约束：人数非空必须有来源，不将邮件人数线索自动视为权威人数。
     @extend_schema(request=RegisterSerializer, responses=OBJECT, parameters=VERSION_HEADERS[:1], tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -277,13 +279,18 @@ class CompanyViewSet(ViewSet):
         if data["employee_count"] is not None and not data["employee_count_source"]:
             raise ValidationError("人数非空时必须填写来源。")
         with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
             company = company_for(request.user, pk, lock=True)
             check_version(expected(request), company.revision)
+            if CompanySettings.objects.filter(company=company, archived=True).exists():
+                raise InvalidState("客户已归档，请先恢复后编辑。")
             company.name, company.crm_status = data["company_name"], "registered"
             company.customer = {**company.customer, "customer_id": str(company.pk), **{key: value for key, value in data.items() if key != "company_name"}}
             company.revision += 1
             company.external_version += 1
             company.save(update_fields=["name", "crm_status", "customer", "revision", "external_version"])
+            company_settings, _ = CompanySettings.objects.get_or_create(company=company, defaults={"owner": request.user})
+            audit(request.user, company_settings, "company_registered", {"fields": sorted(data)})
             jobs.enqueue(company, "external_updated")
         process_if_rules(request.user, company.pk)
         if settings.ANALYSIS_PROVIDER == "agent":

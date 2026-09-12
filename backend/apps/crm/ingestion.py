@@ -1,6 +1,6 @@
 """职责：执行邮件入库、归组、事实补交和同步游标事务。
 实现：按 owner 串行化写入，保留不可变邮件与版本化事实；关键变更触发公司 revision 和任务。
-关联：serializers 校验协议，jobs 创建任务，selectors 查询完整邮件。
+关联：serializers 校验协议，jobs 创建任务，selectors 查询完整邮件；sales.CompanyAlias 提供已确认的人工归组。
 目录：
 - submit_emails：原子保存一批已授权邮件，返回每项创建或去重状态。
 - resubmit_facts：将失败事实补交为已完成，并保留邮件本体。
@@ -17,6 +17,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
+from apps.sales.models import CompanyAlias, CompanySettings
 
 from .access import Conflict, check_version, company_for, mailbox_for, plain
 from .jobs import enqueue
@@ -31,7 +32,7 @@ EXTRACTION_KEYS = frozenset(["extract_status", "extract_prompt_version", "extrac
 # 功能：原子保存一批已授权邮件，返回每项创建或去重状态。
 # 输入：`owner` 为认证用户；`payloads` 为 EmailSubmission 数组。
 # 输出：每封邮件的 dedupe_key、company_id 和 created/updated/duplicate 状态。
-# 逻辑：先完整验证，再锁 owner；邮箱归属、不可变载荷和抽取版本均在同一事务核查。
+# 逻辑：先完整验证再锁 owner；新邮件优先应用精确联系人映射，再应用域名映射；未配置映射时按原域名规则归组。
 # 约束：任何一项失败回滚整批；不接收 Gmail 凭证、不调用模型、不静默覆盖事实。
 @transaction.atomic
 def submit_emails(owner, payloads):
@@ -77,11 +78,19 @@ def submit_emails(owner, payloads):
                 if domain
                 else f"unknown:{mailbox.pk}"
             )
-            company, _ = Company.objects.get_or_create(
-                owner=owner,
-                group_key=key,
-                defaults={"domains": [] if not domain or domain in PUBLIC_DOMAINS else [domain]},
-            )
+            alias = CompanyAlias.objects.filter(owner=owner, archived=False, group_key=f"contact:{address}").first() if address else None
+            if alias is None and domain:
+                alias = CompanyAlias.objects.filter(owner=owner, archived=False, group_key=f"domain:{domain}").first()
+            if alias:
+                company = alias.company
+                if CompanySettings.objects.filter(company=company, archived=True).exists():
+                    raise Conflict("人工归组的目标公司已归档，请先恢复客户或调整归组。")
+            else:
+                company, _ = Company.objects.get_or_create(
+                    owner=owner,
+                    group_key=key,
+                    defaults={"domains": [] if not domain or domain in PUBLIC_DOMAINS else [domain]},
+                )
             company = company_for(owner, company.pk, lock=True)
             facts = data["facts"] or {}
             contact_names = facts.get("contact_name") or []

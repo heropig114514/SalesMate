@@ -80,3 +80,6 @@
   .assistant-body { padding-top: 10px; }
   .assistant-welcome-mark { margin-bottom: 14px; }
 }
+
+/* 持久化助手：历史文本保持换行；会话选择与保存入口在窄侧栏中允许换行。 */
+.assistant-session-controls{display:flex;gap:8px;align-items:center;margin-bottom:18px}.assistant-session-controls select{min-width:0;flex:1}.assistant-session-controls button{white-space:nowrap}.assistant-message{border:1px solid #dce7df;border-radius:9px;padding:12px;margin-bottom:12px;background:#f6faf7}.assistant-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.assistant-send-row{flex-wrap:wrap;gap:8px}.assistant-send-row>span{width:100%}

@@ -1,6 +1,6 @@
 """职责：定义共用 Django、数据库、API 和日志配置。
 实现：读取环境变量及项目根目录 .env，进程变量优先；数据库通过单一 DATABASE_URL 配置。
-关联：供 local.py 导入；注册 accounts 与 crm、请求日志中间件、错误处理器及 OpenAPI 生成器。
+关联：供 local.py 导入；注册 accounts、crm、sales、请求日志中间件、错误处理器及 OpenAPI 生成器。
 
 目录：
 - 无
@@ -13,7 +13,7 @@
 - DEBUG：共用配置中的调试开关，默认关闭。
 - ALLOWED_HOSTS：允许的 Host 列表，从 DJANGO_ALLOWED_HOSTS 读取。
 - CSRF_TRUSTED_ORIGINS：允许的 CSRF 来源列表。
-- INSTALLED_APPS：框架、API、账号与 crm 业务应用的注册顺序。
+- INSTALLED_APPS：框架、API、账号、crm 邮件与 sales 业务应用的注册顺序。
 - MIDDLEWARE：请求处理链，日志中间件位于最外层。
 - ROOT_URLCONF：根路由模块路径。
 - WSGI_APPLICATION：WSGI 应用导入路径。
@@ -35,6 +35,7 @@
 - GOOGLE_OAUTH_CLIENT_ID：Google Web application OAuth 客户端标识。
 - GOOGLE_OAUTH_CLIENT_SECRET：Google Web application OAuth 客户端密钥。
 - GOOGLE_OAUTH_REDIRECT_URI：Google 回到 Django 的精确授权回调地址。
+- SALESMATE_VAULT_KEY：新外部动作连接的 Fernet 密钥，空值时授权与解密明确失败。
 - REST_FRAMEWORK：会话认证、默认权限、JSON 渲染、Schema 与异常处理器配置。
 - SPECTACULAR_SETTINGS：API 元数据、枚举名称及默认仅管理员访问的文档配置。
 - LOGGING：控制台日志格式、处理器和 Django/SalesMate 日志级别。
@@ -73,6 +74,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "apps.accounts.apps.AccountsConfig",
     "apps.crm.apps.CRMConfig",
+    "apps.sales.apps.SalesConfig",
 ]
 MIDDLEWARE = [
     # 最外层先生成 request_id，使后续视图、错误响应和完成日志能够关联。
@@ -121,6 +123,7 @@ USE_TZ = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+SALESMATE_VAULT_KEY = env.str("SALESMATE_VAULT_KEY", default="")
 MEDIA_ROOT = BASE_DIR / "media"
 ANALYSIS_PROVIDER = env.str("ANALYSIS_PROVIDER", default="rules")
 if ANALYSIS_PROVIDER not in {"rules", "agent"}:

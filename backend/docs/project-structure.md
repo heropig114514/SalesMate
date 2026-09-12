@@ -1,6 +1,6 @@
 # 项目目录与职责
 
-更新：2026-09-12。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 已合入同级 `agent/`，软件和 Agent 共用仓库根目录的 .env 与依赖入口。
+更新：2026-09-13。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 已合入同级 `agent/`，软件和 Agent 共用仓库根目录的 .env 与依赖入口。
 
 ```text
 SalesMate/
@@ -30,10 +30,12 @@ SalesMate/
     │   ├── views.py / urls.py         # 浏览器和 Agent 的 HTTP 入口
     │   ├── migrations/                # 数据表与唯一约束
     │   └── management/commands/       # 本地账号初始化
+    ├── apps/sales/                    # 销售关系模型、权限、事务、外部动作和 sales_worker
     ├── common/                       # 日志、错误和健康检查
-    ├── tests/                        # 框架、契约、真实业务及并发测试
+    ├── tests/                        # 框架、契约、业务与权限测试
     ├── frontend/
     │   ├── index.html                # 登录、列表、详情及表单骨架
+    │   ├── business.html              # 业务管理及动作审阅页面
     │   └── assets/                   # 同源 API、页面交互及响应式样式
     ├── contracts/openapi.yaml        # 从后端生成的契约
     ├── docs/                         # 状态、协议、数据模型、Agent 接入
@@ -43,10 +45,10 @@ SalesMate/
 
 `backend/` 表示本项目的软件维护边界，其中 `backend/frontend/` 仍单独组织页面代码。Django 入口和 Python 导入路径保持不变；前端与契约按软件根目录定位。双方只读取仓库根目录 `.env`；原 backend/.env 的本机 PostgreSQL 和调试配置已迁移，数据库未替换。所有软件文档，包括软件侧 Agent 接口说明和历史设计摘要，统一归入 `backend/docs/`。
 
-初期将紧密关联的业务模型放在 crm app，以独立服务文件分工；不为规划中的模块创建空壳。后续按 mailbox/customers/jobs/analysis 拆应用时保持 HTTP 契约不变。用户模型仍归 accounts。
+crm 保持邮件与 L1–L4 分析职责，sales 管理交易、协作与工具动作，用户模型归 accounts。已有 Agent HTTP 契约和邮件存储不变。
 
-浏览器不访问数据库、不在客户端生成假业务状态。Agent 不导入 Django、不直接写业务表。规则只在 rules 模式的明确页面动作中运行，不作为网络或模型失败时的隐式回退。
+浏览器不访问数据库、不在客户端生成假业务状态。Agent 不导入 Django、不直接写业务表。规则在 rules 模式的明确业务变更或分析请求后运行，不作为网络或模型失败时的隐式回退。
 
 在 `SalesMate/backend/` 执行 `python tools/check_docs.py`，默认覆盖本目录全部 Python 文件，包括迁移、测试、工具和包初始化。修改检查器时同时执行 `python tools/test_check_docs.py`。JS/CSS/HTML 与 browser_smoke.cjs 的说明和目录人工核对。
 
-源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。后续交易维护、知识库、发送、翻译和助手按确认范围引入；尚未搭建 RAG、LangGraph、Celery 或容器。
+源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。交易维护、发送/日历确认、会话草稿与团队权限已放入 sales；知识库、翻译和自主助手仍待后续接入。未引入 RAG、LangGraph、Celery 或容器。

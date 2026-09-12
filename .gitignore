@@ -28,3 +28,6 @@ backend/.local-access.json
 .DS_Store
 .local-access.json
 artifacts/
+
+# Private sales attachments
+backend/private_uploads/

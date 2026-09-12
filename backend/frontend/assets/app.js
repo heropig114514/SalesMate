@@ -1,7 +1,7 @@
 /**
  * 职责：实现员工 Gmail 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：哈希路由、同源 API 和可访问表单；本地自动会话跳过登录页；邮件文本先转义再渲染。
- * 关联：api.js 处理 HTTP；assistant.js 管理客户助手占位；index.html 提供骨架；app.css 定义布局。
+ * 关联：api.js 处理 HTTP；assistant.js 管理客户私有会话及草稿；index.html 提供骨架；app.css 定义布局。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、disconnectGmail、openMail、openRegister、loginSubmit、
@@ -10,7 +10,7 @@
  * signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
  */
 import { request, escapeHtml as e } from './api.js';
-import { AssistantPanel } from './assistant.js';
+import { AssistantPanel } from './assistant.js?v=20260913-sales';
 
 const assistant = new AssistantPanel();
 

@@ -75,6 +75,6 @@ python backend/tools/check_docs.py
 
 ## 本机合并后的运行状态
 
-本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env；数据库身份与现有数据保持不变。当前仍为 UTC、rules、免登录模式，SALESMATE_AUTO_RUN_AGENT=False；不会在验证时调用 Gmail 或百炼。已有用户和 .local-access.json 保留，不重复执行初始化。
+本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env；数据库身份与现有数据保持不变。运行模式、时区和自动分析开关以已有根 .env 为准；本轮未改变这些配置，测试通过模拟外部 SDK 避免真实外发。已有用户和 .local-access.json 保留，不重复执行初始化。
 
 共享 Python 环境安装项目依赖时提示若干其他已安装包存在缺失依赖；项目测试结果单独记录，不据此宣称整个共享环境依赖完全一致。

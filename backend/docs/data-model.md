@@ -1,6 +1,6 @@
 # 数据模型现状
 
-更新：2026-09-12。默认本地数据库为 `backend/db.sqlite3`，通过 `DATABASE_URL` 可切换 PostgreSQL。accounts 与 crm 迁移适用于两者。
+更新：2026-09-13。数据库由必填 `DATABASE_URL` 显式指定；本轮沿用本机 PostgreSQL，不改动数据库、时区或分析配置。accounts、crm 和 sales 通过迁移共同维护 Schema。
 
 ## 数据表
 
@@ -27,12 +27,12 @@
 
 关系字段承担权限、查询和唯一约束，JSON 保存协议载荷。邮件本体与抽取分表，L2/L3/L4 分表。后端 revision 与 Agent input_version 独立：前者防止旧任务覆盖，后者保持 Agent 定义的缓存身份。
 
-Company.customer/tickets/quotes/orders 暂为业务快照容器。CRM 基础字段已有建档服务；工单、报价、订单默认空数组，本轮没有伪造交易或实现其编辑入口。后续维护服务必须验证结构，并在同一事务递增 external_version、revision 和创建任务；不能直接改 JSON 绕过版本规则。业务扩大后可迁移为关系表，保持 CompanyContext 表示不变。
+Company.customer 保留已确认的 CRM 基础资料；tickets/quotes/orders 是原 Agent 契约投影。新增 `sales` 关系表维护业务单据与明细，仅替换投影中 `source=sales_record` 条目，原历史 JSON 保留。报价有真实发送证据后才进入投影，订单确认后才作为历史订单；事务同时递增 external_version/revision 并入队。完整关系和状态契约见 [销售 Schema 与接口](backend-expansion.md)。
 
 ## 约束
 
 - 同一 owner 与 group_key 唯一。完整企业域名相同才自动合组；清单中的公共邮箱按完整联系人邮箱分别归组。清单有限，不宣称覆盖全部服务商。
-- 客户自报公司名只用于展示，不参与归组。不猜测子域/集团关系，当前没有人工合并拆分操作。
+- 客户自报公司名只用于展示，不参与自动归组。新邮件优先匹配人工 CompanyAlias（联系人优先、域名其次），无映射时采用原分组规则。所有者可以显式搬移选择的邮件、合并公司或配置多域名映射。
 - 同用户跨业务邮箱的同域往来进入同一公司；不同用户同域仍隔离。
 - 邮箱地址、公司联系人、抽取版本、输入版本、分析提示词版本均有相应联合唯一约束。
 - 邮件/事实/CRM 变化递增 revision；CRM 变化同时递增 external_version。运行中任务保持自己的输入 revision。
@@ -41,7 +41,7 @@ Company.customer/tickets/quotes/orders 暂为业务快照容器。CRM 基础字�
 
 ## 验证边界
 
-本轮自动测试覆盖迁移、业务 CRUD、事务回滚、用户隔离、任务租约、版本冲突、缓存和页面读取，并在 SQLite 上完成真实 HTTP 主链路冒烟。尚未验证生产部署、完整团队权限、大规模并发、进程崩溃恢复或 pgvector 检索；真实 Gmail OAuth 与百炼需要人工验证。
+本轮在 PostgreSQL 隔离测试数据库验证关系记录、状态、权限隔离、金额快照、归组、草稿、附件、CSRF、动作确认及失败语义。Google SDK 边界采用模拟，不能证明真实账号授权或外部执行已完成。尚未进行生产部署、多进程压力测试、真实进程崩溃演练或 pgvector 检索。
 
 ## 旧版规则事实升级
 

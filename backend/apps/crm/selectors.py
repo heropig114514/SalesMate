@@ -1,6 +1,6 @@
 """职责：生成公司、上下文与页面查询投影。
 实现：从同一分析载荷派生列表和详情；邮箱地址取权威关系，保留旧结果时间及 stale 标记。
-关联：API 在授权后调用；ingestion 和 results 使用同一快照表示。
+关联：API 在授权后调用；ingestion 和 results 使用同一快照表示；sales 设置人工主要联系人及客户归档。
 目录：
 - latest_extraction：选择邮件最近创建的抽取版本。
 - email_data：返回标准邮件与当前抽取合并的协议表示。
@@ -15,6 +15,7 @@ from datetime import datetime, time, timedelta
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from apps.sales.models import CompanySettings
 
 from .models import Analysis
 
@@ -43,7 +44,7 @@ def email_data(email):
 # 功能：构建一致的 Grouping 和 CompanyContext。
 # 输入：`company` 为已授权且在修改场景已锁定的公司。
 # 输出：Grouping、CompanyContext 二元组。
-# 逻辑：预取邮箱和抽取后按事实时间排序邮件，联系人主要标记按往来数及邮箱稳定选择。
+# 逻辑：按事实时间排序邮件，主要联系人优先使用明确人工设置；未设置时保留按往来数及邮箱选择的原规则。
 # 约束：revision 由 HTTP ETag 传递，协议 JSON 字段保持 README 名称。
 def context_pair(company):
     emails = list(company.emails.select_related("contact", "mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
@@ -53,8 +54,11 @@ def context_pair(company):
                          "interaction_count": sum(email.contact_id == contact.pk for email in emails),
                          "is_primary": False})
     contacts.sort(key=lambda item: (-item["interaction_count"], item["contact_email"]))
+    selected = CompanySettings.objects.filter(company=company, primary_contact__company=company).select_related("primary_contact").first()
     if contacts:
-        contacts[0]["is_primary"] = True
+        primary = selected.primary_contact.email if selected else contacts[0]["contact_email"]
+        for contact in contacts:
+            contact["is_primary"] = contact["contact_email"] == primary
     grouping = {"company_id": str(company.pk), "company_name": company.name, "crm_status": company.crm_status,
                 "domains": company.domains, "contacts": contacts,
                 "member_dedupe_keys": [email.dedupe_key for email in emails]}
@@ -108,10 +112,11 @@ def company_row(company):
 # 功能：生成页面 A 的筛选、排序、分页及全局统计。
 # 输入：`companies` 为当前用户公司 QuerySet；`params` 为查询参数。
 # 输出：分页结果、总数、统计及当前时区。
-# 逻辑：跨维度 AND、同维度逗号多选 OR；空分最后，同分按最近入站时间降序。
+# 逻辑：排除人工归档公司；跨维度 AND、同维度逗号多选 OR；空分最后，同分按最近入站时间降序。
 # 约束：MVP 在授权数据集内内存投影；规模扩大后替换查询实现而不改响应契约。
 def list_companies(companies, params):
     from rest_framework.exceptions import ValidationError
+    companies = companies.exclude(business_settings__archived=True)
     rows = [company_row(company) for company in companies]
     today = timezone.localdate()
     day_start = timezone.make_aware(datetime.combine(today, time.min))

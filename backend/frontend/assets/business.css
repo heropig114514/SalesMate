@@ -1,0 +1,501 @@
+/* 职责：销售业务页的桌面和移动布局及可见交互状态。
+ * 实现：固定导航、响应式统计卡、可滚动表格和原生对话框；表单保持单一焦点流程。
+ * 关联：business.html 的语义节点及 business.js 生成的业务控件。
+ * 目录：无函数或类；CSS 类仅定义展示。
+ * 变量索引：--ink 正文色、--muted 次要文字、--accent 交互主色、--line 边界色。 */
+:root {
+  --ink: #1e293b;
+  --muted: #64748b;
+  --accent: #286c55;
+  --line: #e2e8e5;
+  font:
+    14px/1.5 "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+  color: var(--ink);
+  background: #f5f7f6;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+a,
+input,
+select,
+textarea {
+  outline-offset: 3px;
+}
+button {
+  border: 1px solid #cfdad4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 14px;
+  cursor: pointer;
+  color: var(--ink);
+}
+button:hover {
+  background: #eff5f1;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.primary:hover {
+  background: #20563f;
+}
+.danger {
+  color: #b42318;
+  border-color: #f1c7c2;
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+h1 {
+  font-size: 30px;
+  margin-bottom: 0;
+}
+h2 {
+  font-size: 19px;
+  margin-bottom: 4px;
+}
+h3 {
+  font-size: 16px;
+}
+small,
+.muted {
+  color: var(--muted);
+}
+.navigation {
+  position: fixed;
+  width: 220px;
+  inset: 0 auto 0 0;
+  background: white;
+  border-right: 1px solid var(--line);
+  padding: 26px 18px;
+  overflow: auto;
+}
+.brand {
+  display: flex;
+  gap: 12px;
+  font-size: 23px;
+  font-weight: 700;
+  align-items: center;
+}
+.brand small {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+}
+.back {
+  display: block;
+  margin: 26px 0 12px;
+  font-size: 12px;
+}
+nav p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 23px 10px 5px;
+}
+nav a {
+  display: block;
+  border-radius: 7px;
+  padding: 9px 12px;
+  color: var(--ink);
+}
+nav a[aria-current="page"] {
+  background: #e8f1eb;
+  color: var(--accent);
+  font-weight: 600;
+}
+.account {
+  padding: 20px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+main {
+  margin-left: 220px;
+  padding: 30px 36px;
+  max-width: 1700px;
+}
+header,
+.toolbar,
+.dialog-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  margin-bottom: 7px;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin: 26px 0;
+}
+.stat {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+}
+.stat strong {
+  display: block;
+  font-size: 27px;
+  margin-top: 10px;
+}
+.stat span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.surface {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.toolbar {
+  padding: 23px 24px;
+}
+.toolbar p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filters {
+  border-block: 1px solid var(--line);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #fafcfb;
+}
+.filters label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+.filters select {
+  max-width: 300px;
+}
+.check input {
+  width: auto;
+}
+.filters span {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+input,
+select,
+textarea {
+  border: 1px solid #cad6ce;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fff;
+  color: var(--ink);
+  width: 100%;
+  min-width: 0;
+}
+textarea {
+  resize: vertical;
+  min-height: 85px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 12px 24px;
+  background: #fafcfb;
+}
+td {
+  padding: 17px 24px;
+  border-top: 1px solid var(--line);
+  vertical-align: middle;
+  max-width: 360px;
+  overflow-wrap: anywhere;
+}
+td small {
+  display: block;
+  margin-top: 4px;
+}
+td button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.badge {
+  display: inline-block;
+  border-radius: 5px;
+  padding: 3px 8px;
+  background: #edf3ef;
+  color: var(--accent);
+  font-size: 11px;
+}
+.empty {
+  text-align: center;
+  padding: 65px 25px;
+  color: var(--muted);
+}
+.empty strong {
+  display: block;
+  color: var(--ink);
+  font-size: 19px;
+  margin-bottom: 8px;
+}
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 24px;
+}
+.footnote {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 20px 2px;
+}
+.details {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 9px 15px;
+  margin: 20px 0;
+}
+.details dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: 0;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.form-grid .wide {
+  grid-column: 1/-1;
+}
+form .actions {
+  margin-top: 24px;
+  justify-content: flex-end;
+}
+.form-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 15px 0;
+}
+.section {
+  border-top: 1px solid var(--line);
+  margin-top: 23px;
+  padding-top: 18px;
+}
+.section .actions {
+  margin-top: 12px;
+}
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  width: min(780px, 94vw);
+  max-height: 90vh;
+  padding: 26px;
+  color: var(--ink);
+}
+dialog::backdrop {
+  background: #152d245e;
+}
+.dialog-top {
+  margin-bottom: 20px;
+}
+.dialog-top button {
+  font-size: 20px;
+  border: 0;
+  padding: 0 8px;
+}
+.preview {
+  padding: 18px;
+  background: #f4f8f5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.warning {
+  background: #fff6e7;
+  color: #83520b;
+  border: 1px solid #efdbb6;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 15px 0;
+  font-size: 12px;
+}
+[role="alert"] {
+  background: #fff0ee;
+  border: 1px solid #f2c6be;
+  color: #97261b;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 20px;
+  white-space: pre-wrap;
+}
+[hidden] {
+  display: none !important;
+}
+#business-content {
+  overflow-x: auto;
+}
+.success {
+  color: var(--accent);
+}
+@media (max-width: 1000px) {
+  .navigation {
+    width: 180px;
+    padding: 20px 12px;
+  }
+  main {
+    margin-left: 180px;
+    padding: 24px 20px;
+  }
+  .stats {
+    gap: 10px;
+  }
+  .stat {
+    padding: 15px;
+  }
+  td,
+  th {
+    padding: 14px;
+  }
+  .filters {
+    flex-wrap: wrap;
+  }
+  .filters span {
+    margin-left: 0;
+  }
+}
+@media (max-width: 700px) {
+  .navigation {
+    position: static;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 15px 20px;
+  }
+  .brand {
+    font-size: 20px;
+  }
+  .back {
+    margin: 10px 0;
+  }
+  nav {
+    display: flex;
+    overflow-x: auto;
+    gap: 5px;
+  }
+  nav p,
+  .account {
+    display: none;
+  }
+  nav a {
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  main {
+    margin: 0;
+    padding: 22px 16px;
+  }
+  header {
+    align-items: flex-start;
+  }
+  header > a {
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  h1 {
+    font-size: 25px;
+  }
+  .stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .toolbar {
+    align-items: flex-start;
+    padding: 18px;
+  }
+  .toolbar .actions {
+    justify-content: flex-end;
+  }
+  .filters {
+    padding: 12px 18px;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .details {
+    grid-template-columns: 95px 1fr;
+  }
+  .form-grid .wide {
+    grid-column: auto;
+  }
+  dialog {
+    padding: 20px;
+  }
+  .stat strong {
+    font-size: 23px;
+  }
+  table {
+    min-width: 550px;
+  }
+}

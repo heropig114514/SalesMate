@@ -38,5 +38,5 @@ python -m agent.main --process-jobs-once --job-limit 10
 - 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。旧 Desktop OAuth 文件只用于兼容调试命令。
 - 后端保留 SyncState 和失败补交兼容接口，但当前 Gmail MVP 通过最近邮件重复扫描和正常 `emails/` 提交完成去重及失败更新。
 - 租约和 revision 用于阻止过期任务覆盖新上下文；没有自动续租、指数退避或复杂调度。
-- 工单、报价和订单可进入 CompanyContext，当前页面没有完整交易编辑入口。
+- 工单、报价和订单由 sales 关系记录维护并投影到 CompanyContext；业务管理页提供编辑和状态入口，只有已发送报价及已确认订单提供相应分析证据。
 - 真实 Gmail 与百炼不属于自动测试依赖。

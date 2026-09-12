@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- 职责：销售业务管理页的语义骨架。
+实现：业务导航、统计、列表和可访问模态表单由 business.js 填充。
+关联：复用现有会话登录及销售 API；business.css 提供独立响应式布局。
+目录：无函数或类；editor 是编辑及动作确认对话框。
+变量索引：无脚本变量；DOM id 供业务模块定位。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>SalesMate · 业务管理</title>
+    <link rel="stylesheet" href="/static/business.css?v=20260913-sales" />
+  </head>
+  <body>
+    <aside class="navigation">
+      <a class="brand" href="/"
+        >S <span>SalesMate<small>销售工作空间</small></span></a
+      ><a class="back" href="/">← 邮件与客户分析</a>
+      <nav id="business-nav" aria-label="业务导航"></nav>
+      <div class="account" id="account">正在读取会话…</div>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">SALES WORKSPACE</p>
+          <h1 id="page-title">业务概览</h1>
+        </div>
+        <a href="/api/docs/" target="_blank" rel="noopener">API 文档 ↗</a>
+      </header>
+      <div id="business-notice" role="alert" hidden></div>
+      <section
+        id="business-stats"
+        class="stats"
+        aria-label="业务概览"
+      ></section>
+      <section class="surface">
+        <div class="toolbar">
+          <div>
+            <h2 id="list-title">客户目录</h2>
+            <p id="list-description">管理客户关系、交易与下一次跟进。</p>
+          </div>
+          <div class="actions">
+            <button id="refresh-business" type="button">刷新</button
+            ><button id="create-business" class="primary" type="button">
+              新建
+            </button>
+          </div>
+        </div>
+        <div class="filters">
+          <label
+            >当前客户<select id="company-filter">
+              <option value="">全部客户</option>
+            </select></label
+          ><label class="check"
+            ><input id="include-archived" type="checkbox" />包含已归档</label
+          ><span id="record-count"></span>
+        </div>
+        <div id="business-content" aria-live="polite">正在加载…</div>
+        <div id="business-pagination" class="pagination"></div>
+      </section>
+      <p class="footnote">
+        确认订单净额按币种分别统计。外部发送须先准备内容、人工确认，再由销售任务进程执行。
+      </p>
+    </main>
+    <dialog id="editor" aria-labelledby="editor-title">
+      <div class="dialog-top">
+        <h2 id="editor-title">编辑记录</h2>
+        <button id="close-editor" type="button" aria-label="关闭编辑">×</button>
+      </div>
+      <div id="editor-error" role="alert" hidden></div>
+      <div id="editor-body"></div>
+    </dialog>
+    <script type="module" src="/static/business.js?v=20260913-sales"></script>
+  </body>
+</html>
