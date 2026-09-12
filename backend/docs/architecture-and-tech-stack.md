@@ -2,7 +2,7 @@
 
 更新日期：2026-09-12
 
-状态：架构方向与后续扩展规划。当前已实现 Django/PostgreSQL 邮件业务闭环、原生同源前端和显式规则占位；业务集中于 crm app，内部以服务文件分工。实际接口见 [API 契约](api-contract.md)，占位替换见 [Agent 接入](agent-integration.md)。后续 RAG 与复杂助手尚未引入。
+状态：本页保留架构方向与后续扩展规划。当前实现以根 [README](../README.md) 为准：Django 与 Agent 已通过 HTTP 整合，本机使用 PostgreSQL，数据库由 DATABASE_URL 显式选择，规则模式仅供离线页面演示。后续 RAG 与复杂助手尚未引入。
 
 ## 1. 目标与范围
 
@@ -16,19 +16,21 @@
 
 ```mermaid
 flowchart LR
-    F[前端] -->|业务查询与操作| B[Django + DRF]
-    F -->|Gmail 授权令牌与同步请求| A[独立 Python Agent]
-    A -->|直接读取邮件| G[Gmail API]
+    U[当前员工] --> F[前端 Gmail 收件箱]
+    F -->|会话业务查询、OAuth 与同步请求| B[Django + DRF]
+    B <-->|授权码交换| G[Google OAuth / Gmail API]
+    B -->|员工专属同步请求与授权| A[一次性 Python Agent]
+    A -->|只读邮件| G
     A -->|提交邮件、领取任务、读取上下文、保存结果| B
-    B <--> D[(PostgreSQL：业务数据与 Job)]
+    B <--> D[(关系数据库：业务数据与 Job)]
     B -->|知识检索：后续扩展| V[(pgvector：文档片段与向量)]
     B -->|文件存取：后续扩展| S[对象存储]
 ```
 
-图中的 PostgreSQL 与 pgvector 在初期可部署于同一个数据库实例，使用不同表管理业务记录和知识索引。
+生产扩展时可将 PostgreSQL 与 pgvector 部署于同一个数据库实例，使用不同表管理业务记录和知识索引。当前 MVP 不使用向量检索。
 
-- **前端**：Gmail 授权、同步入口、公司列表、客户详情及业务交互。
-- **Django 后端**：鉴权、业务数据、公司实体决策、任务持久化、上下文查询、分析结果存储、筛选排序与统计。
+- **前端**：当前登录员工的 Gmail 授权、同步入口、按客户公司归组的列表、客户详情及业务交互。
+- **Django 后端**：员工鉴权、Google OAuth 凭证、邮箱归属、业务数据、公司实体决策、任务持久化、上下文查询、分析结果存储、筛选排序与统计。
 - **Agent**：读取 Gmail、抽取邮件事实、归并分析输入、生成分析、计算评分。
 - **数据与知识层**：保存权威业务事实、原始材料、可追溯的分析快照和知识索引。
 
@@ -41,7 +43,7 @@ Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如
 | 业务框架 | Django 5.2 LTS，使用实施时适用的补丁版本 | 第一阶段：模型、迁移、业务逻辑、用户与管理后台 |
 | API | Django REST Framework（DRF） | 第一阶段：面向前端与 Agent 的接口、输入校验和权限 |
 | 框架辅助 | django-environ、drf-spectacular、Uvicorn | 已引入：环境配置读取、OpenAPI 生成和本地 ASGI 启动 |
-| 业务数据库 | PostgreSQL | 第一阶段：邮件、客户、商机、版本、分析结果和 Job |
+| 业务数据库 | PostgreSQL（本机）/ SQLite（显式配置） | 邮件、客户、商机、版本、分析结果和 Job |
 | Agent 运行 | 独立 Python 服务 | 第一阶段：沿用 Agent 主动领取任务的 Pull 模式 |
 | Agent 编排 | 固定流程先用普通 Python；复杂助手拟用 LangGraph | 多轮对话、工具选择、持久化步骤及等待人工确认时引入 |
 | 生成模型 | 沿用 Agent 侧现有百炼模型配置 | 不因后端框架变化自动更换模型或实验条件 |
@@ -51,10 +53,10 @@ Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如
 | 原文件存储 | S3 兼容对象存储，服务商待定 | 知识库或文件生成功能启用时：保存原文件、附件和产物 |
 | 后台文档处理 | Celery + Redis | 文档解析和向量生成等后台工作启用时引入 |
 | Agent 可观测性 | Langfuse | 模型联调阶段：跟踪模型、检索和工具调用，检查耗时、费用与质量 |
-| 本地开发 | D 盘 Conda 环境 + 本地 PostgreSQL/pgvector | 当前本地 PostgreSQL 16 与迁移已完成 |
+| 本地开发 | Python 环境 + 显式数据库配置 | 统一 `requirements.txt` 和根 `.env` |
 | 后续部署 | Docker Compose + Linux 容器 | 首个可运行后端版本完成后验证打包，部署阶段统一运行环境 |
 
-本机已验证的 Python 与基础库版本见[本地开发环境](local-development.md)。PostgreSQL、后续扩展库及容器镜像的具体版本，在实施前完成兼容性验证并锁定。Langfuse 的托管或自建方式尚未确定；自建资源需求需另行评估。
+本地命令见[本地开发环境](local-development.md)。PostgreSQL、后续扩展库及容器镜像的具体版本，在生产实施前完成兼容性验证并锁定。Langfuse 的托管或自建方式尚未确定；自建资源需求需另行评估。
 
 ## 4. 后端功能模块
 
@@ -78,18 +80,19 @@ Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如
 
 现有邮件理解任务继续使用后端持久化 Job 和 Agent Pull：
 
-1. 前端将当前 Gmail 授权令牌交给 Agent，触发同步。
-2. Agent 读取邮件并提取事实，通过 API 提交给 Django。
-3. Django 在数据库事务中保存邮件与事实、完成归组并创建相应 Job。
-4. Agent 通过领取接口取得任务，再查询公司上下文。
-5. Agent 完成 L2 归并、L3 分析与 L4 评分，提交结果并回报任务状态。
-6. 前端通过后端查询接口获取结果与处理状态。
+1. 当前员工在前端发起 Google OAuth，Django 回调验证 Gmail profile 并保存员工邮箱连接。
+2. 前端请求同步该员工邮箱；Django 将邮箱状态标为 `sync_requested`。
+3. 一次性 Agent 通过服务凭证领取该员工的同步请求和 Google 授权，读取邮件并提取事实。
+4. Django 在数据库事务中保存邮件与事实，在该员工范围内完成归组并创建相应 Job。
+5. Agent 通过领取接口取得 Job，再查询公司上下文。
+6. Agent 完成 L2 归并、L3 分析与 L4 评分，提交结果并回报 Job 和邮箱同步状态。
+7. 前端通过后端查询接口获取该员工自己的结果与处理状态。
 
 Job 表是邮件理解任务状态的权威来源。后端负责原子领取、领取凭证、租约校验和防止过期任务覆盖新结果；HTTP 版本、领取凭证和失败语义已在 api-contract.md 固化，待与团队 Agent 实际联调。重试次数、退避与失败处理必须显式约定，不加入隐式回退。
 
 Celery + Redis 用于后续文档处理等单独任务，不再次派发同一份邮件分析 Job。LangGraph 管理 Agent 内部执行步骤，也不替代后端的业务任务状态与操作权限。
 
-Gmail 同步保持当前前端提供令牌的设计，不引入令牌托管或自动刷新。真实发送若进入本期，需另行定义其授权链路。
+当前本地 MVP 由 Django 保存 Google 授权 JSON，浏览器不接触 access token 或 refresh token；Agent 刷新凭证后通过受保护接口回写。正式部署时应将凭证迁移到加密字段或密钥服务。真实发送若进入本期，需另行定义更高权限的授权链路。
 
 ## 6. RAG 的数据与执行路径
 
@@ -136,13 +139,13 @@ Embedding 模型、维度、分块策略和检索参数在评测后确定并版�
 - 令牌、密钥不进入日志；邮件正文和客户资料只记录诊断所需内容，接入外部追踪服务前明确发送范围。
 - Windows 开发环境中的 Celery Worker 使用 Linux 容器或 WSL2；Celery 官方不支持原生 Windows。
 - LangGraph 的暂停状态不等于业务操作已获批准；实际发送和写回仍由后端验证具体动作及版本。
-- 当前使用本地 Conda + WSL PostgreSQL 开发；前端为 Django 同源的原生 HTML/CSS/JavaScript；连接配置通过环境变量读取，路径避免写死 Windows 盘符。后续容器按锁定依赖重新安装 Python 环境，不直接复制 Windows Conda 环境。
+- 当前本机沿用 D 盘 Conda 环境与 PostgreSQL 开发，新环境可使用项目根目录 Python venv；前端为 Django 同源的原生 HTML/CSS/JavaScript；连接配置从根 `.env` 读取。后续容器按锁定依赖重新安装 Python 环境。
 
 ## 8. 分阶段引入
 
 | 阶段 | 交付与组件 | 验收重点 |
 |---|---|---|
-| 1：邮件分析闭环 | Django、DRF、PostgreSQL、独立 Agent、Job 协议；数据库可预备 pgvector 扩展 | 单公司提交、归组、领取、分析保存与页面查询；重复提交和失败路径 |
+| 1：邮件分析闭环 | Django、DRF、关系数据库、独立 Agent、Job 协议 | 单公司提交、归组、领取、分析保存与页面查询；重复提交和失败路径 |
 | 2：知识库（范围确认后） | `knowledge`、pgvector、Docling、对象存储、Celery + Redis、Embedding | 文档入库、来源引用、权限隔离、文档更新删除和检索质量 |
 | 3：复杂助手（范围确认后） | LangGraph、会话与工作流状态、用户确认流程 | 多步工具调用、暂停恢复、结果可追溯、动作不重复执行 |
 | 模型联调阶段 | Langfuse、固定样例与评测记录 | 事实依据、检索命中、成本、延迟及版本变化的影响 |

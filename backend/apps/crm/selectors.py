@@ -1,5 +1,5 @@
 """职责：生成公司、上下文与页面查询投影。
-实现：从同一分析载荷派生列表和详情，保留旧结果时间及 stale 标记。
+实现：从同一分析载荷派生列表和详情；邮箱地址取权威关系，保留旧结果时间及 stale 标记。
 关联：API 在授权后调用；ingestion 和 results 使用同一快照表示。
 目录：
 - latest_extraction：选择邮件最近创建的抽取版本。
@@ -31,11 +31,11 @@ def latest_extraction(email):
 # 功能：返回标准邮件与当前抽取合并的协议表示。
 # 输入：`email` 为持久化邮件。
 # 输出：含正文与 facts 的 EmailSubmission 字典。
-# 逻辑：本体保持不变，当前抽取覆盖抽取字段。
+# 逻辑：本体保持不变，当前抽取覆盖抽取字段；mailbox_address 从邮箱关系补齐旧记录的传输字段。
 # 约束：必须先验证公司或邮箱访问权限。
 def email_data(email):
     extraction = latest_extraction(email)
-    return {**email.payload, "extract_status": extraction.status,
+    return {**email.payload, "mailbox_address": email.mailbox.address, "extract_status": extraction.status,
             "extract_prompt_version": extraction.prompt_version,
             "extract_error": extraction.error, "facts": extraction.facts}
 
@@ -43,10 +43,10 @@ def email_data(email):
 # 功能：构建一致的 Grouping 和 CompanyContext。
 # 输入：`company` 为已授权且在修改场景已锁定的公司。
 # 输出：Grouping、CompanyContext 二元组。
-# 逻辑：按事实时间排序邮件，联系人主要标记按往来数及邮箱稳定选择。
+# 逻辑：预取邮箱和抽取后按事实时间排序邮件，联系人主要标记按往来数及邮箱稳定选择。
 # 约束：revision 由 HTTP ETag 传递，协议 JSON 字段保持 README 名称。
 def context_pair(company):
-    emails = list(company.emails.select_related("contact").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
+    emails = list(company.emails.select_related("contact", "mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
     contacts = []
     for contact in company.contacts.all():
         contacts.append({"contact_email": contact.email, "contact_name": contact.name,

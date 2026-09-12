@@ -1,14 +1,16 @@
 # 项目目录与职责
 
-更新：2026-09-12。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。后续独立 Agent 放在同级 `agent/`；目前未创建该目录或空壳实现。
+更新：2026-09-12。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 已合入同级 `agent/`，软件和 Agent 共用仓库根目录的 .env 与依赖入口。
 
 ```text
 SalesMate/
 ├── README.md                         # 仓库概览与两方职责入口
 ├── .gitignore                        # 仓库级凭证及运行产物排除
+├── agent/                            # Gmail、L1–L4、CLI 和 Agent 测试
+├── .env.example                      # 共享配置模板
+├── requirements.txt                  # 双方依赖入口
 └── backend/                          # 软件应用根目录、命令执行位置
     ├── README.md                     # 软件开发说明和注释规范
-    ├── .env.example                  # 环境配置模板
     ├── manage.py                     # Django 管理命令
     ├── requirements/                 # Python 依赖
     ├── config/                       # Django、数据库、页面及根路由
@@ -22,6 +24,8 @@ SalesMate/
     │   ├── jobs.py                    # 入队、合并、领取、租约与回报
     │   ├── results.py                 # L2/L3/L4 验证、保存及缓存
     │   ├── selectors.py               # 上下文、页面投影与统计
+    │   ├── gmail_oauth.py             # 员工授权、同步领取及凭证管理
+    │   ├── agent_runner.py            # 显式开启时调度一次性 Agent
     │   ├── rules.py                   # 可替换的显式规则占位
     │   ├── views.py / urls.py         # 浏览器和 Agent 的 HTTP 入口
     │   ├── migrations/                # 数据表与唯一约束
@@ -37,7 +41,7 @@ SalesMate/
     └── artifacts/                    # 本地产物和截图，不提交 Git
 ```
 
-`backend/` 表示本项目的软件维护边界，其中 `frontend/` 仍单独组织页面代码。Django 入口、Python 导入路径和 `.env` 位置保持不变；前端与契约按软件根目录定位。所有软件文档，包括软件侧 Agent 接口说明和历史设计摘要，统一归入 `backend/docs/`。
+`backend/` 表示本项目的软件维护边界，其中 `backend/frontend/` 仍单独组织页面代码。Django 入口和 Python 导入路径保持不变；前端与契约按软件根目录定位。双方只读取仓库根目录 `.env`；原 backend/.env 的本机 PostgreSQL 和调试配置已迁移，数据库未替换。所有软件文档，包括软件侧 Agent 接口说明和历史设计摘要，统一归入 `backend/docs/`。
 
 初期将紧密关联的业务模型放在 crm app，以独立服务文件分工；不为规划中的模块创建空壳。后续按 mailbox/customers/jobs/analysis 拆应用时保持 HTTP 契约不变。用户模型仍归 accounts。
 

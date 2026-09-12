@@ -1,36 +1,31 @@
 # SalesMate 项目参考总览
 
-更新：2026-09-12。当前负责人承担前后端，Agent 团队独立开发。本地已有可运行的邮件理解联调闭环，分析暂用明确标注的规则占位。
+更新：2026-09-12。当前前端、Django 后端和 Agent 已完成本地 HTTP 主链路整合。软件 [README](../README.md) 是范围、数据流、配置、启动和测试的首要文档。
 
 ## 当前实现
 
-原生 HTML/CSS/JavaScript 前端与 Django 同源运行，支持登录、公司收件箱、行业/规模/信号筛选、分页、三栏客户详情、邮件方向筛选、来源跳转、CRM 建档、模拟来信和演示样例导入。
+- 原生 HTML/CSS/JavaScript 工作台展示当前员工 Gmail 授权、同步状态、公司、邮件、画像、分析、业务上下文和跟进优先级。
+- Django + DRF 保存用户、员工 Gmail 授权、邮箱、公司、联系人、邮件、抽取、任务和 L2–L4 结果。
+- Agent 读取 Gmail，调用百炼执行 L1 和 L3，确定性执行 L2 和 L4，通过 HTTP 与 Django 通信。
+- 根 `.env` 是唯一配置文件；`DATABASE_URL` 必填，本机使用原 PostgreSQL；SQLite 需显式配置。
+- `rules` 模式保留为无需 Gmail 和百炼的界面演示，不是模型失败回退。
 
-Django + DRF + PostgreSQL 已执行用户及业务迁移，实现不可变邮件、公司归组、版本化抽取与补交、Job Pull、租约、上下文 revision、L2/L3/L4 保存及缓存。浏览器用 Session + CSRF，Agent 用单用户服务凭证。
+## 文档定位
 
-可演示：模拟来信 → 邮件和事实入库 → 公司归组 → Job → 规则分析评分 → 页面查询。设置 ANALYSIS_PROVIDER=agent 后保持业务 API 和页面不变，交由独立 Agent 主动领取。
-
-真实 OAuth、Gmail 读取、团队 Agent、模型调用、翻译、发送、右栏对话助手、新闻、知识库、完整交易维护和生产部署尚未接入。
-
-## 路线与来源
-
-| 来源 | 定位 |
+| 文档 | 定位 |
 |---|---|
-| SalesMate 仓库上一层 README.md，Agent v1.11 | 当前通信对象基准，原文未修改 |
-| references/product-requirements.md | 产品 0909 版本的页面与功能意图 |
-| references/agent-and-early-design.md | 历史宽范围路线与 Agent 设计摘要 |
-| api-contract.md | 实际 HTTP 路径、版本、领取凭证和失败语义 |
-| data-model.md | 当前 Schema 及本轮内部调整 |
-| agent-integration.md | 规则范围及真实 Agent 替换步骤 |
-| local-development.md | 本机启动、数据库状态与检查边界 |
+| [软件 README](../README.md) | 当前范围、完整流程、统一配置、启动和验收 |
+| [Agent README](../../agent/README.md) | L1–L4 字段、提示词、校验和 Agent CLI |
+| [OpenAPI](../contracts/openapi.yaml) | 当前 HTTP 机器可读契约 |
+| [API 契约](api-contract.md) | 认证、路由和传输一致性说明 |
+| [数据模型](data-model.md) | Django 持久化对象与约束 |
+| [Agent 接入](agent-integration.md) | Agent/Django 职责与一次任务过程 |
+| [本地开发](local-development.md) | 精简的本地启动和检查入口 |
+| [产品需求摘要](references/product-requirements.md) | 原 MVP 产品文档的历史需求摘要 |
+| [早期设计摘要](references/agent-and-early-design.md) | 早期宽范围技术路线，仅作背景 |
 
-## 后续对齐
+历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。
 
-- OAuth 主体、Agent Gmail 读取与邮箱业务 ID 的可信绑定；业务地址不等于授权证据。
-- 新增 HTTP ETag/If-Match、Job lease_token、expected_version 与显式 lease_seconds。
-- 真实 Agent 的提示词、评分与缓存版本，以及纯致谢邮件避免 L3 重算的策略。
-- 产品中的助手、翻译、发送、知识库和新闻是否属于本期以及负责人。
-- 工单/报价/订单录入或同步入口，不把邮件提及当作权威交易。
-- 公共邮箱清单、子域/集团人工归组、完整团队权限及部署。
+## 后续范围
 
-近期优先单公司 Agent 联调，验证重复提交、失败补交、预算历史、旧结果拒绝、空分与缓存版本。研究数据集未自动导入，实验条件未修改。
+尚未实现 Gmail 发信、WhatsApp、真实公司日历、会议纪要、常驻 Worker、知识库、行业新闻、自由对话助手、完整工单/报价/订单编辑和生产部署。员工 Gmail 网页授权和一次性同步请求已经实现；公共邮箱归组、集团多域名和评分权重仍是 MVP 简化规则。

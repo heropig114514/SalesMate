@@ -49,7 +49,7 @@ def enqueue(company, trigger):
 # 逻辑：传递后端 revision，让 Agent 保存快照时使用 If-Match。
 # 约束：不包含 Gmail 凭证；只向领取者返回 lease_token。
 def job_data(job):
-    return {"job_id": str(job.pk), "trigger": job.trigger, "payload": {"company_id": str(job.company_id)},
+    return {"job_id": str(job.pk), "trigger": job.trigger, "company_id": str(job.company_id),
             "enqueued_at": job.enqueued_at.isoformat(), "attempt": job.attempt,
             "lease_until": job.lease_until.isoformat() if job.lease_until else None,
             "lease_token": str(job.lease_token) if job.lease_token else None,
@@ -111,11 +111,14 @@ def report(owner, data, token):
         raise NotFound("任务不存在。")
     company = company_for(owner, candidate.company_id, lock=True)
     job = require_lease(company, candidate.pk, token, require_revision=data["status"] != "failed")
-    if data["status"] != "failed":
+    if data["status"] == "completed":
         result = Analysis.objects.filter(snapshot__company=company, snapshot__revision=company.revision,
                                          snapshot__input_version=data["input_version"], payload__status="completed").order_by("-id").first()
         if result is None or (data["produced"].get("score") and not result.scores.exists()) or data["error"] is not None:
-            raise InvalidState("成功或缓存回报需要已保存且有效的结果。")
+            raise InvalidState("成功回报需要已保存且有效的结果。")
+    elif data["status"] == "skipped":
+        if data["error"] is not None or any(data["produced"].values()):
+            raise InvalidState("跳过回报不得声明产出或错误。")
     elif not data["error"]:
         raise InvalidState("失败回报必须说明错误。")
     job.status, job.report = data["status"], plain(data)

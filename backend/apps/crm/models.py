@@ -4,6 +4,7 @@
 目录：
 - Mailbox：保存用户拥有的业务邮箱及同步游标。
 - Mailbox.Meta：约束同一用户的邮箱地址不重复。
+- GmailCredential：保存员工网页 OAuth 授予的 Gmail 只读凭证。
 - AgentCredential：保存仅能访问单个用户业务数据的 Agent 服务凭证摘要。
 - Company：保存按用户隔离的公司归组及权威 CRM 快照。
 - Company.Meta：隔离不同用户的同域公司。
@@ -55,8 +56,8 @@
 - Contact.name：实体名称；应用配置中表示模块导入路径
 - Email.company：所属公司外键，访问时须验证用户归属
 - Email.contact：主要外部联系人外键，messages 反向关系用于往来查询
-- Email.dedupe_key：邮箱 ID 与 Gmail 消息 ID 组成的天然幂等键
-- Email.direction：邮件入站 inbound 或出站 outbound
+- Email.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
+- Email.direction：邮件入站 inbound、出站 outbound 或未知 unknown
 - Email.mailbox：邮件所属后端业务邮箱
 - Email.payload：对应协议的完整 JSON 快照
 - Email.received_at：邮件接收时间，用于今日新邮件统计
@@ -84,11 +85,15 @@
 - Mailbox.owner：已认证业务用户的归属外键，用于数据隔离
 - Mailbox.sync_state：不含授权令牌的同步游标状态
 - Mailbox.version：同步状态的乐观锁版本
+- GmailCredential.authorized_at：首次完成网页授权的时间
+- GmailCredential.credentials：Google authorized user JSON，仅供后端与 Agent 路由使用
+- GmailCredential.mailbox：与员工业务邮箱的一对一关系
+- GmailCredential.updated_at：凭证刷新或重新授权的更新时间
 - Score.analysis：评分所属分析外键；序列化器中为四维分析结果
 - Score.created_at：数据库记录创建时间
 - Score.payload：对应协议的完整 JSON 快照
 - Score.score_version：评分规则版本，规则占位与正式 Agent 版本分开
-- Score.value：可空分值或整数/unknown 特征值
+- Score.value：可空的 0–100 跟进优先级
 """
 import uuid
 
@@ -98,7 +103,7 @@ from django.db import models
 
 # 功能：保存用户拥有的业务邮箱及同步游标。
 # 逻辑：邮箱 ID 由后端创建，用户身份从会话或 Agent 凭证推导。
-# 约束：不保存 Gmail 访问或刷新令牌；address 只用于展示，不证明 OAuth 所有权。
+# 约束：OAuth 凭证保存在独立 GmailCredential 记录中；address 只用于展示。
 class Mailbox(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -107,10 +112,22 @@ class Mailbox(models.Model):
     version = models.PositiveIntegerField(default=0)
 
     # 功能：约束同一用户的邮箱地址不重复。
-    # 逻辑：使用 PostgreSQL 唯一约束处理并发创建。
+    # 逻辑：使用数据库唯一约束处理重复创建。
     # 约束：地址在服务层规范为小写。
     class Meta:
         constraints = [models.UniqueConstraint(fields=["owner", "address"], name="crm_owner_mailbox")]
+
+
+# 功能：保存员工通过网页 OAuth 授予的 Gmail 只读凭证。
+# 逻辑：每个业务邮箱只保留一份当前凭证，Agent 服务通过受保护接口领取同步任务。
+# 约束：凭证不会出现在浏览器邮箱列表；当前 MVP 使用数据库 JSON 明文保存。
+class GmailCredential(models.Model):
+    mailbox = models.OneToOneField(
+        Mailbox, related_name="gmail_credential", on_delete=models.CASCADE
+    )
+    credentials = models.JSONField(default=dict)
+    authorized_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 # 功能：保存仅能访问单个用户业务数据的 Agent 服务凭证摘要。
@@ -165,12 +182,12 @@ class Contact(models.Model):
 
 # 功能：保存不可变标准邮件。
 # 逻辑：payload 保留 README 邮件本体字段，提取时间和方向用于查询。
-# 约束：dedupe_key 全局唯一且必须匹配后端分配的 mailbox_id；事实另表版本化。
+# 约束：dedupe_key 全局唯一且必须匹配已授权邮箱地址与 Gmail 消息 ID；事实另表版本化。
 class Email(models.Model):
     dedupe_key = models.CharField(max_length=400, primary_key=True)
     mailbox = models.ForeignKey(Mailbox, related_name="emails", on_delete=models.CASCADE)
     company = models.ForeignKey(Company, related_name="emails", on_delete=models.CASCADE)
-    contact = models.ForeignKey(Contact, related_name="messages", on_delete=models.PROTECT)
+    contact = models.ForeignKey(Contact, related_name="messages", on_delete=models.PROTECT, null=True)
     payload = models.JSONField()
     sent_at = models.DateTimeField()
     received_at = models.DateTimeField()

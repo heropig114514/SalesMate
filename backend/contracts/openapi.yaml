@@ -355,6 +355,59 @@ paths:
               schema:
                 $ref: '#/components/schemas/AnalysisInput'
           description: ''
+  /api/v1/agent/mailbox-syncs/claim/:
+    post:
+      operationId: v1_agent_mailbox_syncs_claim_create
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncClaim'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncClaim'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncClaim'
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MailboxSyncClaimResponse'
+          description: ''
+  /api/v1/agent/mailbox-syncs/report/:
+    post:
+      operationId: v1_agent_mailbox_syncs_report_create
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncReport'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncReport'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MailboxSyncReport'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailboxResponse'
+          description: ''
   /api/v1/agent/scores/:
     post:
       operationId: v1_agent_scores_create
@@ -654,8 +707,7 @@ paths:
   /api/v1/health/ready/:
     get:
       operationId: v1_health_ready_retrieve
-      description: Check a PostgreSQL round trip. Does not verify migrations or the
-        vector extension.
+      description: Check the configured default database. Does not verify migrations.
       tags:
       - health
       security:
@@ -715,6 +767,71 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/mailboxes/{id}/gmail-authorization/:
+    delete:
+      operationId: v1_mailboxes_gmail_authorization_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 mailbox 的 UUID 字符串。
+        required: true
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/mailboxes/{id}/request-sync/:
+    post:
+      operationId: v1_mailboxes_request_sync_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 mailbox 的 UUID 字符串。
+        required: true
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailboxResponse'
+          description: ''
+  /api/v1/mailboxes/gmail-authorize/:
+    post:
+      operationId: v1_mailboxes_gmail_authorize_create
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/mailboxes/gmail-callback/:
+    get:
+      operationId: v1_mailboxes_gmail_callback_retrieve
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '302':
+          description: No response body
   /api/v1/session/:
     get:
       operationId: v1_session_retrieve
@@ -798,13 +915,6 @@ components:
           allOf:
           - $ref: '#/components/schemas/Detail'
           nullable: true
-        missing_fields:
-          type: array
-          items:
-            type: string
-        context_completeness:
-          type: object
-          additionalProperties: {}
         error:
           type: object
           additionalProperties: {}
@@ -835,6 +945,15 @@ components:
         built_at:
           type: string
           format: date-time
+        company:
+          type: object
+          additionalProperties: {}
+        business_context:
+          type: object
+          additionalProperties: {}
+        latest_message_summary:
+          type: string
+          nullable: true
         member_dedupe_keys:
           type: array
           items:
@@ -854,10 +973,13 @@ components:
           additionalProperties: {}
       required:
       - built_at
+      - business_context
+      - company
       - company_id
       - external_snapshot_version
       - facts
       - input_version
+      - latest_message_summary
       - member_dedupe_keys
       - merge_version
       - metrics
@@ -900,7 +1022,12 @@ components:
           type: string
         hit:
           type: boolean
+        analysis:
+          type: object
+          additionalProperties: {}
+          nullable: true
       required:
+      - analysis
       - analysis_prompt_version
       - company_id
       - generated_at
@@ -1031,9 +1158,18 @@ components:
           $ref: '#/components/schemas/Profile'
         analysis:
           $ref: '#/components/schemas/Dimensions'
+        missing_fields:
+          type: array
+          items:
+            type: string
+        context_completeness:
+          type: object
+          additionalProperties: {}
       required:
       - analysis
       - conflicts
+      - context_completeness
+      - missing_fields
       - profile
     Dimension:
       type: object
@@ -1074,10 +1210,12 @@ components:
       enum:
       - inbound
       - outbound
+      - unknown
       type: string
       description: |-
         * `inbound` - inbound
         * `outbound` - outbound
+        * `unknown` - unknown
     EmailSubmission:
       type: object
       properties:
@@ -1087,11 +1225,15 @@ components:
         mailbox_id:
           type: string
           format: uuid
+        mailbox_address:
+          type: string
+          format: email
         gmail_message_id:
           type: string
           maxLength: 200
         thread_id:
           type: string
+          nullable: true
           maxLength: 200
         to:
           type: array
@@ -1106,9 +1248,11 @@ components:
         sent_at:
           type: string
           format: date-time
+          nullable: true
         received_at:
           type: string
           format: date-time
+          nullable: true
         subject:
           type: string
           maxLength: 1000
@@ -1122,6 +1266,7 @@ components:
         contact_email:
           type: string
           format: email
+          nullable: true
         non_business_hint:
           type: boolean
         non_business_reason:
@@ -1140,6 +1285,7 @@ components:
         from:
           type: string
           format: email
+          nullable: true
       required:
       - body_text
       - cc
@@ -1152,6 +1298,7 @@ components:
       - facts
       - from
       - gmail_message_id
+      - mailbox_address
       - mailbox_id
       - non_business_hint
       - non_business_reason
@@ -1221,13 +1368,10 @@ components:
       type: object
       properties:
         value:
-          oneOf:
-          - type: integer
-            minimum: 0
-            maximum: 3
-          - type: string
-            enum:
-            - unknown
+          type: integer
+          minimum: 0
+          maximum: 3
+          nullable: true
         basis:
           type: string
       required:
@@ -1385,9 +1529,9 @@ components:
           format: uuid
         trigger:
           type: string
-        payload:
-          type: object
-          additionalProperties: {}
+        company_id:
+          type: string
+          format: uuid
         enqueued_at:
           type: string
           format: date-time
@@ -1405,12 +1549,12 @@ components:
           minimum: 0
       required:
       - attempt
+      - company_id
       - enqueued_at
       - expected_version
       - job_id
       - lease_token
       - lease_until
-      - payload
       - trigger
     KindEnum:
       enum:
@@ -1499,12 +1643,66 @@ components:
         address:
           type: string
           format: email
+        gmail_authorized:
+          type: boolean
         sync_state:
-          $ref: '#/components/schemas/SyncState'
+          type: object
+          additionalProperties: {}
       required:
       - address
+      - gmail_authorized
       - mailbox_id
       - sync_state
+    MailboxSyncClaim:
+      type: object
+      properties:
+        limit:
+          type: integer
+          maximum: 10
+          minimum: 1
+          default: 5
+    MailboxSyncClaimResponse:
+      type: object
+      properties:
+        mailbox_id:
+          type: string
+          format: uuid
+        mailbox_address:
+          type: string
+          format: email
+        authorization:
+          type: object
+          additionalProperties: {}
+        max_results:
+          type: integer
+          maximum: 20
+          minimum: 1
+      required:
+      - authorization
+      - mailbox_address
+      - mailbox_id
+      - max_results
+    MailboxSyncReport:
+      type: object
+      properties:
+        mailbox_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/AnalysisStatusEnum'
+        sync_result:
+          type: object
+          additionalProperties: {}
+        error:
+          type: string
+          nullable: true
+        authorization:
+          type: object
+          additionalProperties: {}
+          nullable: true
+      required:
+      - mailbox_id
+      - status
     Profile:
       type: object
       properties:
@@ -1667,10 +1865,12 @@ components:
     SubmissionResultStatusEnum:
       enum:
       - created
+      - updated
       - duplicate
       type: string
       description: |-
         * `created` - created
+        * `updated` - updated
         * `duplicate` - duplicate
     SyncState:
       type: object

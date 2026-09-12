@@ -1,87 +1,69 @@
 # 当前 API 契约
 
-更新：2026-09-12，版本 0.2.0。通信对象依据 SalesMate 仓库上一层的 README.md《邮件理解 Agent · 模块设计》v1.11；该仓库外原始协议文件未修改。数据库结构见 [data-model.md](data-model.md)。
+更新：2026-09-12。字段的唯一机器可读定义是由 Django 生成的 [OpenAPI](../contracts/openapi.yaml)。Agent 业务对象语义见 [Agent README](../../agent/README.md)。
 
-## 身份与错误
+## 身份
 
-浏览器使用 Django Session。先 GET `/api/v1/session/` 获取 CSRF cookie，所有写请求带 X-CSRFToken，包括匿名登录。Agent 路由仅接受 `Authorization: Agent <service-token>`；凭证绑定单个业务用户，数据库只保存摘要，不能使用浏览器 Session 或 Gmail access_token 代替。
+浏览器使用 Django Session 和 CSRF。Agent 路由只接受：
 
-本地设置默认启用 `LOCAL_DEBUG_AUTO_LOGIN`：DEBUG 开启且直连来自回环地址时，GET session 会为匿名浏览器建立 `LOCAL_DEBUG_USER`（默认 demo）的普通用户会话，并返回 `debug_auto_login: true`。账号必须已存在、启用且无管理员权限；否则返回 409。已有会话不更换用户。关闭该开关、关闭 DEBUG 或非回环访问返回 `debug_auto_login: false`，正常登录流程不变。
-
-mailbox_id 由后端创建，company_id 由后端归组分配，均为 UUID。非法 UUID 返回 400；不存在或跨用户对象返回相同 404。业务邮箱地址只建立业务标识，尚未完成真实 Gmail OAuth 所有权核验。GmailAuthorization 不进入后端业务接口。
-
-服务端生成 X-Request-ID。错误保留 `error.code / error.detail / request_id`：版本冲突返回 409 conflict，状态不允许为 409 invalid_state，输入错误为 400。日志不包含正文、查询参数、密码、授权头或租约凭证。未知异常不自动转换为规则输出。
-
-## Agent HTTP 映射
-
-下列路径均以 `/api/v1/agent/` 开头。JSON 核心字段与 README 同名，包含 `from`。
-
-| README 函数 | HTTP | 请求与响应 |
-|---|---|---|
-| submit_emails | POST emails/ | EmailSubmission[] → 每项 dedupe_key、company_id、created/duplicate |
-| resubmit_facts | POST facts/ | FactsResubmission → company_id、revision |
-| get_company_grouping | GET grouping/?company_id=… | Grouping 与 ETag |
-| get_company_context | GET context/?company_id=… | 带 Grouping 的 If-Match → CompanyContext |
-| get_latest_analysis_input | GET latest-analysis-input/?company_id=… | 当前 revision 的 AnalysisInput，无则 404 |
-| get_cached_analysis | GET cached-analysis/?company_id=…&input_version=…&analysis_prompt_version=… | CachedAnalysis；提示词参数可选，建议传入 |
-| save_analysis_input | POST analysis-inputs/ | AnalysisInput → 已归档输入 |
-| save_analysis | POST analyses/ | Analysis → 已归档分析 |
-| save_score | POST scores/ | Score → 已归档评分 |
-| get_sync_state | GET sync-state/?mailbox_id=… | SyncState 与 ETag |
-| save_sync_state | POST sync-state-save/ | SyncState + If-Match → 新状态 |
-| claim_jobs | POST jobs/claim/ | {limit, lease_seconds} → Job[] |
-| report_job | POST jobs/report/ | JobReport + X-Lease-Token → job_id、status |
-| list_failed_extractions | GET failed-extractions/?mailbox_id=… | 当前抽取失败的 dedupe_key 数组 |
-| 重做原文读取补充 | GET failed-extractions/?mailbox_id=…&dedupe_key=… | 完整邮件与当前抽取 |
-
-## 必要的 HTTP 并发扩展
-
-README 已要求 expected_version，但尚未冻结 HTTP 表示、领取凭证与租约参数；本实现补充如下：
-
-1. Grouping、CompanyContext、详情响应附 `ETag: "<revision>"`。读取 context 时必须带 If-Match，避免两次读取属于不同快照。
-2. claim 请求显式传 lease_seconds（10–600）与 limit（1–50）。返回 Job 增加 lease_token 和 expected_version，payload.company_id 不变。
-3. 保存 Input、Analysis、Score 都必须携带 If-Match、X-Job-ID、X-Lease-Token。错误凭证、过期租约和旧 revision 均拒绝写入。
-4. 同公司未领取任务合并到最新 revision；运行任务不改写，新邮件建立后继任务。领取使用 PostgreSQL 行锁和 skip_locked，两个消费者不能重复领取。
-5. 租约过期在下次领取时显式标记 failed，不自动重新派发。用户可点击更新分析创建新任务；没有自动续租、隐式重试或降级。
-
-## 持久化与幂等
-
-- 每批提交 1–100 封，先校验全部格式，然后事务保存。任一项冲突或越权整批回滚。邮件 dedupe_key 必须为 mailbox_id:gmail_message_id；同键同载荷去重，同键改本体冲突。
-- 抽取失败或非业务跳过仍保存邮件，facts 必须为 null，failed 必须附错误摘要。完成事实要求完整字段及可定位 evidence。
-- (dedupe_key, extract_prompt_version) 唯一。完成结果不可变；failed 仅能通过 facts 接口补交成功一次。新提示词版本保留历史，当前抽取按记录创建顺序选择。
-- (company_id, input_version) 唯一，input_version 仍由 Agent 计算。后端绑定 revision 并核对成员、外部版本、未解析数量及事实全集；不得漏掉旧预算或重复事实。同键重存只忽略 built_at 差异，其余内容不同冲突。
-- (快照, analysis_prompt_version) 唯一。成功结果不可覆盖；失败结果可在显式任务的有效租约内补齐成功。来源必须属于当前快照，详情不允许百分比数字，未解析邮件必须说明。
-- Score 绑定具体成功 Analysis。缺失特征或未知信号必须为空分，贡献和须等于分数。同一分析、score_version、scored_at 为幂等身份，允许显式时间重评分。
-- 缓存命中要求当前 revision、输入版本、成功状态及指定提示词匹配。旧结果可显示，但 stale=true 并保留 generated_at。
-- JobReport 成功必须对应已保存的当前分析；声明生成评分时必须确有评分。失败必须附 error，重复或过期回报冲突。
-- SyncState 初始 cursor/last_synced_at 为 null、scope 为 {}、status 为 authorization_required、version=0。Agent 自行明确首次扫描范围，并仅在全部邮件提交成功后推进游标。后端无法从 historyId 推断同步完整性。
-
-幂等依赖以上自然键与领取凭证；当前未实现通用 Idempotency-Key 存储表。请求追踪 ID 不作为业务身份。
-
-## 浏览器接口
-
-路径以 `/api/v1/` 开头：
-
-| 路径 | 方法与行为 |
-|---|---|
-| session/ | GET 身份与 CSRF；POST 登录；DELETE 注销 |
-| mailboxes/ | GET 用户邮箱；POST 创建业务标识 |
-| companies/ | GET 列表、分页、全局统计 |
-| companies/{id}/ | GET 邮件、CRM、画像、分析、评分与状态 |
-| companies/{id}/analyze/ | POST 显式入队，rules 模式运行占位 |
-| companies/{id}/register/ | POST CRM 建档/编辑，必须带 If-Match |
-| demo/runtime/ | GET provider、时区与可用能力 |
-| demo/seed/ | POST 幂等导入四封独立合成样例，仅 rules |
-| demo/email/ | POST 人工模拟来信及规则处理，仅 rules |
-
-列表参数为 q、industry、size_band、signal、crm_status、page、page_size。跨维度 AND，同维度逗号多选 OR。优先级降序、空分最后、同分按最近入站实际时间降序，再以公司 ID 稳定排序。page_size 默认 20，最大 100。统计使用未过滤的授权公司集合，今日时区沿用 DJANGO_TIME_ZONE，当前 UTC。
-
-原健康检查、accounts/me、Admin 和 Schema 路由保留。`backend/contracts/openapi.yaml` 从代码生成，不手工维护；以下命令从仓库根目录执行：
-
-```powershell
-cd backend
-python manage.py spectacular --file contracts/openapi.yaml --validate --fail-on-warn
-python manage.py test tests
+```http
+Authorization: Agent <service-token>
 ```
 
-切换真实 Agent 见 [agent-integration.md](agent-integration.md)。未实现真实 OAuth、Gmail 读取、模型调用、邮件发送、翻译、右栏对话助手、知识库、新闻及集团多域人工合并。
+服务令牌绑定一个后端用户，不能用浏览器 Session 或 Gmail access token 替代。`mailbox_id` 和 `company_id` 由后端创建，均为 UUID。错误响应保留 `error.code`、`error.detail` 和 `request_id`。
+
+## Agent 路由
+
+以下路径以 `/api/v1/agent/` 开头：
+
+| Agent 操作 | HTTP | 主要交换数据 |
+|---|---|---|
+| 批量提交邮件 | `POST emails/` | `EmailSubmission[]` → 每封的 `dedupe_key`、`company_id`、`created/updated/duplicate` |
+| 读取公司归组 | `GET grouping/?company_id=...` | 公司、域名、联系人、成员邮件键；响应含 ETag |
+| 读取公司上下文 | `GET context/?company_id=...` | 邮件、客户、工单、报价、订单；请求携带 Grouping 的 If-Match |
+| 保存 L2 | `POST analysis-inputs/` | 完整 `AnalysisInput` |
+| 读取最新 L2 | `GET latest-analysis-input/?company_id=...` | `AnalysisInput`，不存在返回 404 |
+| 查询 L3 缓存 | `GET cached-analysis/?company_id=...&input_version=...&analysis_prompt_version=...` | 命中时返回完整 `Analysis`，否则 `analysis=null` |
+| 保存 L3 | `POST analyses/` | 完整 `Analysis` |
+| 保存 L4 | `POST scores/` | 完整 `Score` |
+| 领取任务 | `POST jobs/claim/` | `limit`、`lease_seconds` → 顶层含 `company_id` 的 `Job[]` |
+| 回报任务 | `POST jobs/report/` | `JobReport`，请求携带领取凭证 |
+| 领取员工邮箱同步 | `POST mailbox-syncs/claim/` | `limit` → 邮箱地址、Google 授权信息和读取上限 |
+| 回报员工邮箱同步 | `POST mailbox-syncs/report/` | 同步汇总、错误及可选刷新凭证 → 浏览器安全状态 |
+
+兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。当前 Gmail MVP 不依赖 History cursor，失败抽取可在下一次正常邮件同步时直接更新。
+
+## 写入一致性
+
+领取 Job 后，后端返回 `job_id`、顶层 `company_id`、`trigger`、`expected_version`、`lease_token` 和 `lease_until`。
+
+保存 L2、L3 和 L4 时，HTTP 适配器发送 `If-Match`、`X-Job-ID` 和 `X-Lease-Token`。上下文 revision 已变化、任务不是运行中、凭证错误或租约过期时，后端拒绝写入。MVP 不自动续租或重试过期任务。
+
+邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job。
+
+L2、L3 和 L4 的核心约束：
+
+- L2 必须保留当前公司的所有邮件事实、来源、时间和后端业务快照。
+- L3 的事实与推断引用必须属于当前 L2 输入，详情中的缺失项和完整度位于 `detail_view`。
+- 评分特征只能是 0–3 整数或 JSON `null`。
+- 信号未知、任一评分特征为 `null` 或缺少最近入站时间时，Score 为 `null`。
+- 缓存要求公司、当前 revision、`input_version` 和 `analysis_prompt_version` 全部匹配。
+
+## 浏览器路由
+
+浏览器使用 `/api/v1/` 下的 Session、mailboxes、companies 和 demo 路由。页面可以查看当前员工的 Gmail 连接和公司列表/详情、完成 Google OAuth、请求邮箱同步、建档、请求更新分析，以及在 `rules` 模式导入样例和模拟来信。浏览器不会收到 Google 凭证。
+
+员工 Gmail 路由：
+
+- `POST mailboxes/gmail-authorize/`：生成 Google 授权地址。
+- `GET mailboxes/gmail-callback/`：交换授权码、验证 Gmail 地址、绑定当前员工并请求首次同步。
+- `POST mailboxes/{mailbox_id}/request-sync/`：将已授权邮箱标为 `sync_requested`。
+- `DELETE mailboxes/{mailbox_id}/gmail-authorization/`：移除授权，保留历史业务数据。
+
+邮箱同步状态由一次性 Agent 命令处理，不代表已经启动常驻 Worker。
+
+生成并校验契约：
+
+```powershell
+python backend/manage.py spectacular --file backend/contracts/openapi.yaml --validate --fail-on-warn
+```

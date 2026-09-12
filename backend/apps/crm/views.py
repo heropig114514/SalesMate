@@ -21,12 +21,18 @@
 - MailboxViewSet：管理登录用户的业务邮箱。
 - MailboxViewSet.list：列出当前用户邮箱。
 - MailboxViewSet.create：创建或复用当前用户的业务邮箱。
+- MailboxViewSet.gmail_authorize：生成当前员工 Google OAuth 地址。
+- MailboxViewSet.gmail_callback：完成员工 Gmail 授权并返回工作台。
+- MailboxViewSet.request_sync：请求同步当前员工的已授权邮箱。
+- MailboxViewSet.disconnect_gmail：移除当前员工 Gmail 授权。
 - DemoViewSet：提供运行能力和显式模拟邮件入口。
 - DemoViewSet.runtime：返回前端需要的运行能力。
 - DemoViewSet.email：提交一封人工模拟邮件。
 - DemoViewSet.seed：显式导入独立合成演示材料。
 - AgentViewSet：承载 README 中 Agent 主动调用的后端协议。
 - AgentViewSet.submit_emails：接收整批标准邮件。
+- AgentViewSet.claim_mailbox_syncs：领取员工在网页请求的 Gmail 同步。
+- AgentViewSet.report_mailbox_sync：回报员工 Gmail 同步结果。
 - AgentViewSet.resubmit_facts：补交失败邮件事实。
 - AgentViewSet.failed_extractions：返回失败抽取的去重键或单封邮件完整重做输入。
 - AgentViewSet.grouping：读取公司归组对象。
@@ -47,17 +53,20 @@
 - CompanyViewSet.queryset：供 OpenAPI 确定公司 UUID 路径类型的空查询集
 - LoginSerializer.password：仅用于身份认证的只写密码
 - LoginSerializer.username：浏览器登录用户名
+- MailboxViewSet.queryset：供 OpenAPI 推导邮箱 UUID 路径类型的空查询集
 - OBJECT：OpenAPI 通用对象响应类型
 - logger：记录本地开发会话创建和配置错误，不包含凭证。
 - SessionView.permission_classes：接口访问权限策略
 - VERSION_HEADERS：If-Match、任务 ID 与租约凭证的 Schema 定义
 """
 import logging
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import transaction
 from django.middleware.csrf import get_token
+from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
@@ -71,14 +80,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
-from . import ingestion, jobs, results, rules, selectors
+from . import agent_runner, gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
 from .models import Company, Email, Mailbox
 from .response_schemas import (SubmissionResultSerializer, JobResponseSerializer, CachedAnalysisResponseSerializer,
-                               GroupingResponseSerializer, CompanyContextResponseSerializer, MailboxResponseSerializer)
+                               GroupingResponseSerializer, CompanyContextResponseSerializer, MailboxResponseSerializer,
+                               MailboxSyncClaimResponseSerializer)
 from .serializers import (AnalysisInputSerializer, AnalysisSerializer, ClaimSerializer, EmailSubmissionSerializer,
                           FactsResubmissionSerializer, JobReportSerializer, MailboxSerializer, RegisterSerializer,
-                          ScoreSerializer, SimulateSerializer, StrictSerializer, SyncStateSerializer)
+                          ScoreSerializer, SimulateSerializer, StrictSerializer, SyncStateSerializer,
+                          MailboxSyncClaimSerializer, MailboxSyncReportSerializer)
 
 OBJECT = OpenApiTypes.OBJECT
 logger = logging.getLogger("salesmate.business")
@@ -249,6 +260,8 @@ class CompanyViewSet(ViewSet):
             company = company_for(request.user, pk, lock=True)
             job = jobs.enqueue(company, "customer_detail_opened")
         process_if_rules(request.user, company.pk)
+        if settings.ANALYSIS_PROVIDER == "agent":
+            agent_runner.schedule_agent_sync()
         job.refresh_from_db()
         return Response({"job_id": str(job.pk), "status": job.status, "provider": settings.ANALYSIS_PROVIDER})
 
@@ -273,14 +286,17 @@ class CompanyViewSet(ViewSet):
             company.save(update_fields=["name", "crm_status", "customer", "revision", "external_version"])
             jobs.enqueue(company, "external_updated")
         process_if_rules(request.user, company.pk)
+        if settings.ANALYSIS_PROVIDER == "agent":
+            agent_runner.schedule_agent_sync()
         company.refresh_from_db()
         return versioned(selectors.company_row(company), company.revision)
 
 
-# 功能：管理登录用户的业务邮箱。
-# 逻辑：创建业务标识并返回同步状态。
-# 约束：创建地址不代表完成 Gmail OAuth，真实绑定需 Agent 接入时验证。
+# 功能：管理当前登录员工自己的 Gmail 连接与同步状态。
+# 逻辑：OAuth 回调验证实际账号，所有读取和写入都按 request.user 隔离。
+# 约束：浏览器永远不接收 Google access token 或 refresh token。
 class MailboxViewSet(ViewSet):
+    queryset = Mailbox.objects.none()
     # 功能：列出当前用户邮箱。
     # 输入：`request` 提供会话用户。
     # 输出：邮箱 ID、地址及 SyncState 数组。
@@ -288,7 +304,10 @@ class MailboxViewSet(ViewSet):
     # 约束：不返回任何授权令牌。
     @extend_schema(responses=MailboxResponseSerializer(many=True), tags=["mailboxes"])
     def list(self, request):
-        return Response([{"mailbox_id": str(item.pk), "address": item.address, "sync_state": ingestion.sync_state(item)} for item in Mailbox.objects.filter(owner=request.user)])
+        mailboxes = Mailbox.objects.select_related("gmail_credential").filter(
+            owner=request.user
+        )
+        return Response([gmail_oauth.mailbox_status(item) for item in mailboxes])
 
     # 功能：创建或复用当前用户的业务邮箱。
     # 输入：`request`.data 含 address。
@@ -299,7 +318,67 @@ class MailboxViewSet(ViewSet):
     def create(self, request):
         data = validated(MailboxSerializer, request.data)
         mailbox, created = Mailbox.objects.get_or_create(owner=request.user, address=data["address"].lower())
-        return Response({"mailbox_id": str(mailbox.pk), "address": mailbox.address}, status=201 if created else 200)
+        return Response(gmail_oauth.mailbox_status(mailbox), status=201 if created else 200)
+
+    # 功能：为当前员工生成 Google OAuth 跳转地址。
+    # 输入：`request` 为已登录浏览器会话并携带 CSRF token。
+    # 输出：authorization_url。
+    # 逻辑：state 保存在该员工浏览器会话中，回调后才能建立 Mailbox 绑定。
+    # 约束：只申请 gmail.readonly 权限。
+    @extend_schema(request=None, responses=OBJECT, tags=["mailboxes"])
+    @action(detail=False, methods=["post"], url_path="gmail-authorize")
+    def gmail_authorize(self, request):
+        return Response({"authorization_url": gmail_oauth.begin_authorization(request)})
+
+    # 功能：完成当前员工 Google OAuth 并请求第一次同步。
+    # 输入：`request` 含 Google 返回的 code、state 和当前员工会话。
+    # 输出：重定向回工作台并携带授权结果。
+    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱并排入同步队列。
+    # 约束：失败时不建立未经验证的邮箱连接。
+    @extend_schema(responses={302: None}, tags=["mailboxes"])
+    @action(detail=False, methods=["get"], url_path="gmail-callback")
+    def gmail_callback(self, request):
+        try:
+            mailbox = gmail_oauth.finish_authorization(request)
+            agent_runner.schedule_agent_sync()
+            query = urlencode({"gmail": "authorized", "address": mailbox.address})
+        except Exception as error:
+            # 本地开发阶段保留完整堆栈，便于区分 state、令牌交换和
+            # Gmail API 调用失败；日志中不主动输出授权码或凭证。
+            logger.exception(
+                "Gmail OAuth callback failed: %s: %s",
+                type(error).__name__,
+                error,
+            )
+            query_data = {"gmail": "error"}
+            if settings.DEBUG:
+                query_data["reason"] = (
+                    request.query_params.get("error") or type(error).__name__
+                )
+            query = urlencode(query_data)
+        return redirect(f"/?{query}")
+
+    # 功能：让当前员工请求刷新自己的 Gmail 邮件。
+    # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。
+    # 输出：不含凭证的最新连接及同步状态。
+    # 逻辑：把状态改为 sync_requested，等待一次性 Agent 命令领取。
+    # 约束：不可请求其他员工或未授权邮箱。
+    @extend_schema(request=None, responses=MailboxResponseSerializer, tags=["mailboxes"])
+    @action(detail=True, methods=["post"], url_path="request-sync")
+    def request_sync(self, request, pk=None):
+        mailbox = gmail_oauth.request_mailbox_sync(request.user, pk)
+        agent_runner.schedule_agent_sync()
+        return Response(mailbox)
+
+    # 功能：移除当前员工的 Gmail 本地授权。
+    # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。
+    # 输出：authorization_required 状态。
+    # 逻辑：删除凭证但保留已同步邮件和业务分析。
+    # 约束：不会删除历史客户或邮件。
+    @extend_schema(responses=MailboxResponseSerializer, tags=["mailboxes"])
+    @action(detail=True, methods=["delete"], url_path="gmail-authorization")
+    def disconnect_gmail(self, request, pk=None):
+        return Response(gmail_oauth.disconnect_mailbox(request.user, pk))
 
 
 # 功能：提供运行能力和显式模拟邮件入口。
@@ -310,11 +389,11 @@ class DemoViewSet(ViewSet):
     # 输入：`request` 为登录用户请求。
     # 输出：provider、时区、是否可模拟以及版本。
     # 逻辑：读取显式配置，不探测后自动改变模式。
-    # 约束：真实 Gmail 入口尚未接入，明确返回 false。
+    # 约束：只统计当前登录员工自己的授权连接。
     @extend_schema(responses=OBJECT, tags=["demo"])
     @action(detail=False, methods=["get"])
     def runtime(self, request):
-        return Response({"provider": settings.ANALYSIS_PROVIDER, "simulation_enabled": settings.ANALYSIS_PROVIDER == "rules", "gmail_connected": False,
+        return Response({"provider": settings.ANALYSIS_PROVIDER, "simulation_enabled": settings.ANALYSIS_PROVIDER == "rules", "gmail_connected": Mailbox.objects.filter(owner=request.user, gmail_credential__isnull=False).exists(),
                          "timezone": settings.TIME_ZONE, "analysis_version": rules.ANALYSIS_VERSION if settings.ANALYSIS_PROVIDER == "rules" else None})
 
     # 功能：提交一封人工模拟邮件。
@@ -353,7 +432,7 @@ class DemoViewSet(ViewSet):
         payloads = []
         for index, (sender, subject, body) in enumerate(samples):
             message_id = f"demo-v1-{index}"
-            if not Email.objects.filter(pk=f"{mailbox.pk}:{message_id}").exists():
+            if not Email.objects.filter(pk=f"{mailbox.address.casefold()}:{message_id}").exists():
                 payloads.append(rules.extract_email(mailbox, sender, subject, body, message_id))
         inserted = ingestion.submit_emails(request.user, payloads) if payloads else []
         companies = {item["company_id"] for item in inserted}
@@ -367,6 +446,28 @@ class DemoViewSet(ViewSet):
 # 约束：浏览器会话不能调用这些路由；业务数据中不接收 Gmail access_token。
 class AgentViewSet(ViewSet):
     authentication_classes = [AgentAuthentication]
+
+    # 功能：领取当前凭证所属员工请求的 Gmail 同步任务。
+    # 输入：`request`.data 含 limit，单次最多十个邮箱。
+    # 输出：邮箱标识、地址、Google 授权信息和读取上限。
+    # 逻辑：将 sync_requested 改为 sync_running 后返回给一次性 Agent。
+    # 约束：完整 Google 凭证只通过 AgentAuthentication 路由返回。
+    @extend_schema(request=MailboxSyncClaimSerializer, responses=MailboxSyncClaimResponseSerializer(many=True), tags=["agent"])
+    @action(detail=False, methods=["post"], url_path="mailbox-syncs/claim")
+    def claim_mailbox_syncs(self, request):
+        data = validated(MailboxSyncClaimSerializer, request.data)
+        return Response(gmail_oauth.claim_mailbox_syncs(request.user, data["limit"]))
+
+    # 功能：保存员工邮箱同步的成功或失败结果。
+    # 输入：`request`.data 含 mailbox_id、状态、同步摘要及可选刷新凭证。
+    # 输出：浏览器可见且不含凭证的邮箱状态。
+    # 逻辑：成功写入 last_synced_at，失败保留可显示错误。
+    # 约束：不自动重试或持续轮询。
+    @extend_schema(request=MailboxSyncReportSerializer, responses=MailboxResponseSerializer, tags=["agent"])
+    @action(detail=False, methods=["post"], url_path="mailbox-syncs/report")
+    def report_mailbox_sync(self, request):
+        data = validated(MailboxSyncReportSerializer, request.data)
+        return Response(gmail_oauth.report_mailbox_sync(request.user, data))
 
     # 功能：接收整批标准邮件。
     # 输入：`request`.data 为 EmailSubmission 数组。
