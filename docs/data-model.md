@@ -1,24 +1,25 @@
 # 数据模型现状
 
-更新：2026-09-12。PostgreSQL 16 已在本机 WSL Ubuntu 中建立，accounts 与 crm 初始迁移已执行。没有 SQLite 回退。
+更新：2026-09-12。默认本地数据库为 `backend/db.sqlite3`，通过 `DATABASE_URL` 可切换 PostgreSQL。accounts 与 crm 迁移适用于两者。
 
 ## 数据表
 
 | 模型 | 职责 |
 |---|---|
 | accounts.User | 项目用户模型，普通用户没有管理员权限 |
-| Mailbox | 用户业务邮箱、SyncState 和同步版本；无 Gmail 令牌 |
+| Mailbox | 员工业务邮箱、同步请求状态和同步版本 |
+| GmailCredential | Mailbox 一对一的 Google 授权 JSON；只供后端 OAuth 与 Agent 同步接口使用 |
 | AgentCredential | 单用户服务凭证 SHA-256 摘要；无令牌原文 |
 | Company | 用户归属、归组键、公司名称/域名、CRM 状态、业务快照、revision、external_version |
 | Contact | 公司内联系人邮箱与可空姓名；往来数按邮件计算 |
-| Email | 不可变标准邮件 JSON，邮箱/公司/联系人外键、方向与时间；dedupe_key 主键 |
+| Email | 标准邮件 JSON，邮箱/公司外键、可空联系人、方向与时间；dedupe_key 主键 |
 | Extraction | 邮件的提示词版本、状态、事实、错误及创建时间 |
 | AnalysisInput | Agent 输入版本、原始 L2 JSON 和后端 revision |
 | Analysis | 所属输入快照、提示词版本、原始 L3 JSON、rules/agent 来源 |
 | Score | 所属具体分析、原始 L4 JSON、规则版本、可空分值和创建时间 |
 | Job | 公司、事件、revision、状态、attempt、租约、领取凭证和最终回报 |
 
-关系为 User → Mailbox/Company；Company → Contact/Email/Job/AnalysisInput；Email → Extraction；AnalysisInput → Analysis → Score。账号、邮箱和公司查询均按 owner 隔离。
+关系为 User → Mailbox/Company；Mailbox → GmailCredential/Email；Company → Contact/Email/Job/AnalysisInput；Email → Extraction；AnalysisInput → Analysis → Score。账号、邮箱和公司查询均按 owner 隔离，因此页面是当前员工收件箱，不是全公司共享收件箱。
 
 ## 本轮内部结构调整
 
@@ -35,9 +36,9 @@ Company.customer/tickets/quotes/orders 暂为业务快照容器。CRM 基础字�
 - 同用户跨业务邮箱的同域往来进入同一公司；不同用户同域仍隔离。
 - 邮箱地址、公司联系人、抽取版本、输入版本、分析提示词版本均有相应联合唯一约束。
 - 邮件/事实/CRM 变化递增 revision；CRM 变化同时递增 external_version。运行中任务保持自己的输入 revision。
-- 完成抽取不可变；失败仅允许补交成功一次。完整事实历史保留，不覆盖旧预算。
+- 完成抽取保持不变；失败抽取可在下一次正常同步或兼容补交接口中更新为成功。完整事实历史保留，不覆盖旧预算。
 - 事实、人数、时间和分数未知时保留 null/unknown，不填推断值或零值。
 
 ## 验证边界
 
-本轮验证真实 PostgreSQL 迁移、业务 CRUD、事务回滚、用户隔离、两消费者并发领取、版本冲突及浏览器刷新后持久化。尚未验证生产部署、完整团队权限、OAuth 邮箱绑定、大规模查询、进程崩溃恢复或 pgvector 检索。
+本轮自动测试覆盖迁移、业务 CRUD、事务回滚、用户隔离、任务租约、版本冲突、缓存和页面读取，并在 SQLite 上完成真实 HTTP 主链路冒烟。尚未验证生产部署、完整团队权限、大规模并发、进程崩溃恢复或 pgvector 检索；真实 Gmail OAuth 与百炼需要人工验证。

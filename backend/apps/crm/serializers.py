@@ -1,4 +1,4 @@
-"""职责：校验 README v1.11 业务载荷及浏览器请求。
+"""职责：校验当前 Agent README 业务载荷及浏览器请求。
 实现：显式声明协议字段并校验事实证据、状态与分数一致性；服务层再校验归属与来源范围。
 关联：API 与规则占位共用校验，OpenAPI 以这些声明生成。
 目录：
@@ -7,6 +7,8 @@
 - EmailSubmissionSerializer：声明单封邮件标准载荷。
 - EmailSubmissionSerializer.get_fields：增加 Python 保留字 from 对应的协议字段。
 - EmailSubmissionSerializer.validate：核对邮件天然键、抽取状态和逐字证据。
+- compact_evidence_text：移除证据定位允许忽略的空白和格式字符。
+- evidence_is_locatable：按 Agent 相同规则判断证据是否来自主题或正文。
 - validate_extraction：校验抽取事实的完整字段及可定位证据。
 - FactsResubmissionSerializer：声明失败事实补交载荷。
 - AnalysisInputSerializer：声明 Agent 原样归档的 L2 输入。
@@ -17,7 +19,7 @@
 - DimensionsSerializer：声明四维客户分析。
 - ConflictSerializer：声明事实冲突或明确变更。
 - DetailSerializer：声明详情输出结构。
-- FeatureValueField：声明整数或 unknown 的协议联合类型。
+- FeatureValueField：声明可空的 0–3 整数特征值。
 - FeatureValueField.to_internal_value：验证评分特征的联合类型。
 - FeatureValueField.to_representation：输出已经验证的特征值。
 - FeatureSerializer：声明 L4 使用的单个特征。
@@ -33,12 +35,17 @@
 - RegisterSerializer：声明显式 CRM 建档输入。
 - SimulateSerializer：声明前端手工输入的模拟邮件。
 - MailboxSerializer：声明邮件业务邮箱创建。
+- MailboxSyncClaimSerializer：声明员工邮箱同步领取数量。
+- MailboxSyncReportSerializer：声明员工邮箱同步最终回报。
 变量索引：
 - AnalysisInputSerializer.built_at：L2 快照构建时间
+- AnalysisInputSerializer.business_context：后端客户、工单、报价和订单快照
+- AnalysisInputSerializer.company：公司、域名和联系人归组快照
 - AnalysisInputSerializer.company_id：后端分配的公司 UUID
 - AnalysisInputSerializer.external_snapshot_version：后端 CRM 快照版本的原样回显
 - AnalysisInputSerializer.facts：可定位的事实结构，失败时按协议为 null
 - AnalysisInputSerializer.input_version：Agent 计算并原样提交的输入版本
+- AnalysisInputSerializer.latest_message_summary：最近一封已完成抽取邮件的摘要
 - AnalysisInputSerializer.member_dedupe_keys：参与本次分析的完整邮件去重键集合
 - AnalysisInputSerializer.merge_version：L2 确定性归并规则版本
 - AnalysisInputSerializer.metrics：L2 往来计数、时间间隔和 CRM 状态
@@ -46,13 +53,11 @@
 - AnalysisSerializer.analysis_base_time：允许参与分析的业务事实时间上界
 - AnalysisSerializer.analysis_prompt_version：L3 模型提示词或规则生产者版本
 - AnalysisSerializer.company_id：后端分配的公司 UUID
-- AnalysisSerializer.context_completeness：未解析邮件数和上下文不完整说明
 - AnalysisSerializer.detail_view：三维画像与四维分析的详情投影
 - AnalysisSerializer.error：显式失败说明，不作为成功结果展示
 - AnalysisSerializer.generated_at：分析生成时间，前端据此标示旧结果
 - AnalysisSerializer.input_version：Agent 计算并原样提交的输入版本
 - AnalysisSerializer.list_view：公司列表的轻量分析投影
-- AnalysisSerializer.missing_fields：该维度或全局仍缺少的信息
 - AnalysisSerializer.status：当前协议载荷或任务状态，具体允许值见字段声明
 - ClaimSerializer.lease_seconds：调用方显式指定的租期秒数，10–600
 - ClaimSerializer.limit：单批领取任务数量，1–50
@@ -62,6 +67,8 @@
 - ConflictSerializer.summary：变化或冲突的文字解释
 - DetailSerializer.analysis：评分所属分析外键；序列化器中为四维分析结果
 - DetailSerializer.conflicts：至少引用两个来源的冲突与变化清单
+- DetailSerializer.context_completeness：未解析邮件数和上下文不完整说明
+- DetailSerializer.missing_fields：分析所需但当前上下文没有提供的信息
 - DetailSerializer.profile：三维客户画像
 - DimensionSerializer.facts：可定位的事实结构，失败时按协议为 null
 - DimensionSerializer.inferences：与事实分开保存的有依据推断
@@ -73,14 +80,15 @@
 - EmailSubmissionSerializer.body_text：保留逐字证据的原始纯文本正文
 - EmailSubmissionSerializer.cc：完整抄送人邮箱数组
 - EmailSubmissionSerializer.contact_email：L1 提交的主要外部联系人邮箱
-- EmailSubmissionSerializer.dedupe_key：邮箱 ID 与 Gmail 消息 ID 组成的天然幂等键
-- EmailSubmissionSerializer.direction：邮件入站 inbound 或出站 outbound
+- EmailSubmissionSerializer.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
+- EmailSubmissionSerializer.direction：邮件入站 inbound、出站 outbound 或未知 unknown
 - EmailSubmissionSerializer.extract_error：抽取失败摘要，成功时为空
 - EmailSubmissionSerializer.extract_prompt_version：L1 提示词或规则版本
 - EmailSubmissionSerializer.extract_status：单封抽取的完成、失败或非业务跳过状态
 - EmailSubmissionSerializer.facts：可定位的事实结构，失败时按协议为 null
 - EmailSubmissionSerializer.gmail_message_id：Gmail 原始消息标识，模拟数据使用独立样例标识
 - EmailSubmissionSerializer.mailbox_id：后端分配的业务邮箱 UUID
+- EmailSubmissionSerializer.mailbox_address：已授权 Gmail 邮箱地址，也是 dedupe_key 的组成部分
 - EmailSubmissionSerializer.non_business_hint：疑似非业务邮件标记
 - EmailSubmissionSerializer.non_business_reason：非业务邮件判断依据
 - EmailSubmissionSerializer.received_at：邮件接收时间，用于今日新邮件统计
@@ -91,14 +99,14 @@
 - EmailSubmissionSerializer.to：完整收件人邮箱数组
 - EvidenceSerializer.source_refs：可定位的邮件或业务记录 ID 数组
 - EvidenceSerializer.text：事实或证据解释文本
-- FACT_FIELDS：L1 中 value/evidence 事实字段名称集合
-- FactsResubmissionSerializer.dedupe_key：邮箱 ID 与 Gmail 消息 ID 组成的天然幂等键
+- FACT_FIELDS：L1 中多值事实字段名称集合
+- FactsResubmissionSerializer.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
 - FactsResubmissionSerializer.extract_error：抽取失败摘要，成功时为空
 - FactsResubmissionSerializer.extract_prompt_version：L1 提示词或规则版本
 - FactsResubmissionSerializer.extract_status：单封抽取的完成、失败或非业务跳过状态
 - FactsResubmissionSerializer.facts：可定位的事实结构，失败时按协议为 null
 - FeatureSerializer.basis：推断或特征判断的依据说明
-- FeatureSerializer.value：可空分值或整数/unknown 特征值
+- FeatureSerializer.value：可空的 0–3 整数特征值
 - FeaturesSerializer.decision_visibility：决策流程可见性特征
 - FeaturesSerializer.demand_clarity：需求明确程度特征
 - FeaturesSerializer.urgency：需求紧迫性特征
@@ -121,6 +129,12 @@
 - ListViewSerializer.size_source：权威人数记录的来源说明
 - ListViewSerializer.ticket_signals：逐工单信号数组，不从邮件伪造工单
 - MailboxSerializer.address：业务邮箱展示地址，不作为 OAuth 验证证据
+- MailboxSyncClaimSerializer.limit：一次性 Agent 领取员工邮箱同步请求的上限
+- MailboxSyncReportSerializer.authorization：Agent 刷新后的 Google authorized user JSON
+- MailboxSyncReportSerializer.error：邮箱同步失败的可显示错误
+- MailboxSyncReportSerializer.mailbox_id：本次同步对应的员工邮箱 UUID
+- MailboxSyncReportSerializer.status：completed 或 failed 同步状态
+- MailboxSyncReportSerializer.sync_result：GmailSyncResult 汇总
 - ProfileSerializer.company_ops：客户画像中的经营与决策情况维度
 - ProfileSerializer.industry_context：客户画像中的行业情况维度
 - ProfileSerializer.intent：客户画像中的采购意向维度
@@ -147,6 +161,8 @@
 - SyncStateSerializer.status：当前协议载荷或任务状态，具体允许值见字段声明
 - SyncStateSerializer.version：同步状态的乐观锁版本
 """
+import unicodedata
+
 from rest_framework import serializers as s
 from drf_spectacular.utils import extend_schema_field
 
@@ -179,17 +195,18 @@ class StrictSerializer(s.Serializer):
 class EmailSubmissionSerializer(StrictSerializer):
     dedupe_key = s.CharField(max_length=400)
     mailbox_id = s.UUIDField()
+    mailbox_address = s.EmailField()
     gmail_message_id = s.CharField(max_length=200)
-    thread_id = s.CharField(max_length=200)
-    to = s.ListField(child=s.EmailField(), allow_empty=False)
+    thread_id = s.CharField(max_length=200, allow_null=True)
+    to = s.ListField(child=s.EmailField())
     cc = s.ListField(child=s.EmailField())
-    sent_at = s.DateTimeField()
-    received_at = s.DateTimeField()
+    sent_at = s.DateTimeField(allow_null=True)
+    received_at = s.DateTimeField(allow_null=True)
     subject = s.CharField(max_length=1000, allow_blank=True)
     body_text = s.CharField(max_length=200000, allow_blank=True, trim_whitespace=False)
-    direction = s.ChoiceField(choices=["inbound", "outbound"])
+    direction = s.ChoiceField(choices=["inbound", "outbound", "unknown"])
     source = s.ChoiceField(choices=["gmail_real", "synthetic_sample", "research_dataset", "simulated"])
-    contact_email = s.EmailField()
+    contact_email = s.EmailField(allow_null=True)
     non_business_hint = s.BooleanField()
     non_business_reason = s.CharField(allow_null=True, allow_blank=True)
     extract_status = s.ChoiceField(choices=["completed", "failed", "skipped_non_business"])
@@ -204,7 +221,7 @@ class EmailSubmissionSerializer(StrictSerializer):
     # 约束：Schema 与实际校验共用该映射。
     def get_fields(self):
         fields = super().get_fields()
-        fields["from"] = s.EmailField()
+        fields["from"] = s.EmailField(allow_null=True)
         return fields
 
     # 功能：核对邮件天然键、抽取状态和逐字证据。
@@ -213,43 +230,106 @@ class EmailSubmissionSerializer(StrictSerializer):
     # 逻辑：键由邮箱与消息 ID 拼接；已完成事实逐项校验。
     # 约束：不调用模型、不更改事实或补齐未知值。
     def validate(self, attrs):
-        if attrs["dedupe_key"] != f"{attrs['mailbox_id']}:{attrs['gmail_message_id']}":
-            raise s.ValidationError("dedupe_key 必须为 mailbox_id:gmail_message_id。")
-        validate_extraction(attrs, attrs["body_text"] + "\n" + attrs["subject"])
+        expected_key = f"{attrs['mailbox_address'].casefold()}:{attrs['gmail_message_id']}"
+        if attrs["dedupe_key"] != expected_key:
+            raise s.ValidationError("dedupe_key 必须为 mailbox_address:gmail_message_id。")
+        validate_extraction(attrs, attrs["subject"], attrs["body_text"])
         if attrs["extract_status"] == "skipped_non_business" and not attrs["non_business_hint"]:
             raise s.ValidationError("跳过非业务邮件必须附 non_business_hint。")
         return attrs
 
 
+# 功能：移除证据定位允许忽略的空白和格式字符。
+# 输入：`value` 为证据或邮件原文字符串。
+# 输出：保留所有可见字符原顺序的紧凑字符串。
+# 逻辑：移除 isspace 字符和 Unicode Cf 格式字符。
+# 约束：不执行大小写、标点、NFKC 或全半角转换。
+def compact_evidence_text(value):
+    return "".join(
+        character
+        for character in value
+        if not character.isspace() and unicodedata.category(character) != "Cf"
+    )
+
+
+# 功能：按 Agent 相同规则判断证据是否来自主题或正文。
+# 输入：`evidence` 为模型证据；`subject` 和 `body_text` 为当前邮件边界。
+# 输出：精确匹配，或仅移除空白与 Unicode 格式字符后匹配时返回 True。
+# 逻辑：先检查逐字子串，再分别压缩证据、主题和正文；不跨主题/正文边界拼接。
+# 约束：不做 NFKC、大小写、标点或全半角转换，避免接受模型改写。
+def evidence_is_locatable(evidence, subject, body_text):
+    if evidence in subject or evidence in body_text:
+        return True
+
+    compact_evidence = compact_evidence_text(evidence)
+    return bool(
+        compact_evidence
+        and (
+            compact_evidence in compact_evidence_text(subject)
+            or compact_evidence in compact_evidence_text(body_text)
+        )
+    )
+
+
 # 功能：校验抽取事实的完整字段及可定位证据。
-# 输入：`data` 包含 extract_status、facts、extract_error；`text` 为原始正文和主题。
+# 输入：`data` 包含 extract_status、facts、extract_error；`subject` 和 `body_text` 为当前邮件原文。
 # 输出：无返回值；不符合契约抛 ValidationError。
-# 逻辑：完成状态要求全部事实字段，未知值与证据同时为空；非空证据必须逐字存在。
+# 逻辑：完成状态要求全部事实字段；证据按 Agent 允许的空白和不可见格式差异定位。
 # 约束：仅验证可定位性，不声称证明模型语义正确。
-def validate_extraction(data, text):
+def validate_extraction(data, subject, body_text):
     facts = data["facts"]
     if data["extract_status"] != "completed":
         if facts is not None or (data["extract_status"] == "failed" and not data["extract_error"]):
             raise s.ValidationError("失败需错误摘要，未完成抽取 facts 必须为 null。")
         return
-    required = set(FACT_FIELDS) | {"has_substantive_update", "message_summary", "intent_hint", "intent_evidence"}
+    required = set(FACT_FIELDS) | {"has_substantive_update", "message_summary", "intent_hint", "intent_evidences"}
     if not isinstance(facts, dict) or set(facts) != required or data["extract_error"] is not None:
         raise s.ValidationError("完成抽取必须包含完整 facts 且 extract_error 为 null。")
     if type(facts["has_substantive_update"]) is not bool or not isinstance(facts["message_summary"], str) or len(facts["message_summary"]) > 80:
         raise s.ValidationError("实质更新必须为布尔值，摘要不得超过 80 字。")
     if facts["intent_hint"] not in ["purchase_inquiry", "meeting", "support", "non_sales", "unknown"]:
         raise s.ValidationError("intent_hint 无效。")
-    evidence = facts["intent_evidence"]
-    if evidence is not None and (not isinstance(evidence, str) or not evidence or evidence not in text):
-        raise s.ValidationError("意向证据必须可定位。")
+    intent_evidences = facts["intent_evidences"]
+    if not isinstance(intent_evidences, list):
+        raise s.ValidationError("intent_evidences 必须是数组。")
+    seen_intent_evidences = set()
+    for index, evidence in enumerate(intent_evidences):
+        if (
+            not isinstance(evidence, str)
+            or not evidence.strip()
+            or evidence in seen_intent_evidences
+            or not evidence_is_locatable(evidence, subject, body_text)
+        ):
+            raise s.ValidationError(
+                f"intent_evidences[{index}] 必须是可定位且不重复的原文证据。"
+            )
+        seen_intent_evidences.add(evidence)
     for field in FACT_FIELDS:
-        item = facts[field]
-        if not isinstance(item, dict) or set(item) != {"value", "evidence"}:
-            raise s.ValidationError(f"{field} 必须包含 value 和 evidence。")
-        if item["value"] is None and item["evidence"] is None:
-            continue
-        if not isinstance(item["value"], str) or not item["value"] or not isinstance(item["evidence"], str) or not item["evidence"] or item["evidence"] not in text:
-            raise s.ValidationError(f"{field} 的值与原文证据无效。")
+        groups = facts[field]
+        if not isinstance(groups, list):
+            raise s.ValidationError(f"{field} 必须是数组。")
+        seen_values = set()
+        for index, item in enumerate(groups):
+            if not isinstance(item, dict) or set(item) != {"value", "evidences"}:
+                raise s.ValidationError(f"{field}[{index}] 必须包含 value 和 evidences。")
+            value, evidences = item["value"], item["evidences"]
+            if not isinstance(value, str) or not value.strip() or value in seen_values:
+                raise s.ValidationError(f"{field}[{index}].value 为空或重复。")
+            if not isinstance(evidences, list) or not evidences:
+                raise s.ValidationError(f"{field}[{index}].evidences 至少需要一条证据。")
+            seen_evidences = set()
+            for evidence_index, evidence in enumerate(evidences):
+                if (
+                    not isinstance(evidence, str)
+                    or not evidence.strip()
+                    or evidence in seen_evidences
+                    or not evidence_is_locatable(evidence, subject, body_text)
+                ):
+                    raise s.ValidationError(
+                        f"{field}[{index}].evidences[{evidence_index}] 必须是可定位且不重复的原文证据。"
+                    )
+                seen_evidences.add(evidence)
+            seen_values.add(value)
 
 
 # 功能：声明失败事实补交载荷。
@@ -272,6 +352,9 @@ class AnalysisInputSerializer(StrictSerializer):
     merge_version = s.CharField(max_length=100)
     external_snapshot_version = s.CharField()
     built_at = s.DateTimeField()
+    company = s.DictField()
+    business_context = s.DictField()
+    latest_message_summary = s.CharField(allow_null=True, allow_blank=True)
     member_dedupe_keys = s.ListField(child=s.CharField())
     unparsed_message_count = s.IntegerField(min_value=0)
     facts = s.DictField(child=s.ListField(child=s.DictField()))
@@ -339,25 +422,27 @@ class DetailSerializer(StrictSerializer):
     conflicts = ConflictSerializer(many=True)
     profile = ProfileSerializer()
     analysis = DimensionsSerializer()
+    missing_fields = s.ListField(child=s.CharField())
+    context_completeness = s.DictField()
 
 
-# 功能：声明整数或 unknown 的协议联合类型。
-# 逻辑：使用显式 oneOf 同时描述数字与未知枚举，避免将二者强制转换成字符串。
+# 功能：声明可空的 0–3 整数特征值。
+# 逻辑：保留 JSON null 表示信息不足，不把缺失值强制转换成数字。
 # 约束：布尔值不作为整数特征接收。
-@extend_schema_field({"oneOf": [{"type": "integer", "minimum": 0, "maximum": 3}, {"type": "string", "enum": ["unknown"]}]})
+@extend_schema_field({"type": "integer", "minimum": 0, "maximum": 3, "nullable": True})
 class FeatureValueField(s.Field):
     # 功能：验证评分特征的联合类型。
-    # 输入：`data` 为原始 JSON 数值或 unknown。
+    # 输入：`data` 为原始 JSON 整数；JSON null 由字段的 allow_null 处理。
     # 输出：原值；类型或范围错误抛 ValidationError。
-    # 逻辑：只接收真正整数 0–3 或精确 unknown 字符串。
+    # 逻辑：只接收真正整数 0–3。
     # 约束：不把缺失字段默认为零。
     def to_internal_value(self, data):
-        if (type(data) is int and 0 <= data <= 3) or data == "unknown":
+        if type(data) is int and 0 <= data <= 3:
             return data
-        raise s.ValidationError("特征必须为 0–3 整数或 unknown。")
+        raise s.ValidationError("特征必须为 0–3 整数或 null。")
 
     # 功能：输出已经验证的特征值。
-    # 输入：`value` 为整数或 unknown。
+    # 输入：`value` 为 0–3 整数。
     # 输出：同类型 JSON 原值。
     # 逻辑：不进行字符串化或舍入。
     # 约束：数据应已通过输入校验。
@@ -366,10 +451,10 @@ class FeatureValueField(s.Field):
 
 
 # 功能：声明 L4 使用的单个特征。
-# 逻辑：数值限定 0 至 3，unknown 表示没有依据。
-# 约束：unknown 不等同于零。
+# 逻辑：数值限定 0 至 3，JSON null 表示没有依据。
+# 约束：null 不等同于零。
 class FeatureSerializer(StrictSerializer):
-    value = FeatureValueField()
+    value = FeatureValueField(allow_null=True)
     basis = s.CharField()
 
 
@@ -409,8 +494,6 @@ class AnalysisSerializer(StrictSerializer):
     status = s.ChoiceField(choices=["completed", "failed"])
     list_view = ListViewSerializer(allow_null=True)
     detail_view = DetailSerializer(allow_null=True)
-    missing_fields = s.ListField(child=s.CharField(), required=False)
-    context_completeness = s.DictField(required=False)
     error = s.DictField(allow_null=True, required=False)
 
     # 功能：检查分析状态与载荷的对应关系。
@@ -420,8 +503,8 @@ class AnalysisSerializer(StrictSerializer):
     # 约束：不自动将失败转换为规则输出。
     def validate(self, attrs):
         if attrs["status"] == "completed":
-            if attrs["list_view"] is None or attrs["detail_view"] is None or "missing_fields" not in attrs or "context_completeness" not in attrs or attrs.get("error"):
-                raise s.ValidationError("成功分析必须包含完整结果、缺失项和上下文说明。")
+            if attrs["list_view"] is None or attrs["detail_view"] is None or attrs.get("error"):
+                raise s.ValidationError("成功分析必须包含完整 list_view 和 detail_view。")
         elif attrs["list_view"] is not None or attrs["detail_view"] is not None or not attrs.get("error"):
             raise s.ValidationError("失败分析必须两段为空并包含 error。")
         return attrs
@@ -513,3 +596,21 @@ class SimulateSerializer(StrictSerializer):
 # 约束：真实 Gmail 接入前须补 OAuth 验证绑定。
 class MailboxSerializer(StrictSerializer):
     address = s.EmailField()
+
+
+# 功能：声明网页授权邮箱的一次性同步领取数量。
+# 逻辑：Agent 每次只领取有限数量，处理结束即退出。
+# 约束：不包含租约或长期 Worker 参数。
+class MailboxSyncClaimSerializer(StrictSerializer):
+    limit = s.IntegerField(min_value=1, max_value=10, default=5)
+
+
+# 功能：声明 Agent 对员工 Gmail 同步任务的最终回报。
+# 逻辑：保存汇总结果，并允许 Agent 回传刷新后的 Google 凭证。
+# 约束：authorization 不会经浏览器接口返回。
+class MailboxSyncReportSerializer(StrictSerializer):
+    mailbox_id = s.UUIDField()
+    status = s.ChoiceField(choices=["completed", "failed"])
+    sync_result = s.DictField(required=False, default=dict)
+    error = s.CharField(allow_null=True, required=False, default=None)
+    authorization = s.DictField(allow_null=True, required=False, default=None)

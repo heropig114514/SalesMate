@@ -19,6 +19,9 @@ logs/
 media/
 staticfiles/
 data/
+agent/credentials.json
+agent/gmail_token.json
+backend/.local-access.json
 # Editors
 .idea/
 .vscode/

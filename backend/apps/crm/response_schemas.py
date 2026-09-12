@@ -8,13 +8,14 @@
 - GroupingResponseSerializer：描述后端公司归组结果。
 - CompanyContextResponseSerializer：描述公司邮件与业务快照。
 - MailboxResponseSerializer：描述浏览器邮箱列表行。
+- MailboxSyncClaimResponseSerializer：描述 Agent 领取的员工邮箱同步请求。
 变量索引：
 - SubmissionResultSerializer.dedupe_key：本次提交的邮件天然键。
 - SubmissionResultSerializer.company_id：后端归组分配的公司 UUID。
-- SubmissionResultSerializer.status：created 或 duplicate 提交结果。
+- SubmissionResultSerializer.status：created、updated 或 duplicate 提交结果。
 - JobResponseSerializer.job_id：后端任务 UUID。
+- JobResponseSerializer.company_id：待分析公司的后端 UUID。
 - JobResponseSerializer.trigger：创建任务的业务事件。
-- JobResponseSerializer.payload：任务业务参数，不包含 Gmail 凭证。
 - JobResponseSerializer.enqueued_at：任务入队时间。
 - JobResponseSerializer.attempt：已领取次数。
 - JobResponseSerializer.lease_until：领取租约截止时间。
@@ -26,6 +27,7 @@
 - CachedAnalysisResponseSerializer.generated_at：分析生成时间，无缓存为 null。
 - CachedAnalysisResponseSerializer.status：缓存元数据中的处理状态。
 - CachedAnalysisResponseSerializer.hit：是否匹配当前 revision、输入和指定提示词。
+- CachedAnalysisResponseSerializer.analysis：命中时返回的完整 L3 Analysis，未命中为 null。
 - GroupingResponseSerializer.company_id：后端公司 UUID。
 - GroupingResponseSerializer.company_name：可空公司展示名。
 - GroupingResponseSerializer.crm_status：公司建档状态。
@@ -41,7 +43,12 @@
 - CompanyContextResponseSerializer.orders：权威订单数组。
 - MailboxResponseSerializer.mailbox_id：后端业务邮箱 UUID。
 - MailboxResponseSerializer.address：业务邮箱展示地址。
+- MailboxResponseSerializer.gmail_authorized：当前邮箱是否已经完成 Google OAuth。
 - MailboxResponseSerializer.sync_state：业务同步游标及状态。
+- MailboxSyncClaimResponseSerializer.authorization：仅向 Agent 返回的 Google authorized user JSON。
+- MailboxSyncClaimResponseSerializer.mailbox_address：已经由 Gmail profile 验证的邮箱地址。
+- MailboxSyncClaimResponseSerializer.mailbox_id：后端员工业务邮箱 UUID。
+- MailboxSyncClaimResponseSerializer.max_results：本次最多读取的 Gmail 邮件数量。
 """
 from rest_framework import serializers as s
 
@@ -54,7 +61,7 @@ from .serializers import EmailSubmissionSerializer, SyncStateSerializer
 class SubmissionResultSerializer(s.Serializer):
     dedupe_key = s.CharField()
     company_id = s.UUIDField()
-    status = s.ChoiceField(choices=["created", "duplicate"])
+    status = s.ChoiceField(choices=["created", "updated", "duplicate"])
 
 
 # 功能：描述已领取 Job 与并发扩展字段。
@@ -63,7 +70,7 @@ class SubmissionResultSerializer(s.Serializer):
 class JobResponseSerializer(s.Serializer):
     job_id = s.UUIDField()
     trigger = s.CharField()
-    payload = s.DictField()
+    company_id = s.UUIDField()
     enqueued_at = s.DateTimeField()
     attempt = s.IntegerField(min_value=1)
     lease_until = s.DateTimeField()
@@ -81,6 +88,7 @@ class CachedAnalysisResponseSerializer(s.Serializer):
     generated_at = s.DateTimeField(allow_null=True)
     status = s.CharField()
     hit = s.BooleanField()
+    analysis = s.DictField(allow_null=True)
 
 
 # 功能：描述后端公司归组结果。
@@ -114,4 +122,15 @@ class CompanyContextResponseSerializer(s.Serializer):
 class MailboxResponseSerializer(s.Serializer):
     mailbox_id = s.UUIDField()
     address = s.EmailField()
-    sync_state = SyncStateSerializer()
+    gmail_authorized = s.BooleanField()
+    sync_state = s.DictField()
+
+
+# 功能：描述 Agent 领取到的员工邮箱同步请求。
+# 逻辑：完整授权凭证只在 AgentAuthentication 保护的响应中出现。
+# 约束：浏览器邮箱接口不得使用该结构。
+class MailboxSyncClaimResponseSerializer(s.Serializer):
+    mailbox_id = s.UUIDField()
+    mailbox_address = s.EmailField()
+    authorization = s.DictField()
+    max_results = s.IntegerField(min_value=1, max_value=20)

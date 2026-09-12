@@ -1,11 +1,11 @@
-"""职责：提供不要求认证的服务存活与 PostgreSQL 就绪检查。
+"""职责：提供不要求认证的服务存活与默认数据库就绪检查。
 实现：存活检查不访问数据库；就绪检查执行 SELECT 1，数据库异常或意外结果返回 503 并记录脱敏诊断。
 关联：由 config.urls 暴露，依赖连接配置、响应序列化器及中间件 request_id；不验证迁移和 pgvector。
 
 目录：
 - LivenessView：提供无需数据库和身份认证的存活检查。
 - LivenessView.get：返回后端进程的存活状态。
-- ReadinessView：提供 PostgreSQL 连接往返检查。
+- ReadinessView：提供默认数据库连接往返检查。
 - ReadinessView.get：检查默认数据库能否返回预期查询结果。
 
 变量索引：
@@ -46,7 +46,7 @@ class LivenessView(APIView):
         return Response({"status": "ok", "service": "salesmate-backend"})
 
 
-# 功能：提供 PostgreSQL 连接往返检查。
+# 功能：提供默认数据库连接往返检查。
 # 逻辑：允许匿名 GET，通过连接上下文执行探测并统一报告数据库故障。
 # 约束：不验证迁移完成、数据表、向量扩展或其他外部服务。
 class ReadinessView(APIView):
@@ -61,7 +61,7 @@ class ReadinessView(APIView):
     @extend_schema(
         responses={200: ReadinessSerializer, 503: ReadinessSerializer},
         tags=["health"],
-        description="Check a PostgreSQL round trip. Does not verify migrations or the vector extension.",
+        description="Check the configured default database. Does not verify migrations.",
     )
     def get(self, request):
         try:
@@ -74,7 +74,7 @@ class ReadinessView(APIView):
             # A connection error can include credentials or host details: record its type only.
             logger.error(
                 "database_readiness_failed request_id=%s alias=default error_type=%s "
-                "action=check_PostgreSQL_service_and_POSTGRES_configuration",
+                "action=check_default_database_and_DATABASE_URL",
                 request.request_id,
                 type(exc).__name__,
             )

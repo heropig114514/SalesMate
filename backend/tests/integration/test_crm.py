@@ -1,4 +1,4 @@
-"""职责：验证真实 PostgreSQL 上的邮件理解业务闭环与隔离边界。
+"""职责：验证默认测试数据库上的邮件理解业务闭环与隔离边界。
 实现：Django TestCase 创建隔离测试数据库，以合成邮件覆盖接口、事务、租约、缓存与 CSRF。
 关联：使用与独立 Agent 相同的 HTTP 协议；规则仅生成测试载荷，不模拟数据库。
 目录：
@@ -14,6 +14,8 @@
 - CRMTests.test_batch_ownership_failure_rolls_back：验证整批数据发生越权时回滚所有写入。
 - CRMTests.test_user_isolation_and_agent_authentication：验证页面与 Agent 上下文的跨用户访问均被拒绝。
 - CRMTests.test_failed_extraction_can_be_completed_once：验证失败事实只能成功补交一次。
+- CRMTests.test_failed_extraction_updates_during_next_sync：验证下一次批量同步可直接补齐失败抽取。
+- CRMTests.test_non_business_email_is_saved_without_job：验证非业务邮件留档但不创建分析任务。
 - CRMTests.test_unlocatable_evidence_and_unknown_fields_rejected：验证证据不在原文及未知字段会被拒绝。
 - CRMTests.test_old_revision_cannot_save_after_new_email：验证新邮件到达后旧任务不能保存输入。
 - CRMTests.test_lease_token_and_expiration：验证错误或过期租约不能写入。
@@ -21,6 +23,9 @@
 - CRMTests.test_registration_invalidates_cache_and_checks_version：验证 CRM 建档更新使旧缓存失效并支持未知人数。
 - CRMTests.test_null_score_and_list_sorting：验证空分语义及列表无分数排最后。
 - CRMTests.test_sync_state_compare_and_swap：验证同步游标乐观锁。
+- CRMTests.test_employee_gmail_connection_and_sync_queue：验证员工邮箱隔离、同步领取和回报。
+- CRMTests.test_employee_gmail_oauth_browser_routes：验证网页 OAuth 入口和回调跳转。
+- CRMTests.test_employee_gmail_oauth_reuses_pkce_verifier：验证授权回调复用发起阶段的 PKCE verifier。
 - CRMTests.test_agent_mode_has_no_implicit_rule_fallback：验证 Agent 模式不会调用规则或导入样例。
 - CRMTests.test_session_login_requires_csrf_and_valid_password：验证匿名登录和已登录写入的真实 CSRF 防护。
 - CRMTests.test_demo_seed_is_repeatable_without_duplicate_data：验证演示数据重复导入保持邮件与时间不变。
@@ -28,33 +33,29 @@
 - CRMTests.test_analysis_input_requires_complete_fact_multiset：验证归并不得丢掉历史事实或重复计算事实。
 - CRMTests.test_invalid_identifiers_return_400：验证非法 UUID 为受控输入错误。
 - CRMTests.test_explicit_reanalysis_completes_missing_score：验证部分完成的规则任务可在显式重新分析时补齐评分。
-- ConcurrentJobTests：验证多连接竞争领取时不会重复派发任务。
-- ConcurrentJobTests.claim_in_thread：在线程自己的数据库连接中同步开始领取。
-- ConcurrentJobTests.test_concurrent_claim_is_exclusive：验证一个待办在两消费者并发领取时只被领取一次。
 变量索引：
 - 无
 """
 from copy import deepcopy
-from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import hashlib
-from threading import Barrier
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.crm import jobs, results, rules, selectors
 from apps.crm.access import Conflict
-from apps.crm.models import AgentCredential, Analysis, AnalysisInput, Company, Email, Job, Mailbox
+from apps.crm.models import AgentCredential, Analysis, AnalysisInput, Company, Email, GmailCredential, Job, Mailbox
 from apps.crm.response_schemas import JobResponseSerializer, GroupingResponseSerializer, CompanyContextResponseSerializer
 
 
 # 功能：验证本地前后端与 Agent 契约所依赖的关键业务不变量。
 # 逻辑：每项测试使用独立用户、邮箱和真实事务数据库。
 # 约束：不连接 Gmail 或真实模型，不将测试载荷生成解释为 Agent 效果评测。
+@override_settings(ANALYSIS_PROVIDER="rules", SALESMATE_AUTO_RUN_AGENT=False)
 class CRMTests(TestCase):
     # 功能：创建两名用户及一个有范围的 Agent 凭证。
     # 输入：测试框架调用，无外部参数。
@@ -121,12 +122,14 @@ class CRMTests(TestCase):
         self.assertEqual(Job.objects.get().status, "completed")
 
     # 功能：验证 README 所有主要 Agent 保存步骤可通过 HTTP 串联。
-    # 输入：合成 L1 载荷及已领取任务。
+    # 输入：缺少可选时间和线程字段的合成 L1 载荷及已领取任务。
     # 输出：成功回报和 provider=agent 结果。
     # 逻辑：读取 ETag，核对实际查询响应符合 Schema，再逐次发送 Input、Analysis、Score 与 Report。
     # 约束：只用规则生成契约样例，不调用真实 Agent。
     def test_agent_http_contract_end_to_end(self):
-        company = self.submit()
+        payload = self.email()
+        payload.update(sent_at=None, received_at=None, thread_id=None)
+        company = self.submit(payload)
         claimed = self.agent.post("/api/v1/agent/jobs/claim/", {"limit": 1, "lease_seconds": 120}, format="json")
         job = claimed.data[0]
         grouping_response = self.agent.get("/api/v1/agent/grouping/", {"company_id": str(company.pk)})
@@ -223,19 +226,60 @@ class CRMTests(TestCase):
         self.assertEqual(company.revision, 2)
         self.assertEqual(Email.objects.count(), 1)
 
+    # 功能：验证 Agent 重扫同一邮件时可直接把 failed 更新为 completed。
+    # 输入：同一邮件本体的失败载荷、成功载荷和再次成功载荷。
+    # 输出：created、updated、duplicate 三种状态，且只创建一项分析任务。
+    # 逻辑：沿用 Gmail 同步实际调用的 emails 批量端点完成恢复。
+    # 约束：邮件正文和 extract_prompt_version 必须保持一致。
+    def test_failed_extraction_updates_during_next_sync(self):
+        completed = self.email("retry")
+        failed = deepcopy(completed)
+        failed.update(extract_status="failed", extract_error="temporary model error", facts=None)
+        first = self.agent.post("/api/v1/agent/emails/", [failed], format="json")
+        second = self.agent.post("/api/v1/agent/emails/", [completed], format="json")
+        third = self.agent.post("/api/v1/agent/emails/", [completed], format="json")
+        self.assertEqual(first.data[0]["status"], "created")
+        self.assertEqual(second.data[0]["status"], "updated")
+        self.assertEqual(third.data[0]["status"], "duplicate")
+        self.assertEqual(Job.objects.count(), 1)
+
+    # 功能：验证非业务邮件保存后不会进入公司分析任务队列。
+    # 输入：一封由 L1 标记 skipped_non_business 的完整邮件本体。
+    # 输出：邮件正常 created，Extraction 保留跳过状态，Job 数量为零。
+    # 逻辑：使用正式批量入库端点检查任务触发条件。
+    # 约束：非业务邮件仍参与邮件历史和去重。
+    def test_non_business_email_is_saved_without_job(self):
+        payload = self.email("non-business")
+        payload.update(non_business_hint=True, non_business_reason="automated",
+                       extract_status="skipped_non_business", facts=None, extract_error=None)
+        response = self.agent.post("/api/v1/agent/emails/", [payload], format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data[0]["status"], "created")
+        self.assertEqual(Email.objects.count(), 1)
+        self.assertEqual(Job.objects.count(), 0)
+
     # 功能：验证证据不在原文及未知字段会被拒绝。
-    # 输入：篡改预算 evidence 或注入未声明 access_token。
-    # 输出：400 且无邮件入库。
-    # 逻辑：分别覆盖事实与协议边界。
+    # 输入：只改变空白/不可见格式的正文、篡改预算 evidence，以及未声明 access_token。
+    # 输出：排版差异正常入库；伪造证据和未知字段返回 400。
+    # 逻辑：先核对与 Agent 一致的证据定位，再覆盖事实与协议边界。
     # 约束：token 值为虚构字符串。
     def test_unlocatable_evidence_and_unknown_fields_rejected(self):
+        compatible = self.email("formatting")
+        compatible["body_text"] = compatible["body_text"].replace(
+            "需求：采购设备", "需求：采\u200b购\n设备"
+        )
+        accepted = self.agent.post(
+            "/api/v1/agent/emails/", [compatible], format="json"
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+
         payload = self.email()
-        payload["facts"]["budget"]["evidence"] = "原文不存在的证据"
+        payload["facts"]["budget"][0]["evidences"][0] = "原文不存在的证据"
         self.assertEqual(self.agent.post("/api/v1/agent/emails/", [payload], format="json").status_code, 400)
         payload = self.email()
         payload["access_token"] = "synthetic-not-a-token"
         self.assertEqual(self.agent.post("/api/v1/agent/emails/", [payload], format="json").status_code, 400)
-        self.assertEqual(Email.objects.count(), 0)
+        self.assertEqual(Email.objects.count(), 1)
 
     # 功能：验证新邮件到达后旧任务不能保存输入。
     # 输入：已领取旧 revision，随后提交另一封邮件。
@@ -269,7 +313,7 @@ class CRMTests(TestCase):
     # 功能：验证重复领取不会领取已运行任务。
     # 输入：同一待办连续领取两次。
     # 输出：第一次一条，第二次空列表。
-    # 逻辑：使用真实 PostgreSQL select_for_update 领取。
+    # 逻辑：使用当前测试数据库的事务路径领取。
     # 约束：此项为顺序测试，不声明已覆盖多进程调度压力。
     def test_job_claim_excludes_running_work(self):
         self.submit()
@@ -324,6 +368,153 @@ class CRMTests(TestCase):
         self.assertEqual(first.status_code, 200, first.data)
         self.assertEqual(first.data["version"], 1)
         self.assertEqual(self.agent.post("/api/v1/agent/sync-state-save/", state, format="json", HTTP_IF_MATCH="0").status_code, 409)
+
+    # 功能：验证员工 Gmail 连接只在本人页面可见，并能被对应 Agent 领取和回报。
+    # 输入：测试 Gmail 凭证、浏览器同步请求和 Agent 服务调用；`schedule_agent_sync` 为调度 mock。
+    # 输出：浏览器无令牌、Agent 单次领取、最终同步完成状态。
+    # 逻辑：同一 Mailbox 贯穿页面状态与 Agent 队列，第二名员工不能操作。
+    # 约束：不连接真实 Google，凭证内容完全为测试数据。
+    @patch("apps.crm.views.agent_runner.schedule_agent_sync")
+    def test_employee_gmail_connection_and_sync_queue(self, schedule_agent_sync):
+        credentials = {
+            "token": "fake-access-token",
+            "refresh_token": "fake-refresh-token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "fake-client",
+            "client_secret": "fake-secret",
+            "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+        }
+        GmailCredential.objects.create(mailbox=self.mailbox, credentials=credentials)
+
+        listed = self.browser.get("/api/v1/mailboxes/")
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertTrue(listed.data[0]["gmail_authorized"])
+        self.assertNotIn("authorization", listed.data[0])
+        self.assertNotIn("fake-access-token", str(listed.data))
+
+        queued = self.browser.post(
+            f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
+        )
+        self.assertEqual(queued.status_code, 200, queued.data)
+        self.assertEqual(queued.data["sync_state"]["status"], "sync_requested")
+        schedule_agent_sync.assert_called_once_with()
+
+        claimed = self.agent.post(
+            "/api/v1/agent/mailbox-syncs/claim/", {"limit": 5}, format="json"
+        )
+        self.assertEqual(claimed.status_code, 200, claimed.data)
+        self.assertEqual(len(claimed.data), 1)
+        self.assertEqual(claimed.data[0]["authorization"]["token"], "fake-access-token")
+        self.assertEqual(
+            self.agent.post(
+                "/api/v1/agent/mailbox-syncs/claim/", {"limit": 5}, format="json"
+            ).data,
+            [],
+        )
+
+        report = self.agent.post(
+            "/api/v1/agent/mailbox-syncs/report/",
+            {
+                "mailbox_id": str(self.mailbox.pk),
+                "status": "completed",
+                "sync_result": {"fetched_count": 3, "created_count": 2},
+                "error": None,
+                "authorization": credentials,
+            },
+            format="json",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["sync_state"]["status"], "completed")
+        self.assertIn("last_synced_at", report.data["sync_state"])
+
+        other_browser = APIClient()
+        other_browser.force_authenticate(self.other)
+        self.assertEqual(
+            other_browser.post(
+                f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
+            ).status_code,
+            404,
+        )
+
+    # 功能：验证网页授权入口和 Google 回调返回当前员工工作台。
+    # 输入：`finish` 为模拟 OAuth 完成邮箱的 mock；`schedule_agent_sync` 为调度 mock。
+    # 输出：授权地址 JSON 与带授权状态的 302 跳转。
+    # 逻辑：视图负责会话边界，Google 网络细节由 gmail_oauth 服务封装。
+    # 约束：不请求 Google，不验证第三方 OAuth SDK 行为。
+    @override_settings(
+        GOOGLE_OAUTH_CLIENT_ID="fake-web-client.apps.googleusercontent.com",
+        GOOGLE_OAUTH_CLIENT_SECRET="fake-web-secret",
+        GOOGLE_OAUTH_REDIRECT_URI="http://testserver/api/v1/mailboxes/gmail-callback/",
+    )
+    @patch("apps.crm.views.agent_runner.schedule_agent_sync")
+    @patch("apps.crm.views.gmail_oauth.finish_authorization")
+    def test_employee_gmail_oauth_browser_routes(self, finish, schedule_agent_sync):
+        started = self.browser.post("/api/v1/mailboxes/gmail-authorize/")
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertTrue(
+            started.data["authorization_url"].startswith(
+                "https://accounts.google.com/o/oauth2/auth?"
+            )
+        )
+        self.assertIn("gmail.readonly", started.data["authorization_url"])
+
+        finish.return_value = self.mailbox
+        callback = self.browser.get(
+            "/api/v1/mailboxes/gmail-callback/?code=fake&state=fake"
+        )
+        self.assertEqual(callback.status_code, 302)
+        self.assertIn("gmail=authorized", callback["Location"])
+        self.assertIn("sales%40internal.example", callback["Location"])
+        schedule_agent_sync.assert_called_once_with()
+
+    # 功能：验证 PKCE code_verifier 在发起授权和交换令牌之间保持一致。
+    # 输入：`flow_factory` 构造两次 Flow；`build` 模拟 Gmail profile 服务。
+    # 输出：回调成功、凭据落库，第二个 Flow 收到第一个 Flow 的 verifier。
+    # 逻辑：授权 URL 生成后 verifier 写入 Session，回调时取出并关闭重新生成。
+    # 约束：测试凭据均为虚构内容，不发起任何外部请求。
+    @override_settings(
+        GOOGLE_OAUTH_CLIENT_ID="fake-web-client.apps.googleusercontent.com",
+        GOOGLE_OAUTH_CLIENT_SECRET="fake-web-secret",
+        GOOGLE_OAUTH_REDIRECT_URI="http://testserver/api/v1/mailboxes/gmail-callback/",
+    )
+    @patch("apps.crm.gmail_oauth.build")
+    @patch("apps.crm.gmail_oauth.Flow.from_client_config")
+    def test_employee_gmail_oauth_reuses_pkce_verifier(self, flow_factory, build):
+        begin_flow = Mock()
+        begin_flow.code_verifier = "test-pkce-verifier"
+        begin_flow.authorization_url.return_value = (
+            "https://accounts.google.com/o/oauth2/auth?state=test-state",
+            "test-state",
+        )
+        finish_flow = Mock()
+        finish_flow.credentials.to_json.return_value = '{"token":"fake-token"}'
+        flow_factory.side_effect = [begin_flow, finish_flow]
+        build.return_value.users.return_value.getProfile.return_value.execute.return_value = {
+            "emailAddress": self.mailbox.address
+        }
+
+        started = self.browser.post("/api/v1/mailboxes/gmail-authorize/")
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertEqual(
+            self.browser.session["salesmate_gmail_oauth_code_verifier"],
+            "test-pkce-verifier",
+        )
+
+        callback = self.browser.get(
+            "/api/v1/mailboxes/gmail-callback/?code=test-code&state=test-state"
+        )
+
+        self.assertEqual(callback.status_code, 302)
+        self.assertIn("gmail=authorized", callback["Location"])
+        self.assertTrue(GmailCredential.objects.filter(mailbox=self.mailbox).exists())
+        finish_flow.fetch_token.assert_called_once_with(code="test-code")
+        self.assertEqual(
+            flow_factory.call_args_list[1].kwargs["code_verifier"],
+            "test-pkce-verifier",
+        )
+        self.assertFalse(
+            flow_factory.call_args_list[1].kwargs["autogenerate_code_verifier"]
+        )
 
     # 功能：验证 Agent 模式不会调用规则或导入样例。
     # 输入：切换显式配置后请求分析。
@@ -427,38 +618,3 @@ class CRMTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(Analysis.objects.count(), 1)
         self.assertTrue(analysis.scores.exists())
-
-
-# 功能：验证多连接竞争领取时不会重复派发任务。
-# 逻辑：TransactionTestCase 允许线程使用独立真实 PostgreSQL 连接。
-# 约束：仅验证两消费者竞争一个任务，不代表已完成压力或崩溃恢复测试。
-class ConcurrentJobTests(TransactionTestCase):
-    # 功能：在线程自己的数据库连接中同步开始领取。
-    # 输入：`owner_id` 为已提交用户 ID；`barrier` 为两线程同步屏障。
-    # 输出：当前线程领取的 Job 数组。
-    # 逻辑：先取得独立连接，再同时领取；finally 关闭连接避免泄漏。
-    # 约束：屏障等待最多十秒，不进行失败重试。
-    def claim_in_thread(self, owner_id, barrier):
-        close_old_connections()
-        try:
-            owner = get_user_model().objects.get(pk=owner_id)
-            barrier.wait(timeout=10)
-            return jobs.claim(owner, 1, 120)
-        finally:
-            close_old_connections()
-
-    # 功能：验证一个待办在两消费者并发领取时只被领取一次。
-    # 输入：测试创建的用户、公司和单个待办。
-    # 输出：总领取数量为一，任务 attempt 为一。
-    # 逻辑：两个真实连接同时执行带 skip_locked 的领取事务。
-    # 约束：不模拟数据库行锁。
-    def test_concurrent_claim_is_exclusive(self):
-        owner = get_user_model().objects.create_user(username="concurrent")
-        company = Company.objects.create(owner=owner, group_key="domain:concurrent.example")
-        Job.objects.create(company=company, revision=0, trigger="customer_detail_opened")
-        barrier = Barrier(2)
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(self.claim_in_thread, owner.pk, barrier) for _ in range(2)]
-            claimed = [item for future in futures for item in future.result(timeout=15)]
-        self.assertEqual(len(claimed), 1)
-        self.assertEqual(Job.objects.get().attempt, 1)

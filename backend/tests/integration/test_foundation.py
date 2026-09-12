@@ -1,6 +1,6 @@
 """职责：验证后端基础 HTTP、身份字段和错误边界。
 实现：使用 SimpleTestCase 禁止真实数据库访问；就绪分支显式模拟连接，用户接口使用强制认证。
-关联：通过 Django 路由调用真实视图和中间件；结果不代表真实登录或 PostgreSQL 联调通过。
+关联：通过 Django 路由调用真实视图和中间件；结果不代表真实登录或外部数据库联调通过。
 
 目录：
 - FoundationTests：在禁止真实数据库访问的条件下检查基础 HTTP 行为。
@@ -85,7 +85,7 @@ class FoundationTests(SimpleTestCase):
     # 输入：`connections` 为 patch 注入的连接注册表 mock。
     # 输出：返回 None；状态、正文或 SELECT 1 调用次数不符时失败。
     # 逻辑：模拟游标返回 (1,)，通过 HTTP 调用就绪视图并核对单次执行。
-    # 约束：替换的是真实连接入口，不验证 PostgreSQL 服务或迁移。
+    # 约束：替换的是真实连接入口，不验证外部数据库服务或迁移。
     @patch("common.views.connections")
     def test_readiness_checks_database(self, connections):
         cursor = connections["default"].cursor.return_value.__enter__.return_value

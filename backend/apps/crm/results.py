@@ -13,6 +13,7 @@
 import json
 import logging
 import re
+from datetime import datetime, timezone
 
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
@@ -47,23 +48,62 @@ def save_input(owner, payload, expected, job_id, token):
     emails = {item["dedupe_key"]: item for item in context["emails"]}
     if data["unparsed_message_count"] != sum(item["extract_status"] != "completed" for item in emails.values()):
         raise ValidationError("未解析数量与上下文不一致。")
+    expected_company = {
+        "company_name": grouping["company_name"],
+        "crm_status": grouping["crm_status"],
+        "domains": grouping["domains"],
+        "contacts": grouping["contacts"],
+    }
+    expected_business = {
+        "customer": context["customer"],
+        "tickets": context["tickets"],
+        "quotes": context["quotes"],
+        "orders": context["orders"],
+    }
+    if data["company"] != expected_company or data["business_context"] != expected_business:
+        raise Conflict("L2 公司资料或业务上下文与当前后端快照不一致。")
+    completed_emails = [item for item in emails.values() if item["extract_status"] == "completed"]
+    latest_summary = None
+    if completed_emails:
+        latest = max(
+            completed_emails,
+            key=lambda item: (
+                parse_datetime(item["sent_at"])
+                if item["sent_at"] is not None
+                else datetime.min.replace(tzinfo=timezone.utc),
+                item["dedupe_key"],
+            ),
+        )
+        latest_summary = latest["facts"]["message_summary"]
+    if data["latest_message_summary"] != latest_summary:
+        raise ValidationError("latest_message_summary 与当前邮件上下文不一致。")
     expected_facts = []
     actual_facts = []
     for source in emails.values():
         if source["extract_status"] == "completed":
             for field in FACT_FIELDS:
-                fact = source["facts"][field]
-                if fact["value"] is not None:
-                    expected_facts.append((field, source["dedupe_key"], fact["value"], fact["evidence"]))
+                for fact in source["facts"][field]:
+                    expected_facts.append((field, source["dedupe_key"], fact["value"], tuple(fact["evidences"])))
     for field, items in data["facts"].items():
         if field not in FACT_FIELDS:
             raise ValidationError("未知的归并事实字段。")
         for item in items:
             source = emails.get(item.get("dedupe_key"))
-            fact = ((source or {}).get("facts") or {}).get(field)
-            if not source or not fact or item.get("value") != fact["value"] or item.get("evidence") != fact["evidence"] or parse_datetime(str(item.get("fact_time"))) != parse_datetime(source["sent_at"]):
+            facts = ((source or {}).get("facts") or {}).get(field, [])
+            matches = [
+                fact for fact in facts
+                if item.get("value") == fact.get("value")
+                and item.get("evidences") == fact.get("evidences")
+            ]
+            fact_time = item.get("fact_time")
+            source_time = source.get("sent_at") if source else None
+            times_differ = (fact_time is None) != (source_time is None) or (
+                fact_time is not None
+                and parse_datetime(str(fact_time)) != parse_datetime(source_time)
+            )
+            if not source or len(matches) != 1 or times_differ:
                 raise ValidationError("归并事实与当前邮件事实不一致。")
-            actual_facts.append((field, item["dedupe_key"], item["value"], item["evidence"]))
+            actual_facts.append((field, item["dedupe_key"], item["value"], tuple(item["evidences"])))
     if sorted(actual_facts) != sorted(expected_facts):
         raise ValidationError("L2 必须完整保留已完成抽取的事实，不得遗漏或重复。")
     snapshot, created = AnalysisInput.objects.get_or_create(company=company, input_version=data["input_version"], defaults={"revision": company.revision, "payload": data})
@@ -109,20 +149,28 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
         raise Conflict("请先保存当前 revision 的 AnalysisInput。")
     _, context = context_pair(company)
     base_time = parse_datetime(data["analysis_base_time"])
-    if any(parse_datetime(item["sent_at"]) > base_time for item in context["emails"]):
+    if any(
+        item["sent_at"] is not None and parse_datetime(item["sent_at"]) > base_time
+        for item in context["emails"]
+    ):
         raise ValidationError("分析基准时间早于输入邮件，存在时间穿越。")
     if base_time > parse_datetime(data["generated_at"]):
         raise ValidationError("分析基准时间不得晚于生成时间。")
     allowed = set(snapshot.payload["member_dedupe_keys"]) | {str(company.pk)}
+    allowed.update(str(item["contact_email"]) for item in snapshot.payload["company"]["contacts"])
+    customer_id = context["customer"].get("customer_id")
+    if customer_id:
+        allowed.add(str(customer_id))
     for key, id_field in [("tickets", "ticket_id"), ("quotes", "quote_id"), ("orders", "order_id")]:
-        allowed.update(item[id_field] for item in context[key])
+        allowed.update(str(item[id_field]) for item in context[key])
     validate_refs(data, allowed)
     if data["status"] == "completed":
         if re.search(r"\d\s*[%％]|百分之", json.dumps(data["detail_view"], ensure_ascii=False)):
             raise ValidationError("详情输出不允许百分比数字。")
         count = snapshot.payload["unparsed_message_count"]
-        completeness = data["context_completeness"]
-        if completeness.get("unparsed_message_count") != count or (count and (not completeness.get("note") or not data["missing_fields"])):
+        completeness = data["detail_view"]["context_completeness"]
+        missing_fields = data["detail_view"]["missing_fields"]
+        if completeness.get("unparsed_message_count") != count or (count and (not completeness.get("note") or not missing_fields)):
             raise ValidationError("必须如实说明未解析邮件和缺失项。")
         view = data["list_view"]
         signal = view["signal"]
@@ -166,7 +214,7 @@ def save_score(owner, payload, expected, job_id, token):
     if analysis is None:
         raise InvalidState("当前输入尚无成功分析。")
     view = analysis.payload["list_view"]
-    if data["score"] is not None and (view["signal"] == "unknown" or any(item["value"] == "unknown" for item in view["score_features"].values())):
+    if data["score"] is not None and (view["signal"] == "unknown" or any(item["value"] is None for item in view["score_features"].values())):
         raise ValidationError("缺失评分特征必须返回 null。")
     existing = analysis.scores.filter(score_version=data["score_version"], payload__scored_at=data["scored_at"]).first()
     if existing:
@@ -194,4 +242,5 @@ def cached_analysis(company, input_version, prompt_version=None):
     return {"company_id": str(company.pk), "input_version": result.snapshot.input_version if result else input_version,
             "analysis_prompt_version": result.prompt_version if result else None,
             "generated_at": result.payload["generated_at"] if result else None,
-            "status": "completed" if result else "pending", "hit": hit}
+            "status": "completed" if result else "pending", "hit": hit,
+            "analysis": result.payload if hit else None}
