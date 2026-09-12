@@ -1,7 +1,7 @@
 /* 职责：定义轻量销售工作台的布局、状态与响应式样式。
-实现：浅色背景、墨绿强调、网格列表及三栏详情；窄屏顺序排列，保留可键盘操作焦点。
+实现：浅色背景、墨绿强调、网格列表及三栏详情；助手桌面并排展开，1000px 以下全屏展示，保留键盘焦点。
 关联：index.html 与 app.js 使用相同语义类名。
-目录：无函数或类声明；样式区域为基础、导航、列表、详情、登录与对话框、响应式。
+目录：无函数或类声明；样式区域为基础、导航、列表、详情、登录与对话框、响应式、客户助手。
 变量索引：--ink 正文；--muted 次要文本；--line 边界；--green 主色；--soft 柔和强调背景。 */
 :root{--ink:#223a34;--muted:#7b8984;--line:#e3e9e5;--green:#22634c;--soft:#e9f2ec;font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--ink);background:#f7f9f7;font-size:14px;line-height:1.55}
 *{box-sizing:border-box}body{margin:0}[hidden]{display:none!important}button,input,select,textarea{font:inherit}button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}button{cursor:pointer}button:disabled{opacity:.5;cursor:wait}a{color:inherit;text-decoration:none}h1,h2,h3,h4,p{margin:0}h1{font-size:27px;letter-spacing:-.6px;font-weight:650}h2{font-size:18px;font-weight:650}h3{font-size:16px}h4{font-size:14px}input,select,textarea{border:1px solid #dce4de;border-radius:7px;background:#fff;padding:11px 12px;color:var(--ink);width:100%;outline:none}input:focus,select:focus,textarea:focus{border-color:var(--green);box-shadow:0 0 0 3px #22634c15}button:focus-visible,a:focus-visible{outline:3px solid #6fab91;outline-offset:3px}button{border:0;background:none;color:inherit}button.primary,button.secondary,.filter-apply{display:inline-flex;align-items:center;justify-content:center;gap:14px;padding:10px 17px;border-radius:7px;white-space:nowrap;font-weight:600}.primary{background:var(--green);color:white}.primary:hover{background:#174e3b}.secondary{background:#fff;border:1px solid var(--line)!important}.secondary:hover{background:#f0f5f1}.text-btn{color:var(--green);padding:7px}.icon-btn{padding:6px 9px;font-size:19px;border-radius:5px}.icon-btn:hover{background:var(--soft)}.muted{color:var(--muted);font-size:13px}.fine,.footnote{color:var(--muted);font-size:12px;line-height:1.8}.eyebrow{font-size:10px;letter-spacing:1.9px;font-weight:700;color:#7c9387;margin-bottom:10px}.actions{display:flex;gap:10px;align-items:center}.pill{display:inline-flex;padding:3px 9px;border-radius:5px;font-size:11px;line-height:1.7;max-width:100%;overflow-wrap:anywhere}.pill.green{background:#e6f1e9;color:#337257}.pill.subtle{background:#f0f3f0;color:#75817a}.pill.warning{background:#fff4df;color:#967332}.avatar{width:42px;height:42px;flex-shrink:0;border-radius:12px;background:#edf1e5;color:#657746;display:grid;place-items:center;font-size:19px;font-weight:600}.avatar.small{width:34px;height:34px;font-size:13px;border-radius:50%;background:#dfece4}.avatar.tiny{width:28px;height:28px;border-radius:50%;font-size:12px}.avatar.large{width:56px;height:56px;font-size:25px}.status-dot{display:inline-block;background:#69a787;width:7px;height:7px;border-radius:50%;margin-right:8px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
@@ -14,3 +14,69 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 .nav-item{width:100%;text-align:left}.channel-item>span:nth-child(2){min-width:0;flex:1}.channel-item small{display:block;font-size:9px;font-weight:400;color:#7f9086;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.disabled-channel{opacity:.48}.disabled-channel:disabled{cursor:default}.gmail-chip{padding:7px 9px;border-radius:6px}.gmail-chip:hover{background:var(--soft)}.permission-card{display:flex;align-items:center;gap:14px;margin:22px 0 14px;padding:16px;border:1px solid var(--line);border-radius:9px;background:#f8faf7}.permission-card .gmail-logo{font-size:24px}.permission-card strong{font-size:12px}.permission-card p,.gmail-account p,.gmail-empty p{font-size:10px;color:var(--muted);margin-top:4px}.gmail-accounts{display:grid;gap:9px;margin:13px 0}.gmail-account{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:14px;border:1px solid var(--line);border-radius:8px}.gmail-account strong{font-size:12px;overflow-wrap:anywhere}.gmail-account .failure{display:block;margin-top:5px}.account-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}.account-actions button{font-size:10px;padding:7px 9px}.gmail-empty{padding:20px;text-align:center;background:#fafbf8;border-radius:8px}.wide-button{width:100%;margin-top:16px}.gmail-logo.inverse{color:white}
 @media(max-width:760px){.gmail-account{align-items:flex-start;flex-direction:column}.account-actions{width:100%}.account-actions .secondary{flex:1}}
+
+/* 客户助手：固定宽度侧栏为原工作区预留空间；内容区独立滚动，草稿编辑区保持可见。
+   窄屏的模态语义与背景 inert 由 assistant.js 同步控制，CSS 只承担布局。 */
+.detail-title .actions { flex-wrap: wrap; }
+.assistant-toggle { color: var(--green); border-color: #b9cfc0 !important; }
+.assistant-toggle[aria-expanded="true"] { background: var(--soft); }
+.assistant-open main { margin-right: 440px; }
+.assistant-open .detail-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.assistant-open .context-panel { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.assistant-open .detail-title { flex-wrap: wrap; }
+.assistant-open .detail-title .actions { width: 100%; }
+.assistant-panel { position: fixed; z-index: 100; inset: 0 0 0 auto; width: 440px; height: 100dvh; display: flex; flex-direction: column; background: #fff; border-left: 1px solid var(--line); box-shadow: -8px 0 35px #253d3210; }
+.assistant-header { display: flex; justify-content: space-between; align-items: center; padding: 23px 24px 19px; flex-shrink: 0; }
+.assistant-heading { display: flex; gap: 12px; align-items: center; }
+.assistant-heading > div { display: flex; align-items: center; gap: 10px; }
+.assistant-heading h2 { font-size: 17px; }
+.assistant-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 11px; background: var(--green); color: white; font-size: 26px; }
+.assistant-development { padding: 3px 7px; border: 1px solid #e1e7dd; border-radius: 5px; color: #7a8777; font-size: 10px; }
+.assistant-context { display: flex; align-items: center; gap: 11px; margin: 0 24px 12px; padding: 12px 14px; border: 1px solid #e4eae1; background: #f8faf6; border-radius: 9px; flex-shrink: 0; }
+.assistant-context-icon { color: #78927b; font-size: 21px; }
+.assistant-context > div { flex: 1; min-width: 0; }
+.assistant-context > div > span { display: block; font-size: 10px; color: var(--muted); }
+.assistant-context strong { display: block; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.assistant-context-tag { font-size: 9px; color: #85927d; white-space: nowrap; }
+.assistant-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px 24px 24px; flex: 1; }
+.assistant-welcome { padding: 0 3px 25px; }
+.assistant-welcome-mark { display: grid; place-items: center; width: 50px; height: 50px; background: #eff4e9; border-radius: 16px; color: #729468; font-size: 38px; margin: 3px 0 22px; }
+.assistant-welcome .eyebrow { font-size: 9px; letter-spacing: 1.6px; margin-bottom: 10px; }
+.assistant-welcome h3 { font-size: 23px; line-height: 1.55; font-weight: 600; letter-spacing: -.4px; }
+.assistant-welcome > p:last-child { font-size: 12px; line-height: 1.9; color: var(--muted); margin-top: 12px; }
+.assistant-shortcut-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; color: #667b6c; font-size: 11px; }
+.assistant-shortcut-heading small { font-size: 10px; color: #8b988e; }
+.assistant-shortcuts { display: grid; gap: 9px; }
+.assistant-shortcuts button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 9px; text-align: left; }
+.assistant-shortcuts button:hover { background: #f6faf5; border-color: #b6cdbb; }
+.assistant-task-icon { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 8px; background: #f0f5ed; color: #688260; font-size: 21px; flex-shrink: 0; }
+.assistant-shortcuts button > span:nth-child(2) { flex: 1; }
+.assistant-shortcuts strong { display: block; font-size: 12px; font-weight: 550; }
+.assistant-shortcuts small { display: block; margin-top: 3px; font-size: 10px; color: var(--muted); }
+.assistant-shortcuts button > span:last-child { color: #8b9e8b; }
+.assistant-availability { display: flex; align-items: flex-start; gap: 9px; margin-top: 23px; padding: 13px; border-radius: 8px; background: #faf8f1; color: #908263; font-size: 11px; line-height: 1.8; }
+.assistant-availability strong { display: block; font-weight: 550; color: #807253; margin-bottom: 3px; }
+.assistant-composer { padding: 12px 24px max(16px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); flex-shrink: 0; background: #fff; }
+.assistant-composer-heading { display: flex; justify-content: space-between; align-items: center; font-size: 11px; margin-bottom: 5px; color: #6f8074; }
+.assistant-composer-heading button { font-size: 10px; }
+.assistant-input-box { border: 1px solid #dce5dd; border-radius: 10px; overflow: hidden; }
+.assistant-input-box:focus-within { border-color: #709e7a; box-shadow: 0 0 0 2px #22634c0d; }
+.assistant-input-box textarea { display: block; resize: none; border: 0; border-radius: 0; font-size: 12px; line-height: 1.7; padding: 13px; box-shadow: none; min-height: 85px; }
+.assistant-input-box textarea::placeholder { color: #98a399; }
+.assistant-send-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 0 10px 10px; }
+.assistant-send-row > span { font-size: 10px; color: #8f998e; }
+.assistant-send-row button { padding: 6px 12px; font-size: 11px; cursor: not-allowed; }
+.assistant-draft-note { margin-top: 9px; font-size: 9px; color: #8c998d; line-height: 1.7; }
+@media (min-width: 1001px) and (max-width: 1400px) {
+  .assistant-open .detail-grid { display: flex; flex-direction: column; }
+  .assistant-open .mail-panel, .assistant-open .analysis-panel, .assistant-open .context-panel { width: 100%; }
+  .assistant-open .context-panel { grid-template-columns: 1fr; }
+}
+@media (max-width: 1000px) {
+  body.assistant-open { overflow: hidden; }
+  .assistant-open main { margin-right: 0; }
+  .assistant-panel { width: 100%; border-left: 0; }
+  .assistant-header { padding-top: max(18px, env(safe-area-inset-top)); }
+  .assistant-body { padding-top: 10px; }
+  .assistant-welcome-mark { margin-bottom: 14px; }
+}

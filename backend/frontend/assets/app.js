@@ -1,15 +1,18 @@
 /**
  * 职责：实现员工 Gmail 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：哈希路由、同源 API 和可访问表单；本地自动会话跳过登录页；邮件文本先转义再渲染。
- * 关联：api.js 处理 HTTP；index.html 提供页面骨架；app.css 定义响应式布局。
+ * 关联：api.js 处理 HTTP；assistant.js 管理客户助手占位；index.html 提供骨架；app.css 定义布局。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
- * startGmailAuthorization、pollGmailSync、requestGmailSync、disconnectGmail、openMail、openRegister、loginSubmit、
+ * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、disconnectGmail、openMail、openRegister、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情和方向；
- * signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射。
+ * signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
  */
 import { request, escapeHtml as e } from './api.js';
+import { AssistantPanel } from './assistant.js';
+
+const assistant = new AssistantPanel();
 
 /** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
 const $ = id => document.getElementById(id);
@@ -105,13 +108,23 @@ function renderDimension(key, value) {
 }
 
 /** 功能：渲染客户详情三栏。输入：data 为完整客户响应。输出：无。
- * 逻辑：邮件、同版分析、联系人和评分说明各有独立区域。约束：不展示未实现的发送按钮。 */
+ * 逻辑：邮件、同版分析、联系人和评分说明各有独立区域，绑定助手入口及当前客户上下文。
+ * 约束：助手只编辑临时草稿；既有分析按钮保持原接口与触发条件。 */
 function renderDetail(data) {
   const name = companyName(data), analysis = data.analysis;
   $('detail-crumb').textContent = ' / ' + name;
   $('detail-header').innerHTML = `<a href="#" class="back-link">← 返回我的 Gmail 收件箱</a><div class="detail-title"><div class="avatar large">${e(name.slice(0, 1))}</div><div class="detail-identity"><h1>${e(name)}</h1><p>${e(data.domains.join(' · ') || '公共邮箱 · 按联系人独立归组')} ${pill(data.crm_status === 'registered' ? '已建档' : '未建档', 'subtle')}</p></div><div class="actions"><button id="register" class="secondary">${data.crm_status === 'registered' ? '编辑客户档案' : '建立客户档案'}</button><button id="reanalyze" class="primary">↻ 更新分析</button></div></div><div class="analysis-status">${pill(data.provider === 'rules' ? '规则占位结果' : data.provider === 'agent' ? 'Agent 分析' : '尚无分析', 'green')}<span>${e(jobNames[data.job_status] || '未创建任务')} · ${e(date(data.generated_at))}</span>${data.stale ? pill('上下文已变化，当前展示旧分析', 'warning') : ''}${data.job_error ? `<span class="failure">${e(data.job_error.message)}</span>` : ''}<button id="detail-refresh" class="text-btn">刷新状态</button></div>`;
   $('detail-content').innerHTML = `<div class="detail-grid"><section class="mail-panel"><div class="section-title"><h2>邮件往来 <span class="count-pill">${data.email_count}</span></h2></div><div class="tabs" role="group" aria-label="邮件方向">${[['all', '全部'], ['inbound', '收件'], ['outbound', '发件']].map(([key, label]) => `<button data-direction="${key}" class="${state.direction === key ? 'selected' : ''}">${label}</button>`).join('')}</div><div id="emails"></div></section><section class="analysis-panel"><div class="section-title"><h2>客户画像</h2><span class="muted">基于已有业务事实</span></div>${analysis ? ['industry_context', 'company_ops', 'intent'].map(key => renderDimension(key, analysis.detail_view.profile[key])).join('') : '<div class="empty">分析尚未生成，请更新分析或等待 Agent。</div>'}<div class="section-title analysis-divider"><h2>客户分析</h2></div>${analysis ? ['timeline', 'opportunity', 'risk', 'guidance'].map(key => renderDimension(key, analysis.detail_view.analysis[key])).join('') : ''}${analysis?.detail_view.conflicts.length ? `<div class="missing">事实变化与冲突：${analysis.detail_view.conflicts.map(item => e(item.summary)).join('；')}</div>` : ''}</section><aside class="context-panel"><article class="context-card"><p class="eyebrow">FOLLOW-UP PRIORITY</p><h3>跟进优先级</h3><div class="priority-number">${data.score === null ? '—' : data.score}<span>${data.score === null ? '资料不足，未评分' : '/ 100'}</span></div><p class="fine">${data.provider === 'rules' ? '当前为规则占位分数，用于前后端联调。' : '该分数表示处理优先级。'} 不代表成交概率。</p>${data.score_reasons.map(item => `<p class="score-reason">${e(item.note)}<strong>${item.feature === 'insufficient_data' ? '—' : e(item.contribution)}</strong></p>`).join('')}</article><article class="context-card"><h3>待补充信息</h3><div class="missing-tags">${(analysis?.detail_view?.missing_fields || []).map(text => pill(text, 'warning')).join('') || (analysis ? '<p class="muted">当前分析未列出缺失项</p>' : '<p class="muted">暂未生成缺失项清单</p>')}</div><p class="fine">${e(analysis?.detail_view?.context_completeness?.note || '可从左侧邮件查看原始依据。')}</p></article><article class="context-card"><h3>联系人</h3>${data.contacts.map(contact => `<div class="contact"><strong>${e(contact.contact_name || '姓名待确认')}${contact.is_primary ? ' · 主要联系人' : ''}</strong><span>${e(contact.contact_email)}</span><small>${contact.interaction_count} 封往来</small></div>`).join('')}</article><article class="context-card"><h3>业务记录</h3><p class="muted">工单 ${data.context.tickets.length} · 报价 ${data.context.quotes.length} · 订单 ${data.context.orders.length}</p><p class="fine">只展示后端已有记录。邮件中提到报价，不代表实际已发送报价。</p></article></aside></div>`;
   renderEmails();
+  const assistantButton = document.createElement('button');
+  assistantButton.id = 'assistant-toggle';
+  assistantButton.type = 'button';
+  assistantButton.className = 'secondary assistant-toggle';
+  assistantButton.textContent = '✧ AI 助手';
+  assistantButton.setAttribute('aria-controls', 'assistant-panel');
+  assistantButton.onclick = () => assistant.open();
+  $('detail-header').querySelector('.actions').append(assistantButton);
+  assistant.setContext({ id: data.company_id, name });
   $('register').onclick = openRegister;
   $('reanalyze').onclick = event => busy(event.currentTarget, async () => { await request(`companies/${data.company_id}/analyze/`, { method: 'POST' }); await loadDetail(data.company_id, false); });
   $('detail-refresh').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, false));
@@ -137,9 +150,10 @@ async function loadDetail(id, trigger = true) {
 }
 
 /** 功能：按哈希切换列表和详情。输入：location.hash 隐式状态。输出：无。
- * 逻辑：只接受已知 company 路由，未知路径显示列表。
+ * 逻辑：先解除助手旧上下文，只接受已知 company 路由，未知路径显示列表。
  * 约束：路由错误通过 notice 展示，不伪造空数据。 */
 async function navigate() {
+  assistant.setContext(null);
   $('notice').hidden = true;
   const match = location.hash.match(/^#company\/([\w-]+)$/);
   $('list-page').hidden = Boolean(match); $('detail-page').hidden = !match;
@@ -328,14 +342,14 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：服务端本地自动会话直接进入工作台并隐藏退出；其余匿名访问显示登录页。
+ * 逻辑：服务端本地自动会话直接进入工作台并隐藏退出；匿名访问清空助手草稿并显示登录页。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
   const session = await request('session/');
   $('login-screen').hidden = session.authenticated;
   $('workspace').hidden = !session.authenticated;
   $('logout').hidden = session.debug_auto_login;
-  if (!session.authenticated) return;
+  if (!session.authenticated) { assistant.reset(); return; }
   $('username').textContent = session.username;
   state.runtime = await request('demo/runtime/');
   await loadMailboxes();

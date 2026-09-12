@@ -73,6 +73,47 @@ python tools/check_docs.py common/views.py
 
 自动检查不能核验说明是否真实、默认值是否写对、返回值和异常是否解释完整、关键代码块是否都获得充分解释，也不能证明 Git 提交原子性。参数默认值、类型、返回行为或状态逻辑改变但名称未变时，结构检查可能仍通过，必须人工同步审查。
 
+### 3.1 代码与说明变更检查
+
+在 `SalesMate/backend/` 中执行：
+
+```powershell
+python tools/check_doc_changes.py
+python tools/check_doc_changes.py --staged
+python tools/check_doc_changes.py --base origin/main
+python tools/test_check_doc_changes.py
+```
+
+默认将工作区与 `HEAD` 比较，包含未忽略的新 Python 文件；`--staged` 读取完整暂存 blob，不会用尚未暂存的修正替代提交内容。检查范围仅为 `backend/**/*.py`，包含工具、测试与迁移；不检查 `agent/`、JS/CSS/HTML，不读取 `.env`。与单纯差异检查不同，当前快照中的全部 Python 文件仍须通过现有结构规则。
+
+变更检查会比较函数签名、默认值、类型注解、装饰器、函数体、类属性和模块配置。只改空白、换行或说明不会触发实现变更；嵌套声明独立比较，避免方法修改重复要求修改整个类的说明。限定名称相同的条件声明按出现顺序配对；重命名及新增、删除由当前目录结构检查约束，不推断跨文件移动和调用链影响。
+
+- `ERROR`：确定性的结构、读取或 Git 错误，退出码为 `1`，必须修复。
+- `REVIEW`：实现变化而对应说明未变，需重新核对说明；默认仅提示，不将合法重构自动判为违规。
+- `--fail-on-review`：显式把待复核项也作为门槛，存在待复核项时返回 `2`。不提供自动确认或写入豁免记录。
+- 无结构错误且未启用严格复核时返回 `0`，但始终输出待复核数量和语义未验证提示；CLI 参数错误也按 argparse 返回 `2`，以诊断文本区分。
+
+基准必须是已存在的提交；错误 ref、浅克隆缺历史、无法解码、未解决的暂存冲突和空扫描均失败。首次创建尚无 `HEAD` 的仓库先使用 `check_docs.py`，首个提交后才使用差异入口。Git 命令只读、每次最多 30 秒，失败不重试；检查不会修改源码、索引或提交。
+
+只改注释一个字并不能证明注释已准确更新；没有 `REVIEW` 也不代表自然语言真实、全部异常被说明或全部副作用被验证。修改时仍须同步核对相应注释，涉及行为承诺时运行已有业务测试。本工具增加可定位的复核线索，不替代本规范的语义要求。
+
+### 3.2 提交与 CI 自动触发
+
+仓库根目录的 `.pre-commit-config.yaml` 提供 `backend-docs` 钩子。开发者可用独立工具环境安装，避免修改 Django/Agent 的依赖：
+
+```powershell
+python -m venv .docs-tools/.venv
+.docs-tools/.venv/Scripts/python.exe -m pip install -r backend/requirements/docs.txt
+.docs-tools/.venv/Scripts/python.exe -m pre_commit install
+.docs-tools/.venv/Scripts/python.exe -m pre_commit run backend-docs --all-files
+```
+
+Linux/macOS 使用 `.docs-tools/.venv/bin/python`。环境目录已被 Git 忽略，并放在 backend 外，避免第三方依赖进入全量 Python 注释扫描。pre-commit 配置文件被提交不等于其他协作者已安装钩子；每份克隆都需执行安装。钩子检查暂存区，结构错误阻止提交，待复核项显示在输出中。新增文件必须先 `git add` 才进入暂存检查；检查未暂存内容应使用默认工作区命令。
+
+`.github/workflows/backend-docs.yml` 在 PR、main/master 推送和手动执行时运行：全量结构检查、两个检查器测试及变更提示。PR 比较目标分支基准与测试合并结果；推送比较推送前提交；首次推送和手动执行无变更基准时自比较，仅保证结构检查。工作流不使用路径过滤，避免必需检查长时间等待；检查内容仍只限 backend Python。
+
+若希望远程强制执行，须在 GitHub 分支规则中将 `backend-docs` 配置为必需检查。仅添加工作流不会自动开启分支保护，也不能阻止有绕过权限的操作。本地钩子可被绕过，CI 是独立的再次校验；当前未接入模型服务，不自动上传代码进行语义审查。
+
 ## 4. 同步修改与交付
 
 一次逻辑修改同时完成实现、声明说明、文件顶部索引及相关接口文档更新。删除实现后搜索旧符号并清理失效说明。交付前逐项核对功能、输入输出、实现依据、状态与副作用，运行文档检查和适用于变更的业务测试。

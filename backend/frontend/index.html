@@ -1,14 +1,14 @@
 <!doctype html>
 <!-- 职责：提供 SalesMate 同源工作台的语义化页面骨架与对话框。
-实现：app.js 根据会话和后端状态渲染列表、详情，CSS 负责响应式布局。
+实现：app.js 根据会话和后端状态渲染列表、详情；assistant.js 管理助手占位侧栏，CSS 负责响应式布局。
 关联：Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
-目录：无函数或类；gmail-dialog 管理当前员工 Gmail 授权，其余表单负责筛选、模拟邮件和建档。
-变量索引：无脚本变量；所有标识符为 DOM 定位用途。 -->
+目录：无函数或类；gmail-dialog 管理员工 Gmail 授权，assistant-panel 预留客户对话区，其余表单负责筛选、模拟邮件和建档。
+变量索引：无脚本变量；所有标识符为 DOM 定位用途；静态资源 v 查询参数标识本次界面版本，避免复用旧缓存。 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light"><title>SalesMate · 客户工作台</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=20260912-assistant">
 </head>
 <body>
   <div id="notice" role="alert" hidden></div>
@@ -32,5 +32,27 @@
   <dialog id="gmail-dialog"><div class="dialog-heading"><div><p class="eyebrow">GMAIL CONNECTION</p><h2>连接员工 Google 邮箱</h2></div><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><p class="muted">授权后，SalesMate 只读取当前登录员工选择的 Gmail 邮件，用于客户归组与分析。</p><div class="permission-card"><span class="gmail-logo">M</span><div><strong>只读 Gmail 邮件</strong><p>权限：gmail.readonly，不会代替员工发送或删除邮件。</p></div></div><div id="gmail-accounts" class="gmail-accounts"></div><button id="gmail-authorize" class="primary wide-button" type="button"><span class="gmail-logo inverse">M</span> 使用 Google 账号授权</button><p class="fine">授权完成后会自动请求首次同步。当前 MVP 由一次性 Agent 命令处理队列，页面会显示等待、同步中或完成状态。</p></dialog>
   <dialog id="mail-dialog"><form id="mail-form"><div class="dialog-heading"><div><p class="eyebrow">SIMULATED MESSAGE</p><h2>模拟一封客户来信</h2></div><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><p class="muted">此操作只写入标记为合成样例的邮件，不会收发真实 Gmail。</p><label>业务邮箱<select name="mailbox_id" required></select></label><label>客户邮箱<input name="sender" type="email" placeholder="lin@aurora.example" required></label><label>主题<input name="subject" required placeholder="关于检测设备的预算调整"></label><label>邮件正文<textarea name="body_text" rows="9" required placeholder="公司：示例公司&#10;行业：光学检测&#10;需求：采购检测设备&#10;数量：12 台&#10;预算：上限 30 万&#10;交期：希望下月交付&#10;决策流程：技术总监审批"></textarea></label><p class="fine">当前规则识别“公司、联系人、职位、行业、需求、数量、预算、交期、决策流程、顾虑”等带冒号的行。其他内容仍保存原文。</p><button type="submit" class="primary">保存邮件并分析 →</button></form></dialog>
   <dialog id="register-dialog"><form id="register-form"><div class="dialog-heading"><h2>建立客户档案</h2><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><label>公司名称<input name="company_name" required></label><label>已确认行业<select name="industry_from_crm"><option value="unknown">尚未确认</option><option>半导体检测</option><option>精密量测</option><option>光学检测</option><option>工业检测</option></select></label><label>员工人数<input name="employee_count" type="number" min="0" placeholder="未知可留空"></label><label>人数来源<input name="employee_count_source" placeholder="例如：客户确认；未知可留空"></label><button class="primary" type="submit">保存客户档案</button></form></dialog>
-  <script type="module" src="/static/app.js"></script>
+  <aside id="assistant-panel" class="assistant-panel" role="complementary" aria-labelledby="assistant-title" hidden>
+    <header class="assistant-header">
+      <div class="assistant-heading"><span class="assistant-mark" aria-hidden="true">✧</span><div><h2 id="assistant-title">AI 助手</h2><span class="assistant-development">开发中</span></div></div>
+      <button id="assistant-close" class="icon-btn" type="button" aria-label="收起 AI 助手" title="收起（Esc）">×</button>
+    </header>
+    <div class="assistant-context"><span class="assistant-context-icon" aria-hidden="true">▤</span><div><span>当前客户</span><strong id="assistant-company">请先打开客户详情</strong></div><span class="assistant-context-tag">独立草稿</span></div>
+    <div class="assistant-body">
+      <section class="assistant-welcome" aria-label="助手介绍"><span class="assistant-welcome-mark" aria-hidden="true">✧</span><p class="eyebrow">YOUR NEXT CONVERSATION</p><h3>围绕这位客户，<br>一起想清楚下一步。</h3><p>这里将支持结合邮件与客户资料的对话，帮助你梳理需求、准备回复和推进跟进。</p></section>
+      <div class="assistant-shortcut-heading"><span>从一个问题开始</span><small>点击填入草稿</small></div>
+      <div id="assistant-shortcuts" class="assistant-shortcuts">
+        <button type="button" data-assistant-prompt="请总结这位客户的需求，并列出需要进一步确认的信息。"><span class="assistant-task-icon" aria-hidden="true">≡</span><span><strong>总结客户需求</strong><small>梳理重点与待确认信息</small></span><span aria-hidden="true">↗</span></button>
+        <button type="button" data-assistant-prompt="请结合这位客户的邮件，起草一封供我审核的回复。"><span class="assistant-task-icon" aria-hidden="true">✎</span><span><strong>起草回复</strong><small>准备一份可审核的邮件草稿</small></span><span aria-hidden="true">↗</span></button>
+        <button type="button" data-assistant-prompt="请分析这位客户的跟进风险，并建议下一步行动。"><span class="assistant-task-icon" aria-hidden="true">↗</span><span><strong>建议下一步</strong><small>明确风险与跟进方向</small></span><span aria-hidden="true">↗</span></button>
+      </div>
+      <div class="assistant-availability"><span aria-hidden="true">◷</span><p><strong>助手功能正在开发中</strong>开放后，对话回复、工具执行进度与结果将在这里展示。目前仅可编辑草稿，不会发送或执行任务。</p></div>
+    </div>
+    <form id="assistant-form" class="assistant-composer">
+      <div class="assistant-composer-heading"><label for="assistant-input">消息草稿</label><button id="assistant-clear" class="text-btn" type="button">清空草稿</button></div>
+      <div class="assistant-input-box"><textarea id="assistant-input" rows="3" placeholder="想为这位客户做些什么？" aria-describedby="assistant-unavailable assistant-draft-note"></textarea><div class="assistant-send-row"><span id="assistant-unavailable">发送功能尚未开放</span><button class="primary" type="submit" disabled>发送 ↑</button></div></div>
+      <p id="assistant-draft-note" class="assistant-draft-note" role="status">草稿仅保留在当前页面，刷新后清空。</p>
+    </form>
+  </aside>
+  <script type="module" src="/static/app.js?v=20260912-assistant"></script>
 </body></html>

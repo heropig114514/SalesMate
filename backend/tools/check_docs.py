@@ -13,6 +13,7 @@
 - sections：解析固定标题的结构化说明。
 - check_index：校验索引格式、重复、缺失及失效条目。
 - declaration_doc：读取声明前注释，或声明自身的 docstring。
+- check_source：检查源码文本，供工作区及 Git 快照使用同一结构规则。
 - check_file：检查单文件并返回全部可定位的问题。
 - main：解析路径、扫描文件、报告问题并返回退出码。
 
@@ -169,15 +170,27 @@ def declaration_doc(node, lines):
 # 功能：验证一个 Python 文件的说明结构及符号同步情况。
 # 输入：`path` 为待检查文件的 Path。
 # 输出：包含文件路径和行号的问题列表；无问题时为空。
-# 逻辑：只读解析源码，核对模块标题、两个索引、声明标题及输入参数名称。
+# 逻辑：按源码编码只读文件，委托 check_source 核对说明，保证 Git 快照使用同一规则。
 # 约束：读取、编码或语法错误均明确报错；不导入模块，不检查自然语言真实性或 Git 原子性。
 def check_file(path):
     try:
         with tokenize.open(path) as source_file:
             source = source_file.read()
-        tree = ast.parse(source, filename=str(path))
     except (OSError, UnicodeError, SyntaxError, LookupError) as exc:
         return [f"{path}:{getattr(exc, 'lineno', None) or 1}: 无法读取或解析源码（{type(exc).__name__}）；检查编码、权限和语法"]
+    return check_source(source, path)
+
+
+# 功能：验证内存源码的说明结构与实际声明是否一致。
+# 输入：`source` 为解码后的 Python 源码；`path` 为仅用于错误定位的文件标签。
+# 输出：可定位的问题列表，空列表表示结构检查通过。
+# 逻辑：静态解析 AST，核对模块索引、声明标题及输入参数；不读取标签对应的文件。
+# 约束：源码不会被执行；语法错误返回诊断，说明真实性与 Git 原子性不在本检查范围。
+def check_source(source, path):
+    try:
+        tree = ast.parse(source, filename=str(path))
+    except (SyntaxError, ValueError) as exc:
+        return [f"{path}:{getattr(exc, 'lineno', None) or 1}: 无法解析源码（{type(exc).__name__}）"]
 
     inventory = Inventory()
     # 推导式的迭代变量不会泄露到模块或类命名空间；扫描其余 AST 保留原始行号。

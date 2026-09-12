@@ -1,0 +1,16 @@
+# 职责：提交前检查 backend Python 暂存快照。
+# 实现：本地 Python hook 执行统一检查器，错误阻断，语义复核项仅提示。
+# 关联：backend/tools/check_doc_changes.py；需执行 pre-commit install 激活。
+# 目录：backend-docs 暂存区检查钩子；无函数或类。
+# 变量索引：entry 为检查入口；pass_filenames 禁用逐文件传参以检查完整暂存快照。
+repos:
+  - repo: local
+    hooks:
+      - id: backend-docs
+        name: backend documentation (staged snapshot)
+        entry: python backend/tools/check_doc_changes.py --staged
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+        stages: [pre-commit]
