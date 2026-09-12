@@ -1,0 +1,2 @@
+-r base.txt
+# Tests currently use Django's built-in test runner; no extra test dependencies.

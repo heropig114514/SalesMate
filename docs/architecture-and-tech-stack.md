@@ -1,8 +1,8 @@
 # SalesMate 架构与技术选型（暂定）
 
-更新日期：2026-09-10
+更新日期：2026-09-12
 
-状态：讨论稿，记录当前选型方向；不代表功能已经实现、依赖已经安装或版本已经锁定。
+状态：架构方向与后续扩展规划。当前已实现 Django/PostgreSQL 邮件业务闭环、原生同源前端和显式规则占位；业务集中于 crm app，内部以服务文件分工。实际接口见 [API 契约](api-contract.md)，占位替换见 [Agent 接入](agent-integration.md)。后续 RAG 与复杂助手尚未引入。
 
 ## 1. 目标与范围
 
@@ -10,7 +10,7 @@
 
 当前邮件理解流程是开发基础。知识库、行业资讯、右栏助手、翻译、真实发送及发送后的商机写回，仍需团队确认本期范围和负责人；记录相关技术方案不等于将这些功能全部纳入 MVP。
 
-需求依据为 [SalesMate MVP 产品功能文档（0909 更新）](https://docs.google.com/document/d/1IG0NtzszF1-RVtFgIuH_4KKTUuhKrehARNn_H6gt3aQ/edit) 及团队提供的《邮件理解 Agent · 模块设计》v1.11。后者目前未收录到本仓库，不将本机路径作为团队文档链接。
+需求依据为 [SalesMate MVP 产品功能文档（0909 更新）](https://docs.google.com/document/d/1IG0NtzszF1-RVtFgIuH_4KKTUuhKrehARNn_H6gt3aQ/edit) 及团队提供的《邮件理解 Agent · 模块设计》v1.11。两者及早期技术方案的本地摘要已收录到[项目参考总览](project-reference.md)，可离线阅读；摘要不替代原文及后续接口契约。
 
 ## 2. 总体架构
 
@@ -40,6 +40,7 @@ Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如
 |---|---|---|
 | 业务框架 | Django 5.2 LTS，使用实施时适用的补丁版本 | 第一阶段：模型、迁移、业务逻辑、用户与管理后台 |
 | API | Django REST Framework（DRF） | 第一阶段：面向前端与 Agent 的接口、输入校验和权限 |
+| 框架辅助 | django-environ、drf-spectacular、Uvicorn | 已引入：环境配置读取、OpenAPI 生成和本地 ASGI 启动 |
 | 业务数据库 | PostgreSQL | 第一阶段：邮件、客户、商机、版本、分析结果和 Job |
 | Agent 运行 | 独立 Python 服务 | 第一阶段：沿用 Agent 主动领取任务的 Pull 模式 |
 | Agent 编排 | 固定流程先用普通 Python；复杂助手拟用 LangGraph | 多轮对话、工具选择、持久化步骤及等待人工确认时引入 |
@@ -50,13 +51,16 @@ Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如
 | 原文件存储 | S3 兼容对象存储，服务商待定 | 知识库或文件生成功能启用时：保存原文件、附件和产物 |
 | 后台文档处理 | Celery + Redis | 文档解析和向量生成等后台工作启用时引入 |
 | Agent 可观测性 | Langfuse | 模型联调阶段：跟踪模型、检索和工具调用，检查耗时、费用与质量 |
-| 开发部署 | Docker Compose + Linux 容器 | 统一后端、数据库、Agent 与后续 Worker 的运行环境 |
+| 本地开发 | D 盘 Conda 环境 + 本地 PostgreSQL/pgvector | 当前本地 PostgreSQL 16 与迁移已完成 |
+| 后续部署 | Docker Compose + Linux 容器 | 首个可运行后端版本完成后验证打包，部署阶段统一运行环境 |
 
-Python、PostgreSQL、扩展库及容器镜像的具体版本，在实施前完成兼容性验证并锁定。Langfuse 的托管或自建方式尚未确定；自建资源需求需另行评估。
+本机已验证的 Python 与基础库版本见[本地开发环境](local-development.md)。PostgreSQL、后续扩展库及容器镜像的具体版本，在实施前完成兼容性验证并锁定。Langfuse 的托管或自建方式尚未确定；自建资源需求需另行评估。
 
 ## 4. 后端功能模块
 
 建议按业务职责组织 Django app，以下为初始划分。
+
+目录布局、模块内部文件职责和三方接口文件约定见[项目目录与文件规划](project-structure.md)。规划中的目录按功能逐步创建，不预先生成大量空模块。
 
 | 模块 | 职责 |
 |---|---|
@@ -81,7 +85,7 @@ Python、PostgreSQL、扩展库及容器镜像的具体版本，在实施前完�
 5. Agent 完成 L2 归并、L3 分析与 L4 评分，提交结果并回报任务状态。
 6. 前端通过后端查询接口获取结果与处理状态。
 
-Job 表是邮件理解任务状态的权威来源。后端负责原子领取、领取凭证、租约校验和防止过期任务覆盖新结果；具体协议需在联调前确定。重试次数、退避与失败处理必须显式约定，不加入隐式回退。
+Job 表是邮件理解任务状态的权威来源。后端负责原子领取、领取凭证、租约校验和防止过期任务覆盖新结果；HTTP 版本、领取凭证和失败语义已在 api-contract.md 固化，待与团队 Agent 实际联调。重试次数、退避与失败处理必须显式约定，不加入隐式回退。
 
 Celery + Redis 用于后续文档处理等单独任务，不再次派发同一份邮件分析 Job。LangGraph 管理 Agent 内部执行步骤，也不替代后端的业务任务状态与操作权限。
 
@@ -132,6 +136,7 @@ Embedding 模型、维度、分块策略和检索参数在评测后确定并版�
 - 令牌、密钥不进入日志；邮件正文和客户资料只记录诊断所需内容，接入外部追踪服务前明确发送范围。
 - Windows 开发环境中的 Celery Worker 使用 Linux 容器或 WSL2；Celery 官方不支持原生 Windows。
 - LangGraph 的暂停状态不等于业务操作已获批准；实际发送和写回仍由后端验证具体动作及版本。
+- 当前使用本地 Conda + WSL PostgreSQL 开发；前端为 Django 同源的原生 HTML/CSS/JavaScript；连接配置通过环境变量读取，路径避免写死 Windows 盘符。后续容器按锁定依赖重新安装 Python 环境，不直接复制 Windows Conda 环境。
 
 ## 8. 分阶段引入
 

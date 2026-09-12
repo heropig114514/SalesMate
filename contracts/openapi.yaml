@@ -1,0 +1,1722 @@
+openapi: 3.0.3
+info:
+  title: SalesMate Backend API
+  version: 0.2.0
+  description: SalesMate Gmail understanding contract, company workspace and explicit
+    rule placeholder.
+paths:
+  /api/v1/accounts/me/:
+    get:
+      operationId: v1_accounts_me_retrieve
+      description: Return the current session user. Team and mailbox access rules
+        are not implemented yet.
+      tags:
+      - accounts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+          description: ''
+  /api/v1/agent/analyses/:
+    post:
+      operationId: v1_agent_analyses_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: header
+        name: X-Job-ID
+        schema:
+          type: string
+        required: true
+      - in: header
+        name: X-Lease-Token
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Analysis'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Analysis'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Analysis'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Analysis'
+          description: ''
+  /api/v1/agent/analysis-inputs/:
+    post:
+      operationId: v1_agent_analysis_inputs_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: header
+        name: X-Job-ID
+        schema:
+          type: string
+        required: true
+      - in: header
+        name: X-Lease-Token
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisInput'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AnalysisInput'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AnalysisInput'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisInput'
+          description: ''
+  /api/v1/agent/cached-analysis/:
+    get:
+      operationId: v1_agent_cached_analysis_retrieve
+      parameters:
+      - in: query
+        name: analysis_prompt_version
+        schema:
+          type: string
+      - in: query
+        name: company_id
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: input_version
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CachedAnalysisResponse'
+          description: ''
+  /api/v1/agent/context/:
+    get:
+      operationId: v1_agent_context_retrieve
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: company_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyContextResponse'
+          description: ''
+  /api/v1/agent/emails/:
+    post:
+      operationId: v1_agent_emails_create
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmailSubmission'
+          application/x-www-form-urlencoded:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmailSubmission'
+          multipart/form-data:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/EmailSubmission'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubmissionResult'
+          description: ''
+  /api/v1/agent/facts/:
+    post:
+      operationId: v1_agent_facts_create
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactsResubmission'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FactsResubmission'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FactsResubmission'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent/failed-extractions/:
+    get:
+      operationId: v1_agent_failed_extractions_retrieve
+      parameters:
+      - in: query
+        name: dedupe_key
+        schema:
+          type: string
+      - in: query
+        name: mailbox_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - type: array
+                  items:
+                    type: string
+                - type: object
+          description: ''
+  /api/v1/agent/grouping/:
+    get:
+      operationId: v1_agent_grouping_retrieve
+      parameters:
+      - in: query
+        name: company_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupingResponse'
+          description: ''
+  /api/v1/agent/jobs/claim/:
+    post:
+      operationId: v1_agent_jobs_claim_create
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Claim'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Claim'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Claim'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobResponse'
+          description: ''
+  /api/v1/agent/jobs/report/:
+    post:
+      operationId: v1_agent_jobs_report_create
+      parameters:
+      - in: header
+        name: X-Lease-Token
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobReport'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/JobReport'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/JobReport'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent/latest-analysis-input/:
+    get:
+      operationId: v1_agent_latest_analysis_input_retrieve
+      parameters:
+      - in: query
+        name: company_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisInput'
+          description: ''
+  /api/v1/agent/scores/:
+    post:
+      operationId: v1_agent_scores_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: header
+        name: X-Job-ID
+        schema:
+          type: string
+        required: true
+      - in: header
+        name: X-Lease-Token
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Score'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Score'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Score'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Score'
+          description: ''
+  /api/v1/agent/sync-state/:
+    get:
+      operationId: v1_agent_sync_state_retrieve
+      parameters:
+      - in: query
+        name: mailbox_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - agent
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncState'
+          description: ''
+  /api/v1/agent/sync-state-save/:
+    post:
+      operationId: v1_agent_sync_state_save_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      tags:
+      - agent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncState'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SyncState'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SyncState'
+        required: true
+      security:
+      - agentCredential: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncState'
+          description: ''
+  /api/v1/companies/:
+    get:
+      operationId: companies_list
+      parameters:
+      - in: query
+        name: crm_status
+        schema:
+          type: string
+      - in: query
+        name: industry
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: string
+      - in: query
+        name: page_size
+        schema:
+          type: string
+      - in: query
+        name: q
+        schema:
+          type: string
+      - in: query
+        name: signal
+        schema:
+          type: string
+      - in: query
+        name: size_band
+        schema:
+          type: string
+      tags:
+      - companies
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/companies/{id}/:
+    get:
+      operationId: companies_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 company 的 UUID 字符串。
+        required: true
+      tags:
+      - companies
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/companies/{id}/analyze/:
+    post:
+      operationId: v1_companies_analyze_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 company 的 UUID 字符串。
+        required: true
+      tags:
+      - companies
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/companies/{id}/register/:
+    post:
+      operationId: v1_companies_register_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 company 的 UUID 字符串。
+        required: true
+      tags:
+      - companies
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Register'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Register'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Register'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/demo/email/:
+    post:
+      operationId: v1_demo_email_create
+      tags:
+      - demo
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Simulate'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Simulate'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Simulate'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubmissionResult'
+          description: ''
+  /api/v1/demo/runtime/:
+    get:
+      operationId: v1_demo_runtime_retrieve
+      tags:
+      - demo
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/demo/seed/:
+    post:
+      operationId: v1_demo_seed_create
+      tags:
+      - demo
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/health/live/:
+    get:
+      operationId: v1_health_live_retrieve
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+          description: ''
+  /api/v1/health/ready/:
+    get:
+      operationId: v1_health_ready_retrieve
+      description: Check a PostgreSQL round trip. Does not verify migrations or the
+        vector extension.
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+          description: ''
+  /api/v1/mailboxes/:
+    get:
+      operationId: v1_mailboxes_list
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MailboxResponse'
+          description: ''
+    post:
+      operationId: v1_mailboxes_create
+      tags:
+      - mailboxes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Mailbox'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Mailbox'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Mailbox'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/session/:
+    get:
+      operationId: v1_session_retrieve
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: v1_session_create
+      tags:
+      - session
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Login'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Login'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Login'
+        required: true
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    delete:
+      operationId: v1_session_destroy
+      tags:
+      - session
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '204':
+          description: No response body
+components:
+  schemas:
+    Analysis:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        input_version:
+          type: string
+          maxLength: 160
+        analysis_prompt_version:
+          type: string
+          maxLength: 100
+        generated_at:
+          type: string
+          format: date-time
+        analysis_base_time:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/AnalysisStatusEnum'
+        list_view:
+          allOf:
+          - $ref: '#/components/schemas/ListView'
+          nullable: true
+        detail_view:
+          allOf:
+          - $ref: '#/components/schemas/Detail'
+          nullable: true
+        missing_fields:
+          type: array
+          items:
+            type: string
+        context_completeness:
+          type: object
+          additionalProperties: {}
+        error:
+          type: object
+          additionalProperties: {}
+          nullable: true
+      required:
+      - analysis_base_time
+      - analysis_prompt_version
+      - company_id
+      - detail_view
+      - generated_at
+      - input_version
+      - list_view
+      - status
+    AnalysisInput:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        input_version:
+          type: string
+          maxLength: 160
+        merge_version:
+          type: string
+          maxLength: 100
+        external_snapshot_version:
+          type: string
+        built_at:
+          type: string
+          format: date-time
+        member_dedupe_keys:
+          type: array
+          items:
+            type: string
+        unparsed_message_count:
+          type: integer
+          minimum: 0
+        facts:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              additionalProperties: {}
+        metrics:
+          type: object
+          additionalProperties: {}
+      required:
+      - built_at
+      - company_id
+      - external_snapshot_version
+      - facts
+      - input_version
+      - member_dedupe_keys
+      - merge_version
+      - metrics
+      - unparsed_message_count
+    AnalysisStatusEnum:
+      enum:
+      - completed
+      - failed
+      type: string
+      description: |-
+        * `completed` - completed
+        * `failed` - failed
+    ApiError:
+      type: object
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+        request_id:
+          type: string
+          nullable: true
+      required:
+      - error
+      - request_id
+    CachedAnalysisResponse:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        input_version:
+          type: string
+        analysis_prompt_version:
+          type: string
+          nullable: true
+        generated_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        hit:
+          type: boolean
+      required:
+      - analysis_prompt_version
+      - company_id
+      - generated_at
+      - hit
+      - input_version
+      - status
+    Claim:
+      type: object
+      properties:
+        limit:
+          type: integer
+          maximum: 50
+          minimum: 1
+        lease_seconds:
+          type: integer
+          maximum: 600
+          minimum: 10
+      required:
+      - lease_seconds
+      - limit
+    CompanyContextResponse:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        external_snapshot_version:
+          type: string
+        emails:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmailSubmission'
+        customer:
+          type: object
+          additionalProperties: {}
+        tickets:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        quotes:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        orders:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+      required:
+      - company_id
+      - customer
+      - emails
+      - external_snapshot_version
+      - orders
+      - quotes
+      - tickets
+    ConfidenceEnum:
+      enum:
+      - low
+      - medium
+      - high
+      type: string
+      description: |-
+        * `low` - low
+        * `medium` - medium
+        * `high` - high
+    Conflict:
+      type: object
+      properties:
+        field:
+          $ref: '#/components/schemas/FieldEnum'
+        kind:
+          $ref: '#/components/schemas/KindEnum'
+        summary:
+          type: string
+        source_refs:
+          type: array
+          items:
+            type: string
+          minItems: 2
+      required:
+      - field
+      - kind
+      - source_refs
+      - summary
+    CrmStatusEnum:
+      enum:
+      - registered
+      - unregistered
+      type: string
+      description: |-
+        * `registered` - registered
+        * `unregistered` - unregistered
+    CurrentUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        username:
+          type: string
+          readOnly: true
+          title: 用户名
+          description: 必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。
+        first_name:
+          type: string
+          readOnly: true
+          title: 名字
+        last_name:
+          type: string
+          readOnly: true
+          title: 姓氏
+      required:
+      - first_name
+      - id
+      - last_name
+      - username
+    Detail:
+      type: object
+      properties:
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conflict'
+        profile:
+          $ref: '#/components/schemas/Profile'
+        analysis:
+          $ref: '#/components/schemas/Dimensions'
+      required:
+      - analysis
+      - conflicts
+      - profile
+    Dimension:
+      type: object
+      properties:
+        facts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+        inferences:
+          type: array
+          items:
+            $ref: '#/components/schemas/Inference'
+        missing_fields:
+          type: array
+          items:
+            type: string
+      required:
+      - facts
+      - inferences
+      - missing_fields
+    Dimensions:
+      type: object
+      properties:
+        timeline:
+          $ref: '#/components/schemas/Dimension'
+        opportunity:
+          $ref: '#/components/schemas/Dimension'
+        risk:
+          $ref: '#/components/schemas/Dimension'
+        guidance:
+          $ref: '#/components/schemas/Dimension'
+      required:
+      - guidance
+      - opportunity
+      - risk
+      - timeline
+    DirectionEnum:
+      enum:
+      - inbound
+      - outbound
+      type: string
+      description: |-
+        * `inbound` - inbound
+        * `outbound` - outbound
+    EmailSubmission:
+      type: object
+      properties:
+        dedupe_key:
+          type: string
+          maxLength: 400
+        mailbox_id:
+          type: string
+          format: uuid
+        gmail_message_id:
+          type: string
+          maxLength: 200
+        thread_id:
+          type: string
+          maxLength: 200
+        to:
+          type: array
+          items:
+            type: string
+            format: email
+        cc:
+          type: array
+          items:
+            type: string
+            format: email
+        sent_at:
+          type: string
+          format: date-time
+        received_at:
+          type: string
+          format: date-time
+        subject:
+          type: string
+          maxLength: 1000
+        body_text:
+          type: string
+          maxLength: 200000
+        direction:
+          $ref: '#/components/schemas/DirectionEnum'
+        source:
+          $ref: '#/components/schemas/SourceEnum'
+        contact_email:
+          type: string
+          format: email
+        non_business_hint:
+          type: boolean
+        non_business_reason:
+          type: string
+          nullable: true
+        extract_status:
+          $ref: '#/components/schemas/EmailSubmissionExtractStatusEnum'
+        extract_prompt_version:
+          type: string
+          maxLength: 100
+        extract_error:
+          type: string
+          nullable: true
+        facts:
+          nullable: true
+        from:
+          type: string
+          format: email
+      required:
+      - body_text
+      - cc
+      - contact_email
+      - dedupe_key
+      - direction
+      - extract_error
+      - extract_prompt_version
+      - extract_status
+      - facts
+      - from
+      - gmail_message_id
+      - mailbox_id
+      - non_business_hint
+      - non_business_reason
+      - received_at
+      - sent_at
+      - source
+      - subject
+      - thread_id
+      - to
+    EmailSubmissionExtractStatusEnum:
+      enum:
+      - completed
+      - failed
+      - skipped_non_business
+      type: string
+      description: |-
+        * `completed` - completed
+        * `failed` - failed
+        * `skipped_non_business` - skipped_non_business
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+        detail: {}
+      required:
+      - code
+      - detail
+    Evidence:
+      type: object
+      properties:
+        text:
+          type: string
+        source_refs:
+          type: array
+          items:
+            type: string
+      required:
+      - source_refs
+      - text
+    FactsResubmission:
+      type: object
+      properties:
+        dedupe_key:
+          type: string
+        extract_prompt_version:
+          type: string
+          maxLength: 100
+        extract_status:
+          $ref: '#/components/schemas/FactsResubmissionExtractStatusEnum'
+        extract_error:
+          type: string
+          nullable: true
+        facts: {}
+      required:
+      - dedupe_key
+      - extract_error
+      - extract_prompt_version
+      - extract_status
+      - facts
+    FactsResubmissionExtractStatusEnum:
+      enum:
+      - completed
+      type: string
+      description: '* `completed` - completed'
+    Feature:
+      type: object
+      properties:
+        value:
+          oneOf:
+          - type: integer
+            minimum: 0
+            maximum: 3
+          - type: string
+            enum:
+            - unknown
+        basis:
+          type: string
+      required:
+      - basis
+      - value
+    Features:
+      type: object
+      properties:
+        demand_clarity:
+          $ref: '#/components/schemas/Feature'
+        urgency:
+          $ref: '#/components/schemas/Feature'
+        decision_visibility:
+          $ref: '#/components/schemas/Feature'
+      required:
+      - decision_visibility
+      - demand_clarity
+      - urgency
+    FieldEnum:
+      enum:
+      - contact_name
+      - contact_title
+      - company_self_reported
+      - business_background
+      - employee_scale_hint
+      - product_need
+      - quantity
+      - budget
+      - delivery_time
+      - decision_process
+      - concerns
+      - quote_reference
+      - order_reference
+      type: string
+      description: |-
+        * `contact_name` - contact_name
+        * `contact_title` - contact_title
+        * `company_self_reported` - company_self_reported
+        * `business_background` - business_background
+        * `employee_scale_hint` - employee_scale_hint
+        * `product_need` - product_need
+        * `quantity` - quantity
+        * `budget` - budget
+        * `delivery_time` - delivery_time
+        * `decision_process` - decision_process
+        * `concerns` - concerns
+        * `quote_reference` - quote_reference
+        * `order_reference` - order_reference
+    GroupingResponse:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        company_name:
+          type: string
+          nullable: true
+        crm_status:
+          $ref: '#/components/schemas/CrmStatusEnum'
+        domains:
+          type: array
+          items:
+            type: string
+        contacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        member_dedupe_keys:
+          type: array
+          items:
+            type: string
+      required:
+      - company_id
+      - company_name
+      - contacts
+      - crm_status
+      - domains
+      - member_dedupe_keys
+    IndustryEnum:
+      enum:
+      - 半导体检测
+      - 精密量测
+      - 光学检测
+      - 工业检测
+      - unknown
+      type: string
+      description: |-
+        * `半导体检测` - 半导体检测
+        * `精密量测` - 精密量测
+        * `光学检测` - 光学检测
+        * `工业检测` - 工业检测
+        * `unknown` - unknown
+    Inference:
+      type: object
+      properties:
+        text:
+          type: string
+        source_refs:
+          type: array
+          items:
+            type: string
+        basis:
+          type: string
+        confidence:
+          $ref: '#/components/schemas/ConfidenceEnum'
+      required:
+      - basis
+      - confidence
+      - source_refs
+      - text
+    JobReport:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/JobReportStatusEnum'
+        input_version:
+          type: string
+          nullable: true
+        produced:
+          type: object
+          additionalProperties: {}
+        error:
+          type: object
+          additionalProperties: {}
+          nullable: true
+        duration_ms:
+          type: integer
+          minimum: 0
+      required:
+      - duration_ms
+      - error
+      - input_version
+      - job_id
+      - produced
+      - status
+    JobReportStatusEnum:
+      enum:
+      - completed
+      - failed
+      - skipped
+      type: string
+      description: |-
+        * `completed` - completed
+        * `failed` - failed
+        * `skipped` - skipped
+    JobResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        trigger:
+          type: string
+        payload:
+          type: object
+          additionalProperties: {}
+        enqueued_at:
+          type: string
+          format: date-time
+        attempt:
+          type: integer
+          minimum: 1
+        lease_until:
+          type: string
+          format: date-time
+        lease_token:
+          type: string
+          format: uuid
+        expected_version:
+          type: integer
+          minimum: 0
+      required:
+      - attempt
+      - enqueued_at
+      - expected_version
+      - job_id
+      - lease_token
+      - lease_until
+      - payload
+      - trigger
+    KindEnum:
+      enum:
+      - value_changed
+      - source_disagree
+      type: string
+      description: |-
+        * `value_changed` - value_changed
+        * `source_disagree` - source_disagree
+    ListView:
+      type: object
+      properties:
+        signal:
+          $ref: '#/components/schemas/SignalEnum'
+        signal_evidence:
+          type: object
+          additionalProperties: {}
+        ticket_signals:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        industry:
+          $ref: '#/components/schemas/IndustryEnum'
+        industry_evidence:
+          type: object
+          additionalProperties: {}
+        size_band:
+          $ref: '#/components/schemas/SizeBandEnum'
+        size_source:
+          type: string
+        headline_summary:
+          type: string
+        score_features:
+          $ref: '#/components/schemas/Features'
+      required:
+      - headline_summary
+      - industry
+      - industry_evidence
+      - score_features
+      - signal
+      - signal_evidence
+      - size_band
+      - size_source
+      - ticket_signals
+    Liveness:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/LivenessStatusEnum'
+        service:
+          type: string
+      required:
+      - service
+      - status
+    LivenessStatusEnum:
+      enum:
+      - ok
+      type: string
+      description: '* `ok` - ok'
+    Login:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          writeOnly: true
+      required:
+      - password
+      - username
+    Mailbox:
+      type: object
+      properties:
+        address:
+          type: string
+          format: email
+      required:
+      - address
+    MailboxResponse:
+      type: object
+      properties:
+        mailbox_id:
+          type: string
+          format: uuid
+        address:
+          type: string
+          format: email
+        sync_state:
+          $ref: '#/components/schemas/SyncState'
+      required:
+      - address
+      - mailbox_id
+      - sync_state
+    Profile:
+      type: object
+      properties:
+        industry_context:
+          $ref: '#/components/schemas/Dimension'
+        company_ops:
+          $ref: '#/components/schemas/Dimension'
+        intent:
+          $ref: '#/components/schemas/Dimension'
+      required:
+      - company_ops
+      - industry_context
+      - intent
+    Readiness:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/ReadinessStatusEnum'
+        database:
+          $ref: '#/components/schemas/ReadinessStatusEnum'
+      required:
+      - database
+      - status
+    ReadinessStatusEnum:
+      enum:
+      - ok
+      - unavailable
+      type: string
+      description: |-
+        * `ok` - ok
+        * `unavailable` - unavailable
+    Register:
+      type: object
+      properties:
+        company_name:
+          type: string
+          maxLength: 240
+        industry_from_crm:
+          $ref: '#/components/schemas/IndustryEnum'
+        employee_count:
+          type: integer
+          minimum: 0
+          nullable: true
+        employee_count_source:
+          type: string
+          nullable: true
+      required:
+      - company_name
+      - employee_count
+      - employee_count_source
+      - industry_from_crm
+    Score:
+      type: object
+      properties:
+        company_id:
+          type: string
+          format: uuid
+        input_version:
+          type: string
+          maxLength: 160
+        score:
+          type: integer
+          maximum: 100
+          minimum: 0
+          nullable: true
+        score_reasons:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+        score_version:
+          type: string
+          maxLength: 100
+        scored_at:
+          type: string
+          format: date-time
+      required:
+      - company_id
+      - input_version
+      - score
+      - score_reasons
+      - score_version
+      - scored_at
+    SignalEnum:
+      enum:
+      - repeat_purchase
+      - quoted_not_closed
+      - inquiry_intent
+      - new_lead_no_profile
+      - unknown
+      type: string
+      description: |-
+        * `repeat_purchase` - repeat_purchase
+        * `quoted_not_closed` - quoted_not_closed
+        * `inquiry_intent` - inquiry_intent
+        * `new_lead_no_profile` - new_lead_no_profile
+        * `unknown` - unknown
+    Simulate:
+      type: object
+      properties:
+        mailbox_id:
+          type: string
+          format: uuid
+        sender:
+          type: string
+          format: email
+        subject:
+          type: string
+          maxLength: 1000
+        body_text:
+          type: string
+          maxLength: 200000
+      required:
+      - body_text
+      - mailbox_id
+      - sender
+      - subject
+    SizeBandEnum:
+      enum:
+      - lt_50
+      - '50_100'
+      - '100_200'
+      - '200_500'
+      - gte_500
+      - unknown
+      type: string
+      description: |-
+        * `lt_50` - lt_50
+        * `50_100` - 50_100
+        * `100_200` - 100_200
+        * `200_500` - 200_500
+        * `gte_500` - gte_500
+        * `unknown` - unknown
+    SourceEnum:
+      enum:
+      - gmail_real
+      - synthetic_sample
+      - research_dataset
+      - simulated
+      type: string
+      description: |-
+        * `gmail_real` - gmail_real
+        * `synthetic_sample` - synthetic_sample
+        * `research_dataset` - research_dataset
+        * `simulated` - simulated
+    SubmissionResult:
+      type: object
+      properties:
+        dedupe_key:
+          type: string
+        company_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/SubmissionResultStatusEnum'
+      required:
+      - company_id
+      - dedupe_key
+      - status
+    SubmissionResultStatusEnum:
+      enum:
+      - created
+      - duplicate
+      type: string
+      description: |-
+        * `created` - created
+        * `duplicate` - duplicate
+    SyncState:
+      type: object
+      properties:
+        mailbox_id:
+          type: string
+          format: uuid
+        cursor:
+          type: string
+          nullable: true
+        scope:
+          type: object
+          additionalProperties: {}
+        last_synced_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          $ref: '#/components/schemas/SyncStateStatusEnum'
+        version:
+          type: integer
+          minimum: 0
+      required:
+      - cursor
+      - last_synced_at
+      - mailbox_id
+      - scope
+      - status
+      - version
+    SyncStateStatusEnum:
+      enum:
+      - ok
+      - resync_required
+      - authorization_required
+      type: string
+      description: |-
+        * `ok` - ok
+        * `resync_required` - resync_required
+        * `authorization_required` - authorization_required
+  securitySchemes:
+    agentCredential:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Agent <service-token>; never a Gmail token.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid

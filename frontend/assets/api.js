@@ -1,0 +1,47 @@
+/**
+ * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
+ * 实现：fetch 发送 JSON，写请求附 CSRF；错误保持失败并交给页面呈现。
+ * 关联：app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
+ * 目录：csrfToken（读取 cookie）；request（执行请求）；escapeHtml（转义文本）。
+ * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
+ */
+const BASE = '/api/v1/';
+
+/** 功能：读取 Django CSRF cookie。输入：隐式 document.cookie。输出：令牌或空字符串。
+ * 逻辑：解析精确 csrftoken 键。约束：不打印或持久化令牌。 */
+function csrfToken() {
+  return document.cookie.split('; ').find(item => item.startsWith('csrftoken='))?.split('=').slice(1).join('=') || '';
+}
+
+/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data、version。
+ * 输出：成功 JSON 或 null；失败抛 Error。逻辑：保持 HTTP 失败语义并附 request_id。
+ * 约束：无重试、无降级；不将秘密放入 URL，不保存账号密码。 */
+export async function request(path, { method = 'GET', data, version } = {}) {
+  const headers = { 'Accept': 'application/json' };
+  if (data !== undefined) headers['Content-Type'] = 'application/json';
+  if (method !== 'GET') headers['X-CSRFToken'] = csrfToken();
+  if (version !== undefined) headers['If-Match'] = String(version);
+  let response;
+  try {
+    response = await fetch(BASE + path, { method, headers, credentials: 'same-origin', body: data === undefined ? undefined : JSON.stringify(data) });
+  } catch {
+    throw new Error('无法连接后端，请检查服务是否启动。');
+  }
+  if (response.status === 204) return null;
+  const isJson = response.headers.get('content-type')?.includes('application/json');
+  const body = isJson ? await response.json() : null;
+  if (!response.ok) {
+    const detail = body?.error?.detail;
+    const message = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : `请求失败（HTTP ${response.status}），请检查服务日志。`;
+    const error = new Error(message + (body?.request_id ? ` 请求编号：${body.request_id}` : ''));
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+/** 功能：为模板插值转义不可信文本。输入：value 任意原始字段。输出：HTML 安全文本。
+ * 逻辑：转义五个 HTML 元字符。约束：仅用于文本或加引号属性，不用于执行代码或 URL 协议。 */
+export function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}

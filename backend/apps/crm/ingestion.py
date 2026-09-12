@@ -1,0 +1,133 @@
+"""职责：执行邮件入库、归组、事实补交和同步游标事务。
+实现：按 owner 串行化写入，保留不可变邮件与版本化事实；关键变更触发公司 revision 和任务。
+关联：serializers 校验协议，jobs 创建任务，selectors 查询完整邮件。
+目录：
+- submit_emails：原子保存一批已授权邮件，返回每项创建或去重状态。
+- resubmit_facts：将失败事实补交为已完成，并保留邮件本体。
+- sync_state：读取业务邮箱的同步游标。
+- save_sync_state：按乐观锁保存同步游标。
+变量索引：
+- EXTRACTION_KEYS：从不可变邮件本体剥离的版本化抽取字段
+- PUBLIC_DOMAINS：MVP 公共邮箱域名清单，命中后按联系人独立归组
+- logger：模块脱敏诊断日志记录器
+"""
+import logging
+
+from django.contrib.auth import get_user_model
+from django.db import transaction
+from rest_framework.exceptions import NotFound, ValidationError
+
+from .access import Conflict, check_version, company_for, mailbox_for, plain
+from .jobs import enqueue
+from .models import Company, Contact, Email, Extraction
+from .serializers import EmailSubmissionSerializer, FactsResubmissionSerializer, validate_extraction
+
+logger = logging.getLogger("salesmate.ingestion")
+PUBLIC_DOMAINS = frozenset(["gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com", "yahoo.com.sg", "icloud.com", "qq.com", "163.com", "126.com", "proton.me", "protonmail.com"])
+EXTRACTION_KEYS = frozenset(["extract_status", "extract_prompt_version", "extract_error", "facts"])
+
+
+# 功能：原子保存一批已授权邮件，返回每项创建或去重状态。
+# 输入：`owner` 为认证用户；`payloads` 为 EmailSubmission 数组。
+# 输出：每封邮件的 dedupe_key、company_id 和 created/duplicate 状态。
+# 逻辑：先完整验证，再锁 owner；邮箱归属、不可变载荷和抽取版本均在同一事务核查。
+# 约束：任何一项失败回滚整批；不接收 Gmail 凭证、不调用模型、不静默覆盖事实。
+@transaction.atomic
+def submit_emails(owner, payloads):
+    serializer = EmailSubmissionSerializer(data=payloads, many=True)
+    serializer.is_valid(raise_exception=True)
+    if not 1 <= len(serializer.validated_data) <= 100:
+        raise ValidationError("每批提交 1–100 封邮件。")
+    get_user_model().objects.select_for_update().get(pk=owner.pk)
+    results = []
+    for value in serializer.validated_data:
+        data = plain(value)
+        mailbox = mailbox_for(owner, data["mailbox_id"])
+        body = {key: item for key, item in data.items() if key not in EXTRACTION_KEYS}
+        email = Email.objects.filter(pk=data["dedupe_key"], mailbox__owner=owner).first()
+        if email and email.payload != body:
+            raise Conflict("同一 dedupe_key 的邮件本体不可修改。")
+        if email:
+            company = company_for(owner, email.company_id, lock=True)
+            existing = email.extractions.filter(prompt_version=data["extract_prompt_version"]).first()
+            if existing:
+                if (existing.status, existing.facts, existing.error) != (data["extract_status"], data["facts"], data["extract_error"]):
+                    raise Conflict("抽取版本已存在；失败补交请使用 resubmit_facts。")
+                results.append({"dedupe_key": email.pk, "company_id": str(company.pk), "status": "duplicate"})
+                continue
+        else:
+            address = data["contact_email"].lower()
+            domain = address.rsplit("@", 1)[1]
+            key = f"contact:{address}" if domain in PUBLIC_DOMAINS else f"domain:{domain}"
+            company, _ = Company.objects.get_or_create(owner=owner, group_key=key, defaults={"domains": [] if domain in PUBLIC_DOMAINS else [domain]})
+            company = company_for(owner, company.pk, lock=True)
+            facts = data["facts"] or {}
+            contact, _ = Contact.objects.get_or_create(company=company, email=address, defaults={"name": (facts.get("contact_name") or {}).get("value")})
+            if company.name is None and (facts.get("company_self_reported") or {}).get("value"):
+                company.name = facts["company_self_reported"]["value"]
+            email = Email.objects.create(dedupe_key=data["dedupe_key"], mailbox=mailbox, company=company, contact=contact,
+                                         payload=body, sent_at=value["sent_at"], received_at=value["received_at"], direction=data["direction"])
+        Extraction.objects.create(email=email, prompt_version=data["extract_prompt_version"], status=data["extract_status"], facts=data["facts"], error=data["extract_error"])
+        company.revision += 1
+        company.save(update_fields=["revision", "name"])
+        enqueue(company, "email_ingested")
+        results.append({"dedupe_key": email.pk, "company_id": str(company.pk), "status": "created"})
+    logger.info("emails_submitted owner_id=%s batch_size=%s created=%s", owner.pk, len(results), sum(item["status"] == "created" for item in results))
+    return results
+
+
+# 功能：将失败事实补交为已完成，并保留邮件本体。
+# 输入：`owner` 为认证用户；`payload` 为 FactsResubmission。
+# 输出：公司 ID 与新 revision。
+# 逻辑：锁公司和抽取记录，校验证据后只执行 failed → completed。
+# 约束：重复成功补交返回 conflict，不自动重读 Gmail。
+@transaction.atomic
+def resubmit_facts(owner, payload):
+    serializer = FactsResubmissionSerializer(data=payload)
+    serializer.is_valid(raise_exception=True)
+    data = plain(serializer.validated_data)
+    email = Email.objects.filter(pk=data["dedupe_key"], mailbox__owner=owner).first()
+    if email is None:
+        raise NotFound("邮件不存在。")
+    company = company_for(owner, email.company_id, lock=True)
+    record = Extraction.objects.select_for_update().filter(email=email, prompt_version=data["extract_prompt_version"]).first()
+    if record is None:
+        raise NotFound("抽取版本不存在。")
+    if record.status != "failed":
+        raise Conflict("仅允许失败事实补交一次。")
+    validate_extraction(data, email.payload["body_text"] + "\n" + email.payload["subject"])
+    record.status, record.facts, record.error = "completed", data["facts"], None
+    record.save(update_fields=["status", "facts", "error"])
+    company.revision += 1
+    company.save(update_fields=["revision"])
+    enqueue(company, "email_ingested")
+    logger.info("facts_resubmitted company_id=%s revision=%s", company.pk, company.revision)
+    return {"company_id": str(company.pk), "revision": company.revision}
+
+
+# 功能：读取业务邮箱的同步游标。
+# 输入：`mailbox` 为已授权邮箱实例。
+# 输出：README SyncState；未同步时显式返回空游标。
+# 逻辑：只合并初始表示和当前状态，不假称同步完成。
+# 约束：scope 初值为空，首次 Gmail 扫描范围应由 Agent 显式提供。
+def sync_state(mailbox):
+    return {"mailbox_id": str(mailbox.pk), "cursor": None, "scope": {}, "last_synced_at": None,
+            "status": "authorization_required", **mailbox.sync_state, "version": mailbox.version}
+
+
+# 功能：按乐观锁保存同步游标。
+# 输入：`owner` 为认证用户；`data` 为已验证 SyncState；`expected` 为 If-Match。
+# 输出：写入后的 SyncState。
+# 逻辑：锁邮箱、校验版本并递增；业务层不从历史 ID 推测提交完成。
+# 约束：Agent 必须仅在整批邮件持久化成功后调用；不做令牌托管。
+@transaction.atomic
+def save_sync_state(owner, data, expected):
+    mailbox = mailbox_for(owner, data["mailbox_id"], lock=True)
+    check_version(expected, mailbox.version)
+    if data["version"] != mailbox.version:
+        raise Conflict("载荷 version 与 If-Match 不一致。")
+    mailbox.sync_state = plain(data)
+    mailbox.version += 1
+    mailbox.save(update_fields=["sync_state", "version"])
+    logger.info("sync_state_saved mailbox_id=%s version=%s status=%s", mailbox.pk, mailbox.version, data["status"])
+    return sync_state(mailbox)
