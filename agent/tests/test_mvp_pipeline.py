@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
-from threading import Barrier, Event, Lock
+from threading import Barrier, Event, Lock, get_ident
 from unittest.mock import Mock, call, patch
 
 from agent.tools.gmail import GmailHistoryExpiredError, create_service
@@ -287,6 +287,20 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("百分比", result["error"]["message"])
 
+        deal_likelihood = _payload(self.input)
+        deal_likelihood["detail_view"]["analysis"]["opportunity"]["facts"][0][
+            "text"
+        ] = "成交可能 80%"
+        result = generate_analysis(
+            self.input,
+            analysis_provider=lambda _: json.dumps(
+                deal_likelihood, ensure_ascii=False
+            ),
+            clock=lambda: NOW,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("百分比", result["error"]["message"])
+
         invalid_enum = _payload(self.input)
         invalid_enum["list_view"]["signal"] = "won"
         result = generate_analysis(
@@ -306,6 +320,50 @@ class AnalysisAndScoreTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "failed")
         self.assertIn("字段必须", result["error"]["message"])
+
+    def test_l3_allows_business_percentage_and_normalizes_typed_source_ref(self):
+        payload = _payload(self.input)
+        payload["list_view"]["headline_summary"] = (
+            "客户要求首付款 30%，验收后支付 60%，剩余 10% 作为质保金"
+        )
+        payload["detail_view"]["analysis"]["risk"]["facts"][0]["source_refs"] = [
+            f"company_id:{self.input['company_id']}"
+        ]
+
+        result = generate_analysis(
+            self.input,
+            analysis_provider=lambda _: json.dumps(payload, ensure_ascii=False),
+            clock=lambda: NOW,
+        )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(
+            result["detail_view"]["analysis"]["risk"]["facts"][0]["source_refs"],
+            [self.input["company_id"]],
+        )
+
+    @patch("agent.workflows.customer_analysis.generate_json")
+    def test_default_l3_provider_retries_one_validation_failure(self, generate):
+        invalid = _payload(self.input)
+        invalid["list_view"]["signal"] = "repeat_purchase"
+        retry_input = copy.deepcopy(self.input)
+        retry_input["business_context"]["orders"] = []
+        corrected = _payload(retry_input)
+        corrected["list_view"]["signal"] = "inquiry_intent"
+
+        generate.side_effect = [
+            json.dumps(invalid, ensure_ascii=False),
+            json.dumps(corrected, ensure_ascii=False),
+        ]
+        result = generate_analysis(
+            retry_input,
+            clock=lambda: NOW,
+        )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["list_view"]["signal"], "inquiry_intent")
+        self.assertEqual(generate.call_count, 2)
+        self.assertIn("上一次分析未通过", generate.call_args_list[1].args[1])
 
     def test_no_purchase_basis_only_accepts_unknown_signal(self):
         no_basis_input = copy.deepcopy(self.input)
@@ -557,6 +615,55 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(result["l1_processed_count"], 4)
         self.assertEqual(result["created_count"], 4)
         self.assertEqual(maximum_active, 4)
+
+    def test_l1_progress_callbacks_are_serialized_on_sync_thread(self):
+        backend = FakeBackend()
+        authorization = {
+            "mailbox_id": "mb1",
+            "access_token": "token",
+            "mailbox_address": "sales@example.com",
+            "max_results": 4,
+        }
+        caller_thread = get_ident()
+        callback_threads = []
+        emails = [
+            {"gmail_message_id": f"message-{index}"} for index in range(1, 5)
+        ]
+
+        def process(email, _mailbox_address, _provider):
+            submission = _completed_submission()
+            message_id = email["gmail_message_id"]
+            submission.update(
+                gmail_message_id=message_id,
+                thread_id=message_id,
+                dedupe_key=f"sales@example.com:{message_id}",
+            )
+            return submission
+
+        with (
+            patch(
+                "agent.workflows.gmail_sync.resolve_mailbox_address",
+                return_value="sales@example.com",
+            ),
+            patch(
+                "agent.workflows.gmail_sync.read_sync_emails",
+                return_value=emails,
+            ),
+            patch(
+                "agent.workflows.gmail_sync.process_email",
+                side_effect=process,
+            ),
+        ):
+            result = sync_gmail(
+                authorization,
+                backend=backend,
+                gmail_factory=lambda _: object(),
+                progress=lambda _stage, _data: callback_threads.append(get_ident()),
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(callback_threads)
+        self.assertEqual(set(callback_threads), {caller_thread})
 
     def test_completed_l1_email_is_submitted_before_slower_email_finishes(self):
         submitted_fast = Event()

@@ -69,15 +69,17 @@ detail_view 必须包含：
 {facts:[{text,source_refs}], inferences:[{text,basis,confidence,source_refs}], missing_fields:string[]}。
 
 规则：
-1. facts 每项必须有至少一个 source_refs，且只能使用输入中的邮件 dedupe_key、company_id、
-   customer_id、联系人邮箱、ticket_id、quote_id 或 order_id。
+1. facts 每项必须有至少一个 source_refs，且只能逐字复制用户消息中 ALLOWED_SOURCE_REFS 数组里的值。
+   不得添加 company_id:、email: 等类型前缀，也不得使用 metrics、facts 等字段名代替来源。
 2. inferences 也必须写依据、low/medium/high 置信度和至少一个合法 source_refs。
-3. quoted_not_closed 需要 evidence_type=actual_outbound 的报价；repeat_purchase 需要历史订单和本次新采购动作；
+3. quoted_not_closed 需要 evidence_type=actual_outbound 的报价；repeat_purchase 需要 business_context.orders
+   中的历史订单和本次新采购动作。邮件自述、facts.order_reference 或主题中提到旧订单都不算历史订单；
    inquiry_intent 需要明确采购或询价；new_lead_no_profile 需要未建档的新线索。证据不足返回 unknown。
    同时满足多个信号时按 repeat_purchase > quoted_not_closed > inquiry_intent > new_lead_no_profile 选择主信号。
 4. 不得把客户说“可以”、提及报价或提及订单当成已成交事实。
 5. 不得引用输入外的新闻、行业资讯、知识库或常识作为事实。
-6. 不得输出成交概率、百分比或带 % 的表述。优先级由后续 Python 计算。
+6. 不得估算成交、成单、签约或赢单概率，也不得用数字或百分比表达这类概率。优先级由后续 Python 计算。
+   输入中明确出现的付款比例、良率等业务事实可以原样引用，它们不是成交概率。
 7. 数量、金额、币种、交期只按输入原文表达，不换算、不补全。
 8. unparsed_message_count 大于 0 时 note 必须说明分析未包含全部邮件。
 9. size_band 严格按 business_context.customer.employee_count 划分：小于 50 为 lt_50，50-99 为 50_100，
@@ -85,18 +87,49 @@ detail_view 必须包含：
    size_source 由同一 customer 对象确定；人数未知时必须写 "unknown"，不能返回空字符串或 null。
 """
 
-_PERCENT_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?\s*%|百分之|成交概率)")
+_DEAL_PROBABILITY_PATTERN = re.compile(
+    r"(?:成交|成单|签约|赢单)(?:的)?(?:概率|可能性|可能|成功率)|"
+    r"(?:成交率|赢单率|胜率)"
+)
+
+_SOURCE_REF_PREFIXES = (
+    "dedupe_key:",
+    "email:",
+    "company_id:",
+    "customer_id:",
+    "contact_email:",
+    "ticket_id:",
+    "quote_id:",
+    "order_id:",
+)
 
 
 class AnalysisValidationError(ValueError):
     """百炼返回的 L3 数据不符合 MVP 契约。"""
 
 
-def bailian_analysis_provider(analysis_input: Mapping[str, Any]) -> str:
+def bailian_analysis_provider(
+    analysis_input: Mapping[str, Any],
+    *,
+    validation_error: str | None = None,
+) -> str:
     """调用百炼生成 L3 JSON 文本。"""
+    allowed_refs = sorted(_allowed_source_refs(analysis_input))
+    retry_instruction = ""
+    if validation_error:
+        retry_instruction = (
+            "上一次分析未通过业务或输出契约校验。请重新生成完整 JSON，并修正以下问题：\n"
+            f"{validation_error}\n"
+        )
+    user_text = retry_instruction + (
+        "ALLOWED_SOURCE_REFS（source_refs 只能逐字复制这里的完整字符串）：\n"
+        + json.dumps(allowed_refs, ensure_ascii=False, separators=(",", ":"))
+        + "\nANALYSIS_INPUT：\n"
+        + json.dumps(dict(analysis_input), ensure_ascii=False, separators=(",", ":"))
+    )
     return generate_json(
         ANALYSIS_PROMPT,
-        json.dumps(dict(analysis_input), ensure_ascii=False, separators=(",", ":")),
+        user_text,
         max_tokens=6000,
     )
 
@@ -142,7 +175,34 @@ def generate_analysis(
             raise AnalysisValidationError("模型必须返回 JSON 文本。")
         candidate = json.loads(raw_text)
         validated = validate_analysis_payload(candidate, document)
-    except Exception as error:
+    except Exception as first_error:
+        final_error = first_error
+        # 默认百炼输出若只是 JSON 或业务契约不合格，携带具体原因修正一次。
+        # 网络、配置和自定义 provider 错误保持原行为，交由显式任务重试。
+        if analysis_provider is bailian_analysis_provider and isinstance(
+            first_error,
+            (json.JSONDecodeError, AnalysisValidationError),
+        ):
+            try:
+                raw_text = bailian_analysis_provider(
+                    document,
+                    validation_error=str(first_error),
+                )
+                if not isinstance(raw_text, str):
+                    raise AnalysisValidationError("模型必须返回 JSON 文本。")
+                candidate = json.loads(raw_text)
+                validated = validate_analysis_payload(candidate, document)
+            except Exception as retry_error:
+                final_error = retry_error
+            else:
+                return {
+                    **base,
+                    "status": "completed",
+                    "list_view": validated["list_view"],
+                    "detail_view": validated["detail_view"],
+                    "error": None,
+                }
+
         return {
             **base,
             "status": "failed",
@@ -150,7 +210,7 @@ def generate_analysis(
             "detail_view": None,
             "error": {
                 "code": "analysis_failed",
-                "message": f"{type(error).__name__}: {error}",
+                "message": f"{type(final_error).__name__}: {final_error}",
             },
         }
 
@@ -170,7 +230,7 @@ def validate_analysis_payload(
     """校验模型负责的 list/detail 两段，并返回隔离的普通字典。"""
     root = _object(candidate, "analysis")
     _keys(root, {"list_view", "detail_view"}, "analysis")
-    if _contains_percent(root):
+    if _contains_deal_probability(root):
         raise AnalysisValidationError("分析中不能包含成交概率或百分比。")
 
     allowed_refs = _allowed_source_refs(analysis_input)
@@ -497,20 +557,32 @@ def _evidence_block(value: object, allowed_refs: set[str], path: str) -> dict[st
 
 
 def _source_refs(value: object, allowed: set[str], path: str) -> list[str]:
-    refs = _strings(value, path)
+    refs = [_canonical_source_ref(ref, allowed) for ref in _strings(value, path)]
     invalid = [ref for ref in refs if ref not in allowed]
     if invalid:
         raise AnalysisValidationError(f"{path} 包含输入中不存在的来源：{invalid[0]}")
-    return refs
+    return list(dict.fromkeys(refs))
 
 
-def _contains_percent(value: object) -> bool:
+def _canonical_source_ref(value: str, allowed: set[str]) -> str:
+    """仅在去掉模型常加的类型前缀后能精确命中来源时进行规范化。"""
+    if value in allowed:
+        return value
+    for prefix in _SOURCE_REF_PREFIXES:
+        if value.startswith(prefix):
+            candidate = value[len(prefix):]
+            if candidate in allowed:
+                return candidate
+    return value
+
+
+def _contains_deal_probability(value: object) -> bool:
     if isinstance(value, str):
-        return _PERCENT_PATTERN.search(value) is not None
+        return _DEAL_PROBABILITY_PATTERN.search(value) is not None
     if isinstance(value, Mapping):
-        return any(_contains_percent(item) for item in value.values())
+        return any(_contains_deal_probability(item) for item in value.values())
     if isinstance(value, list):
-        return any(_contains_percent(item) for item in value)
+        return any(_contains_deal_probability(item) for item in value)
     return False
 
 

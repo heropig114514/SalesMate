@@ -1,6 +1,6 @@
-# Gmail 测试邮件注入器
+# SalesMate 测试工具
 
-该工具供开发和测试人员构造 SalesMate 全流程测试数据。它会通过 Gmail API 将六封合成邮件直接插入测试人员自己的 Gmail 收件箱，随后可以在 SalesMate 网页中执行正常的 Gmail 同步，让邮件依次经过 L1 事实抽取、后端公司归组以及 L2–L4 客户分析。
+本目录提供 Gmail 测试邮件注入器和本地后端数据清理脚本，供开发和测试人员反复验证 SalesMate 全流程。注入器通过 Gmail API 将合成邮件直接插入测试人员自己的 Gmail 收件箱，随后可以在 SalesMate 网页中执行正常的 Gmail 同步，让邮件依次经过 L1 事实抽取、后端公司归组以及 L2–L4 客户分析。清理脚本用于在下一轮测试前清空本地处理结果。
 
 工具不会修改 SalesMate 后端，也不会把邮件发送到外部地址。它使用 Gmail `messages.insert`，因此只验证 Gmail 读取和 SalesMate 处理链路，不验证 SMTP 投递、SPF、DKIM 或垃圾邮件分类。
 
@@ -33,6 +33,7 @@ SalesMate/
     ├── __init__.py
     ├── gmail_test_injector.py
     ├── gmail_test_messages.template.json
+    ├── reset_backend_data.py
     └── gmail_inject_credentials.json
 ```
 
@@ -149,7 +150,9 @@ python -m test_tools.gmail_test_injector `
 
 如果修改过授权 scope，也需要删除旧 token 后重新授权。
 
-## 8. 清理测试邮件
+## 8. 清理测试数据
+
+### 8.1 删除 Gmail 中的测试邮件
 
 复制成功输出中的 `gmail_search`，在 Gmail 搜索框中搜索本次测试邮件，确认结果后批量删除。主题格式为：
 
@@ -157,7 +160,36 @@ python -m test_tools.gmail_test_injector `
 [SalesMate测试:<run_id>] 邮件主题
 ```
 
-删除 Gmail 中的邮件不会自动删除已经同步到 SalesMate 数据库的记录。需要进行全新数据库测试时，应另外使用项目现有的本地数据库清理流程。
+删除 Gmail 中的邮件不会自动删除已经同步到 SalesMate 数据库的记录。
+
+### 8.2 重置本地后端测试数据
+
+需要从头验证 Gmail → L1 → 后端归组 → L2–L4 时，先停止正在运行的 `crm_worker`，然后在仓库根目录执行：
+
+```powershell
+python .\test_tools\reset_backend_data.py
+```
+
+脚本会显示目标 SQLite 数据库和清理前的记录数量。输入下面的确认文字后才会执行：
+
+```text
+CLEAR
+```
+
+明确需要跳过交互确认时可以使用：
+
+```powershell
+python .\test_tools\reset_backend_data.py --yes
+```
+
+脚本只允许清理当前项目目录内的 SQLite 数据库，并清除：
+
+- 邮箱同步批次和逐封处理任务。
+- 公司、联系人和邮件记录。
+- L1 抽取、L2 输入、L3 分析和 L4 评分。
+- Agent 公司任务及与客户公司关联的销售测试记录。
+
+脚本保留登录账号、员工邮箱、Google OAuth 授权、Agent 服务凭据、团队和产品配置，也不会删除 Gmail 中的原始邮件。完成后重新启动 `crm_worker`，刷新 SalesMate 页面并点击“同步 Gmail”，即可按首次同步重新处理最近邮件。
 
 ## 9. 常见错误
 

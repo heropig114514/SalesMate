@@ -27,6 +27,11 @@ from .serializers import AnalysisInputSerializer, AnalysisSerializer, ScoreSeria
 
 logger = logging.getLogger("salesmate.analysis")
 
+DEAL_PROBABILITY_PATTERN = re.compile(
+    r"(?:成交|成单|签约|赢单)(?:的)?(?:概率|可能性|可能|成功率)|"
+    r"(?:成交率|赢单率|胜率)"
+)
+
 
 # 功能：保存 L2 原始输入快照。
 # 输入：`owner` 为认证用户；`payload` 为 AnalysisInput；`expected` 为读取版本；`job_id`、`token` 为租约凭证。
@@ -135,7 +140,7 @@ def validate_refs(value, allowed):
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 指定用户、分析、版本与任务；`provider` 标识 rules 或 agent。
 # 输出：已保存 Analysis 原始载荷。
 # 逻辑：当前 revision 与快照一致后检查来源、时间、缺失信息和强信号门槛。
-# 约束：失败不覆盖成功，不接受未知来源或详情中的概率百分比。
+# 约束：失败不覆盖成功，不接受未知来源或详情中的成交概率；原文业务百分比可以保留。
 @transaction.atomic
 def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     serializer = AnalysisSerializer(data=payload)
@@ -165,8 +170,10 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
         allowed.update(str(item[id_field]) for item in context[key])
     validate_refs(data, allowed)
     if data["status"] == "completed":
-        if re.search(r"\d\s*[%％]|百分之", json.dumps(data["detail_view"], ensure_ascii=False)):
-            raise ValidationError("详情输出不允许百分比数字。")
+        if DEAL_PROBABILITY_PATTERN.search(
+            json.dumps(data["detail_view"], ensure_ascii=False)
+        ):
+            raise ValidationError("详情输出不允许成交概率。")
         count = snapshot.payload["unparsed_message_count"]
         completeness = data["detail_view"]["context_completeness"]
         missing_fields = data["detail_view"]["missing_fields"]

@@ -72,12 +72,27 @@ def begin_authorization(request) -> str:
     )
     authorization_url, state = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
         prompt="consent",
     )
     request.session[SESSION_STATE_KEY] = state
     request.session[SESSION_CODE_VERIFIER_KEY] = flow.code_verifier
     return authorization_url
+
+
+# 功能：交换授权码，并兼容 Google 返回已授权 scope 超集的情况。
+# 输入：已恢复 PKCE verifier 的 Flow 与一次性授权码。
+# 输出：无；成功后 Flow 持有可供 credentials 属性读取的 token。
+# 逻辑：oauthlib 会把 scope 变化抛为 Warning；只在返回权限仍包含 Gmail 只读权限时接受 token。
+# 约束：缺少请求权限或 Warning 不含有效 token 时继续抛错。
+def _fetch_token(flow, code: str) -> None:
+    try:
+        flow.fetch_token(code=code)
+    except Warning as error:
+        token = getattr(error, "token", None)
+        returned_scopes = set(getattr(error, "new_scope", None) or [])
+        if not token or not set(GMAIL_SCOPES).issubset(returned_scopes):
+            raise
+        flow.oauth2session.token = token
 
 
 # 功能：完成 Google 回调并建立当前员工邮箱连接。
@@ -108,7 +123,7 @@ def finish_authorization(request) -> Mailbox:
         code_verifier=code_verifier,
         autogenerate_code_verifier=False,
     )
-    flow.fetch_token(code=code)
+    _fetch_token(flow, code)
     credentials = flow.credentials
     profile = (
         build("gmail", "v1", credentials=credentials, cache_discovery=False)

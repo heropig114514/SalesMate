@@ -93,7 +93,7 @@ class BailianClientTests(unittest.TestCase):
         self.assertEqual(request["json"]["response_format"], {"type": "json_object"})
         self.assertEqual(request["json"]["max_tokens"], 2048)
         self.assertNotIn("enable_thinking", request["json"])
-        self.assertEqual(request["timeout"], (10, 60))
+        self.assertEqual(request["timeout"], (10, 90))
         self.assertFalse(request["allow_redirects"])
 
     def test_thinking_configuration_is_forwarded(self):
@@ -875,6 +875,24 @@ class L1ProcessingTests(unittest.TestCase):
         self.assertEqual(result["extract_status"], "completed")
         self.assertEqual(result["facts"], facts)
         self.assertIsNone(result["extract_error"])
+
+    @patch("agent.workflows.l1_email.generate_json")
+    def test_default_provider_retries_one_validation_failure(self, generate):
+        email = l1_email()
+        invalid = valid_l1_facts()
+        invalid["intent_evidences"] = ["原文中不存在的证据"]
+        valid = valid_l1_facts()
+        generate.side_effect = [
+            json.dumps(invalid, ensure_ascii=False),
+            json.dumps(valid, ensure_ascii=False),
+        ]
+
+        result = process_email(email, "sales@example.com")
+
+        self.assertEqual(result["extract_status"], "completed")
+        self.assertEqual(result["facts"], valid)
+        self.assertEqual(generate.call_count, 2)
+        self.assertIn("上一次输出未通过", generate.call_args_list[1].args[1])
 
     def test_provider_exception_returns_sanitized_failure(self):
         email = l1_email()

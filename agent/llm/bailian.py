@@ -46,7 +46,7 @@ def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048)
             base_url + "/chat/completions",
             headers={"Authorization": "Bearer " + api_key},
             json=payload,
-            timeout=(10, 60),
+            timeout=(10, 90),
             allow_redirects=False,
         )
     except requests.RequestException:

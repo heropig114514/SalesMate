@@ -144,7 +144,7 @@ flowchart TB
 | 8. 公司数据准备 | 后端 → L2 | 公司归组、邮件、客户、联系人、工单、报价、订单、快照版本 | 完整公司数据集合 | 为公司级事实归并提供统一上下文 |
 | 9. 公司级事实归并 | L2 → 编排和后端 | 公司数据集合 | AnalysisInput：company、business_context、facts、metrics、input_version、unparsed_message_count | 形成 L3 唯一可信的分析输入 |
 | 10. 分析缓存判断 | 后端 → 编排 | company_id、input_version | 已存在的 Analysis 或空值 | 相同数据版本不重复调用模型 |
-| 11. 客户画像与分析 | L3 ↔ 百炼 | 完整 AnalysisInput | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析、评分特征 | 生成页面 A 和页面 B 所需的 Agent 数据 |
+| 11. 客户画像与分析 | L3 ↔ 百炼 | 完整 AnalysisInput | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析、评分特征 | 生成页面 A 和页面 B 所需的 Agent 数据；首次模型结果未通过 JSON 或业务规则时携带原因修正一次 |
 | 12. 跟进优先级 | 编排 → L4 | Analysis、邮件指标 | Score：score、各特征贡献、说明和评分版本 | 计算 0–100 处理优先级；信息不足时返回 null |
 | 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | 供真实后端以后持久化和提供给前端 |
 | 14. 返回调用方 | 编排 → 后端 → 浏览器 | 完整分析结果 | AnalysisBundle、JobReport 与公司页面投影 | CLI 输出处理报告；前端通过后端读取结果 |
@@ -177,7 +177,7 @@ process_email(email, mailbox_address, extraction_provider) -> EmailSubmission
 4. 选择主要外部联系人。
 5. 自动邮件、营销邮件和 no-reply 邮件跳过 LLM。
 6. 业务邮件调用百炼抽取事实。
-7. 校验证据确实能在当前主题或正文中定位。
+7. 校验证据确实能在当前主题或正文中定位；默认百炼结果若仅因 JSON 结构或证据校验失败，会携带校验原因立即重试一次。
 
 `EmailSubmission` 主要字段：
 
@@ -270,7 +270,7 @@ result = sync_gmail(
 )
 ```
 
-`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v6` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
+`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v6` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。默认百炼输出若只是不符合 L1 JSON 或原文证据约束，会在当前线程内修正重试一次；网络、配置和第二次校验失败仍作为单封失败隔离。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
 
 如果传入的测试后端或旧适配器没有 `get_sync_state()` 与 `save_sync_state()`，`sync_gmail()` 会兼容退回原来的最近邮件扫描。游标读取或保存不可用不会改变邮件提交的正确性，只会让下一次同步重新扫描最近邮件。
 
@@ -462,9 +462,9 @@ L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。
 }
 ```
 
-允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。
+允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。调用百炼时会额外列出本次输入可用的完整来源字符串，模型必须原样复制；若模型只多加了 `company_id:` 等已知类型前缀，并且去掉前缀后能精确命中输入来源，Agent 会安全规范为原始 ID。`metrics`、`facts` 等字段名仍不是合法来源。
 
-L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率和百分比、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
+L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。默认百炼结果首次因 JSON 或这些业务规则失败时，Agent 会将具体校验原因和合法来源列表交给模型完整修正一次；第二次仍不合法才返回失败。邮件原文中的付款比例、良率等业务百分比允许按原文引用，不会被误判为成交概率。`repeat_purchase` 的历史订单只能来自 `business_context.orders`；邮件自述和 `facts.order_reference` 不能代替后端订单记录。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
 
 失败时返回 `status=failed`、`list_view=null`、`detail_view=null` 和本地调试错误，不写入分析缓存。
 
@@ -627,7 +627,7 @@ process_jobs_once(
 ) -> list[JobReport]
 ```
 
-支持 `email_ingested`、`customer_detail_opened`、`external_updated` 和 `grouping_changed`。函数领取一批任务后立即返回；同一批中相同公司只分析一次。Agent workflow 不实现常驻轮询或自动重试。现有 Django 后端要求的租约和版本请求头由 `DjangoBackendClient` 管理。
+支持 `email_ingested`、`customer_detail_opened`、`external_updated` 和 `grouping_changed`。函数领取一批任务后立即返回；同一批中相同公司只分析一次。Agent workflow 不实现常驻轮询或任务级自动重试；L1 和 L3 各自的一次模型校验修正不属于任务重试。现有 Django 后端要求的租约和版本请求头由 `DjangoBackendClient` 管理。
 
 Agent workflow 依赖 `agent.clients.backend_api.BackendClient`：
 
@@ -730,17 +730,17 @@ python -m unittest agent.tests.test_mvp_pipeline
 ```
 
 自动测试不连接真实 Gmail、百炼、数据库或 HTTP 服务。真实 Gmail 与百炼只做人工冒烟验证。
-当前完整 Agent 离线测试共 120 项。
+当前完整 Agent 离线测试共 124 项。
 
 测试文件分工：
 
 | 文件 | 测试数 | 职责 |
 |---|---:|---|
 | `agent/tests/email_submission_exploration.py` | 6 | 提供 L1 公共 fixture，并覆盖 EmailSubmission 的数据契约边界；文件名不以 `test_` 开头，由 `test_core.py` 导入执行 |
-| `agent/tests/test_core.py` | 73 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
+| `agent/tests/test_core.py` | 74 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取、一次校验修正和 EmailSubmission 契约 |
 | `agent/tests/test_integration.py` | 6 | Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
 | `agent/tests/test_analysis_input.py` | 4 | L2 事实归并、业务上下文、版本和错误边界 |
-| `agent/tests/test_mvp_pipeline.py` | 24 | access token、History 增量同步、L1 并发、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 确定性规模来源、冲突字段契约、L4、缓存和端到端流程 |
+| `agent/tests/test_mvp_pipeline.py` | 27 | access token、History 增量同步、L1 并发、进度串行写入、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 单次校验修正、确定性规模来源、业务百分比、来源规范化、冲突字段契约、L4、缓存和端到端流程 |
 | `agent/tests/test_http_backend.py` | 7 | Django 服务认证、已有邮件查询、员工邮箱与游标同步、ETag、任务租约、响应归一化和缓存契约 |
 
 `agent/tests/fake_backend.py` 只是测试 fixture，不包含测试方法，也不参与实际运行。

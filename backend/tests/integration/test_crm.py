@@ -25,11 +25,11 @@
 - CRMTests.test_sync_state_compare_and_swap：验证同步游标乐观锁。
 - CRMTests.test_employee_gmail_connection_and_sync_queue：验证员工邮箱隔离、同步领取和回报。
 - CRMTests.test_employee_gmail_oauth_browser_routes：验证网页 OAuth 入口和回调跳转。
-- CRMTests.test_employee_gmail_oauth_reuses_pkce_verifier：验证授权回调复用发起阶段的 PKCE verifier。
+- CRMTests.test_employee_gmail_oauth_reuses_pkce_verifier：验证授权回调复用 PKCE verifier，并接受包含只读权限的 scope 超集。
 - CRMTests.test_agent_mode_has_no_implicit_rule_fallback：验证 Agent 模式不会调用规则或导入样例。
 - CRMTests.test_session_login_requires_csrf_and_valid_password：验证匿名登录和已登录写入的真实 CSRF 防护。
 - CRMTests.test_demo_seed_is_repeatable_without_duplicate_data：验证演示数据重复导入保持邮件与时间不变。
-- CRMTests.test_analysis_rejects_foreign_evidence_and_percentage：验证伪造来源或百分比分析被拒绝。
+- CRMTests.test_analysis_rejects_foreign_evidence_and_deal_probability：验证伪造来源或成交概率被拒绝，业务百分比可保存。
 - CRMTests.test_analysis_input_requires_complete_fact_multiset：验证归并不得丢掉历史事实或重复计算事实。
 - CRMTests.test_invalid_identifiers_return_400：验证非法 UUID 为受控输入错误。
 - CRMTests.test_explicit_reanalysis_completes_missing_score：验证部分完成的规则任务可在显式重新分析时补齐评分。
@@ -463,10 +463,10 @@ class CRMTests(TestCase):
         self.assertIn("gmail=authorized", callback["Location"])
         self.assertIn("sales%40internal.example", callback["Location"])
 
-    # 功能：验证 PKCE code_verifier 在发起授权和交换令牌之间保持一致。
-    # 输入：`flow_factory` 构造两次 Flow；`build` 模拟 Gmail profile 服务。
+    # 功能：验证 PKCE code_verifier 保持一致，并兼容 Google 返回已授权 scope 超集。
+    # 输入：`flow_factory` 构造两次 Flow；令牌交换抛出携带可用 token 的 scope Warning。
     # 输出：回调成功、凭据落库，第二个 Flow 收到第一个 Flow 的 verifier。
-    # 逻辑：授权 URL 生成后 verifier 写入 Session，回调时取出并关闭重新生成。
+    # 逻辑：回调恢复 verifier，并在返回权限仍包含 gmail.readonly 时接受 token。
     # 约束：测试凭据均为虚构内容，不发起任何外部请求。
     @override_settings(
         GOOGLE_OAUTH_CLIENT_ID="fake-web-client.apps.googleusercontent.com",
@@ -484,6 +484,19 @@ class CRMTests(TestCase):
         )
         finish_flow = Mock()
         finish_flow.credentials.to_json.return_value = '{"token":"fake-token"}'
+        scope_warning = Warning(
+            'Scope has changed from "gmail.readonly" to "gmail.readonly gmail.insert".'
+        )
+        scope_warning.token = {
+            "access_token": "fake-token",
+            "expires_at": 1_900_000_000,
+            "scope": [
+                "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.insert",
+            ],
+        }
+        scope_warning.new_scope = scope_warning.token["scope"]
+        finish_flow.fetch_token.side_effect = scope_warning
         flow_factory.side_effect = [begin_flow, finish_flow]
         build.return_value.users.return_value.getProfile.return_value.execute.return_value = {
             "emailAddress": self.mailbox.address
@@ -495,6 +508,8 @@ class CRMTests(TestCase):
             self.browser.session["salesmate_gmail_oauth_code_verifier"],
             "test-pkce-verifier",
         )
+        authorization_options = begin_flow.authorization_url.call_args.kwargs
+        self.assertNotIn("include_granted_scopes", authorization_options)
 
         callback = self.browser.get(
             "/api/v1/mailboxes/gmail-callback/?code=test-code&state=test-state"
@@ -504,6 +519,7 @@ class CRMTests(TestCase):
         self.assertIn("gmail=authorized", callback["Location"])
         self.assertTrue(GmailCredential.objects.filter(mailbox=self.mailbox).exists())
         finish_flow.fetch_token.assert_called_once_with(code="test-code")
+        self.assertEqual(finish_flow.oauth2session.token, scope_warning.token)
         self.assertEqual(
             flow_factory.call_args_list[1].kwargs["code_verifier"],
             "test-pkce-verifier",
@@ -555,12 +571,12 @@ class CRMTests(TestCase):
         self.assertEqual(second.data["created_emails"], 0)
         self.assertEqual(list(Email.objects.order_by("dedupe_key").values_list("payload", flat=True)), before)
 
-    # 功能：验证伪造来源或百分比分析被拒绝。
-    # 输入：合法 L2 后修改 L3 事实来源，再插入百分比。
-    # 输出：两个 400 响应，分析未保存。
+    # 功能：验证伪造来源或成交概率被拒绝，原文业务百分比可保存。
+    # 输入：合法 L2 后分别修改来源、插入成交概率和付款比例。
+    # 输出：前两个请求返回 400，付款比例分析成功保存。
     # 逻辑：通过正式 Agent HTTP 写入检查。
     # 约束：不调用外部模型。
-    def test_analysis_rejects_foreign_evidence_and_percentage(self):
+    def test_analysis_rejects_foreign_evidence_and_deal_probability(self):
         company = self.submit()
         job, snapshot, grouping, context = self.prepare(company)
         results.save_input(self.user, snapshot, company.revision, job["job_id"], job["lease_token"])
@@ -571,7 +587,11 @@ class CRMTests(TestCase):
         analysis = rules.generate_analysis(snapshot, grouping, context)
         analysis["detail_view"]["profile"]["intent"]["facts"][0]["text"] = "成交可能 80%"
         self.assertEqual(self.agent.post("/api/v1/agent/analyses/", analysis, format="json", **headers).status_code, 400)
-        self.assertEqual(Analysis.objects.count(), 0)
+        analysis = rules.generate_analysis(snapshot, grouping, context)
+        analysis["detail_view"]["profile"]["intent"]["facts"][0]["text"] = "首付款 30%，验收后支付 60%，剩余 10% 为质保金"
+        response = self.agent.post("/api/v1/agent/analyses/", analysis, format="json", **headers)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Analysis.objects.count(), 1)
 
     # 功能：验证归并不得丢掉历史事实或重复计算事实。
     # 输入：已保存邮件的有效快照，分别删除预算和重复预算。

@@ -316,8 +316,8 @@ def _extract_new_or_retryable_emails(
 # 功能：按完成顺序产出并发 L1。
 # 输入：`candidates` 为邮件与已有记录的候选数组；`mailbox_address` 为授权账号完整地址；`extraction_provider` 为单封邮件事实抽取函数；`progress` 为可选阶段回调。
 # 输出：包含邮件、原记录、提交对象或异常的迭代器。
-# 逻辑：线程池最多四路，单封完成即产出。
-# 约束：不并发操作 Gmail SDK；观察器须能接受多个抽取线程。
+# 逻辑：主线程顺序回报抽取开始，线程池最多四路执行模型，单封完成即产出。
+# 约束：不并发操作 Gmail SDK 或进度观察器；只有模型调用在线程池中并发。
 def _process_email_candidates(
     candidates: list[tuple[dict, object]],
     mailbox_address: str,
@@ -331,12 +331,10 @@ def _process_email_candidates(
     # 功能：执行一封候选邮件的抽取。
     # 输入：`candidate` 为一封邮件与原记录元组。
     # 输出：邮件与抽取结果或异常四元组。
-    # 逻辑：先回报 extracting，再调用 process_email，捕获本封异常。
-    # 约束：进度持久化失败不伪装成抽取成功。
+    # 逻辑：调用 process_email，捕获本封异常；进度由提交线程统一回报。
+    # 约束：不从工作线程调用可能写数据库的观察器。
     def run(candidate: tuple[dict, object]):
         email, stored = candidate
-        if progress:
-            progress("extracting", {"gmail_message_id": _email_message_id(email)})
         try:
             return email, stored, process_email(
                 email, mailbox_address, extraction_provider
@@ -346,7 +344,14 @@ def _process_email_candidates(
 
     workers = min(EMAIL_EXTRACTION_WORKERS, len(candidates))
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="salesmate-l1") as pool:
-        futures = [pool.submit(run, candidate) for candidate in candidates]
+        futures = []
+        for candidate in candidates:
+            if progress:
+                progress(
+                    "extracting",
+                    {"gmail_message_id": _email_message_id(candidate[0])},
+                )
+            futures.append(pool.submit(run, candidate))
         for future in as_completed(futures):
             yield future.result()
 
