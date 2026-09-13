@@ -1,6 +1,6 @@
 # 本地开发与联调
 
-更新：2026-09-12。完整步骤以项目根目录的 [README](../README.md) 为准。本页只记录本地运行边界，避免维护第二套启动说明。
+更新：2026-09-13。完整步骤以项目根目录的 [README](../README.md) 为准。本页只记录本地运行边界，避免维护第二套启动说明。
 
 ## 环境
 
@@ -46,13 +46,15 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 并在根 `.env` 填写 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和
 `GOOGLE_OAUTH_REDIRECT_URI`。随后在工作台用当前员工账号点击“连接 Gmail”。
 
-授权返回工作台后，在第二个终端运行：
+`SALESMATE_AUTO_RUN_AGENT=True` 时，授权回调和页面“同步 Gmail”会让 Django 启动本地后台 Agent，页面会静默轮询并逐步显示已保存结果。该运行方式仅用于本地 MVP，Django Web 进程重启会中断正在执行的任务。
+
+关闭自动运行或需要逐步调试时，在第二个终端运行：
 
 ```powershell
 python -m agent.main --sync-authorized-mailboxes-once
 ```
 
-命令领取该员工的邮箱同步请求，执行 Gmail 读取、L1、邮件提交、Job 领取、L2、L3、L4、结果保存和回报。页面再次点击“同步 Gmail”后，需要再运行一次该命令。页面手动创建新分析任务后可单独运行：
+命令领取该员工的邮箱同步请求，首次扫描最近邮件、后续按 Gmail History 游标读取新增邮件，最多四路执行 L1，并在任一邮件完成后逐封提交。随后执行 Job 领取、L2、L3、L4、结果保存和回报。自动运行关闭时，页面再次点击“同步 Gmail”后需要再运行一次该命令。页面手动创建新分析任务后可单独运行：
 
 ```powershell
 python -m agent.main --process-jobs-once --job-limit 10

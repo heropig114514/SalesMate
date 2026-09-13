@@ -38,12 +38,12 @@ flowchart TB
     WEB <-->|Session JSON API| DJANGO[Django + DRF]
     WEB -->|发起 Google OAuth| DJANGO
     DJANGO <-->|授权码与只读凭证| GMAIL[Gmail]
-    DJANGO -->|员工专属同步请求与凭证| SYNC[一次性 Agent Gmail Sync]
-    GMAIL -->|只读邮件| SYNC
+    DJANGO -->|员工专属同步请求、凭证与 History 游标| SYNC[一次性 Agent Gmail Sync]
+    GMAIL -->|新增 message ID 与只读邮件| SYNC
     SYNC --> PARSE[邮件解析]
-    PARSE --> L1[L1 单封事实抽取]
+    PARSE --> L1[L1 单封事实抽取<br/>最多四路并发]
     L1 <-->|JSON Object| BAILIAN[阿里百炼]
-    L1 -->|EmailSubmission| DJANGO
+    L1 -->|任一完成即逐封提交 EmailSubmission| DJANGO
 
     DJANGO -->|Job + CompanyContext| ORCH[Agent 一次性任务编排]
     ORCH --> L2[L2 公司事实归并]
@@ -74,9 +74,9 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 |---|---|---|---|
 | 员工 Gmail 授权 | 当前员工 Session、Google OAuth code | 邮箱地址、授权状态、`sync_requested` | Django `GmailCredential` 与 `Mailbox.sync_state` |
 | 同步任务领取 | Agent 服务凭证、领取数量 | `mailbox_id`、邮箱地址、Google 授权信息、读取上限 | 状态变为 `sync_running` |
-| Gmail 读取 | 已领取的员工授权与读取上限 | Gmail message resource | Agent 内存 |
+| Gmail 读取 | 已领取的员工授权、读取上限和后端 History 游标 | 首次最近邮件或游标后的新增 message resource | Agent 内存；游标由 Django `Mailbox.sync_state` 保存 |
 | 邮件解析 | raw MIME、message/thread ID | 发件人、收件人、主题、正文、时间、方向 | Agent 内存 |
-| L1 抽取 | 当前邮件主题和正文 | `EmailSubmission` | Django `Email` 与 `Extraction` |
+| L1 抽取 | 当前邮件主题和正文 | `EmailSubmission` | 最多四路并发；任一完成后立即逐封保存到 Django `Email` 与 `Extraction` |
 | 后端归组 | 联系人邮箱和自报公司 | `company_id`、联系人、成员邮件键 | Django `Company` 与 `Contact` |
 | 任务入队 | 业务邮件且 `has_substantive_update=true` | `email_ingested` Job | Django `Job` |
 | L2 归并 | Grouping、邮件、客户、工单、报价、订单 | `AnalysisInput` | Django `AnalysisInput` |
@@ -89,8 +89,9 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 - `dedupe_key` 为 `mailbox_address:gmail_message_id`。
 - 相同邮件和相同抽取结果返回 `duplicate`。
 - 原抽取为 `failed`，下次同步成功时返回 `updated` 并更新事实。
-- 非业务邮件仍保存，但不创建分析任务。
+- 非业务邮件仍保存，但不创建分析任务；当前后端尚未把仅含非业务邮件的公司从默认列表中排除。
 - 没有实质变化的业务邮件仍保存，但不自动重跑公司分析。
+- 一封邮件的抽取或提交错误不会回滚其他邮件；失败 message ID 保留到下一轮重试。
 - 企业邮箱按域名归组，常见公共邮箱按完整联系人邮箱独立归组。
 
 ## 4. Agent 数据结构
@@ -271,7 +272,7 @@ BAILIAN_ENABLE_THINKING=false
 SALESMATE_BACKEND_AGENT_URL=http://127.0.0.1:8000/api/v1/agent/
 SALESMATE_AGENT_SERVICE_TOKEN=
 SALESMATE_MAILBOX_ID=
-SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v1
+SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2
 SALESMATE_JOB_LEASE_SECONDS=120
 SALESMATE_BACKEND_TIMEOUT=30
 ```
@@ -358,9 +359,9 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 授权回调或页面“同步并刷新”按钮会让后端自动启动一次后台 Agent。该 Agent 领取当前服务凭证所属员工的同步请求，并执行：
 
 ```text
-读取最近收件和发件
-→ L1 百炼抽取
-→ 提交 Django
+首次读取最近收件和发件，后续按 Gmail History 游标读取新增邮件
+→ 最多四路并发执行单封 L1 百炼抽取
+→ 任一 L1 完成即逐封提交 Django
 → 领取本次产生的任务
 → L2 归并
 → L3 百炼分析
@@ -382,6 +383,8 @@ python -m agent.main --sync-authorized-mailboxes-once
 - `updated_count`：之前抽取失败、这次成功更新的邮件数量。
 - `duplicate_count`：后端已有且内容相同的邮件数量。
 - `failed_extraction_count`：本次 L1 未能形成可信 facts 的邮件数量。
+- `failed_submission_count`：本次逐封提交后端失败的邮件数量。
+- `failed_email_count` 和 `email_errors`：本次需要重试的 message ID 数量及逐封错误阶段。
 - `job_reports[].status`：应为 `completed`；没有新的实质业务邮件时数组可以为空。
 
 ### 第四步：在前端核对结果
@@ -443,7 +446,7 @@ python -m agent.main --sync-gmail --mailbox-address your-account@gmail.com
 在项目根目录执行：
 
 ```powershell
-# Agent 离线测试：123 项
+# Agent 离线测试：141 项
 python -m unittest discover -s agent/tests -p "test_*.py"
 
 # Django 测试：39 项
@@ -486,8 +489,11 @@ ANALYSIS_PROVIDER=rules
 
 ## 12. 已知限制
 
-- 每次 Gmail 同步最多读取最近 20 封收件和发件邮件，不使用 Gmail History 游标。
-- 本地 MVP 由 Django 进程中的轻量后台线程按需启动 Agent，没有常驻任务队列；服务重启会中断正在执行的同步，可再次点击“同步并刷新”。
+- 首次 Gmail 同步最多读取最近 20 封收件和发件邮件；后续优先使用 Gmail History 游标读取新增邮件，游标过期时退回最近邮件扫描。
+- L1 最多四路并发并按完成顺序逐封保存，但 Gmail raw 正文仍按顺序读取。
+- 本地 MVP 由 Django 进程中的轻量后台线程按需启动 Agent，没有持久化的邮箱同步批次或常驻分析任务队列；服务重启会中断正在执行的同步，可再次点击“同步并刷新”。
+- 公司画像以公司 revision 为单位；当前后台线程一次领取一个分析 Job，不同公司画像尚未并行。
+- `skipped_non_business` 和 LLM 的 `non_sales` 会被 Agent 保留，但后端尚未提供人工复核分类或从默认公司列表排除非业务公司的查询规则。
 - 原 Gmail 只读同步仍使用原 GmailCredential JSON；本轮新发信/日历 Connection 使用独立 Fernet 密钥加密，浏览器既不接收明文也不接收密文。现有只读凭证迁移与生产密钥服务不在本轮变更内。
 - 公共邮箱按原清单自动归组；已支持显式公司合并、选择邮件搬移及人工域名/联系人映射，不猜测集团关系。
 - 工单、商机、产品、报价及明细、订单及明细、跟进均有关系记录和管理页入口；库存为人工记录，不自动扣减，不推断税费或收入确认。

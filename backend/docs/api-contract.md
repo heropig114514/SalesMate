@@ -1,6 +1,6 @@
 # 当前 API 契约
 
-更新：2026-09-12。字段的唯一机器可读定义是由 Django 生成的 [OpenAPI](../contracts/openapi.yaml)。Agent 业务对象语义见 [Agent README](../../agent/README.md)。
+更新：2026-09-13。字段的唯一机器可读定义是由 Django 生成的 [OpenAPI](../contracts/openapi.yaml)。Agent 业务对象语义见 [Agent README](../../agent/README.md)。
 
 ## 身份
 
@@ -18,7 +18,7 @@ Authorization: Agent <service-token>
 
 | Agent 操作 | HTTP | 主要交换数据 |
 |---|---|---|
-| 批量提交邮件 | `POST emails/` | `EmailSubmission[]` → 每封的 `dedupe_key`、`company_id`、`created/updated/duplicate` |
+| 提交邮件 | `POST emails/` | 接口仍接受 `EmailSubmission[]`；当前 Agent 每次传一封，返回该邮件的 `dedupe_key`、`company_id`、`created/updated/duplicate` |
 | 读取公司归组 | `GET grouping/?company_id=...` | 公司、域名、联系人、成员邮件键；响应含 ETag |
 | 读取公司上下文 | `GET context/?company_id=...` | 邮件、客户、工单、报价、订单；请求携带 Grouping 的 If-Match |
 | 保存 L2 | `POST analysis-inputs/` | 完整 `AnalysisInput` |
@@ -31,7 +31,7 @@ Authorization: Agent <service-token>
 | 领取员工邮箱同步 | `POST mailbox-syncs/claim/` | `limit` → 邮箱地址、Google 授权信息和读取上限 |
 | 回报员工邮箱同步 | `POST mailbox-syncs/report/` | 同步汇总、错误及可选刷新凭证 → 浏览器安全状态 |
 
-兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。当前 Gmail MVP 不依赖 History cursor，失败抽取可在下一次正常邮件同步时直接更新。
+兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。当前 Gmail 同步通过 SyncState 保存 History cursor、积压 message ID 和失败 message ID；游标无效时回退到最近邮件扫描。失败抽取可在下一次正常邮件同步时直接更新。
 
 ## 写入一致性
 
@@ -39,7 +39,7 @@ Authorization: Agent <service-token>
 
 保存 L2、L3 和 L4 时，HTTP 适配器发送 `If-Match`、`X-Job-ID` 和 `X-Lease-Token`。上下文 revision 已变化、任务不是运行中、凭证错误或租约过期时，后端拒绝写入。MVP 不自动续租或重试过期任务。
 
-邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job。
+邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。Agent 逐封调用提交接口，因此单封冲突不会回滚其他邮件。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job；当前公司列表尚未排除只包含非业务邮件的公司。
 
 L2、L3 和 L4 的核心约束：
 

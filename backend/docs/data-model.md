@@ -39,6 +39,8 @@ Company.customer 保留已确认的 CRM 基础资料；tickets/quotes/orders 是
 - 完成抽取保持不变；失败抽取可在下一次正常同步或兼容补交接口中更新为成功。完整事实历史保留，不覆盖旧预算。
 - 事实、人数、时间和分数未知时保留 null/unknown，不填推断值或零值。
 
+当前 `Extraction.status` 可以保存 `skipped_non_business`，完成事实中也可以保存 `intent_hint=non_sales`，但数据库没有独立的业务分类或人工复核字段。`Email.company` 当前为必填，因此仅包含非业务邮件的 Company 仍可能进入默认公司列表；该行为是待修复的后端数据模型和查询缺口，不能由前端主题或域名规则代替。
+
 ## 验证边界
 
 本轮在 PostgreSQL 隔离测试数据库验证关系记录、状态、权限隔离、金额快照、归组、草稿、附件、CSRF、动作确认及失败语义。Google SDK 边界采用模拟，不能证明真实账号授权或外部执行已完成。尚未进行生产部署、多进程压力测试、真实进程崩溃演练或 pgvector 检索。

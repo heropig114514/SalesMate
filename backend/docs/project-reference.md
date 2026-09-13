@@ -6,7 +6,7 @@
 
 - 原生 HTML/CSS/JavaScript 工作台展示当前员工 Gmail 授权、同步状态、公司、邮件、画像、分析、业务上下文和跟进优先级。
 - Django + DRF 保存用户、员工 Gmail 授权、邮箱、公司、联系人、邮件、抽取、任务和 L2–L4 结果。
-- Agent 读取 Gmail，调用百炼执行 L1 和 L3，确定性执行 L2 和 L4，通过 HTTP 与 Django 通信。
+- Agent 首次扫描最近 Gmail 邮件、后续使用 History 游标增量读取；L1 最多四路并发并完成即逐封提交，L2/L3/L4 按公司 Job 执行，通过 HTTP 与 Django 通信。
 - 根 `.env` 是唯一配置文件；`DATABASE_URL` 必填，本机使用原 PostgreSQL；SQLite 需显式配置。
 - `rules` 模式保留为无需 Gmail 和百炼的界面演示，不是模型失败回退。
 
@@ -24,7 +24,7 @@
 | [产品需求摘要](references/product-requirements.md) | 原 MVP 产品文档的历史需求摘要 |
 | [早期设计摘要](references/agent-and-early-design.md) | 早期宽范围技术路线，仅作背景 |
 
-历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。
+历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。当前后端尚未实现邮件级持久任务、公司画像并行 Worker，以及非业务邮件默认隐藏和人工复核。
 
 ## 后续范围
 
