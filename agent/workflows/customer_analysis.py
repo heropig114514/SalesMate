@@ -8,9 +8,10 @@ from datetime import datetime
 from typing import Any, Callable, Mapping
 
 from agent.llm.bailian import generate_json
+from agent.workflows.l1_email import MULTI_VALUE_FACT_FIELDS
 
 
-ANALYSIS_PROMPT_VERSION = "analysis-v1"
+ANALYSIS_PROMPT_VERSION = "analysis-v2"
 
 SIGNALS = frozenset(
     {
@@ -29,6 +30,8 @@ SIZE_BANDS = frozenset(
 )
 CONFIDENCES = frozenset({"low", "medium", "high"})
 CONFLICT_KINDS = frozenset({"value_changed", "source_disagree"})
+CONFLICT_FIELDS = frozenset(MULTI_VALUE_FACT_FIELDS)
+CONFLICT_FIELD_ALIASES = {"company_name": "company_self_reported"}
 PROFILE_DIMENSIONS = ("industry_context", "company_ops", "intent")
 ANALYSIS_DIMENSIONS = ("timeline", "opportunity", "risk", "guidance")
 SCORE_FEATURES = ("demand_clarity", "urgency", "decision_visibility")
@@ -46,13 +49,17 @@ list_view 必须包含：
 - industry: 半导体检测 / 精密量测 / 光学检测 / 工业检测 / unknown
 - industry_evidence: {text, source_refs}
 - size_band: lt_50 / 50_100 / 100_200 / 200_500 / gte_500 / unknown
-- size_source: string
+- size_source: 非空 string。若 business_context.customer.employee_count 不存在，必须返回 "unknown"；
+  若人数存在，必须原样使用 employee_count_source，来源缺失时返回 "crm"。不得自行猜测来源。
 - headline_summary: string
 - score_features: demand_clarity、urgency、decision_visibility 三项，
   每项为 {value, basis}，value 只能是 0、1、2、3 或 null。
 
 detail_view 必须包含：
 - conflicts: [{field, kind, summary, source_refs}]，kind 只能是 value_changed 或 source_disagree；无法确认则 []。
+  field 只能是 contact_name / contact_title / company_self_reported / business_background /
+  employee_scale_hint / product_need / quantity / budget / delivery_time / decision_process /
+  concerns / quote_reference / order_reference。公司名称变化使用 company_self_reported，禁止使用 company_name。
 - profile: industry_context、company_ops、intent 三个维度。
 - analysis: timeline、opportunity、risk、guidance 四个维度。
 - missing_fields: string[]。
@@ -73,8 +80,9 @@ detail_view 必须包含：
 6. 不得输出成交概率、百分比或带 % 的表述。优先级由后续 Python 计算。
 7. 数量、金额、币种、交期只按输入原文表达，不换算、不补全。
 8. unparsed_message_count 大于 0 时 note 必须说明分析未包含全部邮件。
-9. size_band 严格按员工人数划分：小于 50 为 lt_50，50-99 为 50_100，100-199 为 100_200，
-   200-499 为 200_500，500 及以上为 gte_500，人数未知为 unknown。
+9. size_band 严格按 business_context.customer.employee_count 划分：小于 50 为 lt_50，50-99 为 50_100，
+   100-199 为 100_200，200-499 为 200_500，500 及以上为 gte_500，人数未知为 unknown。
+   size_source 由同一 customer 对象确定；人数未知时必须写 "unknown"，不能返回空字符串或 null。
 """
 
 _PERCENT_PATTERN = re.compile(r"(?:\d+(?:\.\d+)?\s*%|百分之|成交概率)")
@@ -166,7 +174,7 @@ def validate_analysis_payload(
         raise AnalysisValidationError("分析中不能包含成交概率或百分比。")
 
     allowed_refs = _allowed_source_refs(analysis_input)
-    list_view = _validate_list_view(root["list_view"], allowed_refs)
+    list_view = _validate_list_view(root["list_view"], allowed_refs, analysis_input)
     _validate_business_rules(list_view, analysis_input)
     detail_view = _validate_detail_view(
         root["detail_view"],
@@ -244,7 +252,33 @@ def _size_band(value: object) -> str:
     return "gte_500"
 
 
-def _validate_list_view(value: object, allowed_refs: set[str]) -> dict[str, Any]:
+def _authoritative_size_source(analysis_input: Mapping[str, Any]) -> str:
+    """只使用后端客户档案中的员工人数来源，未知时返回稳定占位。"""
+    business = analysis_input.get("business_context")
+    business = business if isinstance(business, Mapping) else {}
+    customer = business.get("customer")
+    customer = customer if isinstance(customer, Mapping) else {}
+    employee_count = customer.get("employee_count")
+    if type(employee_count) is not int or employee_count < 0:
+        return "unknown"
+    source = customer.get("employee_count_source")
+    if isinstance(source, str) and source.strip():
+        return source.strip()
+    return "crm"
+
+
+def _conflict_field(value: object, path: str) -> str:
+    """规范常见模型别名，并确保最终字段符合后端 L1 事实枚举。"""
+    field = _nonblank(value, path)
+    normalized = CONFLICT_FIELD_ALIASES.get(field, field)
+    return _enum(normalized, CONFLICT_FIELDS, path)
+
+
+def _validate_list_view(
+    value: object,
+    allowed_refs: set[str],
+    analysis_input: Mapping[str, Any],
+) -> dict[str, Any]:
     item = _object(value, "list_view")
     required = {
         "signal",
@@ -307,7 +341,9 @@ def _validate_list_view(value: object, allowed_refs: set[str]) -> dict[str, Any]
         "industry": industry,
         "industry_evidence": industry_evidence,
         "size_band": size_band,
-        "size_source": _nonblank(item["size_source"], "list_view.size_source"),
+        # 规模来源是后端客户档案中的确定性字段。模型仍需输出该键，
+        # 但空值或自由改写不会再让整份画像失败或制造虚假来源。
+        "size_source": _authoritative_size_source(analysis_input),
         "headline_summary": _nonblank(
             item["headline_summary"], "list_view.headline_summary"
         ),
@@ -340,7 +376,7 @@ def _validate_detail_view(
             raise AnalysisValidationError(f"{path} 至少需要两个来源。")
         conflicts.append(
             {
-                "field": _nonblank(conflict["field"], f"{path}.field"),
+                "field": _conflict_field(conflict["field"], f"{path}.field"),
                 "kind": _enum(conflict["kind"], CONFLICT_KINDS, f"{path}.kind"),
                 "summary": _nonblank(conflict["summary"], f"{path}.summary"),
                 "source_refs": refs,

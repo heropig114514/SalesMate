@@ -4,9 +4,10 @@
  * 关联：api.js 处理 HTTP；assistant.js 管理客户私有会话及草稿；index.html 提供骨架；app.css 定义布局。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
- * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、disconnectGmail、openMail、openRegister、loginSubmit、
+ * startGmailAuthorization、mailboxEmailErrorCount、pollCompanyAnalyses、pollGmailSync、requestGmailSync、refreshInbox、
+ * disconnectGmail、openMail、openRegister、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
- * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情和方向；
+ * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
  * signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
  */
 import { request, escapeHtml as e } from './api.js';
@@ -16,7 +17,7 @@ const assistant = new AssistantPanel();
 
 /** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
 const $ = id => document.getElementById(id);
-const state = { page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0 };
+const state = { page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0, listSignature: null };
 const signals = { unknown: '待确认', inquiry_intent: '询盘', new_lead_no_profile: '新线索未建档', quoted_not_closed: '已报价未成交', repeat_purchase: '复购' };
 const sizes = { unknown: '规模未知', lt_50: '少于 50 人', '50_100': '50–99 人', '100_200': '100–199 人', '200_500': '200–499 人', gte_500: '500 人及以上' };
 const dimensions = { industry_context: '行业情况', company_ops: '公司经营分析', intent: '意向分析', timeline: '时间轴', opportunity: '商机分析', risk: '风险分析', guidance: '下一步引导' };
@@ -80,14 +81,19 @@ function renderRow(row) {
   return `<a class="company-row" href="#company/${encodeURIComponent(row.company_id)}"><div class="company-main"><div class="avatar">${e(name.slice(0, 1))}</div><div><div class="row-title"><h3>${e(name)}</h3>${row.crm_status === 'registered' ? pill('已建档', 'subtle') : ''}</div><p class="identity">${e(row.contacts[0]?.contact_email || '联系人待确认')} <span>·</span> ${row.email_count} 封往来</p><p class="summary">${e(row.headline_summary)}</p><div class="row-tags">${pill(row.industry === 'unknown' ? '行业未知' : row.industry, 'subtle')}${pill(sizes[row.size_band], 'subtle')}${row.stale ? pill('分析待更新', 'warning') : ''}${row.job_status === 'failed' ? pill('处理失败', 'warning') : ''}</div></div></div><div class="row-signal">${pill(signals[row.signal], row.signal === 'unknown' ? 'subtle' : 'green')}<small>${row.provider === 'rules' ? '规则占位' : row.provider === 'agent' ? 'Agent 分析' : '等待分析'}</small></div><div class="row-score">${row.score === null ? '<span class="unscored">—</span><small>资料不足 · 未评分</small>' : `<strong>${row.score}<small> / 100</small></strong><div class="score-track"><span style="width:${Number(row.score)}%"></span></div><small>跟进优先级${row.provider === 'rules' ? ' · 占位' : ''}</small>`}</div><div class="row-date">${e(date(row.last_message_at))}<span>查看客户 →</span></div></a>`;
 }
 
-/** 功能：加载列表及分页状态。输入：表单与 state.page 隐式状态。输出：无。
- * 逻辑：以查询参数调用后端，展示空、错误和成功状态。约束：不在请求失败时保留看似最新的旧列表。 */
-async function loadList() {
-  $('company-list').innerHTML = '<div class="empty">正在读取当前员工的 Gmail 客户列表…</div>';
+/** 功能：加载列表及分页状态。输入：表单、state.page 和是否显示加载占位。输出：列表响应。
+ * 逻辑：以查询参数调用后端；后台轮询时保留现有列表，避免每三秒清空并重建造成闪烁。约束：普通加载失败时不保留看似最新的旧列表。 */
+async function loadList({ showLoading = true } = {}) {
+  if (showLoading) {
+    $('company-list').innerHTML = '<div class="empty">正在读取当前员工的 Gmail 客户列表…</div>';
+  }
   const params = new URLSearchParams(new FormData($('filters')));
   params.set('page', state.page); params.set('page_size', 20);
   try {
     const data = await request('companies/?' + params);
+    const signature = JSON.stringify(data);
+    if (!showLoading && signature === state.listSignature) return data;
+    state.listSignature = signature;
     state.count = data.count;
     renderStats(data.stats);
     $('result-count').textContent = data.count;
@@ -95,8 +101,11 @@ async function loadList() {
     $('page-number').textContent = `${state.page} / ${Math.max(1, Math.ceil(data.count / 20))}`;
     $('previous').disabled = state.page <= 1;
     $('next').disabled = state.page * 20 >= data.count;
+    return data;
   } catch (error) {
-    $('company-list').innerHTML = '<div class="empty">加载失败，请检查上方提示后点击刷新。</div>';
+    if (showLoading) {
+      $('company-list').innerHTML = '<div class="empty">加载失败，请检查上方提示后点击刷新。</div>';
+    }
     throw error;
   }
 }
@@ -216,8 +225,42 @@ async function startGmailAuthorization() {
   location.assign(result.authorization_url);
 }
 
+/** 功能：统计本次同步中已隔离并等待重试的单封邮件错误。输入：邮箱状态数组。输出：错误数量。
+ * 逻辑：读取后端已原样保存的 sync_state.last_result.email_errors。约束：缺少字段时按零处理。 */
+function mailboxEmailErrorCount(mailboxes) {
+  return mailboxes.reduce((total, item) => {
+    const failedEmailCount = item.sync_state?.last_result?.failed_email_count;
+    if (Number.isInteger(failedEmailCount) && failedEmailCount >= 0) return total + failedEmailCount;
+    const errors = item.sync_state?.last_result?.email_errors;
+    if (!Array.isArray(errors)) return total;
+    return total + new Set(errors.map(error => error?.gmail_message_id).filter(Boolean)).size;
+  }, 0);
+}
+
+/** 功能：在 Gmail 已完成后继续轮询公司画像任务。输入：当前轮询标识和单封邮件错误数。输出：无。
+ * 逻辑：逐次刷新列表，所有可见公司不再 pending/running 时结束。约束：新一轮 Gmail 操作会停止旧轮询。 */
+async function pollCompanyAnalyses(polling, emailErrorCount) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (polling !== state.gmailPolling) return;
+    const data = await loadList({ showLoading: false });
+    const active = data.results.some(item => ['pending', 'running'].includes(item.job_status));
+    if (active) continue;
+    const failedCompanies = data.results.filter(item => item.job_status === 'failed').length;
+    if (failedCompanies) {
+      notice(`客户画像处理完成，其中 ${failedCompanies} 家失败；其他公司结果已保存。`);
+    } else if (emailErrorCount) {
+      notice(`客户画像已更新；${emailErrorCount} 封邮件处理失败并已加入下次重试。`);
+    } else {
+      notice('Gmail 同步和客户分析已完成，收件箱已刷新。', false);
+    }
+    return;
+  }
+  notice('客户画像仍在后台生成，可继续使用页面并稍后刷新查看。', false);
+}
+
 /** 功能：轮询后台 Gmail 同步状态并刷新客户列表。输入：mailboxIds。输出：无。
- * 逻辑：同步完成或失败即停止，最长等待十分钟。约束：新一轮轮询会终止旧轮询。 */
+ * 逻辑：同步运行时静默展示已逐封落库的结果；邮箱结束后继续观察画像任务，最长等待十分钟。约束：新一轮轮询会终止旧轮询。 */
 async function pollGmailSync(mailboxIds) {
   const polling = ++state.gmailPolling;
   const tracked = new Set(mailboxIds);
@@ -227,12 +270,24 @@ async function pollGmailSync(mailboxIds) {
     await loadMailboxes();
     const mailboxes = state.mailboxes.filter(item => tracked.has(item.mailbox_id));
     const pending = mailboxes.some(item => ['sync_requested', 'sync_running'].includes(item.sync_state?.status));
-    if (pending) continue;
+    if (pending) {
+      // Agent 会在每封邮件完成 L1 后立即保存；同步尚未结束时静默读取，
+      // 让已经落库的客户先显示出来，不清空当前列表，也不等待最慢邮件。
+      await loadList({ showLoading: false });
+      continue;
+    }
 
-    await loadList();
+    const data = await loadList({ showLoading: false });
     const failed = mailboxes.find(item => item.sync_state?.status === 'failed');
+    const emailErrorCount = mailboxEmailErrorCount(mailboxes);
+    const analysisPending = data.results.some(item => ['pending', 'running'].includes(item.job_status));
     if (failed) {
       notice(`Gmail 同步失败：${failed.sync_state?.error || '请查看后端 Agent 日志。'}`);
+    } else if (analysisPending) {
+      notice('Gmail 邮件已同步，客户画像正在后台逐家公司生成。', false);
+      void pollCompanyAnalyses(polling, emailErrorCount).catch(error => notice(error.message));
+    } else if (emailErrorCount) {
+      notice(`Gmail 同步完成；${emailErrorCount} 封邮件处理失败并已加入下次重试。`);
     } else {
       notice('Gmail 同步和客户分析已完成，收件箱已刷新。', false);
     }

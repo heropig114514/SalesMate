@@ -62,6 +62,31 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertEqual(result["duplicate_count"], 1)
         self.assertEqual(result["affected_company_ids"], ["company-1", "company-2"])
 
+    def test_stored_email_lookup_maps_existing_record_and_not_found(self):
+        dedupe_key = "sales@example.com:message-1"
+        session = _Session(
+            _Response(
+                {
+                    "dedupe_key": dedupe_key,
+                    "extract_prompt_version": "extract-v6",
+                    "extract_status": "completed",
+                }
+            ),
+            _Response(
+                {"error": {"code": "not_found", "detail": "邮件不存在。"}},
+                status=404,
+            ),
+        )
+        backend = self.client(session)
+
+        stored = backend.get_stored_email("mailbox-1", dedupe_key)
+        missing = backend.get_stored_email("mailbox-1", "sales@example.com:missing")
+
+        self.assertEqual(stored["extract_status"], "completed")
+        self.assertIsNone(missing)
+        self.assertIn("mailbox_id=mailbox-1", session.calls[0][1])
+        self.assertIn("dedupe_key=sales%40example.com%3Amessage-1", session.calls[0][1])
+
     def test_grouping_context_and_job_extensions_are_hidden_from_workflow(self):
         session = _Session(
             _Response({"company_id": "company-1"}, headers={"ETag": '"7"'}),
@@ -167,6 +192,46 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertTrue(
             session.calls[1][1].endswith("agent/mailbox-syncs/report/")
         )
+
+    def test_sync_state_uses_etag_for_incremental_cursor_save(self):
+        session = _Session(
+            _Response(
+                {
+                    "mailbox_id": "mailbox-1",
+                    "cursor": "100",
+                    "scope": {},
+                    "last_synced_at": None,
+                    "status": "ok",
+                    "version": 4,
+                },
+                headers={"ETag": '"4"'},
+            ),
+            _Response(
+                {
+                    "mailbox_id": "mailbox-1",
+                    "cursor": "120",
+                    "scope": {"mode": "gmail_history"},
+                    "last_synced_at": "2026-09-13T00:00:00+00:00",
+                    "status": "ok",
+                    "version": 5,
+                },
+                headers={"ETag": '"5"'},
+            ),
+        )
+        backend = self.client(session)
+
+        state = backend.get_sync_state("mailbox-1")
+        state.update(
+            cursor="120",
+            scope={"mode": "gmail_history"},
+            last_synced_at="2026-09-13T00:00:00+00:00",
+        )
+        saved = backend.save_sync_state(state)
+
+        self.assertEqual(saved["cursor"], "120")
+        self.assertTrue(session.calls[0][1].endswith("agent/sync-state/?mailbox_id=mailbox-1"))
+        self.assertTrue(session.calls[1][1].endswith("agent/sync-state-save/"))
+        self.assertEqual(session.calls[1][2]["headers"]["If-Match"], "4")
 
     def test_metadata_only_cache_hit_and_http_error_fail_explicitly(self):
         cache_session = _Session(

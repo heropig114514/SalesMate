@@ -12,9 +12,12 @@ from agent.config import AGENT_DIR
 from agent.llm.bailian import generate_json
 from agent.main import main as cli_main
 from agent.tools.gmail import (
+    GmailHistoryExpiredError,
     SCOPES,
     connect_gmail,
     get_profile_address,
+    get_profile_history_id,
+    list_history_message_ids,
     read_email,
     read_recent_emails,
 )
@@ -142,6 +145,82 @@ class GmailReadOnlyIntegrationTests(unittest.TestCase):
         profile_request.execute.assert_called_once_with()
         self.messages.get.assert_not_called()
         self.messages.list.assert_not_called()
+        self.assert_fully_offline_and_read_only()
+
+    def test_profile_history_id_uses_read_only_profile(self):
+        profile_request = Mock(name="profile_history_request")
+        profile_request.execute.return_value = {"historyId": "9001"}
+        self.users.getProfile.return_value = profile_request
+
+        self.assertEqual(get_profile_history_id(self.service), "9001")
+
+        self.users.getProfile.assert_called_once_with(userId="me")
+        profile_request.execute.assert_called_once_with()
+        self.assert_fully_offline_and_read_only()
+
+    def test_history_lists_added_inbox_and_sent_ids_across_pages(self):
+        first_request = Mock(name="history_page_1")
+        first_request.execute.return_value = {
+            "historyId": "110",
+            "nextPageToken": "page-2",
+            "history": [
+                {
+                    "messagesAdded": [
+                        {"message": {"id": "inbox-1", "labelIds": ["INBOX"]}},
+                        {"message": {"id": "draft-1", "labelIds": ["DRAFT"]}},
+                    ]
+                }
+            ],
+        }
+        second_request = Mock(name="history_page_2")
+        second_request.execute.return_value = {
+            "historyId": "120",
+            "history": [
+                {
+                    "messagesAdded": [
+                        {"message": {"id": "inbox-1", "labelIds": ["INBOX"]}},
+                        {"message": {"id": "sent-1", "labelIds": ["SENT"]}},
+                    ]
+                }
+            ],
+        }
+        history = self.users.history.return_value
+        history.list.side_effect = [first_request, second_request]
+
+        message_ids, cursor = list_history_message_ids(self.service, "100")
+
+        self.assertEqual(message_ids, ["inbox-1", "sent-1"])
+        self.assertEqual(cursor, "120")
+        self.assertEqual(
+            history.list.call_args_list,
+            [
+                call(
+                    userId="me",
+                    startHistoryId="100",
+                    historyTypes=["messageAdded"],
+                    maxResults=100,
+                ),
+                call(
+                    userId="me",
+                    startHistoryId="100",
+                    historyTypes=["messageAdded"],
+                    maxResults=100,
+                    pageToken="page-2",
+                ),
+            ],
+        )
+        self.assert_fully_offline_and_read_only()
+
+    def test_expired_history_cursor_has_distinct_fallback_error(self):
+        expired = RuntimeError("expired")
+        expired.resp = Mock(status=404)
+        request = Mock(name="expired_history_request")
+        request.execute.side_effect = expired
+        self.users.history.return_value.list.return_value = request
+
+        with self.assertRaises(GmailHistoryExpiredError):
+            list_history_message_ids(self.service, "old-cursor")
+
         self.assert_fully_offline_and_read_only()
 
     def test_specified_message_gets_only_target_id_as_raw(self):

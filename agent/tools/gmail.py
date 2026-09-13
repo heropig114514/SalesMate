@@ -17,6 +17,10 @@ from agent.tools.email_parser import parse_raw_email
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
+class GmailHistoryExpiredError(RuntimeError):
+    """保存的 Gmail historyId 已不可用于增量读取。"""
+
+
 def create_service(access_token: str):
     """使用前端传入的短期 access token 创建只读 Gmail Service。"""
     if not isinstance(access_token, str) or not access_token.strip():
@@ -97,6 +101,22 @@ def get_profile_address(service) -> str:
     normalized = _normalize_mailbox_address(email_address)
     if normalized is None:
         raise RuntimeError("Gmail profile 未返回邮箱地址。")
+    return normalized
+
+
+def get_profile_history_id(service) -> str:
+    """读取当前邮箱可作为下一次增量起点的 Gmail historyId。"""
+    try:
+        profile = service.users().getProfile(userId="me").execute()
+    except Exception:
+        raise RuntimeError("Gmail profile 历史游标读取失败。") from None
+
+    history_id = profile.get("historyId") if isinstance(profile, dict) else None
+    if isinstance(history_id, bool) or not isinstance(history_id, (str, int)):
+        raise RuntimeError("Gmail profile 未返回有效历史游标。")
+    normalized = str(history_id).strip()
+    if not normalized:
+        raise RuntimeError("Gmail profile 未返回有效历史游标。")
     return normalized
 
 
@@ -206,8 +226,8 @@ def read_recent_emails(service, limit: int = 5) -> list[dict]:
     return emails
 
 
-def read_sync_emails(service, limit: int = 20) -> list[dict]:
-    """读取本次 Demo 同步使用的最近收件和发件邮件，最多二十封。"""
+def list_sync_message_ids(service, limit: int = 20) -> list[str]:
+    """列出最近收件和发件的 Gmail message ID，不读取邮件正文。"""
     if type(limit) is not int:
         raise RuntimeError("Gmail 同步数量必须是整数。")
     max_results = max(1, min(limit, 20))
@@ -226,10 +246,105 @@ def read_sync_emails(service, limit: int = 20) -> list[dict]:
     if not isinstance(items, list):
         raise RuntimeError("Gmail 同步邮件列表响应无效。")
 
-    emails: list[dict] = []
+    message_ids: list[str] = []
     for item in items[:max_results]:
         message_id = item.get("id") if isinstance(item, dict) else None
         if not isinstance(message_id, str) or not message_id.strip():
             raise RuntimeError("Gmail 同步邮件列表响应无效。")
-        emails.append(read_email(service, message_id))
-    return emails
+        message_ids.append(message_id)
+    return message_ids
+
+
+def list_history_message_ids(
+    service, start_history_id: str
+) -> tuple[list[str], str]:
+    """列出 historyId 之后新增的收件和发件 ID，并返回最新游标。"""
+    if not isinstance(start_history_id, str) or not start_history_id.strip():
+        raise RuntimeError("Gmail 历史游标不能为空。")
+
+    message_ids: list[str] = []
+    seen_message_ids: set[str] = set()
+    seen_page_tokens: set[str] = set()
+    page_token: str | None = None
+    latest_history_id = start_history_id.strip()
+    while True:
+        arguments = {
+            "userId": "me",
+            "startHistoryId": start_history_id.strip(),
+            "historyTypes": ["messageAdded"],
+            "maxResults": 100,
+        }
+        if page_token is not None:
+            arguments["pageToken"] = page_token
+        try:
+            response = service.users().history().list(**arguments).execute()
+        except Exception as error:
+            status = getattr(getattr(error, "resp", None), "status", None)
+            if status == 404:
+                raise GmailHistoryExpiredError(
+                    "Gmail 历史游标已过期，需要重新扫描最近邮件。"
+                ) from None
+            raise RuntimeError("Gmail 增量历史读取失败。") from None
+
+        if not isinstance(response, dict):
+            raise RuntimeError("Gmail 增量历史响应无效。")
+        returned_history_id = response.get("historyId")
+        if isinstance(returned_history_id, (str, int)) and not isinstance(
+            returned_history_id, bool
+        ):
+            candidate = str(returned_history_id).strip()
+            if candidate:
+                latest_history_id = candidate
+
+        history = response.get("history", [])
+        if not isinstance(history, list):
+            raise RuntimeError("Gmail 增量历史响应无效。")
+        for record in history:
+            additions = record.get("messagesAdded", []) if isinstance(record, dict) else []
+            if not isinstance(additions, list):
+                raise RuntimeError("Gmail 增量历史响应无效。")
+            for addition in additions:
+                message = addition.get("message") if isinstance(addition, dict) else None
+                if not isinstance(message, dict):
+                    raise RuntimeError("Gmail 增量历史响应无效。")
+                message_id = message.get("id")
+                if not isinstance(message_id, str) or not message_id.strip():
+                    raise RuntimeError("Gmail 增量历史响应无效。")
+                labels = message.get("labelIds")
+                if isinstance(labels, list) and labels and not {
+                    "INBOX",
+                    "SENT",
+                }.intersection(labels):
+                    continue
+                if message_id not in seen_message_ids:
+                    seen_message_ids.add(message_id)
+                    message_ids.append(message_id)
+
+        next_page_token = response.get("nextPageToken")
+        if next_page_token is None:
+            break
+        if (
+            not isinstance(next_page_token, str)
+            or not next_page_token
+            or next_page_token in seen_page_tokens
+        ):
+            raise RuntimeError("Gmail 增量历史分页信息无效。")
+        seen_page_tokens.add(next_page_token)
+        page_token = next_page_token
+
+    return message_ids, latest_history_id
+
+
+def read_messages(service, message_ids: list[str]) -> list[dict]:
+    """按给定顺序读取 Gmail raw 邮件。"""
+    if not isinstance(message_ids, list) or any(
+        not isinstance(message_id, str) or not message_id.strip()
+        for message_id in message_ids
+    ):
+        raise RuntimeError("Gmail message ID 列表无效。")
+    return [read_email(service, message_id) for message_id in message_ids]
+
+
+def read_sync_emails(service, limit: int = 20) -> list[dict]:
+    """读取本次同步使用的最近收件和发件邮件，最多二十封。"""
+    return read_messages(service, list_sync_message_ids(service, limit))

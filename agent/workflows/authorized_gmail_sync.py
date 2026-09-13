@@ -19,7 +19,7 @@ def sync_authorized_mailboxes_once(
     extraction_provider: Callable[[str, str], str] = bailian_extraction_provider,
     analysis_provider: Callable[[Mapping[str, Any]], str] = bailian_analysis_provider,
 ) -> list[dict[str, Any]]:
-    """领取网页同步请求，完成 Gmail、L1 和 L2-L4 后回报邮箱状态。"""
+    """领取网页同步请求，先回报 Gmail/L1，再在后台继续处理公司任务。"""
     claims = backend.claim_mailbox_syncs(limit)
     reports: list[dict[str, Any]] = []
     for claim in claims:
@@ -42,21 +42,6 @@ def sync_authorized_mailboxes_once(
                 gmail_factory=lambda _token, gmail_service=service: gmail_service,
                 extraction_provider=extraction_provider,
             )
-            if sync_result["status"] == "completed":
-                # 百炼调用串行执行时可能持续一分钟以上。每次只在后端领取
-                # 一个任务，完成并回报后再领取下一个，避免尚未开始处理的
-                # 任务在本地 MVP 的租约窗口内提前过期。
-                job_reports: list[dict[str, Any]] = []
-                while True:
-                    batch = process_jobs_once(
-                        backend=backend,
-                        limit=1,
-                        analysis_provider=analysis_provider,
-                    )
-                    if not batch:
-                        break
-                    job_reports.extend(batch)
-                sync_result["job_reports"] = job_reports
             status = sync_result["status"]
             error = (
                 sync_result.get("error", {}).get("message")
@@ -82,6 +67,22 @@ def sync_authorized_mailboxes_once(
             }
         )
         reports.append(sync_result)
+
+    # 邮箱读取和逐封保存完成后，前端已经可以看到同步结果。公司画像继续
+    # 通过后端 Job 独立处理；一次只领取一个，避免等待中的任务租约过期。
+    job_reports: list[dict[str, Any]] = []
+    while True:
+        batch = process_jobs_once(
+            backend=backend,
+            limit=1,
+            analysis_provider=analysis_provider,
+        )
+        if not batch:
+            break
+        job_reports.extend(batch)
+    for result in reports:
+        if result.get("status") == "completed":
+            result["job_reports"] = job_reports
     return reports
 
 

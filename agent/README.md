@@ -137,9 +137,9 @@ flowchart TB
 | 1. 员工邮箱授权 | 浏览器 ↔ Django ↔ Google | 员工 Session、OAuth code | mailbox_id、mailbox_address、授权状态、sync_requested | 绑定当前员工实际选择的 Gmail，不把令牌交给浏览器 |
 | 2. 同步领取与邮件读取 | Django → Agent ↔ Gmail | mailbox_id、授权信息、读取上限 | message_id、thread_id、raw MIME、received_at | 一次性读取该员工最近的收件和发件邮件 |
 | 3. 邮件解析 | Gmail → 邮件解析 → L1 | raw MIME 和 Gmail 元数据 | subject、body_text、from、to、cc、sent_at、direction | 把 Gmail resource 转成统一邮件结构 |
-| 4. 单封事实抽取 | L1 → 后端 | 统一邮件结构 | EmailSubmission：dedupe_key、contact_email、extract_status、facts | 保存邮件，并区分完成、失败和非业务邮件 |
-| 5. 保存与归组 | 后端内部 | EmailSubmission 数组 | 保存结果、company_id、公司成员邮件、必要的待处理任务 | 完成去重、失败记录更新和真实公司归组 |
-| 6. 同步结果 | Agent → Django → 浏览器 | 后端保存结果 | fetched_count、created_count、updated_count、duplicate_count、failed_extraction_count、affected_company_ids、同步状态 | 告知员工本次同步发生了什么 |
+| 4. 单封事实抽取 | L1 → 后端 | 统一邮件结构 | EmailSubmission：dedupe_key、contact_email、extract_status、facts | 最多四封并发抽取；一封异常不终止其他邮件 |
+| 5. 保存与归组 | Agent → 后端 | 已完成的单封 EmailSubmission | 单封保存结果、company_id、公司成员邮件、必要的待处理任务 | 不等待最慢邮件，任一 L1 完成后立即逐封提交；独立事务避免一个冲突回滚整批邮件 |
+| 6. 同步结果 | Agent → Django → 浏览器 | 后端保存结果 | fetched_count、l1_processed_count、created_count、duplicate_count、failed_extraction_count、failed_submission_count、email_errors、同步状态 | 邮箱阶段完成后立即回报；失败邮件保留到下一轮重试 |
 | 7. 任务进入分析 | 后端 → 编排 | job_id、trigger、company_id | 本批次待分析公司列表 | 把邮件变化或业务数据变化转换为公司分析任务 |
 | 8. 公司数据准备 | 后端 → L2 | 公司归组、邮件、客户、联系人、工单、报价、订单、快照版本 | 完整公司数据集合 | 为公司级事实归并提供统一上下文 |
 | 9. 公司级事实归并 | L2 → 编排和后端 | 公司数据集合 | AnalysisInput：company、business_context、facts、metrics、input_version、unparsed_message_count | 形成 L3 唯一可信的分析输入 |
@@ -270,7 +270,9 @@ result = sync_gmail(
 )
 ```
 
-`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。每次重新读取最近的收件和发件邮件，依靠 `dedupe_key` 去重，不实现 Gmail History 游标。
+`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v6` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
+
+如果传入的测试后端或旧适配器没有 `get_sync_state()` 与 `save_sync_state()`，`sync_gmail()` 会兼容退回原来的最近邮件扫描。游标读取或保存不可用不会改变邮件提交的正确性，只会让下一次同步重新扫描最近邮件。
 
 L1 的标准 `EmailSubmission` 保持上一节的业务字段。HTTP 适配器提交时额外加入后端传输所需的 `mailbox_id` 和 `source=gmail_real`，但不会把多值 facts 降级成后端当前的旧单值结构。
 
@@ -280,18 +282,27 @@ L1 的标准 `EmailSubmission` 保持上一节的业务字段。HTTP 适配器�
 {
   "mailbox_id": "mb1",
   "status": "completed",
+  "sync_mode": "incremental",
+  "cursor_saved": true,
   "fetched_count": 5,
-  "created_count": 3,
+  "pending_message_count": 0,
+  "retry_message_count": 0,
+  "failed_email_count": 0,
+  "l1_processed_count": 2,
+  "skipped_existing_count": 3,
+  "created_count": 1,
   "updated_count": 1,
-  "duplicate_count": 1,
+  "duplicate_count": 3,
   "failed_extraction_count": 0,
-  "affected_company_ids": ["company:example.com"],
+  "failed_submission_count": 0,
+  "email_errors": [],
+  "affected_company_ids": ["company-1", "company-2"],
   "job_reports": [],
   "error": null
 }
 ```
 
-底层同步函数只负责 Gmail、L1 和邮件提交。`job_reports` 在单独调用 `process_jobs_once()` 后由调用方填入；两个 Gmail CLI 入口都完成这层组合。
+底层同步函数只负责 Gmail、L1 和逐封邮件提交。网页授权流程会先回报邮箱同步结果，让浏览器结束 Gmail 等待，再逐家公司处理 L2–L4 Job；前端继续轮询公司 `job_status`，因此画像生成不会阻塞邮箱同步状态。`job_reports` 在单独调用 `process_jobs_once()` 后由调用方填入；两个 Gmail CLI 入口仍完成整条链路。
 
 后端需要遵循的提交规则：
 
@@ -453,7 +464,7 @@ L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。
 
 允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。
 
-L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率和百分比、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。
+L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率和百分比、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
 
 失败时返回 `status=failed`、`list_view=null`、`detail_view=null` 和本地调试错误，不写入分析缓存。
 
@@ -463,7 +474,7 @@ L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交�
 {
   "company_id": "company:example.com",
   "input_version": "sha256:...",
-  "analysis_prompt_version": "analysis-v1",
+  "analysis_prompt_version": "analysis-v2",
   "generated_at": "2026-09-12T10:02:00+08:00",
   "analysis_base_time": "2026-09-12T10:01:00+08:00",
   "status": "completed",
@@ -639,12 +650,15 @@ report_mailbox_sync(report)
 
 - 使用 `Authorization: Agent <service-token>`。
 - 为邮件提交补充 `mailbox_id` 和 `source=gmail_real`。
-- 把后端逐封邮件结果聚合为同步统计。
+- 最多四路并发执行 L1，并把后端逐封邮件结果聚合为同步统计。
+- 单封查询、L1 或提交失败只记录到 `email_errors` 和重试 ID，不使其他邮件回滚。
 - 保存并传递 Grouping/CompanyContext 的 ETag。
 - 读取后端 Job 的顶层 `company_id`。
 - 内部保存 `lease_token` 和 `expected_version`，写入 L2/L3/L4 时自动添加请求头。
 - 缓存未命中映射为 `None`；命中时要求后端返回完整 Analysis。
 - 领取当前服务凭证所属员工的 Gmail 同步请求，并回报同步状态和刷新后的授权。
+- 通过现有 `sync-state` 端点读取和保存 Gmail `historyId`，后续同步在 L1 之前跳过未变化的历史邮件。
+- 通过现有单封邮件兼容查询识别同版本完成记录，首次建立游标时也不会用新的模型结果覆盖已有事实。
 
 适配器不会改变 `extract-v6` 多值事实和 L2、L3、L4 字段层级。当前 Django 后端已经按这些结构完成对齐。
 
@@ -665,7 +679,7 @@ BAILIAN_MODEL=模型名称
 SALESMATE_BACKEND_AGENT_URL=http://127.0.0.1:8000/api/v1/agent/
 SALESMATE_AGENT_SERVICE_TOKEN=后端生成的Agent服务令牌
 SALESMATE_MAILBOX_ID=后端创建的邮箱UUID
-SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v1
+SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2
 SALESMATE_JOB_LEASE_SECONDS=120
 SALESMATE_BACKEND_TIMEOUT=30
 ```
@@ -705,7 +719,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 ```
 
 自动测试不连接真实 Gmail、百炼、数据库或 HTTP 服务。真实 Gmail 与百炼只做人工冒烟验证。
-当前完整 Agent 离线测试共 123 项。
+当前完整 Agent 离线测试共 141 项。
 
 测试文件分工：
 
@@ -713,10 +727,10 @@ python -m unittest agent.tests.test_mvp_pipeline
 |---|---:|---|
 | `agent/tests/email_submission_exploration.py` | 10 | 提供 L1 公共 fixture，并覆盖 EmailSubmission 与 CLI 的边界探索；文件名不以 `test_` 开头，由 `test_core.py` 和 `test_integration.py` 导入执行 |
 | `agent/tests/test_core.py` | 75 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
-| `agent/tests/test_integration.py` | 18 | Gmail 只读调用、CLI 参数、profile 回退和完整邮件处理集成路径 |
+| `agent/tests/test_integration.py` | 21 | Gmail 只读调用、History 分页与过期、CLI 参数、profile 回退和完整邮件处理集成路径 |
 | `agent/tests/test_analysis_input.py` | 4 | L2 事实归并、业务上下文、版本和错误边界 |
-| `agent/tests/test_mvp_pipeline.py` | 11 | access token 同步、去重、L3、L4、缓存和一次性任务端到端流程 |
-| `agent/tests/test_http_backend.py` | 5 | Django 服务认证、员工邮箱同步、ETag、任务租约、响应归一化和缓存契约 |
+| `agent/tests/test_mvp_pipeline.py` | 24 | access token、History 增量同步、L1 并发、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 确定性规模来源、冲突字段契约、L4、缓存和端到端流程 |
+| `agent/tests/test_http_backend.py` | 7 | Django 服务认证、已有邮件查询、员工邮箱与游标同步、ETag、任务租约、响应归一化和缓存契约 |
 
 `agent/tests/fake_backend.py` 只是测试 fixture，不包含测试方法，也不参与实际运行。
 
@@ -734,11 +748,17 @@ python -m unittest agent.tests.test_mvp_pipeline
 8. 三个评分特征的未知值使用 JSON `null`。
 9. L3 的合法 `source_refs` 包含 customer_id 和联系人邮箱。
 10. Job 顶层携带 `company_id`，合法重复公司任务可以回报 `skipped`。
+11. `sync-state` 返回 ETag 和 version，Agent 保存 Gmail `historyId` 时使用 `If-Match`，不需要新增后端接口。
+12. `failed-extractions` 的单封查询返回当前 EmailSubmission；Agent 用它在 L1 前跳过同版本可信终态，并继续处理失败或新邮件。
+13. 邮件提交仍使用既有 `POST emails/`，但 Agent 每次只提交一个元素，利用后端现有原子事务隔离单封错误，不需要新增接口。
 
 ## 12. 当前限制
 
-- 每次 Gmail 同步最多检查最近 20 封邮件，两次检查之间超过 20 封时可能遗漏。
+- 首次 Gmail 同步只回溯最近 20 封邮件；成功保存 `historyId` 后会分页读取全部新增记录，并把超过单轮上限的 message ID 留到后续轮次。游标过期时退回最近 20 封扫描。
+- 当前后端只能逐封查询已有邮件；首次扫描和游标回退最多增加 20 次轻量 HTTP 查询。后续若增加批量邮件状态接口，可把这些查询合并成一次，但不影响当前正确性。
+- L1 固定最多四路并发，避免一次产生二十个百炼请求；若账号限流，应在 Agent 侧把并发数改小。L2–L4 按公司 Job 独立处理，同一公司的多封更新由后端合并为一项最新任务。
 - 当前没有常驻任务队列；Django 在授权、同步刷新或更新分析后启动轻量后台 Agent，处理完当前任务即退出。
+- Agent 会提交 `skipped_non_business`，也会在 LLM 结果中保留 `intent_hint=non_sales` 与 `has_substantive_update=false`。当前公司列表接口尚未提供非业务复核分类或默认隐藏能力；该展示策略必须由后端基于已保存标记实现，前端不根据主题、域名或摘要自行猜测。
 - Django 服务重启会中断正在执行的后台同步；再次点击“同步并刷新”即可重新排队。
 - L3 不使用外部行业资讯或知识库。
 - L4 权重尚未使用真实销售样本校准。

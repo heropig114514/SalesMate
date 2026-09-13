@@ -18,6 +18,10 @@ class BackendClient(Protocol):
 
     def submit_emails(self, submissions: list[dict[str, Any]]) -> JsonObject: ...
 
+    def get_stored_email(
+        self, mailbox_id: str, dedupe_key: str
+    ) -> JsonObject | None: ...
+
     def get_company_grouping(self, company_id: str) -> JsonObject: ...
 
     def get_company_context(self, company_id: str) -> JsonObject: ...
@@ -41,6 +45,10 @@ class BackendClient(Protocol):
     def claim_mailbox_syncs(self, limit: int) -> list[dict[str, Any]]: ...
 
     def report_mailbox_sync(self, report: JsonObject) -> JsonObject: ...
+
+    def get_sync_state(self, mailbox_id: str) -> JsonObject: ...
+
+    def save_sync_state(self, sync_state: JsonObject) -> JsonObject: ...
 
 
 class BackendRetrievalError(RuntimeError):
@@ -86,7 +94,7 @@ class DjangoBackendClient:
         service_token: str,
         *,
         mailbox_id: str | None = None,
-        analysis_prompt_version: str = "analysis-v1",
+        analysis_prompt_version: str = "analysis-v2",
         lease_seconds: int = 120,
         timeout: float = 30,
         session: requests.Session | None = None,
@@ -112,6 +120,7 @@ class DjangoBackendClient:
         self._revisions: dict[str, str] = {}
         self._jobs: dict[str, _JobContext] = {}
         self._company_jobs: dict[str, _JobContext] = {}
+        self._mailbox_revisions: dict[str, str] = {}
 
     def submit_emails(
         self, submissions: list[dict[str, Any]]
@@ -154,6 +163,31 @@ class DjangoBackendClient:
             "duplicate_count": counts["duplicate"],
             "affected_company_ids": affected,
         }
+
+    def get_stored_email(
+        self, mailbox_id: str, dedupe_key: str
+    ) -> dict[str, Any] | None:
+        """按天然键读取已保存邮件，用于在 L1 前复用同版本抽取。"""
+        response, _ = self._request(
+            "GET",
+            "failed-extractions/",
+            query={"mailbox_id": mailbox_id, "dedupe_key": dedupe_key},
+            allowed_statuses={404},
+        )
+        if response is None:
+            return None
+        document = self._object(response, "Stored EmailSubmission")
+        if document.get("dedupe_key") != dedupe_key:
+            raise BackendContractError("已保存邮件的 dedupe_key 与请求不一致。")
+        if not isinstance(document.get("extract_prompt_version"), str):
+            raise BackendContractError("已保存邮件缺少 extract_prompt_version。")
+        if document.get("extract_status") not in {
+            "completed",
+            "failed",
+            "skipped_non_business",
+        }:
+            raise BackendContractError("已保存邮件的 extract_status 无效。")
+        return document
 
     def get_company_grouping(self, company_id: str) -> dict[str, Any]:
         response, headers = self._request(
@@ -347,6 +381,44 @@ class DjangoBackendClient:
         )
         return self._object(response, "Mailbox sync report")
 
+    def get_sync_state(self, mailbox_id: str) -> dict[str, Any]:
+        """读取邮箱历史游标，并保存后端返回的乐观锁版本。"""
+        response, headers = self._request(
+            "GET", "sync-state/", query={"mailbox_id": mailbox_id}
+        )
+        document = self._object(response, "SyncState")
+        revision = self._etag(headers)
+        if revision is None:
+            raise BackendContractError("SyncState 响应缺少 ETag。")
+        if str(document.get("mailbox_id")) != mailbox_id:
+            raise BackendContractError("SyncState 的 mailbox_id 与请求不一致。")
+        if type(document.get("version")) is not int:
+            raise BackendContractError("SyncState 响应缺少整数 version。")
+        self._mailbox_revisions[mailbox_id] = revision
+        return document
+
+    def save_sync_state(self, sync_state: Mapping[str, Any]) -> dict[str, Any]:
+        """保存成功邮件批次对应的 Gmail historyId 增量游标。"""
+        document = dict(sync_state)
+        mailbox_id = document.get("mailbox_id")
+        if not isinstance(mailbox_id, str) or not mailbox_id:
+            raise BackendContractError("SyncState 载荷缺少 mailbox_id。")
+        revision = self._mailbox_revisions.get(mailbox_id)
+        if revision is None:
+            raise BackendContractError("保存 SyncState 前必须先读取当前状态。")
+        response, headers = self._request(
+            "POST",
+            "sync-state-save/",
+            json=document,
+            headers={"If-Match": revision},
+        )
+        saved = self._object(response, "SyncState")
+        returned_revision = self._etag(headers)
+        if returned_revision is None:
+            raise BackendContractError("保存 SyncState 的响应缺少 ETag。")
+        self._mailbox_revisions[mailbox_id] = returned_revision
+        return saved
+
     def _write_headers(self, company_id: str) -> dict[str, str]:
         context = self._company_jobs.get(company_id)
         if context is None:
@@ -440,7 +512,7 @@ def django_backend_from_environment(
     service_token = os.getenv("SALESMATE_AGENT_SERVICE_TOKEN", "")
     resolved_mailbox = mailbox_id or os.getenv("SALESMATE_MAILBOX_ID")
     analysis_prompt_version = os.getenv(
-        "SALESMATE_ANALYSIS_PROMPT_VERSION", "analysis-v1"
+        "SALESMATE_ANALYSIS_PROMPT_VERSION", "analysis-v2"
     )
     try:
         lease_seconds = int(os.getenv("SALESMATE_JOB_LEASE_SECONDS", "120"))
