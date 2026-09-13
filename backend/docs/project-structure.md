@@ -26,7 +26,7 @@ SalesMate/
     │   ├── results.py                 # L2/L3/L4 验证、保存及缓存
     │   ├── selectors.py               # 上下文、页面投影与统计
     │   ├── gmail_oauth.py             # 员工授权、同步领取及凭证管理
-    │   ├── agent_runner.py            # 显式开启时调度一次性 Agent
+    │   ├── worker.py                  # 独立 Worker 的邮箱与画像执行单元
     │   ├── rules.py                   # 可替换的显式规则占位
     │   ├── views.py / urls.py         # 浏览器和 Agent 的 HTTP 入口
     │   ├── migrations/                # 数据表与唯一约束
@@ -35,9 +35,9 @@ SalesMate/
     ├── common/                       # 日志、错误和健康检查
     ├── tests/                        # 框架、契约、业务与权限测试
     ├── frontend/
-    │   ├── index.html                # 登录、列表、详情及表单骨架
-    │   ├── business.html              # 业务管理及动作审阅页面
-    │   └── assets/                   # 同源 API、页面交互及响应式样式
+    │   ├── index.html                # 统一工作台、邮件列表、客户详情及复核
+    │   ├── business.html              # 共享导航下的业务管理及动作审阅
+    │   └── assets/                   # workspace.js/CSS 共享外壳；业务模块及同源 API
     ├── contracts/openapi.yaml        # 从后端生成的契约
     ├── docs/                         # 状态、协议、数据模型、Agent 接入
     ├── tools/                        # 注释检查器、浏览器冒烟测试
@@ -53,3 +53,5 @@ crm 保持邮件与 L1–L4 分析持久化职责，sales 管理交易、协作�
 在 `SalesMate/backend/` 执行 `python tools/check_docs.py`，默认覆盖本目录全部 Python 文件，包括迁移、测试、工具和包初始化。修改检查器时同时执行 `python tools/test_check_docs.py`。JS/CSS/HTML 与 browser_smoke.cjs 的说明和目录人工核对。
 
 源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。交易维护、发送/日历确认、会话草稿与团队权限已放入 sales；知识库、翻译和自主助手仍待后续接入。未引入 RAG、LangGraph、Celery 或容器。
+
+新增 `processing_models.py`、`processing.py`、`classification.py`、`processing_views.py` 管理持久批次、阶段和复核；`management/commands/crm_worker.py` 消费任务，`classify_emails.py` 回填历史分类。

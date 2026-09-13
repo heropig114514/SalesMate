@@ -1,5 +1,5 @@
 /* 职责：销售业务页的桌面和移动布局及可见交互状态。
- * 实现：固定导航、响应式统计卡、可滚动表格和原生对话框；表单保持单一焦点流程。
+ * 实现：业务统计、表格和模态表单保留单一焦点流程；共享导航及客户外壳由 workspace.css 统一。
  * 关联：business.html 的语义节点及 business.js 生成的业务控件。
  * 目录：无函数或类；CSS 类仅定义展示。
  * 变量索引：--ink 正文色、--muted 次要文字、--accent 交互主色、--line 边界色。 */
@@ -89,15 +89,7 @@ small,
 .muted {
   color: var(--muted);
 }
-.navigation {
-  position: fixed;
-  width: 220px;
-  inset: 0 auto 0 0;
-  background: white;
-  border-right: 1px solid var(--line);
-  padding: 26px 18px;
-  overflow: auto;
-}
+
 .brand {
   display: flex;
   gap: 12px;
@@ -110,11 +102,7 @@ small,
   font-size: 11px;
   font-weight: 400;
 }
-.back {
-  display: block;
-  margin: 26px 0 12px;
-  font-size: 12px;
-}
+
 nav p {
   font-size: 11px;
   color: var(--muted);
@@ -401,10 +389,7 @@ dialog::backdrop {
   color: var(--accent);
 }
 @media (max-width: 1000px) {
-  .navigation {
-    width: 180px;
-    padding: 20px 12px;
-  }
+
   main {
     margin-left: 180px;
     padding: 24px 20px;
@@ -427,19 +412,11 @@ dialog::backdrop {
   }
 }
 @media (max-width: 700px) {
-  .navigation {
-    position: static;
-    width: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    padding: 15px 20px;
-  }
+
   .brand {
     font-size: 20px;
   }
-  .back {
-    margin: 10px 0;
-  }
+
   nav {
     display: flex;
     overflow-x: auto;

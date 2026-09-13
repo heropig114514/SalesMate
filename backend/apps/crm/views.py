@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：会话路由与 Agent 凭证路由隔离；本机调试可自动建立普通用户会话；校验后交给事务服务。
+实现：Web 只排队，独立 Worker 执行；会话路由与 Agent 凭证路由隔离；本机调试可自动建立普通用户会话；校验后交给事务服务。
 关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -82,7 +82,7 @@ from rest_framework.viewsets import ViewSet
 from apps.sales.models import CompanySettings
 from apps.sales.services import audit
 
-from . import agent_runner, gmail_oauth, ingestion, jobs, results, rules, selectors
+from . import gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
 from .models import Company, Email, Mailbox
 from .response_schemas import (SubmissionResultSerializer, JobResponseSerializer, CachedAnalysisResponseSerializer,
@@ -253,24 +253,24 @@ class CompanyViewSet(ViewSet):
     # 功能：显式请求公司分析。
     # 输入：`request` 为已登录用户；`pk` 为公司 UUID。
     # 输出：任务 ID、provider 和当前任务状态。
-    # 逻辑：在事务中合并任务，提交后按 provider 执行。
+    # 逻辑：拒绝无业务邮件公司，在事务中合并任务；agent 模式由独立 Worker 消费。
     # 约束：失败不会返回伪成功；agent 模式只入队。
     @extend_schema(request=None, responses=OBJECT, tags=["companies"])
     @action(detail=True, methods=["post"])
     def analyze(self, request, pk=None):
         with transaction.atomic():
             company = company_for(request.user, pk, lock=True)
+            if not company.emails.filter(business_classification="business").exists():
+                raise InvalidState("没有已确认业务邮件，不能生成客户画像。")
             job = jobs.enqueue(company, "customer_detail_opened")
         process_if_rules(request.user, company.pk)
-        if settings.ANALYSIS_PROVIDER == "agent":
-            agent_runner.schedule_agent_sync()
         job.refresh_from_db()
         return Response({"job_id": str(job.pk), "status": job.status, "provider": settings.ANALYSIS_PROVIDER})
 
     # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
     # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。
     # 输出：新的公司投影和 revision。
-    # 逻辑：先锁 owner 再锁公司，修改版本并同事务记录审计，提交后按原配置重算。
+    # 逻辑：先锁 owner 再锁公司，修改版本并记录审计；agent 任务持久排队，rules 在事务提交后计算。
     # 约束：人数非空必须有来源，不将邮件人数线索自动视为权威人数。
     @extend_schema(request=RegisterSerializer, responses=OBJECT, parameters=VERSION_HEADERS[:1], tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -293,8 +293,6 @@ class CompanyViewSet(ViewSet):
             audit(request.user, company_settings, "company_registered", {"fields": sorted(data)})
             jobs.enqueue(company, "external_updated")
         process_if_rules(request.user, company.pk)
-        if settings.ANALYSIS_PROVIDER == "agent":
-            agent_runner.schedule_agent_sync()
         company.refresh_from_db()
         return versioned(selectors.company_row(company), company.revision)
 
@@ -340,14 +338,13 @@ class MailboxViewSet(ViewSet):
     # 功能：完成当前员工 Google OAuth 并请求第一次同步。
     # 输入：`request` 含 Google 返回的 code、state 和当前员工会话。
     # 输出：重定向回工作台并携带授权结果。
-    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱并排入同步队列。
+    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱并持久化同步批次，由独立 Worker 消费。
     # 约束：失败时不建立未经验证的邮箱连接。
     @extend_schema(responses={302: None}, tags=["mailboxes"])
     @action(detail=False, methods=["get"], url_path="gmail-callback")
     def gmail_callback(self, request):
         try:
             mailbox = gmail_oauth.finish_authorization(request)
-            agent_runner.schedule_agent_sync()
             query = urlencode({"gmail": "authorized", "address": mailbox.address})
         except Exception as error:
             # 本地开发阶段保留完整堆栈，便于区分 state、令牌交换和
@@ -368,14 +365,13 @@ class MailboxViewSet(ViewSet):
     # 功能：让当前员工请求刷新自己的 Gmail 邮件。
     # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。
     # 输出：不含凭证的最新连接及同步状态。
-    # 逻辑：把状态改为 sync_requested，等待一次性 Agent 命令领取。
+    # 逻辑：创建持久批次并返回 HTTP 202，独立 Worker 领取。
     # 约束：不可请求其他员工或未授权邮箱。
-    @extend_schema(request=None, responses=MailboxResponseSerializer, tags=["mailboxes"])
+    @extend_schema(request=None, responses={202: OBJECT}, tags=["mailboxes"])
     @action(detail=True, methods=["post"], url_path="request-sync")
     def request_sync(self, request, pk=None):
         mailbox = gmail_oauth.request_mailbox_sync(request.user, pk)
-        agent_runner.schedule_agent_sync()
-        return Response(mailbox)
+        return Response(mailbox, status=202)
 
     # 功能：移除当前员工的 Gmail 本地授权。
     # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。

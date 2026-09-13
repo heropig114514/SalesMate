@@ -31,9 +31,8 @@ from apps.sales import actions, calendar, grouping, integrations, models
 
 
 # 功能：验证工具适配器的授权与载荷不变量。
-# 逻辑：用 Mock 替代 SDK 网络，数据库仍真实隔离。
+# 逻辑：用 Mock 替代 SDK 网络，数据库仍真实隔离；业务任务可入队，但不运行独立分析 Worker。
 # 约束：测试不得向任何真实收件人或日历写入。
-@override_settings(SALESMATE_AUTO_RUN_AGENT=False)
 class ExternalTests(TestCase):
     # 功能：建立测试用连接和会话。
     # 输入：无外部参数。

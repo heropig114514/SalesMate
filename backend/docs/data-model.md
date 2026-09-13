@@ -39,7 +39,7 @@ Company.customer 保留已确认的 CRM 基础资料；tickets/quotes/orders 是
 - 完成抽取保持不变；失败抽取可在下一次正常同步或兼容补交接口中更新为成功。完整事实历史保留，不覆盖旧预算。
 - 事实、人数、时间和分数未知时保留 null/unknown，不填推断值或零值。
 
-当前 `Extraction.status` 可以保存 `skipped_non_business`，完成事实中也可以保存 `intent_hint=non_sales`，但数据库没有独立的业务分类或人工复核字段。`Email.company` 当前为必填，因此仅包含非业务邮件的 Company 仍可能进入默认公司列表；该行为是待修复的后端数据模型和查询缺口，不能由前端主题或域名规则代替。
+`Email` 的业务分类与人工复核字段独立于原始 payload；分类依据 `Extraction` 的跳过状态和意图信号，人工决定优先。`Email.company` 仍为必填，默认列表和统计仅保留含业务邮件的公司。`MailboxSyncRun` 保存同步批次与租约，`EmailProcessingJob` 保存逐封阶段，进度由任务表派生。迁移和规则边界见 [邮件处理适配](processing-integration.md)。
 
 ## 验证边界
 

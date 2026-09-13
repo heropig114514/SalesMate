@@ -39,7 +39,7 @@ Authorization: Agent <service-token>
 
 保存 L2、L3 和 L4 时，HTTP 适配器发送 `If-Match`、`X-Job-ID` 和 `X-Lease-Token`。上下文 revision 已变化、任务不是运行中、凭证错误或租约过期时，后端拒绝写入。MVP 不自动续租或重试过期任务。
 
-邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。Agent 逐封调用提交接口，因此单封冲突不会回滚其他邮件。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job；当前公司列表尚未排除只包含非业务邮件的公司。
+邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。Agent 逐封调用提交接口，因此单封冲突不会回滚其他邮件。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job；默认公司列表、统计与 Agent 上下文已排除非业务和待复核邮件。
 
 L2、L3 和 L4 的核心约束：
 
@@ -57,10 +57,10 @@ L2、L3 和 L4 的核心约束：
 
 - `POST mailboxes/gmail-authorize/`：生成 Google 授权地址。
 - `GET mailboxes/gmail-callback/`：交换授权码、验证 Gmail 地址、绑定当前员工并请求首次同步。
-- `POST mailboxes/{mailbox_id}/request-sync/`：将已授权邮箱标为 `sync_requested`。
+- `POST mailboxes/{mailbox_id}/request-sync/`：持久排队并返回 HTTP 202、run_id 和 queued；重复请求复用活动批次。
 - `DELETE mailboxes/{mailbox_id}/gmail-authorization/`：移除授权，保留历史业务数据。
 
-邮箱同步状态由一次性 Agent 命令处理，不代表已经启动常驻 Worker。
+独立 `crm_worker` 处理同步批次和公司任务。新增批次进度、明确重试、复核查询和 If-Match 确认接口见 [邮件处理适配](processing-integration.md)。Web 不启动后台线程。
 
 生成并校验契约：
 

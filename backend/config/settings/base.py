@@ -31,7 +31,6 @@
 - STATIC_ROOT：静态文件收集目录。
 - MEDIA_ROOT：媒体文件目录。
 - ANALYSIS_PROVIDER：显式选择 rules 占位或 agent 独立任务消费者。
-- SALESMATE_AUTO_RUN_AGENT：授权或刷新 Gmail 后是否在后台自动启动一次 Agent。
 - GOOGLE_OAUTH_CLIENT_ID：Google Web application OAuth 客户端标识。
 - GOOGLE_OAUTH_CLIENT_SECRET：Google Web application OAuth 客户端密钥。
 - GOOGLE_OAUTH_REDIRECT_URI：Google 回到 Django 的精确授权回调地址。
@@ -128,7 +127,6 @@ MEDIA_ROOT = BASE_DIR / "media"
 ANALYSIS_PROVIDER = env.str("ANALYSIS_PROVIDER", default="rules")
 if ANALYSIS_PROVIDER not in {"rules", "agent"}:
     raise ImproperlyConfigured("ANALYSIS_PROVIDER must be rules or agent.")
-SALESMATE_AUTO_RUN_AGENT = env.bool("SALESMATE_AUTO_RUN_AGENT", default=False)
 
 # Employee Gmail OAuth uses a Google "Web application" client. The callback
 # must exactly match an authorized redirect URI in Google Cloud Console.

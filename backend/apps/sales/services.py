@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：按业务 owner 串行化写入，使用 revision 拒绝覆盖；审计与快照在同一事务提交。
+实现：Agent 业务变化只入队，独立 Worker 消费；按业务 owner 串行化写入，使用 revision 拒绝覆盖；审计与快照在同一事务提交。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
 - audit：追加不含正文或凭证的操作事件。
@@ -81,19 +81,16 @@ IMMUTABLE_RELATIONS = (
 # 功能：入队并在事务提交后按既有 provider 调度。
 # 输入：`company` 为已锁定公司，`trigger` 为原协议事件名。
 # 输出：Job。
-# 逻辑：agent 模式沿用现有自动运行开关；rules 模式执行既有规则入口。
+# 逻辑：agent 模式只入队由独立 Worker 消费；rules 模式事务提交后执行既有规则入口。
 # 约束：不修改 provider、提示词或参数，无错误降级；回滚不会启动分析。
 def enqueue_analysis(company, trigger):
     from functools import partial
-    from apps.crm.agent_runner import schedule_agent_sync
     from apps.crm.rules import run_company
 
     job = enqueue(company, trigger)
-    if settings.ANALYSIS_PROVIDER == "agent":
-        transaction.on_commit(schedule_agent_sync)
-    elif settings.ANALYSIS_PROVIDER == "rules":
+    if settings.ANALYSIS_PROVIDER == "rules":
         transaction.on_commit(partial(run_company, company.owner, company.pk))
-    else:
+    elif settings.ANALYSIS_PROVIDER != "agent":
         raise InvalidState("ANALYSIS_PROVIDER 只能为 rules 或 agent。")
     return job
 

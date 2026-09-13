@@ -302,7 +302,7 @@ L1 的标准 `EmailSubmission` 保持上一节的业务字段。HTTP 适配器�
 }
 ```
 
-底层同步函数只负责 Gmail、L1 和逐封邮件提交。网页授权流程会先回报邮箱同步结果，让浏览器结束 Gmail 等待，再逐家公司处理 L2–L4 Job；前端继续轮询公司 `job_status`，因此画像生成不会阻塞邮箱同步状态。`job_reports` 在单独调用 `process_jobs_once()` 后由调用方填入；两个 Gmail CLI 入口仍完成整条链路。
+底层同步函数只负责 Gmail、L1 和逐封邮件提交。产品入口由独立 `crm_worker` 并行调度同步与公司画像，逐封完成即保存，前端分别读取批次进度和当前客户结果。保留的 Gmail CLI 仍先完成同步再处理公司 Job，仅用于单独调试，不与新 Worker 混用同一邮箱。`job_reports` 在调用 `process_jobs_once()` 后由调用方填入。
 
 后端需要遵循的提交规则：
 
@@ -765,12 +765,14 @@ python -m unittest agent.tests.test_mvp_pipeline
 
 ## 12. 当前限制
 
-- 首次 Gmail 同步只回溯最近 20 封邮件；成功保存 `historyId` 后会分页读取全部新增记录，并把超过单轮上限的 message ID 留到后续轮次。游标过期时退回最近 20 封扫描。
+- 首次 Gmail 同步只回溯最近 20 封邮件；成功保存 `historyId` 后会分页读取全部新增记录，并把超过单轮上限的 message ID 留到后续轮次。游标过期时合并已有待处理/失败 ID 与最近扫描，避免清空未完成清单。
 - 当前后端只能逐封查询已有邮件；首次扫描和游标回退最多增加 20 次轻量 HTTP 查询。后续若增加批量邮件状态接口，可把这些查询合并成一次，但不影响当前正确性。
 - L1 固定最多四路并发，避免一次产生二十个百炼请求；若账号限流，应在 Agent 侧把并发数改小。L2–L4 按公司 Job 独立处理，同一公司的多封更新由后端合并为一项最新任务。
-- 当前没有常驻任务队列；Django 在授权、同步刷新或更新分析后启动轻量后台 Agent，处理完当前任务即退出。
-- Agent 会提交 `skipped_non_business`，也会在 LLM 结果中保留 `intent_hint=non_sales` 与 `has_substantive_update=false`。当前公司列表接口尚未提供非业务复核分类或默认隐藏能力；该展示策略必须由后端基于已保存标记实现，前端不根据主题、域名或摘要自行猜测。
-- Django 服务重启会中断正在执行的后台同步；再次点击“同步并刷新”即可重新排队。
+- 软件独立 `crm_worker` 消费持久批次和画像任务；CLI 保留一次性调试，Web 不启动 Agent 线程。
+- Agent 会提交 `skipped_non_business`，也会在 LLM 结果中保留 `intent_hint=non_sales` 与 `has_substantive_update=false`。软件已提供非业务默认隐藏和人工复核；前端只展示后端分类，不猜测业务类别。
+- Web 重启不删除数据库任务；Worker 执行发生 HTTP 错误时显式失败，进度页可明确重试失败邮件。
 - L3 不使用外部行业资讯或知识库。
 - L4 权重尚未使用真实销售样本校准。
 - 实际筛选、排序、分页、CRM 建档和前端渲染由后端与前端实现。
+
+软件 Worker 为 `sync_gmail` 提供可选 progress 观察回调和显式重试 message_ids；观察模式在读取前登记消息并逐封隔离读取错误。原 CLI 默认参数保持不变。详见 [处理适配](../backend/docs/processing-integration.md)。

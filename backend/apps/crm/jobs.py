@@ -1,5 +1,5 @@
 """职责：管理持久化分析任务、领取租约和回报。
-实现：行锁领取待办、固定输入 revision、随机领取凭证；过期显式失败。
+实现：所有者锁与任务行锁保证公司级互斥，固定输入 revision、随机凭证；过期显式失败。
 关联：ingestion 入队，rules 或独立 Agent 消费，results 验证租约。
 目录：
 - enqueue：合并公司尚未领取的同类分析工作。
@@ -15,6 +15,7 @@ import logging
 import uuid
 
 from django.db import transaction
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
@@ -59,10 +60,12 @@ def job_data(job):
 # 功能：原子领取当前用户的待处理任务。
 # 输入：`owner` 为服务凭证用户；`limit` 为数量；`lease_seconds` 为显式租期；`company_id` 可限制公司。
 # 输出：领取后的 Job 数组。
-# 逻辑：先将已过期运行任务标记失败，再用 skip_locked 领取待办并生成新凭证。
+# 逻辑：过期运行任务显式失败；所有者锁串行化领取，排除已有运行任务的公司，同批每公司至多一个。
 # 约束：不重派已过期任务，不自动重试；需用户显式重新分析。
 @transaction.atomic
 def claim(owner, limit, lease_seconds, company_id=None):
+    from django.contrib.auth import get_user_model
+    get_user_model().objects.select_for_update().get(pk=owner.pk)
     now = timezone.now()
     scope = Job.objects.filter(company__owner=owner)
     if company_id:
@@ -71,13 +74,21 @@ def claim(owner, limit, lease_seconds, company_id=None):
     if expired:
         logger.warning("job_leases_expired count=%s owner_id=%s action=request_new_analysis", expired, owner.pk)
     # 只锁任务表，避免先锁任务再锁公司的反向锁序；enqueue 在公司锁之后锁待办。
-    jobs = list(scope.select_for_update(of=("self",), skip_locked=True).filter(status="pending").order_by("enqueued_at")[:limit])
+    running = Job.objects.filter(company_id=OuterRef("company_id"), status="running", lease_until__gt=now)
+    # 锁住所有者后再领取任务，使多个工作进程的公司互斥检查与领取原子化。
+    jobs = list(scope.annotate(company_running=Exists(running)).select_for_update(of=("self",), skip_locked=True).filter(status="pending", company_running=False).order_by("enqueued_at")[:limit])
+    selected = []
+    companies = set()
     for job in jobs:
+        if job.company_id in companies:
+            continue
+        companies.add(job.company_id)
+        selected.append(job)
         job.status, job.attempt = "running", job.attempt + 1
         job.lease_until, job.lease_token = now + timedelta(seconds=lease_seconds), uuid.uuid4()
         job.save(update_fields=["status", "attempt", "lease_until", "lease_token"])
         logger.info("job_claimed job_id=%s revision=%s attempt=%s", job.pk, job.revision, job.attempt)
-    return [job_data(job) for job in jobs]
+    return [job_data(job) for job in selected]
 
 
 # 功能：核验任务领取凭证和上下文版本。

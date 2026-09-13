@@ -54,10 +54,14 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 
 所有软件修改须遵循 `backend/README.md` 中的开发原则，代码、注释、目录与文档同步维护。在 `backend/` 执行 `python tools/check_docs.py`；修改检查器时同时执行 `python tools/test_check_docs.py`。
 
-Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent` 和 `SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2`；网页自动触发本地 Agent 时还需启用 `SALESMATE_AUTO_RUN_AGENT=True`。
+Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent` 和 `SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2`；HTTP 后端启动后另开终端运行 `python backend/manage.py crm_worker`。
 
-当前 Django 自动 Agent 使用 Web 进程内线程，适合本地 MVP。它没有持久化的邮件级任务和并行公司画像 Worker；服务重启可能中断任务。Agent 已输出非业务标记，但后端尚未提供默认隐藏与人工复核分类。
+同步批次和逐封状态持久化到数据库，独立 Worker 并行调度邮箱同步与公司画像。后端已提供非业务隐藏、人工复核、进度和明确重试接口；执行中断保留失败记录。
 
 ## 销售业务扩展
 
 `/business/` 已提供客户关系、交易单据、跟进、团队授权、附件和动作确认；助手侧栏支持持久化会话与草稿。新增 `backend/apps/sales/` 管理关系 Schema 和业务事务，原 Agent 协议不变。详细模型、接口、验证边界及 Worker/OAuth 配置见 [销售扩展说明](backend/docs/backend-expansion.md)。聊天模型与自主工具选择仍未接入，真实 Gmail 发信和日历执行须完成明确的写权限授权。
+
+## 邮件持久处理
+
+同步请求返回批次 ID，独立 `crm_worker` 执行逐封处理及公司画像；工作台新增准确进度、失败邮件重试和人工复核。升级与启动见 [适配说明](backend/docs/processing-integration.md)。

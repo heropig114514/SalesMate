@@ -12,36 +12,37 @@
 ## 一次同步
 
 1. 当前员工通过网页 OAuth 连接 Gmail，并在页面请求同步。
-2. Agent 从 `mailbox-syncs/claim/` 领取该员工邮箱的授权信息和读取上限。
+2. Django 持久保存同步批次；独立 Worker 领取批次与员工授权，再调用 Agent。旧 CLI 的 `mailbox-syncs/claim/` 仅保留迁移调试。
 3. 首次同步读取最近邮件并保存 Gmail History 游标；后续优先读取游标之后新增的邮件，游标过期时退回最近邮件扫描。
 4. Agent 根据 `dedupe_key` 复用后端已有的成功抽取，只对新邮件和可重试邮件执行 L1。
 5. 需要执行 L1 的邮件最多四路并发；任一邮件完成后，`DjangoBackendClient` 立即向 `POST /api/v1/agent/emails/` 逐封提交。
 6. 后端按 `mailbox_address:gmail_message_id` 去重，在当前员工范围内将邮件归组到公司；失败抽取在后续同步成功时可更新。
 7. 只有已完成、属于业务且有实质变化的邮件创建 `email_ingested` Job。
-8. 邮箱读取和逐封保存结束后，Agent 先回报邮箱同步结果；浏览器此时可以显示已保存邮件并继续轮询公司任务。
-9. Agent 领取 Job，依次读取 Grouping 和 CompanyContext，构建并保存 L2。
+8. Worker 持续记录逐封进度，邮箱处理结束后保存批次结果；浏览器轮询该批次的全量计数。
+9. 独立画像通道与同步并行，Agent 领取 Job，依次读取 Grouping 和 CompanyContext，构建并保存 L2。
 10. Agent 查询或生成 L3，计算并保存 L4，回报 Job。公司画像以公司 revision 为单位，同一公司的多封邮件共同组成一次分析输入。
 
 Job 对 Agent workflow 暴露顶层 `company_id`。HTTP 层额外返回 `lease_token` 和 `expected_version`；适配器负责 ETag、If-Match 和租约请求头，使 L1–L4 保持简单的后端协议。
 
 ## 运行模式
 
-`ANALYSIS_PROVIDER=agent` 是真实 Agent 模式。页面的“更新分析”只创建 Job，随后运行：
+`ANALYSIS_PROVIDER=agent` 是真实 Agent 模式。页面的“更新分析”只创建 Job，独立终端中的 Worker 持续消费：
 
 ```powershell
-python -m agent.main --process-jobs-once --job-limit 10
+python backend/manage.py crm_worker
 ```
 
 `ANALYSIS_PROVIDER=rules` 是离线演示模式。页面可导入合成样例或模拟来信，Django 内的确定性规则会写入演示分析。它不会在 Agent 网络或模型调用失败时自动接管。
 
 ## 当前限制
 
-- Agent 是一次性 CLI，不常驻轮询。
+- Agent CLI 保留一次性调试；产品链路由独立 `crm_worker` 消费数据库批次和公司任务。
 - 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。Agent 不再维护旧的本机 Desktop OAuth 读取命令；`test_tools/` 中的测试邮件注入器使用独立的 Desktop OAuth 凭据和 token，具体见其 README。
 - 后端 SyncState 保存 Gmail History 游标、积压 message ID 和失败 message ID；后续同步优先增量读取，仍以 `dedupe_key` 保证保存幂等。
-- L1 最多四路并发，并按实际完成顺序逐封提交。一封邮件失败不会阻止其他邮件保存，但邮箱同步目前仍由 Django 进程内线程执行，没有持久化邮件任务。
-- L3/L4 是公司级 Job。当前本地自动运行器一次只领取一个公司 Job，不同公司的画像尚未并行。
-- Agent 会提交明确的 `skipped_non_business`，并保留模型给出的 `intent_hint=non_sales`。后端当前只阻止它们创建自动分析任务，尚未提供默认隐藏和人工复核接口。
-- 租约和 revision 用于阻止过期任务覆盖新上下文；没有自动续租、指数退避或复杂调度。
+- L1 最多四路并发，逐封失败隔离；批次与邮件任务保存到数据库。公司画像默认两路，同公司互斥。
+- 后端依据 Agent 信号保存独立分类，隐藏非业务和待复核邮件；人工确认优先于后续自动分类。
+- 租约和 revision 用于阻止过期任务覆盖新上下文；公司任务没有自动续租或隐式重试；邮箱批次通过阶段事件刷新租约。
 - 工单、报价和订单由 sales 关系记录维护并投影到 CompanyContext；业务管理页提供编辑和状态入口，只有已发送报价及已确认订单提供相应分析证据。
 - 真实 Gmail 与百炼不属于自动测试依赖。
+
+持久批次、Worker、复核及迁移兼容边界见 [邮件处理适配](processing-integration.md)。

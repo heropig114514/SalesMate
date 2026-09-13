@@ -1,16 +1,19 @@
 /**
  * 职责：实现员工 Gmail 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：哈希路由、同源 API 和可访问表单；本地自动会话跳过登录页；邮件文本先转义再渲染。
- * 关联：api.js 处理 HTTP；assistant.js 管理客户私有会话及草稿；index.html 提供骨架；app.css 定义布局。
+ * 实现：哈希路由、单客户持续读取和局部节点更新；会话隔离旧响应，保留阅读位置及独立草稿。
+ * 关联：workspace.js 共享导航、真实待办及 URL 客户上下文；api.js 通信，assistant.js 管理私有草稿。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
- * renderDimension、renderDetail、renderEmails、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
- * startGmailAuthorization、mailboxEmailErrorCount、pollCompanyAnalyses、pollGmailSync、requestGmailSync、refreshInbox、
+ * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
+ * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
  * disconnectGmail、openMail、openRegister、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
- * signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
+ * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
  */
+import { initProcessingUI, updateRunProgress, refreshReviewBadge } from './processing.js';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js';
 import { request, escapeHtml as e } from './api.js';
+import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
 import { AssistantPanel } from './assistant.js?v=20260913-sales';
 
 const assistant = new AssistantPanel();
@@ -22,7 +25,16 @@ const signals = { unknown: '待确认', inquiry_intent: '询盘', new_lead_no_pr
 const sizes = { unknown: '规模未知', lt_50: '少于 50 人', '50_100': '50–99 人', '100_200': '100–199 人', '200_500': '200–499 人', gte_500: '500 人及以上' };
 const dimensions = { industry_context: '行业情况', company_ops: '公司经营分析', intent: '意向分析', timeline: '时间轴', opportunity: '商机分析', risk: '风险分析', guidance: '下一步引导' };
 const jobNames = { pending: '等待处理', running: '正在分析', completed: '分析完成', skipped: '已复用缓存', failed: '处理失败' };
-const gmailStates = { authorization_required: '未授权', sync_requested: '等待 Agent 同步', sync_running: '正在同步', completed: '同步完成', failed: '同步失败', ok: '同步完成' };
+const gmailStates = { authorization_required: '未授权', sync_requested: '等待 Agent 同步', sync_running: '正在同步', completed: '同步完成', failed: '同步失败', partial: '部分完成', ok: '同步完成' };
+const detailObserver = new DetailObserver({
+  read: id => request(`companies/${encodeURIComponent(id)}/`),
+  apply: data => {
+    if ($('workspace').hidden || location.hash !== `#company/${data.company_id}`) { detailObserver.stop(); return; }
+    renderDetail(data);
+  },
+  fail: error => setDetailLiveStatus(`自动更新已暂停：${error.message} 当前内容可能已过时。`, true),
+});
+
 
 /** 功能：按配置时区显示时间。输入：value 为 ISO 时间。输出：日期时间字符串。
  * 逻辑：Intl 使用后端声明时区。约束：空时间保持未知，不猜测时间。 */
@@ -68,10 +80,9 @@ async function busy(button, operation) {
 }
 
 /** 功能：显示公司及今日新邮件概览。输入：stats。输出：无。
- * 逻辑：统计完全来自后端，注明统计时区。约束：不拿过滤结果冒充全局统计。 */
+ * 逻辑：展示邮件客户口径与时区，区分全量业务目录。约束：后端总数不受当前分页替代。 */
 function renderStats(stats) {
-  $('stats').innerHTML = [['公司总数', stats.companies, '按客户公司整理往来', '▦'], ['待建档客户', stats.unregistered, '补齐档案，积累客户上下文', '♧'], ['今日新邮件', stats.new_emails_today, `统计时区 ${state.runtime.timezone}`, '✉']].map(([label, value, note, icon]) => `<article class="stat-card"><div><span class="stat-label">${e(label)}</span><strong>${e(value)}</strong><p>${e(note)}</p></div><span class="stat-icon">${icon}</span></article>`).join('');
-  $('nav-count').textContent = stats.companies;
+  $('stats').innerHTML = [['邮件客户', stats.companies, '已保存业务邮件的客户', '▦'], ['待建档客户', stats.unregistered, '补齐档案，积累客户上下文', '♧'], ['今日新邮件', stats.new_emails_today, `统计时区 ${state.runtime.timezone}`, '✉']].map(([label, value, note, icon]) => `<article class="stat-card"><div><span class="stat-label">${e(label)}</span><strong>${e(value)}</strong><p>${e(note)}</p></div><span class="stat-icon">${icon}</span></article>`).join('');
 }
 
 /** 功能：构造单个公司列表行。输入：row。输出：可键盘访问的链接 HTML。
@@ -113,58 +124,85 @@ async function loadList({ showLoading = true } = {}) {
 /** 功能：生成含来源跳转的分析维度。输入：key、value。输出：安全 HTML。
  * 逻辑：事实和推断分开展示，缺失项单独标记。约束：来源只通过 data-ref 导航，不执行邮件内容。 */
 function renderDimension(key, value) {
-  return `<article class="dimension"><h4>${e(dimensions[key] || key)}</h4>${value.facts.map(item => `<p>${e(item.text)} ${item.source_refs.map(ref => `<button class="source-ref" data-ref="${e(ref)}" title="查看原始依据">↗ 依据</button>`).join('')}</p>`).join('')}${value.inferences.map(item => `<p class="inference">${pill('推断', 'subtle')} ${e(item.text)}<small>依据：${e(item.basis)} · 置信等级 ${e(item.confidence)}</small></p>`).join('')}${!value.facts.length && !value.inferences.length ? '<p class="muted">尚无充分依据</p>' : ''}${value.missing_fields.length ? `<div class="missing">待补充：${value.missing_fields.map(e).join('、')}</div>` : ''}</article>`;
+  return `<article class="dimension" data-live-key="${e(key)}"><h4>${e(dimensions[key] || key)}</h4>${value.facts.map(item => `<p>${e(item.text)} ${item.source_refs.map(ref => `<button class="source-ref" data-ref="${e(ref)}" title="查看原始依据">↗ 依据</button>`).join('')}</p>`).join('')}${value.inferences.map(item => `<p class="inference">${pill('推断', 'subtle')} ${e(item.text)}<small>依据：${e(item.basis)} · 置信等级 ${e(item.confidence)}</small></p>`).join('')}${!value.facts.length && !value.inferences.length ? '<p class="muted">尚无充分依据</p>' : ''}${value.missing_fields.length ? `<div class="missing">待补充：${value.missing_fields.map(e).join('、')}</div>` : ''}</article>`;
 }
 
 /** 功能：渲染客户详情三栏。输入：data 为完整客户响应。输出：无。
- * 逻辑：邮件、同版分析、联系人和评分说明各有独立区域，绑定助手入口及当前客户上下文。
- * 约束：助手只编辑临时草稿；既有分析按钮保持原接口与触发条件。 */
+ * 逻辑：比较完整响应（不只 revision）；复用未变化节点并校正阅读位置，客户身份变化才重建共享上下文。
+ * 约束：独立助手和编辑表单不在局部更新范围，未保存草稿、焦点和邮件方向保留；不等待整批结束。 */
 function renderDetail(data) {
-  const name = companyName(data), analysis = data.analysis;
-  $('detail-crumb').textContent = ' / ' + name;
-  $('detail-header').innerHTML = `<a href="#" class="back-link">← 返回我的 Gmail 收件箱</a><div class="detail-title"><div class="avatar large">${e(name.slice(0, 1))}</div><div class="detail-identity"><h1>${e(name)}</h1><p>${e(data.domains.join(' · ') || '公共邮箱 · 按联系人独立归组')} ${pill(data.crm_status === 'registered' ? '已建档' : '未建档', 'subtle')}</p></div><div class="actions"><button id="register" class="secondary">${data.crm_status === 'registered' ? '编辑客户档案' : '建立客户档案'}</button><button id="reanalyze" class="primary">↻ 更新分析</button></div></div><div class="analysis-status">${pill(data.provider === 'rules' ? '规则占位结果' : data.provider === 'agent' ? 'Agent 分析' : '尚无分析', 'green')}<span>${e(jobNames[data.job_status] || '未创建任务')} · ${e(date(data.generated_at))}</span>${data.stale ? pill('上下文已变化，当前展示旧分析', 'warning') : ''}${data.job_error ? `<span class="failure">${e(data.job_error.message)}</span>` : ''}<button id="detail-refresh" class="text-btn">刷新状态</button></div>`;
-  $('detail-content').innerHTML = `<div class="detail-grid"><section class="mail-panel"><div class="section-title"><h2>邮件往来 <span class="count-pill">${data.email_count}</span></h2></div><div class="tabs" role="group" aria-label="邮件方向">${[['all', '全部'], ['inbound', '收件'], ['outbound', '发件']].map(([key, label]) => `<button data-direction="${key}" class="${state.direction === key ? 'selected' : ''}">${label}</button>`).join('')}</div><div id="emails"></div></section><section class="analysis-panel"><div class="section-title"><h2>客户画像</h2><span class="muted">基于已有业务事实</span></div>${analysis ? ['industry_context', 'company_ops', 'intent'].map(key => renderDimension(key, analysis.detail_view.profile[key])).join('') : '<div class="empty">分析尚未生成，请更新分析或等待 Agent。</div>'}<div class="section-title analysis-divider"><h2>客户分析</h2></div>${analysis ? ['timeline', 'opportunity', 'risk', 'guidance'].map(key => renderDimension(key, analysis.detail_view.analysis[key])).join('') : ''}${analysis?.detail_view.conflicts.length ? `<div class="missing">事实变化与冲突：${analysis.detail_view.conflicts.map(item => e(item.summary)).join('；')}</div>` : ''}</section><aside class="context-panel"><article class="context-card"><p class="eyebrow">FOLLOW-UP PRIORITY</p><h3>跟进优先级</h3><div class="priority-number">${data.score === null ? '—' : data.score}<span>${data.score === null ? '资料不足，未评分' : '/ 100'}</span></div><p class="fine">${data.provider === 'rules' ? '当前为规则占位分数，用于前后端联调。' : '该分数表示处理优先级。'} 不代表成交概率。</p>${data.score_reasons.map(item => `<p class="score-reason">${e(item.note)}<strong>${item.feature === 'insufficient_data' ? '—' : e(item.contribution)}</strong></p>`).join('')}</article><article class="context-card"><h3>待补充信息</h3><div class="missing-tags">${(analysis?.detail_view?.missing_fields || []).map(text => pill(text, 'warning')).join('') || (analysis ? '<p class="muted">当前分析未列出缺失项</p>' : '<p class="muted">暂未生成缺失项清单</p>')}</div><p class="fine">${e(analysis?.detail_view?.context_completeness?.note || '可从左侧邮件查看原始依据。')}</p></article><article class="context-card"><h3>联系人</h3>${data.contacts.map(contact => `<div class="contact"><strong>${e(contact.contact_name || '姓名待确认')}${contact.is_primary ? ' · 主要联系人' : ''}</strong><span>${e(contact.contact_email)}</span><small>${contact.interaction_count} 封往来</small></div>`).join('')}</article><article class="context-card"><h3>业务记录</h3><p class="muted">工单 ${data.context.tickets.length} · 报价 ${data.context.quotes.length} · 订单 ${data.context.orders.length}</p><p class="fine">只展示后端已有记录。邮件中提到报价，不代表实际已发送报价。</p></article></aside></div>`;
-  renderEmails();
-  const assistantButton = document.createElement('button');
-  assistantButton.id = 'assistant-toggle';
-  assistantButton.type = 'button';
-  assistantButton.className = 'secondary assistant-toggle';
-  assistantButton.textContent = '✧ AI 助手';
-  assistantButton.setAttribute('aria-controls', 'assistant-panel');
-  assistantButton.onclick = () => assistant.open();
-  $('detail-header').querySelector('.actions').append(assistantButton);
-  assistant.setContext({ id: data.company_id, name });
-  $('register').onclick = openRegister;
-  $('reanalyze').onclick = event => busy(event.currentTarget, async () => { await request(`companies/${data.company_id}/analyze/`, { method: 'POST' }); await loadDetail(data.company_id, false); });
-  $('detail-refresh').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, false));
+  const previous = state.detail;
+  if ($('detail-content').querySelector('.detail-grid') && JSON.stringify(previous) === JSON.stringify(data)) return;
+  state.detail = data;
+  try {
+    preserveReading($('detail-page'), () => {
+    const name = companyName(data), analysis = data.analysis;
+    if (!previous || previous.company_id !== data.company_id || companyName(previous) !== name) setWorkspaceContext({ id: data.company_id, name }, 'inbox');
+    $('detail-crumb').textContent = ' / ' + name;
+    patchHTML($('detail-header'), `<a href="#" class="back-link">← 返回工作台</a><div class="detail-title"><div class="avatar large">${e(name.slice(0, 1))}</div><div class="detail-identity"><h1>${e(name)}</h1><p>${e(data.domains.join(' · ') || '公共邮箱 · 按联系人独立归组')} ${pill(data.crm_status === 'registered' ? '已建档' : '未建档', 'subtle')}</p></div><div class="actions"><button id="register" class="secondary">${data.crm_status === 'registered' ? '编辑客户档案' : '建立客户档案'}</button><button id="reanalyze" class="primary">↻ 更新分析</button><button id="assistant-toggle" type="button" class="secondary assistant-toggle" aria-controls="assistant-panel" aria-expanded="${assistant.isOpen}">✧ AI 助手</button></div></div><div class="analysis-status">${pill(data.provider === 'rules' ? '规则占位结果' : data.provider === 'agent' ? 'Agent 分析' : '尚无分析', 'green')}<span>${e(jobNames[data.job_status] || '未创建任务')} · ${e(date(data.generated_at))}</span>${data.stale ? pill('上下文已变化，当前展示旧分析', 'warning') : ''}${data.job_error ? `<span class="failure">${e(data.job_error.message)}</span>` : ''}<button id="detail-refresh" class="text-btn">刷新状态</button></div><div class="workspace-customer-actions"><a href="${e(businessHref('quotes', data.company_id, { create: '1' }))}">＋ 创建报价</a><a href="${e(businessHref('follow-ups', data.company_id, { create: '1' }))}">＋ 安排跟进</a><a href="${e(businessHref('actions', data.company_id))}">准备沟通动作 →</a></div>`);
+    patchHTML($('detail-content'), `<div class="detail-grid"><section class="mail-panel"><div class="section-title"><h2>邮件往来 <span class="count-pill">${data.email_count}</span></h2></div><div class="tabs" role="group" aria-label="邮件方向">${[['all', '全部'], ['inbound', '收件'], ['outbound', '发件']].map(([key, label]) => `<button data-direction="${key}" class="${state.direction === key ? 'selected' : ''}">${label}</button>`).join('')}</div><div id="emails" data-live-preserve></div></section><section class="analysis-panel"><div class="section-title"><h2>客户画像</h2><span class="muted">基于已有业务事实</span></div>${analysis ? ['industry_context', 'company_ops', 'intent'].map(key => renderDimension(key, analysis.detail_view.profile[key])).join('') : '<div class="empty">分析尚未生成，请更新分析或等待 Agent。</div>'}<div class="section-title analysis-divider"><h2>客户分析</h2></div>${analysis ? ['timeline', 'opportunity', 'risk', 'guidance'].map(key => renderDimension(key, analysis.detail_view.analysis[key])).join('') : ''}${analysis?.detail_view.conflicts.length ? `<div class="missing">事实变化与冲突：${analysis.detail_view.conflicts.map(item => e(item.summary)).join('；')}</div>` : ''}</section><aside class="context-panel"><article class="context-card" data-live-key="score"><p class="eyebrow">FOLLOW-UP PRIORITY</p><h3>跟进优先级</h3><div class="priority-number">${data.score === null ? '—' : data.score}<span>${data.score === null ? '资料不足，未评分' : '/ 100'}</span></div><p class="fine">${data.provider === 'rules' ? '当前为规则占位分数，用于前后端联调。' : '该分数表示处理优先级。'} 不代表成交概率。</p>${data.score_reasons.map(item => `<p class="score-reason">${e(item.note)}<strong>${item.feature === 'insufficient_data' ? '—' : e(item.contribution)}</strong></p>`).join('')}</article><article class="context-card" data-live-key="missing"><h3>待补充信息</h3><div class="missing-tags">${(analysis?.detail_view?.missing_fields || []).map(text => pill(text, 'warning')).join('') || (analysis ? '<p class="muted">当前分析未列出缺失项</p>' : '<p class="muted">暂未生成缺失项清单</p>')}</div><p class="fine">${e(analysis?.detail_view?.context_completeness?.note || '可从左侧邮件查看原始依据。')}</p></article><article class="context-card" data-live-key="contacts"><h3>联系人</h3>${data.contacts.map(contact => `<div class="contact"><strong>${e(contact.contact_name || '姓名待确认')}${contact.is_primary ? ' · 主要联系人' : ''}</strong><span>${e(contact.contact_email)}</span><small>${contact.interaction_count} 封往来</small></div>`).join('')}</article><article class="context-card" data-live-key="business-context"><h3>业务记录</h3><p class="muted">工单 ${data.context.tickets.length} · 报价 ${data.context.quotes.length} · 订单 ${data.context.orders.length}</p><p class="fine">只展示后端已有记录。邮件中提到报价，不代表实际已发送报价。</p></article></aside></div>`);
+    renderEmails();
+    $('assistant-toggle').onclick = () => assistant.open();
+    assistant.setContext({ id: data.company_id, name });
+    $('register').onclick = openRegister;
+    $('reanalyze').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, true));
+    $('detail-refresh').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, false));
+    });
+  } catch (error) { state.detail = previous; throw error; }
 }
 
 /** 功能：按方向显示原始邮件。输入：state.detail、state.direction。输出：无。
  * 逻辑：时间线显示来源、抽取失败和逐字正文。约束：所有正文转义，禁止执行 HTML 或指令。 */
 function renderEmails() {
   const emails = state.detail.context.emails.filter(item => state.direction === 'all' || item.direction === state.direction);
-  $('emails').innerHTML = emails.map(item => { const sender = item.from || item.mailbox_address || '未知发件人'; return `<article class="email-card" data-email-ref="${e(item.dedupe_key)}"><div class="email-top"><span class="avatar tiny">${e(sender.slice(0, 1).toUpperCase())}</span><div><strong>${e(sender)}</strong><small>${e(date(item.sent_at || item.received_at))} · ${{ inbound: '收件', outbound: '发件', unknown: '方向未知' }[item.direction] || '方向未知'}</small></div></div><h4>${e(item.subject)}</h4><div class="email-source">${pill(({ gmail_real: '真实 Gmail', synthetic_sample: '合成样例', simulated: '模拟数据', research_dataset: '研究数据' })[item.source] || item.source, 'subtle')}${item.extract_status !== 'completed' ? pill('未解析：' + item.extract_status, 'warning') : ''}</div><pre>${e(item.body_text)}</pre>${item.extract_error ? `<p class="failure">${e(item.extract_error)}</p>` : ''}</article>`; }).join('') || '<div class="empty">没有此方向的邮件</div>';
+  patchHTML($('emails'), emails.map(item => { const sender = item.from || item.mailbox_address || '未知发件人'; return `<article class="email-card" data-email-ref="${e(item.dedupe_key)}"><div class="email-top"><span class="avatar tiny">${e(sender.slice(0, 1).toUpperCase())}</span><div><strong>${e(sender)}</strong><small>${e(date(item.sent_at || item.received_at))} · ${{ inbound: '收件', outbound: '发件', unknown: '方向未知' }[item.direction] || '方向未知'}</small></div></div><h4>${e(item.subject)}</h4><div class="email-source">${pill(({ gmail_real: '真实 Gmail', synthetic_sample: '合成样例', simulated: '模拟数据', research_dataset: '研究数据' })[item.source] || item.source, 'subtle')}${item.extract_status !== 'completed' ? pill('未解析：' + item.extract_status, 'warning') : ''}</div><pre>${e(item.body_text)}</pre>${item.extract_error ? `<p class="failure">${e(item.extract_error)}</p>` : ''}</article>`; }).join('') || '<div class="empty">没有此方向的邮件</div>');
 }
 
-/** 功能：获取客户详情并可触发打开事件。输入：id、trigger 是否请求分析。
- * 输出：无。逻辑：版本化 API 加请求序号阻止旧导航覆盖新页面。
- * 约束：仅首次打开触发 POST；刷新 GET 不隐式写入。 */
+/** 功能：显示详情自动更新状态。输入：message、paused 是否需要手动恢复。输出：无。
+ * 逻辑：状态区独立于详情渲染；只有失败才显示恢复按钮。约束：不把网络失败显示为分析失败或成功。 */
+function setDetailLiveStatus(message, paused = false) {
+  $('detail-live-message').textContent = message;
+  $('detail-live-resume').hidden = !paused;
+}
+
+/** 功能：读取客户并开始持续观察，可按原入口请求分析。输入：id、trigger 是否提交分析。
+ * 输出：当前读取 Promise；随后由 detailObserver 只读追踪。逻辑：先停止旧轮询，代次隔离初次响应。
+ * 约束：只有 trigger 才 POST；读取失败暂停，人工恢复只 GET；公司版本未变也检查画像与评分变化。 */
 async function loadDetail(id, trigger = true) {
+  detailObserver.stop();
   const sequence = ++state.navigation;
-  if (trigger) await request(`companies/${encodeURIComponent(id)}/analyze/`, { method: 'POST' });
-  const data = await request(`companies/${encodeURIComponent(id)}/`);
-  if (sequence !== state.navigation || location.hash !== `#company/${id}`) return;
-  state.detail = data;
-  renderDetail(data);
+  setDetailLiveStatus('正在读取最新结果…');
+  try {
+    if (trigger) await request(`companies/${encodeURIComponent(id)}/analyze/`, { method: 'POST' });
+    if (sequence !== state.navigation || location.hash !== `#company/${id}`) return;
+    const data = await request(`companies/${encodeURIComponent(id)}/`);
+    if (sequence !== state.navigation || location.hash !== `#company/${id}`) return;
+    renderDetail(data);
+    setDetailLiveStatus('自动更新已开启 · 约每 3 秒检查新邮件、画像与评分');
+    detailObserver.start(id);
+  } catch (error) {
+    if (sequence !== state.navigation || location.hash !== `#company/${id}`) return;
+    setDetailLiveStatus(`自动更新已暂停：${error.message} 当前内容可能已过时。`, true);
+    throw error;
+  }
 }
 
 /** 功能：按哈希切换列表和详情。输入：location.hash 隐式状态。输出：无。
- * 逻辑：先解除助手旧上下文，只接受已知 company 路由，未知路径显示列表。
- * 约束：路由错误通过 notice 展示，不伪造空数据。 */
+ * 逻辑：切换时停止详情观察并隔离旧响应；路由区分工作台、客户、复核和进度入口。
+ * 约束：复核和授权只打开界面；现有客户分析触发条件不变，路由错误可见。 */
 async function navigate() {
+  detailObserver.stop();
+  ++state.navigation;
+  state.detail = null;
   assistant.setContext(null);
   $('notice').hidden = true;
   const match = location.hash.match(/^#company\/([\w-]+)$/);
+  const home = !location.hash || location.hash === '#home';
+  mountWorkspace(home ? 'home' : 'inbox');
+  $('workspace-overview').hidden = !home;
+  $('list-page').querySelector('.page-heading').hidden = home;
+  $('customer-list-title').textContent = home ? '优先跟进客户' : '邮件与客户分析';
+  $('workspace-crumb').textContent = home ? '工作台' : '邮件与分析';
   $('list-page').hidden = Boolean(match); $('detail-page').hidden = !match;
   if (match) {
     $('detail-header').innerHTML = '<p class="muted">正在读取客户资料…</p>';
@@ -173,27 +211,34 @@ async function navigate() {
     await loadDetail(match[1]);
   } else {
     ++state.navigation;
+    setWorkspaceContext(null, home ? 'home' : 'inbox');
     $('detail-crumb').textContent = '';
     await loadList();
+    if (location.hash === '#reviews') $('email-reviews-open').click();
+    if (location.hash === '#gmail') await openGmail();
+    if (location.hash === '#processing') {
+      const mailboxIds = state.mailboxes.filter(item => item.sync_state?.run_id).map(item => item.mailbox_id);
+      if (mailboxIds.length) void pollGmailSync(mailboxIds).catch(error => notice(error.message));
+      else { $('sync-progress').hidden = false; $('sync-progress').textContent = '暂无同步批次，可连接 Gmail 后发起同步。'; }
+      $('sync-progress').scrollIntoView({ block: 'center' });
+    }
   }
 }
 
 
 /** 功能：读取并渲染当前员工自己的 Gmail 连接。输入：当前会话。输出：邮箱数组。
- * 逻辑：授权状态与同步状态分别显示。约束：响应中不包含 Google 凭证。 */
+ * 逻辑：顶部显示授权账号，弹窗保留同步状态；列表描述邮件范围。约束：不向浏览器提供 Google 凭证。 */
 async function loadMailboxes() {
   state.mailboxes = await request('mailboxes/');
   const authorized = state.mailboxes.filter(item => item.gmail_authorized);
   const primary = authorized[0];
   $('gmail-chip-label').textContent = primary ? primary.address : '连接 Gmail';
   $('gmail-manage').textContent = primary ? '管理 Gmail' : '连接 Gmail';
-  $('gmail-channel-status').textContent = primary
-    ? `${primary.address} · ${gmailStates[primary.sync_state?.status] || '状态未知'}`
-    : '未授权 · 点击连接';
   $('inbox-scope').textContent = authorized.length
     ? `已授权账号：${authorized.map(item => item.address).join('、')} · 客户邮件按公司域名归组。`
     : '尚未授权 Gmail；连接后只显示当前员工同步的客户邮件。';
   renderGmailAccounts();
+  await refreshReviewBadge();
   return state.mailboxes;
 }
 
@@ -225,80 +270,32 @@ async function startGmailAuthorization() {
   location.assign(result.authorization_url);
 }
 
-/** 功能：统计本次同步中已隔离并等待重试的单封邮件错误。输入：邮箱状态数组。输出：错误数量。
- * 逻辑：读取后端已原样保存的 sync_state.last_result.email_errors。约束：缺少字段时按零处理。 */
-function mailboxEmailErrorCount(mailboxes) {
-  return mailboxes.reduce((total, item) => {
-    const failedEmailCount = item.sync_state?.last_result?.failed_email_count;
-    if (Number.isInteger(failedEmailCount) && failedEmailCount >= 0) return total + failedEmailCount;
-    const errors = item.sync_state?.last_result?.email_errors;
-    if (!Array.isArray(errors)) return total;
-    return total + new Set(errors.map(error => error?.gmail_message_id).filter(Boolean)).size;
-  }, 0);
-}
-
-/** 功能：在 Gmail 已完成后继续轮询公司画像任务。输入：当前轮询标识和单封邮件错误数。输出：无。
- * 逻辑：逐次刷新列表，所有可见公司不再 pending/running 时结束。约束：新一轮 Gmail 操作会停止旧轮询。 */
-async function pollCompanyAnalyses(polling, emailErrorCount) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    if (polling !== state.gmailPolling) return;
-    const data = await loadList({ showLoading: false });
-    const active = data.results.some(item => ['pending', 'running'].includes(item.job_status));
-    if (active) continue;
-    const failedCompanies = data.results.filter(item => item.job_status === 'failed').length;
-    if (failedCompanies) {
-      notice(`客户画像处理完成，其中 ${failedCompanies} 家失败；其他公司结果已保存。`);
-    } else if (emailErrorCount) {
-      notice(`客户画像已更新；${emailErrorCount} 封邮件处理失败并已加入下次重试。`);
-    } else {
-      notice('Gmail 同步和客户分析已完成，收件箱已刷新。', false);
-    }
-    return;
-  }
-  notice('客户画像仍在后台生成，可继续使用页面并稍后刷新查看。', false);
-}
-
-/** 功能：轮询后台 Gmail 同步状态并刷新客户列表。输入：mailboxIds。输出：无。
- * 逻辑：同步运行时静默展示已逐封落库的结果；邮箱结束后继续观察画像任务，最长等待十分钟。约束：新一轮轮询会终止旧轮询。 */
+/** 功能：轮询持久批次及整体画像状态。输入：mailboxIds 为本次邮箱集合。输出：无。
+ * 逻辑：读取完整批次进度，结束后刷新共享待办；公司分页不参与完成判断。约束：错误可见，新操作停止旧轮询。 */
 async function pollGmailSync(mailboxIds) {
   const polling = ++state.gmailPolling;
   const tracked = new Set(mailboxIds);
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    await new Promise(resolve => setTimeout(resolve, 3000));
     if (polling !== state.gmailPolling) return;
     await loadMailboxes();
-    const mailboxes = state.mailboxes.filter(item => tracked.has(item.mailbox_id));
-    const pending = mailboxes.some(item => ['sync_requested', 'sync_running'].includes(item.sync_state?.status));
-    if (pending) {
-      // Agent 会在每封邮件完成 L1 后立即保存；同步尚未结束时静默读取，
-      // 让已经落库的客户先显示出来，不清空当前列表，也不等待最慢邮件。
-      await loadList({ showLoading: false });
-      continue;
+    const runIds = state.mailboxes.filter(item => tracked.has(item.mailbox_id)).map(item => item.sync_state?.run_id).filter(Boolean);
+    const runs = await Promise.all(runIds.map(id => request(`mailbox-sync-runs/${encodeURIComponent(id)}/`)));
+    updateRunProgress(runs);
+    await loadList({ showLoading: false });
+    await refreshReviewBadge();
+    if (runs.length && runs.every(run => !['queued', 'running'].includes(run.status) && run.analysis_pending_count === 0)) {
+      const failed = runs.some(run => ['failed', 'partial'].includes(run.status) || run.analysis_failed_count > 0);
+      notice(failed ? '处理已结束，存在失败项，请查看同步进度。' : '邮件和客户画像已处理完成。', failed);
+      await refreshWorkspace();
+      return;
     }
-
-    const data = await loadList({ showLoading: false });
-    const failed = mailboxes.find(item => item.sync_state?.status === 'failed');
-    const emailErrorCount = mailboxEmailErrorCount(mailboxes);
-    const analysisPending = data.results.some(item => ['pending', 'running'].includes(item.job_status));
-    if (failed) {
-      notice(`Gmail 同步失败：${failed.sync_state?.error || '请查看后端 Agent 日志。'}`);
-    } else if (analysisPending) {
-      notice('Gmail 邮件已同步，客户画像正在后台逐家公司生成。', false);
-      void pollCompanyAnalyses(polling, emailErrorCount).catch(error => notice(error.message));
-    } else if (emailErrorCount) {
-      notice(`Gmail 同步完成；${emailErrorCount} 封邮件处理失败并已加入下次重试。`);
-    } else {
-      notice('Gmail 同步和客户分析已完成，收件箱已刷新。', false);
-    }
-    return;
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
-  await loadList();
-  notice('Gmail 同步仍在后台运行，可稍后再次点击刷新查看结果。', false);
+  notice('任务仍未结束，进度已保存，可稍后刷新查看。', false);
 }
 
 /** 功能：请求同步一个已授权员工邮箱。输入：mailboxId。输出：无。
- * 逻辑：后端排队并自动启动 Agent，页面随后轮询结果。约束：不在浏览器读取 Gmail。 */
+ * 逻辑：后端排队并由独立 Worker 执行，页面随后轮询持久批次结果。约束：不在浏览器读取 Gmail。 */
 async function requestGmailSync(mailboxId) {
   await request(`mailboxes/${encodeURIComponent(mailboxId)}/request-sync/`, { method: 'POST' });
   await loadMailboxes();
@@ -397,25 +394,29 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：服务端本地自动会话直接进入工作台并隐藏退出；匿名访问清空助手草稿并显示登录页。
+ * 逻辑：先使旧观察失效，再核验会话；已登录挂载工作台，匿名清空助手并显示登录页。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
+  detailObserver.stop();
+  ++state.navigation;
   const session = await request('session/');
   $('login-screen').hidden = session.authenticated;
   $('workspace').hidden = !session.authenticated;
   $('logout').hidden = session.debug_auto_login;
   if (!session.authenticated) { assistant.reset(); return; }
   $('username').textContent = session.username;
+  mountWorkspace();
+  void refreshWorkspace();
   state.runtime = await request('demo/runtime/');
   await loadMailboxes();
   const isRules = state.runtime.provider === 'rules';
-  $('provider-label').textContent = isRules ? '规则占位模式' : 'Agent 接入模式';
-  $('provider-note').textContent = isRules ? '当前员工可连接 Gmail；演示分析也可离线生成。' : '授权或刷新 Gmail 后，Agent 会自动读取邮件并更新分析。';
   $('seed').hidden = !isRules; $('compose').hidden = !isRules;
   $('workspace-footnote').textContent = isRules
     ? '当前员工数据空间 · 支持 Gmail 授权与离线规则演示 · 统计时区：' + state.runtime.timezone
-    : '当前员工数据空间 · Gmail 同步与 Agent 分析自动运行 · 统计时区：' + state.runtime.timezone;
+    : '当前员工数据空间 · Gmail 同步与 Agent 分析独立执行 · 统计时区：' + state.runtime.timezone;
   await navigate();
+  const trackedMailboxes = state.mailboxes.filter(item => item.sync_state?.run_id).map(item => item.mailbox_id);
+  if (trackedMailboxes.length) void pollGmailSync(trackedMailboxes).catch(error => notice(error.message));
   const callback = new URLSearchParams(location.search);
   if (callback.get('gmail') === 'authorized') {
     const address = callback.get('address') || '';
@@ -438,9 +439,14 @@ async function initialize() {
 }
 
 /** 功能：注册静态表单与动态内容事件。输入：现有 DOM。输出：无。
- * 逻辑：委托监听来源、方向；所有异步操作集中展示异常。
+ * 逻辑：复核同步待办，恢复按钮只读重启观察，pagehide 取消旧响应；委托来源与方向交互。
  * 约束：只绑定一次，不通过 eval 或字符串内联事件执行代码。 */
 function bindEvents() {
+  initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
+  $('detail-live-resume').onclick = event => {
+    const match = location.hash.match(/^#company\/([\w-]+)$/);
+    if (match) busy(event.currentTarget, () => loadDetail(match[1], false));
+  };
   $('login-form').addEventListener('submit', loginSubmit);
   $('mail-form').addEventListener('submit', mailSubmit);
   $('register-form').addEventListener('submit', registerSubmit);
@@ -452,7 +458,6 @@ function bindEvents() {
   $('next').onclick = event => { state.page += 1; busy(event.currentTarget, loadList); };
   $('compose').onclick = event => busy(event.currentTarget, openMail);
   $('seed').onclick = event => busy(event.currentTarget, async () => { const result = await request('demo/seed/', { method: 'POST' }); await loadList(); notice(`已导入 ${result.created_emails} 封合成样例。重复导入不会新增已有邮件。`, false); });
-  $('gmail-channel').onclick = () => openGmail().catch(error => notice(error.message));
   $('gmail-manage').onclick = event => busy(event.currentTarget, openGmail);
   $('gmail-manage-top').onclick = () => openGmail().catch(error => notice(error.message));
   $('gmail-authorize').onclick = event => busy(event.currentTarget, startGmailAuthorization);
@@ -475,6 +480,11 @@ function bindEvents() {
       if (email) { email.scrollIntoView({ behavior: 'smooth', block: 'center' }); email.classList.add('highlight'); }
       else notice('该依据来自已保存的 CRM 业务记录，来源 ID：' + reference.dataset.ref, false);
     }
+  });
+  window.addEventListener('pagehide', () => { detailObserver.stop(); ++state.navigation; });
+  window.addEventListener('pageshow', event => {
+    const match = location.hash.match(/^#company\/([\w-]+)$/);
+    if (event.persisted && match && !$('workspace').hidden) busy(null, () => loadDetail(match[1], false));
   });
   window.addEventListener('hashchange', () => { if (!$('workspace').hidden) busy(null, navigate); });
 }

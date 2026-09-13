@@ -51,9 +51,8 @@ BASE = "/api/v1/sales/"
 
 
 # 功能：验证销售业务的持久化及边界。
-# 逻辑：每项测试使用真实隔离数据库，不依赖用户开发数据。
+# 逻辑：每项测试使用真实隔离数据库，业务更新按现有 provider 创建分析任务；测试不启动独立 Worker。
 # 约束：外部 provider 只在动作测试中模拟；不发送真实消息。
-@override_settings(SALESMATE_AUTO_RUN_AGENT=False)
 class SalesTests(TestCase):
     # 功能：建立最小业务上下文。
     # 输入：无外部参数，测试框架创建。

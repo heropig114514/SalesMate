@@ -46,15 +46,15 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 并在根 `.env` 填写 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和
 `GOOGLE_OAUTH_REDIRECT_URI`。随后在工作台用当前员工账号点击“连接 Gmail”。
 
-`SALESMATE_AUTO_RUN_AGENT=True` 时，授权回调和页面“同步 Gmail”会让 Django 启动本地后台 Agent，页面会静默轮询并逐步显示已保存结果。该运行方式仅用于本地 MVP，Django Web 进程重启会中断正在执行的任务。
+授权回调和页面“同步 Gmail”持久创建同步批次，页面静默轮询进度。HTTP 后端运行后，在第二个终端启动 `python backend/manage.py crm_worker`；Web 重启不删除已排队任务，失败由员工明确重试。
 
-关闭自动运行或需要逐步调试时，在第二个终端运行：
+旧 CLI 仅用于单独逐步调试，不与新 Worker 混用同一邮箱：
 
 ```powershell
 python -m agent.main --sync-authorized-mailboxes-once
 ```
 
-命令领取该员工的邮箱同步请求，首次扫描最近邮件、后续按 Gmail History 游标读取新增邮件，最多四路执行 L1，并在任一邮件完成后逐封提交。随后执行 Job 领取、L2、L3、L4、结果保存和回报。自动运行关闭时，页面再次点击“同步 Gmail”后需要再运行一次该命令。页面手动创建新分析任务后可单独运行：
+该兼容命令领取一次同步请求，首次扫描最近邮件、后续按 History 游标读取，最多四路执行 L1 并逐封提交，再执行 L2–L4。完整逐封状态与读取失败隔离使用新 Worker。公司 Job 也保留单次调试入口：
 
 ```powershell
 python -m agent.main --process-jobs-once --job-limit 10
@@ -77,6 +77,10 @@ python backend/tools/check_docs.py
 
 ## 本机合并后的运行状态
 
-本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env；数据库身份与现有数据保持不变。运行模式、时区和自动分析开关以已有根 .env 为准；本轮未改变这些配置，测试通过模拟外部 SDK 避免真实外发。已有用户和 .local-access.json 保留，不重复执行初始化。
+本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env。此次保留 provider、数据库身份和时区，分析提示词版本对齐 `analysis-v2`，移除旧 Web 线程开关；应用持久批次迁移并重新分类历史邮件。测试模拟外部 SDK，已有用户和 .local-access.json 保留。
 
 共享 Python 环境安装项目依赖时提示若干其他已安装包存在缺失依赖；项目测试结果单独记录，不据此宣称整个共享环境依赖完全一致。
+
+## 持久处理升级
+
+升级后先执行 `python backend/manage.py migrate` 和历史分类预览，再明确 `classify_emails --apply`。HTTP 后端启动后另开终端运行 `python backend/manage.py crm_worker`；启动要求及规则边界见 [邮件处理适配](processing-integration.md)。Web 不再创建后台 Agent 线程。

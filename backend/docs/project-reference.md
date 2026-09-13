@@ -24,7 +24,7 @@
 | [产品需求摘要](references/product-requirements.md) | 原 MVP 产品文档的历史需求摘要 |
 | [早期设计摘要](references/agent-and-early-design.md) | 早期宽范围技术路线，仅作背景 |
 
-历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。当前后端尚未实现邮件级持久任务、公司画像并行 Worker，以及非业务邮件默认隐藏和人工复核。
+历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。邮件级持久任务、公司画像并行 Worker、非业务隐藏和人工复核已实现；当前规则与待补齐事项见 [邮件处理适配](processing-integration.md)。
 
 ## 后续范围
 

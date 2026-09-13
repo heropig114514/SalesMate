@@ -1,16 +1,17 @@
 /**
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
  * 实现：读取后端字段契约渲染表单，写请求携带版本；外部动作先展示冻结内容再单独确认。
- * 关联：sales-api.js 负责同源通信，business.html/CSS 提供布局；不调用模型或自动批准工具。
+ * 关联：workspace.js 共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、refreshDirectory、
- * loadPage、renderRows、renderStats、boot。
- * 变量索引：$ 为 DOM 查询；labels 为字段中文名；states 为状态中文名；sections 为导航分组；
+ * syncBusinessContext、loadPage、renderRows、renderStats、boot。
+ * 变量索引：$ 为 DOM 查询；labels 为字段中文名；states 为状态中文名；
  * metadata 为资源契约，companies 为授权目录，user 为当前身份，current 为路由，page 为页码，
  * generation 为异步加载代次，relations 为当前已读关系名称缓存。
  */
 import { request, escapeHtml as esc } from "./api.js";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js";
 
 const $ = (id) => document.getElementById(id);
@@ -119,25 +120,6 @@ const states = {
   all: "通知全部参会人",
   externalOnly: "仅通知外部参会人",
 };
-const sections = [
-  ["客户关系", ["directory", "contact-profiles", "aliases"]],
-  [
-    "销售业务",
-    ["opportunities", "products", "quotes", "orders", "tickets", "follow-ups"],
-  ],
-  [
-    "助手与执行",
-    [
-      "conversations",
-      "messages",
-      "drafts",
-      "actions",
-      "files",
-      "notifications",
-    ],
-  ],
-  ["协作与设置", ["teams", "memberships", "grants", "connections", "audit"]],
-];
 let metadata = {},
   companies = [],
   user = null,
@@ -457,12 +439,14 @@ async function runCommand(resource, record, command, value = null) {
 }
 
 /** 功能：显示客户档案与联系人操作。输入：id。
- * 输出：无。逻辑：从最新授权目录读取版本，设置、联系人和归组分开维护。
+ * 输出：无。逻辑：从授权目录读取版本并设置共享客户上下文；客户操作继续使用原权限检查。
  * 约束：客户核心资料和合并由 owner 维护，后端继续验证授权。 */
 async function customerDetail(id) {
   await refreshDirectory();
   const company = companies.find((item) => item.id === id);
   if (!company) throw new Error("客户已不可见，请刷新。");
+  $("company-filter").value = company.id;
+  syncBusinessContext();
   showDialog(
     company.name || "未命名客户",
     `<p class="muted">${esc(company.domains.join(" · ") || "尚未指定公司域名")}</p><dl class="details">${Object.entries(
@@ -475,7 +459,7 @@ async function customerDetail(id) {
       )
       .join(
         "",
-      )}</dl><div class="actions"><button id="customer-edit">编辑档案</button><button id="customer-settings">主要联系人 / 备注 / 归档</button><a href="/#company/${esc(company.id)}">邮件与分析 ↗</a></div><div class="section"><h3>联系人</h3>${company.contacts.map((c) => `<p>${esc(c.name || "姓名未知")} · ${esc(c.email)} <button data-contact="${esc(c.id)}">编辑身份</button><button data-profile="${esc(c.id)}">职位 / 电话 / 备注</button></p>`).join("") || '<p class="muted">暂无联系人</p>'}<button id="contact-add">＋ 新增联系人</button></div><div class="section"><h3>人工归组</h3><p class="muted">搬移已选择的邮件，或将另一家公司合入此客户。未来邮件可单独配置域名 / 联系人规则。</p><div class="actions"><button id="group-move">搬移邮件</button><button id="group-merge">合并客户</button><button id="group-alias">新增归组规则</button></div></div>`,
+      )}</dl><div class="actions"><button id="customer-edit">编辑档案</button><button id="customer-settings">主要联系人 / 备注 / 归档</button><a href="/#company/${esc(company.id)}">邮件与分析 ↗</a><a href="${esc(businessHref("quotes", company.id, { create: "1" }))}">创建报价</a><a href="${esc(businessHref("follow-ups", company.id, { create: "1" }))}">安排跟进</a></div><div class="section"><h3>联系人</h3>${company.contacts.map((c) => `<p>${esc(c.name || "姓名未知")} · ${esc(c.email)} <button data-contact="${esc(c.id)}">编辑身份</button><button data-profile="${esc(c.id)}">职位 / 电话 / 备注</button></p>`).join("") || '<p class="muted">暂无联系人</p>'}<button id="contact-add">＋ 新增联系人</button></div><div class="section"><h3>人工归组</h3><p class="muted">搬移已选择的邮件，或将另一家公司合入此客户。未来邮件可单独配置域名 / 联系人规则。</p><div class="actions"><button id="group-move">搬移邮件</button><button id="group-merge">合并客户</button><button id="group-alias">新增归组规则</button></div></div>`,
   );
   $("customer-edit").onclick = () => editCustomer(company);
   $("customer-settings").onclick = () =>
@@ -775,10 +759,23 @@ async function refreshDirectory() {
   $("company-filter").value = selected;
 }
 
+/** 功能：同步授权客户筛选、URL 和共享客户导航。输入：当前 company-filter、current。
+ * 输出：无。逻辑：只保留目录中可见的客户，更新同源链接并让刷新恢复筛选。
+ * 约束：不写业务数据；不使用设备缓存跨账号保留客户身份。 */
+function syncBusinessContext() {
+  const selected = companies.find(company => company.id === $("company-filter").value);
+  const url = new URL(location.href);
+  if (selected) url.searchParams.set("company", selected.id);
+  else url.searchParams.delete("company");
+  history.replaceState({}, "", url);
+  setWorkspaceContext(selected ? { id: selected.id, name: nameOf(selected) } : null, current);
+}
+
 /** 功能：按当前路由加载一页记录。输入：无参数，读取 current/page/筛选。
- * 输出：无。逻辑：异步代次防止慢请求覆盖新导航；独立刷新统计。
+ * 输出：无。逻辑：URL 筛选联动共享导航并刷新待办，异步代次防止慢响应覆盖新页面。
  * 约束：只读加载不执行外部动作或模型分析。 */
 async function loadPage() {
+  void refreshWorkspace();
   const turn = ++generation,
     resource = current;
   $("business-notice").hidden = true;
@@ -791,11 +788,10 @@ async function loadPage() {
   if (!title) throw new Error("该业务页面不存在。");
   $("page-title").textContent = title;
   $("list-title").textContent = title;
-  for (const link of $("business-nav").querySelectorAll("a"))
-    link.setAttribute(
-      "aria-current",
-      link.hash === `#${resource}` ? "page" : "false",
-    );
+  const supportsCompany = resource === "directory" || resource === "audit" || metadata[resource]?.fields.some(field => field.name === "company");
+  $("company-filter").closest("label").hidden = !supportsCompany;
+  if (!supportsCompany) $("company-filter").value = "";
+  syncBusinessContext();
   const creatable = resource !== "audit" && resource !== "notifications";
   $("create-business").hidden = !creatable;
   $("create-business").textContent =
@@ -811,6 +807,13 @@ async function loadPage() {
     page_size: "20",
     archived: $("include-archived").checked ? "all" : "false",
   });
+  const statusField = metadata[resource]?.fields.find(field => field.name === "status" && field.type === "choice");
+  const status = new URLSearchParams(location.search).get("status") || "";
+  $("status-filter-label").hidden = !statusField;
+  $("status-filter").innerHTML = '<option value="">全部状态</option>' + (statusField?.choices || []).map(value => `<option value="${esc(value)}">${esc(states[value] || value)}</option>`).join('');
+  if (status && !statusField?.choices.includes(status)) throw new Error("该页面不支持此状态筛选，请从导航重新进入。");
+  $("status-filter").value = status;
+  if (status) query.set("status", status);
   const company = $("company-filter").value;
   if (
     company &&
@@ -902,11 +905,11 @@ function renderRows(resource, rows) {
 }
 
 /** 功能：显示当前权限范围内统计。输入：overview 后端汇总。
- * 输出：无。逻辑：四个计数卡与单币种净额描述。
+ * 输出：无。逻辑：全量授权目录的四个计数卡与分币种净额，不随客户筛选改变。
  * 约束：不把不同币种相加，不将确认订单净额标记为实际收入。 */
 function renderStats(overview) {
   $("business-stats").innerHTML = [
-    ["客户", overview.customers],
+    ["全部可见客户", overview.customers],
     ["待处理工单", overview.open_tickets],
     ["待跟进", overview.open_follow_ups],
     ["未读提醒", overview.unread_notifications],
@@ -928,7 +931,7 @@ function renderStats(overview) {
 }
 
 /** 功能：初始化登录态、元数据及页面交互。输入：无参数，读取当前路由。
- * 输出：无。逻辑：会话未登录返回现有登录页，成功后注册导航及表单入口。
+ * 输出：无。逻辑：验证 URL 客户后挂载共享导航，恢复筛选并可打开明确请求的新建表单。
  * 约束：初始化仅执行读取；用户数据不保存到浏览器本地存储。 */
 async function boot() {
   const session = await request("session/");
@@ -941,13 +944,11 @@ async function boot() {
   metadata = Object.fromEntries(
     (await salesRequest("catalog/")).resources.map((item) => [item.key, item]),
   );
-  $("business-nav").innerHTML = sections
-    .map(
-      ([title, keys]) =>
-        `<p>${title}</p>${keys.map((key) => `<a href="#${key}">${key === "directory" ? "客户目录" : key === "audit" ? "操作审计" : metadata[key].label}</a>`).join("")}`,
-    )
-    .join("");
+  mountWorkspace(current);
   await refreshDirectory();
+  const initialCompany = new URLSearchParams(location.search).get("company");
+  if (initialCompany && !companies.some(company => company.id === initialCompany)) throw new Error("链接中的客户不存在或当前账号无权访问。请从客户导航重新选择。");
+  $("company-filter").value = initialCompany || "";
   $("close-editor").onclick = () => $("editor").close();
   $("refresh-business").onclick = (event) =>
     perform(async () => {
@@ -955,6 +956,15 @@ async function boot() {
       await loadPage();
     }, event.currentTarget);
   $("company-filter").onchange = $("include-archived").onchange = () => {
+    page = 1;
+    syncBusinessContext();
+    perform(loadPage);
+  };
+  $("status-filter").onchange = () => {
+    const url = new URL(location.href);
+    if ($("status-filter").value) url.searchParams.set("status", $("status-filter").value);
+    else url.searchParams.delete("status");
+    history.replaceState({}, "", url);
     page = 1;
     perform(loadPage);
   };
@@ -990,5 +1000,11 @@ async function boot() {
     }, event.currentTarget);
   current = location.hash.slice(1) || "directory";
   await loadPage();
+  const route = new URL(location.href);
+  if (route.searchParams.get("create") === "1") {
+    route.searchParams.delete("create");
+    history.replaceState({}, "", route);
+    if (!$("create-business").hidden) $("create-business").click();
+  }
 }
 perform(boot);

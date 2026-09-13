@@ -690,6 +690,67 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/email-reviews/:
+    get:
+      operationId: v1_email_reviews_retrieve
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+      tags:
+      - processing
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/email-reviews/{email_id}/:
+    patch:
+      operationId: v1_email_reviews_partial_update
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      - in: path
+        name: email_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - processing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedReviewRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedReviewRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedReviewRequest'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/health/live/:
     get:
       operationId: v1_health_live_retrieve
@@ -724,6 +785,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Readiness'
+          description: ''
+  /api/v1/mailbox-sync-runs/{run_id}/:
+    get:
+      operationId: v1_mailbox_sync_runs_retrieve
+      parameters:
+      - in: path
+        name: run_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - processing
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: v1_mailbox_sync_runs_create
+      parameters:
+      - in: path
+        name: run_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - processing
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
           description: ''
   /api/v1/mailboxes/:
     get:
@@ -767,6 +871,36 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/mailboxes/{mailbox_id}/email-reviews/:
+    get:
+      operationId: v1_mailboxes_email_reviews_retrieve
+      parameters:
+      - in: path
+        name: mailbox_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+      tags:
+      - processing
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/mailboxes/{id}/gmail-authorization/:
     delete:
       operationId: v1_mailboxes_gmail_authorization_destroy
@@ -801,11 +935,12 @@ paths:
       security:
       - cookieAuth: []
       responses:
-        '200':
+        '202':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MailboxResponse'
+                type: object
+                additionalProperties: {}
           description: ''
   /api/v1/mailboxes/gmail-authorize/:
     post:
@@ -2146,6 +2281,11 @@ components:
       required:
       - mailbox_id
       - status
+    PatchedReviewRequest:
+      type: object
+      properties:
+        review_status:
+          $ref: '#/components/schemas/ReviewStatusEnum'
     Profile:
       type: object
       properties:
@@ -2197,6 +2337,14 @@ components:
       - employee_count
       - employee_count_source
       - industry_from_crm
+    ReviewStatusEnum:
+      enum:
+      - confirmed_business
+      - confirmed_non_business
+      type: string
+      description: |-
+        * `confirmed_business` - confirmed_business
+        * `confirmed_non_business` - confirmed_non_business
     Score:
       type: object
       properties:

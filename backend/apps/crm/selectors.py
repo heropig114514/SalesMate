@@ -1,5 +1,5 @@
 """职责：生成公司、上下文与页面查询投影。
-实现：从同一分析载荷派生列表和详情；邮箱地址取权威关系，保留旧结果时间及 stale 标记。
+实现：业务分类统一约束收件箱与 Agent 上下文；从同一分析载荷派生列表和详情；邮箱地址取权威关系，保留旧结果时间及 stale 标记。
 关联：API 在授权后调用；ingestion 和 results 使用同一快照表示；sales 设置人工主要联系人及客户归档。
 目录：
 - latest_extraction：选择邮件最近创建的抽取版本。
@@ -14,6 +14,7 @@
 from datetime import datetime, time, timedelta
 
 from django.utils import timezone
+from django.db.models import Q
 from django.utils.dateparse import parse_datetime
 from apps.sales.models import CompanySettings
 
@@ -44,19 +45,19 @@ def email_data(email):
 # 功能：构建一致的 Grouping 和 CompanyContext。
 # 输入：`company` 为已授权且在修改场景已锁定的公司。
 # 输出：Grouping、CompanyContext 二元组。
-# 逻辑：按事实时间排序邮件，主要联系人优先使用明确人工设置；未设置时保留按往来数及邮箱选择的原规则。
+# 逻辑：仅业务邮件进入成员键；保留有业务邮件或人工无邮件联系人，按事实时间排序，主要联系人优先使用明确人工设置；未设置时保留按往来数及邮箱选择的原规则。
 # 约束：revision 由 HTTP ETag 传递，协议 JSON 字段保持 README 名称。
 def context_pair(company):
-    emails = list(company.emails.select_related("contact", "mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
+    emails = list(company.emails.filter(business_classification="business").select_related("contact", "mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
     contacts = []
-    for contact in company.contacts.all():
+    for contact in company.contacts.filter(Q(messages__business_classification="business") | Q(messages__isnull=True)).distinct():
         contacts.append({"contact_email": contact.email, "contact_name": contact.name,
                          "interaction_count": sum(email.contact_id == contact.pk for email in emails),
                          "is_primary": False})
     contacts.sort(key=lambda item: (-item["interaction_count"], item["contact_email"]))
     selected = CompanySettings.objects.filter(company=company, primary_contact__company=company).select_related("primary_contact").first()
     if contacts:
-        primary = selected.primary_contact.email if selected else contacts[0]["contact_email"]
+        primary = selected.primary_contact.email if selected and any(item["contact_email"] == selected.primary_contact.email for item in contacts) else contacts[0]["contact_email"]
         for contact in contacts:
             contact["is_primary"] = contact["contact_email"] == primary
     grouping = {"company_id": str(company.pk), "company_name": company.name, "crm_status": company.crm_status,
@@ -73,10 +74,14 @@ def context_pair(company):
 # 功能：选择最近存储的成功分析及其最新评分。
 # 输入：`company` 为已授权公司。
 # 输出：Analysis 或 None，Score 或 None。
-# 逻辑：允许展示旧 revision 的结果但由调用者显式标记陈旧。
+# 逻辑：来源仍为业务邮件时允许旧结果并标记陈旧；包含已隐藏邮件的旧画像不再展示。
 # 约束：失败结果不能覆盖已完成结果的页面展示。
 def latest_result(company):
     analysis = Analysis.objects.filter(snapshot__company=company, payload__status="completed").select_related("snapshot").order_by("-id").first()
+    if analysis:
+        visible = set(company.emails.filter(business_classification="business").values_list("dedupe_key", flat=True))
+        if set(analysis.snapshot.payload.get("member_dedupe_keys", [])) - visible:
+            return None, None
     return analysis, analysis.scores.order_by("-id").first() if analysis else None
 
 
@@ -112,16 +117,16 @@ def company_row(company):
 # 功能：生成页面 A 的筛选、排序、分页及全局统计。
 # 输入：`companies` 为当前用户公司 QuerySet；`params` 为查询参数。
 # 输出：分页结果、总数、统计及当前时区。
-# 逻辑：排除人工归档公司；跨维度 AND、同维度逗号多选 OR；空分最后，同分按最近入站时间降序。
+# 逻辑：收件箱排除人工归档及无业务邮件公司，统计同步排除非业务邮件；跨维度 AND、同维度逗号多选 OR；空分最后，同分按最近入站时间降序。
 # 约束：MVP 在授权数据集内内存投影；规模扩大后替换查询实现而不改响应契约。
 def list_companies(companies, params):
     from rest_framework.exceptions import ValidationError
-    companies = companies.exclude(business_settings__archived=True)
+    companies = companies.exclude(business_settings__archived=True).filter(emails__business_classification="business").distinct()
     rows = [company_row(company) for company in companies]
     today = timezone.localdate()
     day_start = timezone.make_aware(datetime.combine(today, time.min))
     stats = {"companies": len(rows), "unregistered": sum(row["crm_status"] == "unregistered" for row in rows),
-             "new_emails_today": sum(company.emails.filter(received_at__gte=day_start, received_at__lt=day_start + timedelta(days=1)).count() for company in companies)}
+             "new_emails_today": sum(company.emails.filter(business_classification="business", received_at__gte=day_start, received_at__lt=day_start + timedelta(days=1)).count() for company in companies)}
     for key in ["industry", "size_band", "signal", "crm_status"]:
         if params.get(key):
             allowed = params[key].split(",")

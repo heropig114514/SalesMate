@@ -1,5 +1,5 @@
 """职责：管理员工 Gmail OAuth 与一次性同步请求。
-实现：后端交换授权码并保存凭证，浏览器只读安全状态，Agent 通过服务认证领取和回报。
+实现：后端交换授权码并保存凭证；请求写入持久批次；保留旧 Agent 领取及回报接口供版本迁移。
 关联：views 暴露浏览器与 Agent 路由，models.GmailCredential 保存授权，Agent 负责读取邮件。
 目录：
 - _client_config：构造 Google Web application 客户端配置。
@@ -150,26 +150,14 @@ def mailbox_status(mailbox: Mailbox) -> dict[str, Any]:
 # 功能：请求一次员工 Gmail 同步。
 # 输入：`owner` 为当前员工，`mailbox_id` 为其邮箱 UUID。
 # 输出：更新后的浏览器安全邮箱状态。
-# 逻辑：锁定邮箱并把状态改为 sync_requested。
+# 逻辑：复用 processing 创建持久批次，返回旧邮箱表示与新增 run_id/queued 状态。
 # 约束：拒绝其他员工邮箱和未授权邮箱。
 def request_mailbox_sync(owner, mailbox_id) -> dict[str, Any]:
     """Queue one authorized mailbox for the next one-shot Agent execution."""
-    with transaction.atomic():
-        mailbox = mailbox_for(owner, mailbox_id, lock=True)
-        if not GmailCredential.objects.filter(mailbox=mailbox).exists():
-            raise InvalidState("该邮箱尚未完成 Google 授权。")
-        current = dict(mailbox.sync_state or {})
-        current.update(
-            {
-                "status": "sync_requested",
-                "requested_at": timezone.now().isoformat(),
-                "error": None,
-            }
-        )
-        mailbox.sync_state = current
-        mailbox.version += 1
-        mailbox.save(update_fields=["sync_state", "version"])
-    return mailbox_status(mailbox)
+    from .processing import request_run, run_data
+    run = request_run(owner, mailbox_id)
+    mailbox = mailbox_for(owner, mailbox_id)
+    return {**mailbox_status(mailbox), **run_data(run)}
 
 
 # 功能：移除员工 Gmail 的本地授权。
@@ -191,75 +179,36 @@ def disconnect_mailbox(owner, mailbox_id) -> dict[str, Any]:
 # 功能：为一次性 Agent 领取员工邮箱同步请求。
 # 输入：`owner` 为 Agent 凭证所属员工，`limit` 为本次领取上限。
 # 输出：含邮箱地址、授权和读取上限的同步请求数组。
-# 逻辑：锁定 sync_requested 邮箱并改为 sync_running。
-# 约束：只返回 owner 自己的已授权邮箱，不实现租约。
+# 逻辑：复用持久批次原子领取，保留旧响应字段用于 CLI 迁移。
+# 约束：只返回 owner 自己的已授权邮箱；精确逐封进度请使用 crm_worker。
 def claim_mailbox_syncs(owner, limit: int) -> list[dict[str, Any]]:
     """Claim up to limit employee mailbox requests for one Agent process."""
-    claimed: list[dict[str, Any]] = []
-    with transaction.atomic():
-        mailboxes = list(
-            Mailbox.objects.select_for_update()
-            .select_related("gmail_credential")
-            .filter(
-                owner=owner,
-                gmail_credential__isnull=False,
-                sync_state__status="sync_requested",
-            )
-            .order_by("address")[:limit]
-        )
-        for mailbox in mailboxes:
-            mailbox.sync_state = {
-                **(mailbox.sync_state or {}),
-                "status": "sync_running",
-                "started_at": timezone.now().isoformat(),
-                "error": None,
-            }
-            mailbox.version += 1
-            mailbox.save(update_fields=["sync_state", "version"])
-            claimed.append(
-                {
-                    "mailbox_id": str(mailbox.pk),
-                    "mailbox_address": mailbox.address,
-                    "authorization": mailbox.gmail_credential.credentials,
-                    "max_results": 20,
-                }
-            )
+    from .processing import claim_run
+    claimed = []
+    for _index in range(limit):
+        run = claim_run(owner)
+        if run is None:
+            break
+        claimed.append({"mailbox_id": str(run.mailbox_id), "mailbox_address": run.mailbox.address,
+                        "authorization": run.mailbox.gmail_credential.credentials, "max_results": 20})
     return claimed
 
 
 # 功能：保存 Agent 对员工邮箱同步的最终回报。
 # 输入：`owner` 为 Agent 凭证所属员工，`data` 为已校验同步报告。
 # 输出：更新后的浏览器安全邮箱状态。
-# 逻辑：保存汇总、完成时间和可选刷新凭证。
+# 逻辑：兼容旧回报载荷，完成当前运行批次并保存安全汇总；新 Worker 直接使用租约身份回报。
 # 约束：失败不自动重试，授权已移除时拒绝回报。
 def report_mailbox_sync(owner, data: dict[str, Any]) -> dict[str, Any]:
     """Save the final sync state and optionally a refreshed Google credential."""
-    with transaction.atomic():
-        mailbox = mailbox_for(owner, data["mailbox_id"], lock=True)
-        credential = GmailCredential.objects.filter(mailbox=mailbox).first()
-        if credential is None:
-            raise InvalidState("该邮箱授权已被员工移除。")
-        refreshed = data.get("authorization")
-        if isinstance(refreshed, dict) and refreshed:
-            credential.credentials = refreshed
-            credential.save(update_fields=["credentials", "updated_at"])
-
-        status = data["status"]
-        sync_result = data.get("sync_result") or {}
-        current = dict(mailbox.sync_state or {})
-        current.update(
-            {
-                "status": status,
-                "finished_at": timezone.now().isoformat(),
-                "error": data.get("error") if status == "failed" else None,
-                "last_result": sync_result,
-            }
-        )
-        if status == "completed":
-            current["last_synced_at"] = timezone.now().isoformat()
-        mailbox.sync_state = current
-        mailbox.version += 1
-        mailbox.save(update_fields=["sync_state", "version"])
+    from .models import MailboxSyncRun
+    from .processing import finish_run
+    mailbox = mailbox_for(owner, data["mailbox_id"])
+    run = MailboxSyncRun.objects.filter(mailbox=mailbox, status="running").first()
+    if run is None:
+        raise InvalidState("没有可回报的运行批次。")
+    finish_run(run.pk, run.lease_token, {**(data.get("sync_result") or {}), "status": data["status"]}, data.get("authorization"))
+    mailbox.refresh_from_db()
     return mailbox_status(mailbox)
 
 

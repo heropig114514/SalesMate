@@ -1,5 +1,5 @@
 """职责：定义邮件理解闭环的持久化实体。
-实现：关系字段承担归属与唯一约束，JSON 保存协议原文；业务版本与分析版本独立。
+实现：关系字段承担归属与唯一约束，JSON 保存协议原文；邮件分类独立于原文，导入同步批次模型。
 关联：ingestion、jobs、results 负责事务写入，selectors 提供授权查询。
 目录：
 - Mailbox：保存用户拥有的业务邮箱及同步游标。
@@ -54,6 +54,13 @@
 - Contact.company：所属公司外键，访问时须验证用户归属
 - Contact.email：联系人邮箱字段；Extraction 中为所属邮件关系
 - Contact.name：实体名称；应用配置中表示模块导入路径
+- Email.business_classification：business/non_business/needs_review 的当前有效分类。
+- Email.classification_source：rule/llm/human 的判断来源。
+- Email.classification_reason：可展示的分类依据。
+- Email.review_status：人工复核决定，空字符串表示无人工决定。
+- Email.reviewed_by：作出人工判断的员工。
+- Email.reviewed_at：人工判断时间。
+- Email.review_revision：防止并发复核覆盖的版本。
 - Email.company：所属公司外键，访问时须验证用户归属
 - Email.contact：主要外部联系人外键，messages 反向关系用于往来查询
 - Email.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
@@ -180,10 +187,17 @@ class Contact(models.Model):
         constraints = [models.UniqueConstraint(fields=["company", "email"], name="crm_company_contact")]
 
 
-# 功能：保存不可变标准邮件。
-# 逻辑：payload 保留 README 邮件本体字段，提取时间和方向用于查询。
-# 约束：dedupe_key 全局唯一且必须匹配已授权邮箱地址与 Gmail 消息 ID；事实另表版本化。
+# 功能：保存不可变标准邮件及独立的可变分类、人工复核元数据。
+# 逻辑：payload 保留邮件本体；时间和方向用于查询，分类控制可见性，review_revision 保护并发决定。
+# 约束：dedupe_key 全局唯一且匹配已授权邮箱和消息 ID；复核不得改写原文，事实另表版本化。
 class Email(models.Model):
+    business_classification = models.CharField(max_length=24, default="business")
+    classification_source = models.CharField(max_length=12, default="rule")
+    classification_reason = models.TextField(blank=True, default="")
+    review_status = models.CharField(max_length=32, blank=True, default="")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="reviewed_customer_emails")
+    reviewed_at = models.DateTimeField(null=True)
+    review_revision = models.PositiveIntegerField(default=0)
     dedupe_key = models.CharField(max_length=400, primary_key=True)
     mailbox = models.ForeignKey(Mailbox, related_name="emails", on_delete=models.CASCADE)
     company = models.ForeignKey(Company, related_name="emails", on_delete=models.CASCADE)
@@ -271,3 +285,6 @@ class Job(models.Model):
     lease_until = models.DateTimeField(null=True)
     lease_token = models.UUIDField(null=True)
     report = models.JSONField(null=True)
+
+
+from .processing_models import EmailProcessingJob, MailboxSyncRun  # noqa: E402,F401

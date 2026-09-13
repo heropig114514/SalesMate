@@ -1,5 +1,5 @@
 """职责：验证默认测试数据库上的邮件理解业务闭环与隔离边界。
-实现：Django TestCase 创建隔离测试数据库，以合成邮件覆盖接口、事务、租约、缓存与 CSRF。
+实现：同步请求验证持久批次与 202 契约，不模拟已删除的 Web 调度；Django TestCase 创建隔离测试数据库，以合成邮件覆盖接口、事务、租约、缓存与 CSRF。
 关联：使用与独立 Agent 相同的 HTTP 协议；规则仅生成测试载荷，不模拟数据库。
 目录：
 - CRMTests：验证本地前后端与 Agent 契约所依赖的关键业务不变量。
@@ -53,9 +53,9 @@ from apps.crm.response_schemas import JobResponseSerializer, GroupingResponseSer
 
 
 # 功能：验证本地前后端与 Agent 契约所依赖的关键业务不变量。
-# 逻辑：每项测试使用独立用户、邮箱和真实事务数据库。
+# 逻辑：每项测试使用独立用户、邮箱和隔离数据库；rules 用于确定性断言，同步请求只验证持久排队。
 # 约束：不连接 Gmail 或真实模型，不将测试载荷生成解释为 Agent 效果评测。
-@override_settings(ANALYSIS_PROVIDER="rules", SALESMATE_AUTO_RUN_AGENT=False)
+@override_settings(ANALYSIS_PROVIDER="rules")
 class CRMTests(TestCase):
     # 功能：创建两名用户及一个有范围的 Agent 凭证。
     # 输入：测试框架调用，无外部参数。
@@ -370,12 +370,11 @@ class CRMTests(TestCase):
         self.assertEqual(self.agent.post("/api/v1/agent/sync-state-save/", state, format="json", HTTP_IF_MATCH="0").status_code, 409)
 
     # 功能：验证员工 Gmail 连接只在本人页面可见，并能被对应 Agent 领取和回报。
-    # 输入：测试 Gmail 凭证、浏览器同步请求和 Agent 服务调用；`schedule_agent_sync` 为调度 mock。
+    # 输入：测试 Gmail 凭证、浏览器同步请求和 Agent 服务调用，执行由独立 Worker 消费。
     # 输出：浏览器无令牌、Agent 单次领取、最终同步完成状态。
     # 逻辑：同一 Mailbox 贯穿页面状态与 Agent 队列，第二名员工不能操作。
     # 约束：不连接真实 Google，凭证内容完全为测试数据。
-    @patch("apps.crm.views.agent_runner.schedule_agent_sync")
-    def test_employee_gmail_connection_and_sync_queue(self, schedule_agent_sync):
+    def test_employee_gmail_connection_and_sync_queue(self):
         credentials = {
             "token": "fake-access-token",
             "refresh_token": "fake-refresh-token",
@@ -395,9 +394,8 @@ class CRMTests(TestCase):
         queued = self.browser.post(
             f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
         )
-        self.assertEqual(queued.status_code, 200, queued.data)
+        self.assertEqual(queued.status_code, 202, queued.data)
         self.assertEqual(queued.data["sync_state"]["status"], "sync_requested")
-        schedule_agent_sync.assert_called_once_with()
 
         claimed = self.agent.post(
             "/api/v1/agent/mailbox-syncs/claim/", {"limit": 5}, format="json"
@@ -437,7 +435,7 @@ class CRMTests(TestCase):
         )
 
     # 功能：验证网页授权入口和 Google 回调返回当前员工工作台。
-    # 输入：`finish` 为模拟 OAuth 完成邮箱的 mock；`schedule_agent_sync` 为调度 mock。
+    # 输入：`finish` 为模拟 OAuth 完成邮箱的 mock，执行由独立 Worker 消费。
     # 输出：授权地址 JSON 与带授权状态的 302 跳转。
     # 逻辑：视图负责会话边界，Google 网络细节由 gmail_oauth 服务封装。
     # 约束：不请求 Google，不验证第三方 OAuth SDK 行为。
@@ -446,9 +444,8 @@ class CRMTests(TestCase):
         GOOGLE_OAUTH_CLIENT_SECRET="fake-web-secret",
         GOOGLE_OAUTH_REDIRECT_URI="http://testserver/api/v1/mailboxes/gmail-callback/",
     )
-    @patch("apps.crm.views.agent_runner.schedule_agent_sync")
     @patch("apps.crm.views.gmail_oauth.finish_authorization")
-    def test_employee_gmail_oauth_browser_routes(self, finish, schedule_agent_sync):
+    def test_employee_gmail_oauth_browser_routes(self, finish):
         started = self.browser.post("/api/v1/mailboxes/gmail-authorize/")
         self.assertEqual(started.status_code, 200, started.data)
         self.assertTrue(
@@ -465,7 +462,6 @@ class CRMTests(TestCase):
         self.assertEqual(callback.status_code, 302)
         self.assertIn("gmail=authorized", callback["Location"])
         self.assertIn("sales%40internal.example", callback["Location"])
-        schedule_agent_sync.assert_called_once_with()
 
     # 功能：验证 PKCE code_verifier 在发起授权和交换令牌之间保持一致。
     # 输入：`flow_factory` 构造两次 Flow；`build` 模拟 Gmail profile 服务。

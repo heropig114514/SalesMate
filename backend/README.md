@@ -1,5 +1,9 @@
 # SalesMate 软件与 Agent 联调
 
+页面现已统一为销售工作空间：共享导航、首页待办、客户跨页上下文和业务表单预填。入口与验证记录见 [统一工作空间](docs/unified-workspace.md)。
+
+客户详情和手动分析已接入持续只读更新，逐步显示已保存的邮件、画像与评分；阅读位置和未保存内容保留，失败时明确暂停。行为和验收见 [结果逐步展示](docs/live-results.md)。
+
 本说明位于软件目录 `backend/`。除另有说明外，命令均从 **SalesMate 仓库根目录** 执行；Django 软件、页面、契约和工具归 backend/，Agent 实现归 agent/，独立测试数据工具归 test_tools/，根目录同时保留共享配置与依赖入口。返回[仓库概览](../README.md)。
 
 SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取往来邮件，提取客户意向和可定位证据，按公司归组，生成客户画像、销售分析与跟进优先级，并把结果展示在浏览器工作台中。
@@ -90,7 +94,7 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 - `dedupe_key` 为 `mailbox_address:gmail_message_id`。
 - 相同邮件和相同抽取结果返回 `duplicate`。
 - 原抽取为 `failed`，下次同步成功时返回 `updated` 并更新事实。
-- 非业务邮件仍保存，但不创建分析任务；当前后端尚未把仅含非业务邮件的公司从默认列表中排除。
+- 非业务和待复核邮件仍保存，但不创建自动分析任务；仅含这些邮件的公司从默认列表及统计中排除。
 - 没有实质变化的业务邮件仍保存，但不自动重跑公司分析。
 - 一封邮件的抽取或提交错误不会回滚其他邮件；失败 message ID 保留到下一轮重试。
 - 企业邮箱按域名归组，常见公共邮箱按完整联系人邮箱独立归组。
@@ -258,7 +262,6 @@ Copy-Item .env.example .env
 DJANGO_SECRET_KEY=本地随机字符串
 DJANGO_TIME_ZONE=UTC
 ANALYSIS_PROVIDER=rules
-SALESMATE_AUTO_RUN_AGENT=False
 LOCAL_DEBUG_AUTO_LOGIN=True
 LOCAL_DEBUG_USER=demo
 
@@ -319,7 +322,7 @@ python backend/manage.py check
 3. 创建 **Web application** 类型的 OAuth Client。
 4. 在 Authorized redirect URIs 中精确添加 `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/`。
 5. 在根 `.env` 填写 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和相同的 `GOOGLE_OAUTH_REDIRECT_URI`。
-6. 真实联调时显式设置 `ANALYSIS_PROVIDER=agent`。若需要网页自动触发 Agent，再设置 `SALESMATE_AUTO_RUN_AGENT=True`；默认关闭自动运行，仍可用 CLI 单次执行。
+6. 真实联调使用 `ANALYSIS_PROVIDER=agent`，HTTP 后端启动后在独立终端运行 `python backend/manage.py crm_worker`。Web 只提交持久任务。
 7. 在根 `.env` 填写 `DASHSCOPE_API_KEY` 和百炼模型名 `BAILIAN_MODEL`。
 
 员工网页授权不读取 Agent 目录中的凭据文件，也不需要手工配置 `SALESMATE_MAILBOX_ID`。网页 OAuth 使用根 `.env` 中的 Web application Client；`--sync-authorized-mailboxes-once` 保留为自动运行关闭时的调试入口。与 `agent/`、`backend/` 同级的 `test_tools/` 提供独立测试邮件注入器，使用自己的 `gmail_inject_credentials.json` 和 `gmail_inject_token.json`，具体见 [测试工具说明](../test_tools/README.md)。
@@ -351,14 +354,20 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 1. 在工作台左侧点击 Gmail，或点击页面右上角“连接 Gmail”。
 2. 在弹窗点击“使用 Google 账号授权”。
 3. 选择当前员工自己的 Google 账号并同意只读权限。
-4. Google 返回工作台后，页面应显示该邮箱，并自动开始 Gmail 同步和 Agent 分析。
-5. 页面每三秒读取一次同步状态，完成后自动刷新客户列表。
+4. Google 返回工作台后，页面显示邮箱并持久排队；下一步启动独立 Worker 后执行同步和分析。
+5. 页面持续读取批次进度，并逐步刷新客户列表。
 
 不同 SalesMate 登录用户拥有独立的邮箱连接、客户公司和邮件范围。即使两名员工联系相同客户域名，他们也不会在当前 MVP 中互相看到对方邮件。
 
-### 第三步：等待自动同步和分析
+### 第三步：启动独立 Worker
 
-授权回调或页面“同步并刷新”按钮会让后端自动启动一次后台 Agent。该 Agent 领取当前服务凭证所属员工的同步请求，并执行：
+在仓库根目录的第二个终端运行，使用已安装项目依赖的 Python 环境：
+
+```powershell
+python backend/manage.py crm_worker --analysis-workers 2 --poll 1
+```
+
+授权回调或“同步 Gmail”只创建数据库批次，Web 不启动 Agent。Worker 为当前服务凭证所属员工执行以下流程，公司画像通道与邮箱同步并行：
 
 ```text
 首次读取最近收件和发件，后续按 Gmail History 游标读取新增邮件
@@ -371,9 +380,9 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 → 保存并回报任务
 ```
 
-页面显示“Gmail 同步和客户分析已完成”即表示本轮结束。后端终端会记录邮箱批次和任务批次状态；`failed_extraction_count` 大于零时，先查看终端中的 `[DEBUG]` 错误，再重试同步。
+页面分别显示邮件完成、失败和公司画像计数；邮件处理完成不代表画像已完成。失败批次显示安全错误和重试按钮，可在 Worker 终端按批次 ID 排查后明确重试。迁移、历史分类及详细恢复边界见 [邮件处理适配](docs/processing-integration.md)。
 
-如需关闭自动运行并逐步调试，可将 `SALESMATE_AUTO_RUN_AGENT=False`，然后手工执行：
+如需逐步调试，先停止独立 Worker，再使用保留的 CLI 入口；同一邮箱不要同时运行两种消费者：
 
 ```powershell
 python -m agent.main --sync-authorized-mailboxes-once
@@ -415,13 +424,13 @@ python -m agent.main --sync-authorized-mailboxes-once
 |---|---|---|
 | Google 显示 `403 access_denied` | OAuth consent screen 的发布状态和 Test users | 测试状态下把当前员工 Gmail 加入 Test users，然后从页面重新授权 |
 | 页面授权后提示失败 | OAuth Client 类型与 Redirect URI | 使用 Web application，并确保 Google Cloud 和根 `.env` 都是 `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/` |
-| 页面一直显示“等待 Agent 同步” | 自动 Agent 配置无效或后台执行失败 | 确认 `SALESMATE_AUTO_RUN_AGENT=True`、Agent token 和百炼配置有效，再查看后端终端中的 `automatic_agent_sync_failed` |
+| 页面一直显示“等待 Agent 同步” | 独立 Worker 未运行或配置无效 | 启动 `crm_worker`，检查 Agent token、HTTP 地址与百炼配置，查看 Worker 的错误类型和批次进度 |
 | CLI 返回 `configuration_failed` | 根 `.env` 的服务令牌、邮箱 UUID | 先运行 `provision_local`；确认没有继续维护 `agent/.env` 或 `backend/.env` |
 | CLI 返回后端 401 | Agent token 与数据库记录不匹配 | 不要手工复制旧 token；重新初始化一套本地数据库和凭证，或核对当前根 `.env` |
 | CLI 返回后端 404 | `SALESMATE_MAILBOX_ID` 不属于当前 token 用户 | 使用同一次 `provision_local` 生成的 token 与 mailbox ID |
 | `job_reports` 为空 | 邮件是重复、非业务或无实质更新 | 查看 created/duplicate 和 L1 的 `has_substantive_update`，也可在页面点击“更新分析”后运行 `--process-jobs-once` |
 | L3 失败 | 百炼返回非 JSON、枚举错误或 `source_refs` 越界 | 查看终端详细错误；修正 Prompt/模型后再次创建分析任务并运行一次 Job |
-| 页面没有新结果 | 后台仍在处理，或同步/分析执行失败 | 查看邮箱状态和后端日志；需要逐步调试时关闭自动运行并执行一次性 CLI |
+| 页面没有新结果 | Worker 未启动、后台仍在处理或执行失败 | 查看批次状态与 Worker 日志；旧 CLI 仅单独调试，不与 Worker 混用同一邮箱 |
 | ready 返回 503 | 默认数据库连接失败 | SQLite 模式检查 `backend/` 是否可写；PostgreSQL 模式检查 `DATABASE_URL` |
 
 ### 第六步：单独调试各阶段
@@ -442,7 +451,7 @@ python -m agent.main --process-jobs-once --job-limit 10
 # Agent 离线测试：120 项
 python -m unittest discover -s agent/tests -p "test_*.py"
 
-# Django 测试：39 项
+# Django 业务回归测试
 python backend/manage.py test tests
 
 python backend/manage.py check
@@ -482,11 +491,10 @@ ANALYSIS_PROVIDER=rules
 
 ## 12. 已知限制
 
-- 首次 Gmail 同步最多读取最近 20 封收件和发件邮件；后续优先使用 Gmail History 游标读取新增邮件，游标过期时退回最近邮件扫描。
+- 首次扫描最多最近 20 封；后续使用 History 游标，单轮上限仍为 20，剩余 ID 持久保留。
 - L1 最多四路并发并按完成顺序逐封保存，但 Gmail raw 正文仍按顺序读取。
-- 本地 MVP 由 Django 进程中的轻量后台线程按需启动 Agent，没有持久化的邮箱同步批次或常驻分析任务队列；服务重启会中断正在执行的同步，可再次点击“同步并刷新”。
-- 公司画像以公司 revision 为单位；当前后台线程一次领取一个分析 Job，不同公司画像尚未并行。
-- `skipped_non_business` 和 LLM 的 `non_sales` 会被 Agent 保留，但后端尚未提供人工复核分类或从默认公司列表排除非业务公司的查询规则。
+- 独立 `crm_worker` 消费数据库任务；Web 重启不删除队列。执行中断通过批次错误或租约过期展示，失败由员工明确重试。
+- 公司画像默认两路，单公司任务互斥。人工确认跳过邮件后的 L1 重做版本和分类口径待双方补齐，见 [邮件处理适配](docs/processing-integration.md)。
 - 原 Gmail 只读同步仍使用原 GmailCredential JSON；本轮新发信/日历 Connection 使用独立 Fernet 密钥加密，浏览器既不接收明文也不接收密文。现有只读凭证迁移与生产密钥服务不在本轮变更内。
 - 公共邮箱按原清单自动归组；已支持显式公司合并、选择邮件搬移及人工域名/联系人映射，不猜测集团关系。
 - 工单、商机、产品、报价及明细、订单及明细、跟进均有关系记录和管理页入口；库存为人工记录，不自动扣减，不推断税费或收入确认。
@@ -513,3 +521,8 @@ ANALYSIS_PROVIDER=rules
 从旧版本升级时先拉取代码、安装根 requirements.txt，再运行 `python backend/manage.py migrate`。若原配置位于 backend/.env，须将其迁到根 .env，把原 PostgreSQL 连接等价写入 DATABASE_URL（包括原连接超时）；保留原密钥、时区、运行模式和开发账号，不重复初始化数据库或用户。规则模式与免登录均可继续使用。
 
 0004 数据迁移以追加版本的方式转换旧规则事实，保留原邮件及抽取记录，并使旧分析过期；打开公司或明确请求分析后生成新结果。详见[数据模型](docs/data-model.md)。
+
+
+## 持久同步与人工复核
+
+已接入同步批次、逐封进度、独立 Worker、公司互斥、非业务默认隐藏和人工复核。启动、升级、API 与后续规则见 [邮件处理适配](docs/processing-integration.md)。历史分类先运行 `python backend/manage.py classify_emails` 预览，再用 `--apply` 应用；原始邮件不删除。
