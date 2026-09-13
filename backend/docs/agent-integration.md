@@ -37,7 +37,7 @@ python -m agent.main --process-jobs-once --job-limit 10
 ## 当前限制
 
 - Agent 是一次性 CLI，不常驻轮询。
-- 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。旧 Desktop OAuth 文件只用于兼容调试命令。
+- 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。Agent 不再维护旧的本机 Desktop OAuth 读取命令；`test_tools/` 中的测试邮件注入器使用独立的 Desktop OAuth 凭据和 token，具体见其 README。
 - 后端 SyncState 保存 Gmail History 游标、积压 message ID 和失败 message ID；后续同步优先增量读取，仍以 `dedupe_key` 保证保存幂等。
 - L1 最多四路并发，并按实际完成顺序逐封提交。一封邮件失败不会阻止其他邮件保存，但邮箱同步目前仍由 Django 进程内线程执行，没有持久化邮件任务。
 - L3/L4 是公司级 Job。当前本地自动运行器一次只领取一个公司 Job，不同公司的画像尚未并行。

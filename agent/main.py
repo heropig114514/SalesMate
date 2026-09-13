@@ -12,31 +12,17 @@ if __package__ in (None, ""):
 
 from agent.clients.backend_api import django_backend_from_environment
 from agent.config import load_environment
-from agent.tools.gmail import (
-    connect_gmail,
-    read_email,
-    read_recent_emails,
-    resolve_mailbox_address,
-)
 from agent.workflows.analysis_input import ValidationError, build_analysis_input
 from agent.workflows.authorized_gmail_sync import sync_authorized_mailboxes_once
 from agent.workflows.customer_analysis import bailian_analysis_provider
-from agent.workflows.gmail_sync import sync_gmail
-from agent.workflows.l1_email import bailian_extraction_provider, process_email
 from agent.workflows.orchestration import process_jobs_once
 
 
 def main(argv: list[str] | None = None) -> int:
-    """执行一个 L1 邮件读取或 L2 分析输入构建并输出一个 JSON 文档。"""
+    """执行一次公司分析、任务处理或员工授权邮箱同步。"""
     raw_argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(description="SalesMate 一次性 Agent 命令")
     selection = parser.add_mutually_exclusive_group(required=True)
-    selection.add_argument("--message-id", metavar="ID", help="读取指定 Gmail 邮件")
-    selection.add_argument(
-        "--recent",
-        action="store_true",
-        help="读取最近至多五封 Gmail 邮件",
-    )
     selection.add_argument(
         "--analysis-company-id",
         metavar="COMPANY_ID",
@@ -48,18 +34,9 @@ def main(argv: list[str] | None = None) -> int:
         help="从 Django 后端领取一批任务并运行一次 L2-L4",
     )
     selection.add_argument(
-        "--sync-gmail",
-        action="store_true",
-        help="同步最近 Gmail 邮件到 Django 后端，并处理一次分析任务",
-    )
-    selection.add_argument(
         "--sync-authorized-mailboxes-once",
         action="store_true",
         help="处理员工在网页中请求的 Gmail 同步，然后立即退出",
-    )
-    parser.add_argument(
-        "--mailbox-address",
-        help="当前授权邮箱地址（用于单封读取、最近邮件或同步）",
     )
     parser.add_argument(
         "--merge-version",
@@ -72,8 +49,6 @@ def main(argv: list[str] | None = None) -> int:
     is_l2 = args.analysis_company_id is not None
     if not is_l2 and "--merge-version" in raw_argv:
         parser.error("--merge-version 必须与 --analysis-company-id 一起使用")
-    if is_l2 and args.mailbox_address is not None:
-        parser.error("--mailbox-address 不能与公司分析命令一起使用")
     if args.job_limit <= 0:
         parser.error("--job-limit 必须大于 0")
 
@@ -84,36 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.process_jobs_once:
         return _run_jobs_once(args.job_limit)
-    if args.sync_authorized_mailboxes_once:
-        return _run_authorized_sync(args.job_limit)
-    if args.sync_gmail:
-        return _run_sync(args, args.job_limit)
-
-    return _run_l1(args)
-
-
-def _run_l1(args: argparse.Namespace) -> int:
-    """Preserve the existing one-shot Gmail L1 route."""
-    load_environment()
-
-    try:
-        service = connect_gmail()
-        mailbox_address = resolve_mailbox_address(service, args.mailbox_address)
-        if args.recent:
-            emails = read_recent_emails(service, limit=5)
-        else:
-            emails = [read_email(service, args.message_id)]
-    except Exception:
-        # 输入层只暴露固定安全错误，不包含 OAuth 或服务端详情。
-        return _print_safe_error("input_read_failed", "邮件读取失败。", 1)
-
-    results = [
-        process_email(email, mailbox_address, bailian_extraction_provider)
-        for email in emails
-    ]
-    document = results if args.recent else results[0]
-    _print_json(document)
-    return 0
+    return _run_authorized_sync(args.job_limit)
 
 
 def _run_l2(
@@ -160,43 +106,6 @@ def _run_jobs_once(limit: int) -> int:
         )
     _print_json(reports)
     return 1 if any(report.get("status") == "failed" for report in reports) else 0
-
-
-def _run_sync(args: argparse.Namespace, limit: int) -> int:
-    """使用本地 Gmail OAuth，将邮件提交到 Django 后端并处理一轮任务。"""
-    try:
-        load_environment()
-        service = connect_gmail()
-        backend = django_backend_from_environment()
-        if not isinstance(backend.mailbox_id, str) or not backend.mailbox_id:
-            raise ValueError("SALESMATE_MAILBOX_ID 不能为空。")
-        sync_result = sync_gmail(
-            {
-                "mailbox_id": backend.mailbox_id,
-                "access_token": "local-oauth-service",
-                "mailbox_address": args.mailbox_address,
-                "max_results": 20,
-            },
-            backend=backend,
-            gmail_factory=lambda _token: service,
-            extraction_provider=bailian_extraction_provider,
-        )
-        reports = []
-        if sync_result["status"] == "completed":
-            reports = process_jobs_once(
-                backend=backend,
-                limit=limit,
-                analysis_provider=bailian_analysis_provider,
-            )
-        sync_result["job_reports"] = reports
-    except Exception as error:
-        return _print_safe_error(
-            "gmail_sync_failed",
-            f"Gmail 同步失败：{type(error).__name__}: {error}",
-            1,
-        )
-    _print_json(sync_result)
-    return 0 if sync_result["status"] == "completed" else 1
 
 
 def _run_authorized_sync(limit: int) -> int:

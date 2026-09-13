@@ -19,8 +19,10 @@ logs/
 media/
 staticfiles/
 data/
-agent/credentials.json
-agent/gmail_token.json
+agent/*credentials*.json
+agent/*token*.json
+test_tools/*credentials*.json
+test_tools/*token*.json
 backend/.local-access.json
 # Editors
 .idea/

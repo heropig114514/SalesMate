@@ -1,6 +1,6 @@
 # SalesMate 软件与 Agent 联调
 
-本说明位于软件目录 `backend/`。除另有说明外，命令均从 **SalesMate 仓库根目录** 执行；Django 软件、页面、契约和工具归 backend/，Agent 实现归 agent/，根目录仅保留共享配置与依赖入口。返回[仓库概览](../README.md)。
+本说明位于软件目录 `backend/`。除另有说明外，命令均从 **SalesMate 仓库根目录** 执行；Django 软件、页面、契约和工具归 backend/，Agent 实现归 agent/，独立测试数据工具归 test_tools/，根目录同时保留共享配置与依赖入口。返回[仓库概览](../README.md)。
 
 SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取往来邮件，提取客户意向和可定位证据，按公司归组，生成客户画像、销售分析与跟进优先级，并把结果展示在浏览器工作台中。
 
@@ -63,6 +63,7 @@ flowchart TB
 | `backend/frontend/` | 原生 HTML、CSS、JavaScript | 当前员工 Gmail 授权、同步状态、公司列表、邮件原文、画像、分析、业务记录和跟进分数 |
 | `backend/` | Django、DRF | 员工会话、Google OAuth、邮箱凭证、邮件、公司、联系人、业务上下文、任务和分析结果持久化 |
 | `agent/` | Python、Gmail API、百炼 | 领取员工邮箱同步请求、Gmail 读取、L1–L4、后端 HTTP 客户端和一次性编排 |
+| `test_tools/` | Python、Gmail API | 供开发和测试人员向自己的 Gmail 注入全流程合成邮件 |
 | `backend/contracts/` | OpenAPI YAML | 当前 HTTP 接口结构 |
 | `backend/tools/` | Python/Node 脚本 | 文档一致性和可选浏览器检查 |
 
@@ -221,6 +222,7 @@ SalesMate/
 ├── README.md                     # 仓库概览
 ├── .env.example                  # 双方共享配置模板
 ├── requirements.txt              # 后端和 Agent 的统一安装入口
+├── test_tools/                   # 独立全流程测试数据工具和使用说明
 ├── backend/                      # 软件应用
 │   ├── README.md                 # 本文：软件开发及联调
 │   ├── apps/、config/、common/    # Django API、模型和基础模块
@@ -283,7 +285,7 @@ SALESMATE_BACKEND_TIMEOUT=30
 DATABASE_URL=postgresql://salesmate:password@127.0.0.1:5432/salesmate?connect_timeout=3
 ```
 
-`.env`、`agent/credentials.json`、`agent/gmail_token.json`、`backend/.local-access.json` 和数据库文件均被 Git 忽略。
+`.env`、Agent 与 `test_tools/` 下的 OAuth 凭据和 token、`backend/.local-access.json` 以及数据库文件均被 Git 忽略。
 
 ## 7. 首次安装和初始化
 
@@ -320,7 +322,7 @@ python backend/manage.py check
 6. 真实联调时显式设置 `ANALYSIS_PROVIDER=agent`。若需要网页自动触发 Agent，再设置 `SALESMATE_AUTO_RUN_AGENT=True`；默认关闭自动运行，仍可用 CLI 单次执行。
 7. 在根 `.env` 填写 `DASHSCOPE_API_KEY` 和百炼模型名 `BAILIAN_MODEL`。
 
-`agent/credentials.json` 和 `agent/gmail_token.json` 只供旧的本机 Desktop OAuth 命令 `--sync-gmail` 使用。员工从网页授权时不需要这两个文件，也不需要手工配置 `SALESMATE_MAILBOX_ID`。`--sync-authorized-mailboxes-once` 保留为自动运行关闭时的调试入口。
+员工网页授权不读取 Agent 目录中的凭据文件，也不需要手工配置 `SALESMATE_MAILBOX_ID`。网页 OAuth 使用根 `.env` 中的 Web application Client；`--sync-authorized-mailboxes-once` 保留为自动运行关闭时的调试入口。与 `agent/`、`backend/` 同级的 `test_tools/` 提供独立测试邮件注入器，使用自己的 `gmail_inject_credentials.json` 和 `gmail_inject_token.json`，具体见 [测试工具说明](../test_tools/README.md)。
 
 ## 8. 启动与真实完整测试
 
@@ -425,20 +427,11 @@ python -m agent.main --sync-authorized-mailboxes-once
 ### 第六步：单独调试各阶段
 
 ```powershell
-# 只读取并抽取指定 Gmail 邮件
-python -m agent.main --message-id GMAIL_MESSAGE_ID
-
-# 只读取并抽取最近五封
-python -m agent.main --recent
-
 # 只从后端读取公司上下文并构建 L2
 python -m agent.main --analysis-company-id COMPANY_UUID
 
 # 只处理已有任务的 L2–L4
 python -m agent.main --process-jobs-once --job-limit 10
-
-# 使用旧的本机 Desktop OAuth 直接同步指定邮箱（兼容调试入口）
-python -m agent.main --sync-gmail --mailbox-address your-account@gmail.com
 ```
 
 ## 9. 自动检查
@@ -446,7 +439,7 @@ python -m agent.main --sync-gmail --mailbox-address your-account@gmail.com
 在项目根目录执行：
 
 ```powershell
-# Agent 离线测试：141 项
+# Agent 离线测试：120 项
 python -m unittest discover -s agent/tests -p "test_*.py"
 
 # Django 测试：39 项

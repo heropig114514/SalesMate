@@ -1,12 +1,13 @@
 # 项目目录与职责
 
-更新：2026-09-13。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 已合入同级 `agent/`，软件和 Agent 共用仓库根目录的 .env 与依赖入口。
+更新：2026-09-13。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 位于同级 `agent/`，开发和测试人员使用的测试数据工具位于 `test_tools/`；软件与 Agent 共用仓库根目录的 .env 和依赖入口。
 
 ```text
 SalesMate/
 ├── README.md                         # 仓库概览与两方职责入口
 ├── .gitignore                        # 仓库级凭证及运行产物排除
 ├── agent/                            # Gmail History、并发 L1、L2–L4、CLI 和 Agent 测试
+├── test_tools/                       # 独立 Gmail 测试邮件注入器和使用说明
 ├── .env.example                      # 共享配置模板
 ├── requirements.txt                  # 双方依赖入口
 └── backend/                          # 软件应用根目录、命令执行位置

@@ -1,7 +1,5 @@
 .env
 .venv/
-credentials.json
-gmail_token.json
 __pycache__/
 *.pyc
 .idea/

@@ -8,10 +8,8 @@ from typing import Mapping
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from agent.config import AGENT_DIR
 from agent.tools.email_parser import parse_raw_email
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
@@ -55,39 +53,6 @@ def create_service_from_authorization(authorization: Mapping) -> tuple[object, d
         raise
     except Exception:
         raise RuntimeError("Gmail 授权信息无法建立连接。") from None
-
-
-def connect_gmail():
-    """使用 agent 目录中的 OAuth 配置，并复用或刷新本地令牌。"""
-    credentials_path = AGENT_DIR / "credentials.json"
-    token_path = AGENT_DIR / "gmail_token.json"
-
-    try:
-        credentials = None
-        if token_path.exists():
-            credentials = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-
-        if not credentials or not credentials.valid:
-            if credentials and credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-            else:
-                if not credentials_path.exists():
-                    raise RuntimeError("Gmail OAuth 配置不存在。")
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(credentials_path), SCOPES
-                )
-                credentials = flow.run_local_server(port=0)
-            token_path.write_text(credentials.to_json(), encoding="utf-8")
-
-        return build("gmail", "v1", credentials=credentials, cache_discovery=False)
-    except RefreshError:
-        raise RuntimeError("Gmail 授权刷新失败，请重新授权。") from None
-    except RuntimeError as error:
-        if str(error) == "Gmail OAuth 配置不存在。":
-            raise
-        raise RuntimeError("Gmail 授权失败。") from None
-    except Exception:
-        raise RuntimeError("Gmail 授权失败。") from None
 
 
 def get_profile_address(service) -> str:
@@ -200,30 +165,6 @@ def _internal_date_to_utc(value) -> str | None:
         return (epoch + timedelta(milliseconds=milliseconds)).isoformat()
     except (OverflowError, ValueError):
         return None
-
-
-def read_recent_emails(service, limit: int = 5) -> list[dict]:
-    """一次列出至多五个消息 ID，并按 API 返回顺序读取完整 raw 邮件。"""
-    max_results = max(0, min(limit, 5))
-    try:
-        response = service.users().messages().list(
-            userId="me", maxResults=max_results
-        ).execute()
-    except Exception:
-        raise RuntimeError("Gmail 最近邮件读取失败。") from None
-
-    if not isinstance(response, dict):
-        raise RuntimeError("Gmail 最近邮件响应无效。")
-    listed_messages = response.get("messages", [])
-    if not isinstance(listed_messages, list):
-        raise RuntimeError("Gmail 最近邮件响应无效。")
-
-    emails = []
-    for item in listed_messages[:max_results]:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-            raise RuntimeError("Gmail 最近邮件响应无效。")
-        emails.append(read_email(service, item["id"]))
-    return emails
 
 
 def list_sync_message_ids(service, limit: int = 20) -> list[str]:

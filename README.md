@@ -17,6 +17,7 @@ SalesMate/
 │   ├── requirements/ # Python 依赖
 │   └── manage.py     # Django 管理入口
 ├── agent/            # Gmail History 增量读取、并发 L1、L2–L4、后端 HTTP 客户端和测试
+├── test_tools/       # 开发和测试人员可独立使用的全流程测试数据工具
 ├── .env.example      # 软件与 Agent 共用的配置模板
 ├── requirements.txt  # 两侧依赖的安装入口
 └── .gitignore        # 仓库级凭证、缓存及运行产物排除规则
@@ -36,6 +37,7 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 
 - [软件开发与启动说明](backend/README.md)
 - [Agent 实现与数据契约](agent/README.md)
+- [Gmail 测试邮件注入器](test_tools/README.md)
 - [目录与职责](backend/docs/project-structure.md)
 - [代码注释规范](backend/docs/coding-agent-guidelines.md)
 - [API 契约](backend/docs/api-contract.md)

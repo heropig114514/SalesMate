@@ -38,7 +38,7 @@ agent/
 │   ├── __init__.py                 # 外部服务客户端包出口
 │   └── backend_api.py              # BackendClient 协议与 Django API 调用
 ├── tools/
-│   ├── gmail.py                    # 本地 OAuth、后端授权信息、邮件读取
+│   ├── gmail.py                    # 后端授权信息、Gmail History 与邮件读取
 │   └── email_parser.py             # MIME、正文和历史回复解析
 ├── llm/
 │   └── bailian.py                  # 百炼 JSON Object 请求
@@ -52,10 +52,10 @@ agent/
 │   └── orchestration.py            # L2–L4 和一次任务处理
 └── tests/
     ├── __init__.py                 # 测试包标记
-    ├── email_submission_exploration.py  # L1 公共 fixture、边界与 CLI 探索测试
+    ├── email_submission_exploration.py  # L1 公共 fixture 与数据契约边界测试
     ├── fake_backend.py             # 仅供离线测试使用的协议假实现
     ├── test_core.py                # L1、Gmail、百炼客户端和数据契约单元测试
-    ├── test_integration.py         # Gmail 只读边界和 CLI 集成测试
+    ├── test_integration.py         # Gmail 只读读取、History 与百炼客户端集成测试
     ├── test_analysis_input.py      # L2 AnalysisInput 行为测试
     ├── test_http_backend.py        # Django HTTP 传输映射测试
     └── test_mvp_pipeline.py        # Gmail 同步及 L2–L4 主链测试
@@ -151,13 +151,13 @@ flowchart TB
 
 当前没有“前端上传 JSON 文件”或“后端返回磁盘文件”的过程。Agent workflow 内部交换普通字典，`DjangoBackendClient` 将这些字典转换成 HTTP JSON 请求和响应。前端页面查询、筛选、排序和分页继续调用 Django 的浏览器接口。
 
-旧的 Desktop OAuth 调试入口会读取以下本地文件；网页 OAuth 凭证由 Django 保存：
+本地配置和测试注入器使用以下文件；网页 OAuth 凭证由 Django 保存：
 
 | 本地文件 | 读取者 | 用途 | 是否与前端或后端交换 |
 |---|---|---|---|
 | `.env` | Django、Agent 和百炼客户端 | 后端、模型与 Agent API 的共享本地配置 | 否 |
-| `agent/credentials.json` | `agent/tools/gmail.py` | 本地 Installed App OAuth 客户端配置 | 否 |
-| `agent/gmail_token.json` | `agent/tools/gmail.py` | 本地 OAuth token 缓存 | 否 |
+| `test_tools/gmail_inject_credentials.json` | `test_tools/gmail_test_injector.py` | 测试邮件注入器专用 Desktop OAuth 配置 | 否 |
+| `test_tools/gmail_inject_token.json` | `test_tools/gmail_test_injector.py` | 测试邮件注入器专用 OAuth token 缓存 | 否 |
 
 `agent/tests/fake_backend.py` 只用于不连接网络和数据库的自动测试，不参与 CLI 或实际部署。运行时数据全部由 Django 后端持久化。
 
@@ -248,7 +248,7 @@ python -m agent.main --sync-authorized-mailboxes-once
 
 自动执行和该调试命令都通过 `claim_mailbox_syncs()` 取得邮箱地址、后端保存的授权信息和读取上限；Agent 必要时刷新授权，完成同步后调用 `report_mailbox_sync()`。浏览器只读取同步状态并轮询结果。
 
-`sync_gmail()` 仍是底层同步函数，也可用于 Desktop OAuth 或独立集成。直接调用时准备 access token 和后端创建的 mailbox_id：
+`sync_gmail()` 是底层同步函数。直接调用时需要后端提供的授权信息和 mailbox_id；正常产品流程由 `sync_authorized_mailboxes_once()` 从后端领取这些数据：
 
 ```python
 from agent.clients.backend_api import DjangoBackendClient
@@ -687,12 +687,6 @@ SALESMATE_BACKEND_TIMEOUT=30
 网页 Gmail OAuth 的 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和回调地址由 Django 从同一个根 `.env` 读取，Agent 无需重复配置。
 
 ```powershell
-# L1 指定邮件
-python -m agent.main --message-id <GMAIL_MESSAGE_ID>
-
-# L1 最近五封
-python -m agent.main --recent
-
 # 从真实后端读取公司数据，只构建并输出 L2
 python -m agent.main --analysis-company-id <COMPANY_UUID>
 
@@ -701,12 +695,29 @@ python -m agent.main --process-jobs-once --job-limit 10
 
 # 领取员工在网页请求的 Gmail 同步，并运行本次 L1-L4
 python -m agent.main --sync-authorized-mailboxes-once
-
-# 旧的本机 Desktop OAuth 调试入口
-python -m agent.main --sync-gmail --mailbox-address sales@example.com
 ```
 
-本地 Desktop CLI 使用 `agent/credentials.json` 和 `agent/gmail_token.json`。网页授权通过 Django 建立员工邮箱连接；浏览器不接触 token，Django 按需启动的 Agent 或 `--sync-authorized-mailboxes-once` 调试命令从受保护的 Agent API 领取。
+网页授权通过 Django 建立员工邮箱连接；浏览器不接触 token，Django 按需启动的 Agent 或 `--sync-authorized-mailboxes-once` 调试命令从受保护的 Agent API 领取。旧的 `--message-id`、`--recent` 和 `--sync-gmail` 本机 Desktop OAuth 命令已经删除，避免与正式网页授权流程维护两套凭据。
+
+### 9.1 向测试 Gmail 注入全链路样例
+
+没有多个真实外部联系人邮箱时，可以使用独立测试工具把六封 RFC 2822 合成邮件直接插入开发者自己的 Gmail。该工具不调用或修改后端，也不会向外部地址发送邮件；网页仍通过原有只读 OAuth 拉取，所以邮件会经过 Gmail、L1、后端归组和 L2–L4。Gmail 官方 `messages.insert` 会绕过大部分正常投递扫描，因此该流程不验证 SMTP、SPF、DKIM 或垃圾邮件分类。
+
+测试邮件注入器位于与 `agent/`、`backend/` 同级的 `test_tools/`，可由开发和测试人员独立使用。完整准备步骤、权限说明、全流程验证和清理方法见 [测试工具说明](../test_tools/README.md)。在 Google Cloud 的 Credentials 页面另外创建一个 **Desktop app** OAuth Client，将下载的 JSON 重命名为 `gmail_inject_credentials.json` 并放入 `test_tools/`。不要使用后端网页授权所需的 Web application Client；它只允许登记的 Django 回调地址，不能接收测试注入器生成的随机 localhost 端口。在 OAuth consent screen 中还要把测试 Gmail 加入 Test users。预览本次样例：
+
+```powershell
+python -m test_tools.gmail_test_injector --dry-run
+```
+
+实际插入：
+
+```powershell
+python -m test_tools.gmail_test_injector
+```
+
+工具默认读取 `test_tools/gmail_test_messages.template.json`，也可通过 `--messages-file` 指定测试人员自己的 JSON；收件箱由 JSON 顶层的 `mailbox_address` 指定。首次运行会读取被 Git 忽略的 `test_tools/gmail_inject_credentials.json`，在浏览器申请 `gmail.insert` 和 `gmail.readonly`，并把独立 token 保存在 `test_tools/gmail_inject_token.json`。工具会验证授权账号与 JSON 中的邮箱一致，然后插入模板定义的邮件。完成后打开 Gmail 确认主题前缀，再到 SalesMate 工作台点击“同步 Gmail”。需要重新选择账号或重新授权时，删除 `test_tools/gmail_inject_token.json` 后再次运行。
+
+为了让 History 游标稳定捕获样例，推荐先在 SalesMate 完成一次正常 Gmail 授权和同步，再运行注入命令。测试邮件通过 Gmail 进入系统，当前传输来源会显示为 `gmail_real`；请使用专门的测试 Gmail 和测试数据库，完成后可按工具输出的主题前缀在 Gmail 中搜索并手工删除。
 
 ## 10. 测试
 
@@ -719,15 +730,15 @@ python -m unittest agent.tests.test_mvp_pipeline
 ```
 
 自动测试不连接真实 Gmail、百炼、数据库或 HTTP 服务。真实 Gmail 与百炼只做人工冒烟验证。
-当前完整 Agent 离线测试共 141 项。
+当前完整 Agent 离线测试共 120 项。
 
 测试文件分工：
 
 | 文件 | 测试数 | 职责 |
 |---|---:|---|
-| `agent/tests/email_submission_exploration.py` | 10 | 提供 L1 公共 fixture，并覆盖 EmailSubmission 与 CLI 的边界探索；文件名不以 `test_` 开头，由 `test_core.py` 和 `test_integration.py` 导入执行 |
-| `agent/tests/test_core.py` | 75 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
-| `agent/tests/test_integration.py` | 21 | Gmail 只读调用、History 分页与过期、CLI 参数、profile 回退和完整邮件处理集成路径 |
+| `agent/tests/email_submission_exploration.py` | 6 | 提供 L1 公共 fixture，并覆盖 EmailSubmission 的数据契约边界；文件名不以 `test_` 开头，由 `test_core.py` 导入执行 |
+| `agent/tests/test_core.py` | 73 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
+| `agent/tests/test_integration.py` | 6 | Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
 | `agent/tests/test_analysis_input.py` | 4 | L2 事实归并、业务上下文、版本和错误边界 |
 | `agent/tests/test_mvp_pipeline.py` | 24 | access token、History 增量同步、L1 并发、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 确定性规模来源、冲突字段契约、L4、缓存和端到端流程 |
 | `agent/tests/test_http_backend.py` | 7 | Django 服务认证、已有邮件查询、员工邮箱与游标同步、ETag、任务租约、响应归一化和缓存契约 |

@@ -1,0 +1,5 @@
+gmail_inject_credentials.json
+gmail_inject_token.json
+*.local.json
+__pycache__/
+*.pyc

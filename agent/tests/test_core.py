@@ -2,17 +2,14 @@
 
 import base64
 import copy
-import io
 import json
 import unittest
-from contextlib import redirect_stdout
 from email.message import EmailMessage
 from unittest.mock import Mock, patch
 
 import requests
 
 from agent.llm.bailian import LLMError, generate_json
-from agent.main import main as cli_main
 from agent.tools.email_parser import parse_raw_email
 from agent.tools.gmail import (
     get_profile_address,
@@ -2076,56 +2073,6 @@ class SafeL1ErrorTests(unittest.TestCase):
         serialized_error = json.dumps(result["extract_error"], ensure_ascii=False)
         for secret in secrets:
             self.assertNotIn(secret, serialized_error)
-
-    def test_failed_extraction_is_valid_cli_submission_with_zero_exit(self):
-        """**Validates: Requirements 2.11, 3.8, 3.9**"""
-        provider = CountingFakeProvider(
-            exception=RuntimeError("Authorization: Bearer provider-token-secret")
-        )
-        stdout = io.StringIO()
-        with (
-            patch("agent.main.load_environment"),
-            patch("agent.main.connect_gmail", return_value=Mock()),
-            patch("agent.main.resolve_mailbox_address", return_value="sales@example.com"),
-            patch("agent.main.read_email", return_value=l1_email()),
-            patch("agent.main.bailian_extraction_provider", provider),
-            redirect_stdout(stdout),
-        ):
-            exit_code = cli_main(["--message-id", "gmail-message-l1"])
-
-        document = json.loads(stdout.getvalue())
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(tuple(document), EMAIL_SUBMISSION_FIELDS)
-        self.assertEqual(document["extract_status"], "failed")
-        self.assertEqual(document["extract_error"], SAFE_EXTRACTION_ERROR)
-        self.assertNotIn("error", document)
-        self.assertNotIn("provider-token-secret", stdout.getvalue())
-        self.assertEqual(len(provider.calls), 1)
-
-    def test_unrecoverable_read_remains_fixed_cli_error_with_nonzero_exit(self):
-        """**Validates: Requirements 3.8, 3.9**"""
-        read_secret = "Authorization: Bearer read-token-secret"
-        stdout = io.StringIO()
-        with (
-            patch("agent.main.load_environment"),
-            patch("agent.main.connect_gmail", side_effect=RuntimeError(read_secret)),
-            redirect_stdout(stdout),
-        ):
-            exit_code = cli_main(
-                [
-                    "--message-id",
-                    "gmail-message-l1",
-                    "--mailbox-address",
-                    "sales@example.com",
-                ]
-            )
-
-        self.assertNotEqual(exit_code, 0)
-        self.assertEqual(
-            json.loads(stdout.getvalue()),
-            {"error": {"code": "input_read_failed", "message": "邮件读取失败。"}},
-        )
-        self.assertNotIn(read_secret, stdout.getvalue())
 
 
 if __name__ == "__main__":
