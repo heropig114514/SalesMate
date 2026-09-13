@@ -464,7 +464,7 @@ class CRMTests(TestCase):
         self.assertIn("sales%40internal.example", callback["Location"])
 
     # 功能：验证 PKCE code_verifier 保持一致，并兼容 Google 返回已授权 scope 超集。
-    # 输入：`flow_factory` 构造两次 Flow；令牌交换抛出携带可用 token 的 scope Warning。
+    # 输入：`flow_factory` 构造两次 Flow；`build` 模拟 Gmail profile；令牌交换抛出携带可用 token 的 scope Warning。
     # 输出：回调成功、凭据落库，第二个 Flow 收到第一个 Flow 的 verifier。
     # 逻辑：回调恢复 verifier，并在返回权限仍包含 gmail.readonly 时接受 token。
     # 约束：测试凭据均为虚构内容，不发起任何外部请求。

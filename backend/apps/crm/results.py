@@ -9,6 +9,7 @@
 - cached_analysis：查询指定版本的分析缓存元数据。
 变量索引：
 - logger：模块脱敏诊断日志记录器
+- DEAL_PROBABILITY_PATTERN：识别并禁止 Agent 输出成交概率或胜率表述。
 """
 import json
 import logging

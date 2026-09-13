@@ -4,6 +4,7 @@
 目录：
 - _client_config：构造 Google Web application 客户端配置。
 - begin_authorization：创建员工授权地址并保存 state 与 PKCE verifier。
+- _fetch_token：交换授权码并接受包含 Gmail 只读权限的 scope 超集。
 - finish_authorization：交换 code、验证账号并请求首次同步。
 - mailbox_status：生成不含凭证的浏览器邮箱状态。
 - request_mailbox_sync：把已授权邮箱标记为等待同步。
@@ -80,7 +81,7 @@ def begin_authorization(request) -> str:
 
 
 # 功能：交换授权码，并兼容 Google 返回已授权 scope 超集的情况。
-# 输入：已恢复 PKCE verifier 的 Flow 与一次性授权码。
+# 输入：`flow` 为已恢复 PKCE verifier 的 Flow；`code` 为一次性授权码。
 # 输出：无；成功后 Flow 持有可供 credentials 属性读取的 token。
 # 逻辑：oauthlib 会把 scope 变化抛为 Warning；只在返回权限仍包含 Gmail 只读权限时接受 token。
 # 约束：缺少请求权限或 Warning 不含有效 token 时继续抛错。
