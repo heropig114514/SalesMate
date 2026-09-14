@@ -1,6 +1,6 @@
 """职责：处理已明确批准的外部动作和到期跟进提醒。
-实现：每轮领取 approved 动作，执行结果持久化；中断的 running 不自动重试。
-关联：actions 负责单次外部调用，services.notify_due 负责去重站内通知。
+实现：每轮领取 approved 动作；SIGTERM 后完成当前动作并停止领取，中断的 running 不自动重试。
+关联：actions 负责外部调用，services.notify_due 提醒，common.shutdown 处理部署停止信号。
 目录：
 - Command：销售任务工作进程。
 - Command.add_arguments：声明单轮及轮询参数。
@@ -14,6 +14,7 @@ import logging
 import time
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
+from common.shutdown import graceful_shutdown
 from apps.sales.actions import run_action
 from apps.sales.models import ToolAction
 from apps.sales.services import notify_due
@@ -39,25 +40,30 @@ class Command(BaseCommand):
     # 功能：循环处理明确批准的任务。
     # 输入：`args` 为位置参数，`options` 包含 once/poll。
     # 输出：无；错误抛 CommandError，中断正常退出。
-    # 逻辑：清理连接、生成提醒、依次执行当前批准队列，再等待下一轮。
-    # 约束：未批准动作不会执行；未知结果留待人工核对。
+    # 逻辑：清理连接、生成提醒并执行批准队列；SIGTERM 后完成当前动作，下一边界停止领取。
+    # 约束：未批准动作不执行，未知结果留待核对；stop 状态只影响停止，不改变原轮询参数。
     def handle(self, *args, **options):
         if options["poll"] <= 0 or options["poll"] > 60:
             raise CommandError("--poll 必须大于 0 且不超过 60 秒。")
         logger.info("sales_worker_started once=%s", options["once"])
         try:
-            while True:
-                close_old_connections()
-                notify_due()
-                for key in list(
-                    ToolAction.objects.filter(status="approved")
-                    .order_by("approved_at")
-                    .values_list("pk", flat=True)
-                ):
-                    run_action(key)
-                if options["once"]:
-                    break
-                time.sleep(options["poll"])
+            with graceful_shutdown() as stop:
+                while not stop["requested"]:
+                    close_old_connections()
+                    notify_due()
+                    for key in list(
+                        ToolAction.objects.filter(status="approved")
+                        .order_by("approved_at")
+                        .values_list("pk", flat=True)
+                    ):
+                        if stop["requested"]:
+                            break
+                        run_action(key)
+                    if options["once"] or stop["requested"]:
+                        break
+                    time.sleep(options["poll"])
+                if stop["requested"]:
+                    logger.info("sales_worker_stopped reason=deployment_signal current_action=finished")
         except KeyboardInterrupt:
             logger.info("sales_worker_stopped reason=keyboard_interrupt")
         except Exception as exception:

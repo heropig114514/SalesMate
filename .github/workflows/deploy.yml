@@ -1,0 +1,111 @@
+# 职责：主分支提交通过隔离测试后，通知 Lightsail 自动拉取并部署该提交。
+# 实现：PR 只验证；main 推送或手动运行才使用专用部署密钥；部署串行且不取消在途部署。
+# 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
+# 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
+# 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
+# DEPLOY_KEY/DEPLOY_HOST_KEY 为 GitHub 加密 secrets，前者只允许受限触发，后者固定服务器身份。
+# SALESMATE_PLAYWRIGHT_MODULE/SALESMATE_BROWSER_PATH 指向 RUNNER_TEMP 中的隔离浏览器运行时。
+name: Verify and deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: salesmate
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: salesmate
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://salesmate:ci-only-password@127.0.0.1:5432/salesmate?connect_timeout=3
+      DJANGO_SECRET_KEY: ci-only-isolated-tests-no-production-credentials-2026
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      DJANGO_TIME_ZONE: UTC
+      ANALYSIS_PROVIDER: rules
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements/base.txt
+            agent/requirements.txt
+      - name: Install isolated test dependencies
+        run: python -m pip install -r backend/requirements/base.txt -r agent/requirements.txt
+      - name: Check source documentation and deployment scripts
+        run: |
+          python backend/tools/check_docs.py
+          python backend/tools/test_check_docs.py
+          python backend/tools/test_check_doc_changes.py
+          bash -n backend/deploy/lightsail/deploy-from-git.sh
+          bash -n backend/deploy/lightsail/deploy-trigger.sh
+      - name: Run backend, Agent and mailbox tool tests
+        run: |
+          python backend/manage.py test tests --noinput
+          python -m unittest discover -s agent/tests
+          python -m unittest discover -s test_tools/tests
+          python backend/manage.py makemigrations --check --dry-run
+      - name: Check provider-free tool previews
+        run: |
+          python test_tools/gmail_test_injector.py --dry-run
+          python test_tools/qq_test_injector.py --dry-run
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated browser test runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/salesmate-browser" playwright@1.62.1
+          "$RUNNER_TEMP/salesmate-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Verify browser flows with mocked APIs
+        run: |
+          export SALESMATE_PLAYWRIGHT_MODULE="$RUNNER_TEMP/salesmate-browser/node_modules/playwright"
+          export SALESMATE_BROWSER_PATH="$(node -e 'console.log(require(process.env.SALESMATE_PLAYWRIGHT_MODULE).chromium.executablePath())')"
+          node backend/tools/browser_qq_send.cjs
+          node backend/tools/browser_workspace.cjs
+          node backend/tools/browser_processing.cjs
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    concurrency:
+      group: salesmate-production
+      cancel-in-progress: false
+    steps:
+      - name: Pull and deploy the verified commit on Lightsail
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          DEPLOY_KEY: ${{ secrets.LIGHTSAIL_DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.LIGHTSAIL_DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ && -n "$DEPLOY_KEY" && -n "$DEPLOY_HOST_KEY" ]]
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            salesmate-deploy@47.131.232.143 "$RELEASE_SHA"

@@ -1,6 +1,6 @@
 """职责：运行与 Web 生命周期独立的 Gmail 和公司画像任务进程。
-实现：同步通道消费原文同步及人工补抽取，与少量可领取画像任务并行；数据库及租约是权威状态。
-关联：worker 执行业务单元，processing 管理过期批次；不消费 sales 外部动作队列。
+实现：同步与画像通道并行；SIGTERM 后停止调度并等待正在执行单元完成，数据库及租约为权威状态。
+关联：worker 执行业务单元，processing 管理批次，common.shutdown 处理部署停止；不消费 sales 外部动作。
 目录：
 - Command：配置并运行持久队列消费者。
 - Command.add_arguments：声明单轮、轮询和画像并发参数。
@@ -18,6 +18,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 from django.db.models import Q
 from django.utils import timezone
+from common.shutdown import graceful_shutdown
 
 from apps.crm.models import ExtractionRepair, MailboxSyncRun
 from apps.crm.jobs import claimable_jobs
@@ -46,8 +47,8 @@ class Command(BaseCommand):
     # 功能：调度独立同步和分析通道。
     # 输入：`args` 为位置参数，`options` 含 once/poll/analysis_workers。
     # 输出：无；单轮排空当前可领取工作后退出。
-    # 逻辑：持续填充空闲通道；人工补抽取无需同步请求也会调度，画像只排可领取任务以避免失败修复阻塞单轮退出。
-    # 约束：中断等待正在执行单元结束；硬中断由租约过期显式失败，不重发外部动作。
+    # 逻辑：填充空闲通道；SIGTERM 后停止新调度并等待 pending 的结果；单轮只处理当前可领取工作。
+    # 约束：停止时依然报告任务异常，等待期间需要 Web 可用；不改变并发、租约或业务重试语义。
     def handle(self, *args, **options):
         if settings.ANALYSIS_PROVIDER != "agent":
             raise CommandError("crm_worker 仅用于 ANALYSIS_PROVIDER=agent；规则模式保持显式页面演示。")
@@ -57,8 +58,8 @@ class Command(BaseCommand):
         logger.info("crm_worker_started owner_id=%s analysis_workers=%s", owner.pk, options["analysis_workers"])
         pending = {}
         try:
-            with ThreadPoolExecutor(max_workers=options["analysis_workers"] + 1, thread_name_prefix="crm") as pool:
-                while True:
+            with graceful_shutdown() as stop, ThreadPoolExecutor(max_workers=options["analysis_workers"] + 1, thread_name_prefix="crm") as pool:
+                while not stop["requested"]:
                     close_old_connections()
                     expire_runs(owner)
                     for future in list(pending):
@@ -77,6 +78,10 @@ class Command(BaseCommand):
                     if options["once"] and not pending and not sync_waiting and not analysis_waiting:
                         break
                     time.sleep(options["poll"])
+                for future in pending:
+                    future.result()
+                if stop["requested"]:
+                    logger.info("crm_worker_stopped reason=deployment_signal pending=finished")
         except KeyboardInterrupt:
             logger.info("crm_worker_stopped reason=keyboard_interrupt")
         logger.info("crm_worker_finished owner_id=%s", owner.pk)
