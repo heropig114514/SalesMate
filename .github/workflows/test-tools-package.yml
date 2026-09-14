@@ -1,0 +1,60 @@
+# 职责：在 Gmail 测试工具更新后验证其独立安装能力，并生成可直接下载的 ZIP。
+# 实现：只复制公开分发文件，通过独立 requirements 安装与 dry-run 后上传 Actions Artifact。
+# 关联：test_tools/README.md、requirements.txt、gmail_test_injector.py 和邮件模板。
+# 目录：package-test-tools 打包任务；无函数或类。
+# 变量索引：无。
+name: Package test tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'test_tools/**'
+      - '.github/workflows/test-tools-package.yml'
+  pull_request:
+    paths:
+      - 'test_tools/**'
+      - '.github/workflows/test-tools-package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-test-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: test_tools/requirements.txt
+
+      - name: Install standalone dependencies
+        run: python -m pip install -r test_tools/requirements.txt
+
+      - name: Verify standalone injector
+        run: python test_tools/gmail_test_injector.py --dry-run
+
+      - name: Build package directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="dist/SalesMate-test-tools"
+          mkdir -p "$package_dir"
+          cp test_tools/README.md "$package_dir/"
+          cp test_tools/requirements.txt "$package_dir/"
+          cp test_tools/gmail_test_injector.py "$package_dir/"
+          cp test_tools/gmail_test_messages.template.json "$package_dir/"
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: salesmate-test-tools
+          path: dist/SalesMate-test-tools/
+          if-no-files-found: error
+          retention-days: 30
