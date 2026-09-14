@@ -67,7 +67,10 @@ from urllib.parse import urlencode
 
 import requests
 
+from agent.skills import load_skill
+
 JsonObject = Mapping[str, Any]
+_DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
 
 
 class BackendClient(Protocol):
@@ -151,7 +154,7 @@ class DjangoBackendClient:
         service_token: str,
         *,
         mailbox_id: str | None = None,
-        analysis_prompt_version: str = "analysis-v2",
+        analysis_prompt_version: str = _DEFAULT_ANALYSIS_PROMPT_VERSION,
         lease_seconds: int = 120,
         timeout: float = 30,
         session: requests.Session | None = None,
@@ -575,9 +578,6 @@ def django_backend_from_environment(
     )
     service_token = os.getenv("SALESMATE_AGENT_SERVICE_TOKEN", "")
     resolved_mailbox = mailbox_id or os.getenv("SALESMATE_MAILBOX_ID")
-    analysis_prompt_version = os.getenv(
-        "SALESMATE_ANALYSIS_PROMPT_VERSION", "analysis-v2"
-    )
     try:
         lease_seconds = int(os.getenv("SALESMATE_JOB_LEASE_SECONDS", "120"))
         timeout = float(os.getenv("SALESMATE_BACKEND_TIMEOUT", "30"))
@@ -589,7 +589,7 @@ def django_backend_from_environment(
         base_url,
         service_token,
         mailbox_id=resolved_mailbox,
-        analysis_prompt_version=analysis_prompt_version,
+        analysis_prompt_version=_DEFAULT_ANALYSIS_PROMPT_VERSION,
         lease_seconds=lease_seconds,
         timeout=timeout,
     )

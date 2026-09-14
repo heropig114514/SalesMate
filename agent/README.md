@@ -44,6 +44,12 @@ agent/
 │   └── email_parser.py             # MIME、正文和历史回复解析
 ├── llm/
 │   └── bailian.py                  # 百炼 JSON Object 请求
+├── skills/
+│   ├── loader.py                   # Skill 发现、元数据解析和进程内缓存
+│   ├── email-fact-extraction/
+│   │   └── SKILL.md                # L1 抽取指令、版本和输出上限
+│   └── customer-analysis/
+│       └── SKILL.md                # L3 画像指令、版本和输出上限
 ├── workflows/
 │   ├── l1_email.py                 # L1 单封邮件事实抽取
 │   ├── gmail_sync.py               # 前端 Gmail 同步服务函数
@@ -63,7 +69,16 @@ agent/
     └── test_mvp_pipeline.py        # Gmail 同步及 L2–L4 主链测试
 ```
 
-没有单独的 `schemas` 或 `prompts` 层。每套提示词直接放在对应 workflow 文件中，数据结构使用普通字典和少量就地 dataclass。
+没有单独的 `schemas` 或 `prompts` 层。模型能力以 `agent/skills/<skill-name>/SKILL.md` 组织，frontmatter 提供路由名称、用途描述、版本和输出 token 上限，正文保存模型指令。workflow 按名称加载 Skill，只负责拼装本次输入、调用百炼和校验结果。数据结构继续使用普通字典和少量就地 dataclass。
+
+当前提供两个 Skill：
+
+| Skill | 调用阶段 | 输入边界 | 产出 |
+|---|---|---|---|
+| `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
+| `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
+
+`agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。以后增加邮件回复或会议排期时，应新增职责单一的 Skill，再由路由层按名称或 description 选择；工具执行权限和员工确认流程仍由工作流及后端控制。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`，缓存键和提交结果会直接使用该版本。
 
 QQ 邮箱已作为独立 IMAP 读取源追加，保留现有 Gmail 接入。`tools/qq_mail.py` 提供固定 QQ TLS 服务的只读适配，后端 `qq_sync` 持久同步并复用现有 L1–L4；无需 Google 回调域名。配置及协议兼容边界见 [QQ 邮箱试用](../backend/docs/qq-mailbox.md)。QQ 通过 `crm_worker` 运行，旧 Gmail CLI 不领取 QQ 任务。
 
@@ -86,6 +101,7 @@ flowchart TB
     subgraph AGENT["Agent"]
         SYNC["邮件同步"]
         PARSER["邮件解析"]
+        SKILLS["Skill 注册表<br/>名称 / 描述 / 版本 / 模型指令"]
         L1["L1 单封邮件事实抽取"]
         ORCH["任务与公司分析编排"]
         L2["L2 公司级事实归并"]
@@ -108,6 +124,7 @@ flowchart TB
     SYNC -->|"只读授权 / 查询范围"| GMAIL
     GMAIL -->|"message_id / thread_id / raw MIME / received_at"| PARSER
     PARSER -->|"subject / body_text / from / to / cc / sent_at / direction"| L1
+    SKILLS -->|"email-fact-extraction"| L1
     L1 -->|"EmailSubmission<br/>适配器补充 mailbox_id / source"| DATA
     DATA -->|"created_count / updated_count / duplicate_count / affected_company_ids"| SYNC
     SYNC -->|"GmailSyncResult / 刷新授权"| AUTH
@@ -124,6 +141,7 @@ flowchart TB
 
     RESULT -->|"相同 company_id + input_version 的历史 Analysis 或空值"| ORCH
     ORCH -->|"缓存未命中时传入 AnalysisInput"| L3
+    SKILLS -->|"customer-analysis"| L3
     L3 -->|"公司事实与业务上下文"| BAILIAN
     BAILIAN -->|"画像、信号、分析、评分特征 JSON"| L3
     L3 -->|"Analysis<br/>list_view / detail_view / status / error"| ORCH
@@ -141,14 +159,14 @@ flowchart TB
 | 1. 员工邮箱授权 | 浏览器 ↔ Django ↔ Google | 员工 Session、OAuth code | mailbox_id、mailbox_address、授权状态、sync_requested | 绑定当前员工实际选择的 Gmail，不把令牌交给浏览器 |
 | 2. 同步领取与邮件读取 | Django → Agent ↔ Gmail | mailbox_id、授权信息、读取上限 | message_id、thread_id、raw MIME、received_at | 一次性读取该员工最近的收件和发件邮件 |
 | 3. 邮件解析 | Gmail → 邮件解析 → L1 | raw MIME 和 Gmail 元数据 | subject、body_text、from、to、cc、sent_at、direction | 把 Gmail resource 转成统一邮件结构 |
-| 4. 单封事实抽取 | L1 → 后端 | 统一邮件结构 | EmailSubmission：dedupe_key、contact_email、extract_status、facts | 最多四封并发抽取；一封异常不终止其他邮件 |
+| 4. 单封事实抽取 | Skill → L1 → 后端 | `email-fact-extraction` 指令、统一邮件结构 | EmailSubmission：dedupe_key、contact_email、extract_status、facts | 最多四封并发抽取；一封异常不终止其他邮件 |
 | 5. 保存与归组 | Agent → 后端 | 已完成的单封 EmailSubmission | 单封保存结果、company_id、公司成员邮件、必要的待处理任务 | 不等待最慢邮件，任一 L1 完成后立即逐封提交；独立事务避免一个冲突回滚整批邮件 |
 | 6. 同步结果 | Agent → Django → 浏览器 | 后端保存结果 | fetched_count、l1_processed_count、created_count、duplicate_count、failed_extraction_count、failed_submission_count、email_errors、同步状态 | 邮箱阶段完成后立即回报；失败邮件保留到下一轮重试 |
 | 7. 任务进入分析 | 后端 → 编排 | job_id、trigger、company_id | 本批次待分析公司列表 | 把邮件变化或业务数据变化转换为公司分析任务 |
 | 8. 公司数据准备 | 后端 → L2 | 公司归组、邮件、客户、联系人、工单、报价、订单、快照版本 | 完整公司数据集合 | 为公司级事实归并提供统一上下文 |
 | 9. 公司级事实归并 | L2 → 编排和后端 | 公司数据集合 | AnalysisInput：company、business_context、facts、metrics、input_version、unparsed_message_count | 形成 L3 唯一可信的分析输入 |
 | 10. 分析缓存判断 | 后端 → 编排 | company_id、input_version | 已存在的 Analysis 或空值 | 相同数据版本不重复调用模型 |
-| 11. 客户画像与分析 | L3 ↔ 百炼 | 完整 AnalysisInput | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析、评分特征 | 生成页面 A 和页面 B 所需的 Agent 数据；首次模型结果未通过 JSON 或业务规则时携带原因修正一次 |
+| 11. 客户画像与分析 | Skill → L3 ↔ 百炼 | `customer-analysis` 指令、精简后的 AnalysisInput 推理视图 | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析、评分特征 | 完整 L2 继续用于校验和存储；百炼只接收分析所需字段，首次模型结果未通过业务规则时携带原因修正一次 |
 | 12. 跟进优先级 | 编排 → L4 | Analysis、邮件指标 | Score：score、各特征贡献、说明和评分版本 | 计算 0–100 处理优先级；信息不足时返回 null |
 | 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | 供真实后端以后持久化和提供给前端 |
 | 14. 返回调用方 | 编排 → 后端 → 浏览器 | 完整分析结果 | AnalysisBundle、JobReport 与公司页面投影 | CLI 输出处理报告；前端通过后端读取结果 |
@@ -427,7 +445,7 @@ generate_analysis(
 ) -> dict
 ```
 
-L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。
+L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。调用前会从完整 `AnalysisInput` 构造精简推理视图：保留公司、业务上下文、事实值、事实时间、来源、指标和分析基准时间，删除仅用于缓存的版本字段、重复成员列表以及 L1 已验证过的原文证据副本。完整 L2 仍用于结果校验和后端保存。
 
 `list_view` 包含公司主信号和证据、逐工单信号、行业、规模档位、最新摘要，以及三个 0–3 或 `null` 的评分特征。
 
@@ -466,9 +484,9 @@ L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。
 }
 ```
 
-允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。调用百炼时会额外列出本次输入可用的完整来源字符串，模型必须原样复制；若模型只多加了 `company_id:` 等已知类型前缀，并且去掉前缀后能精确命中输入来源，Agent 会安全规范为原始 ID。`metrics`、`facts` 等字段名仍不是合法来源。
+允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。调用百炼时会额外列出本次输入可用的完整来源字符串，模型必须原样复制；若模型只多加了 `company_id:` 等已知类型前缀，并且去掉前缀后能精确命中输入来源，Agent 会安全规范为原始 ID。重复来源会在本地去重，`metrics`、`facts` 等字段名仍不是合法来源。
 
-L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。默认百炼结果首次因 JSON 或这些业务规则失败时，Agent 会将具体校验原因和合法来源列表交给模型完整修正一次；第二次仍不合法才返回失败。邮件原文中的付款比例、良率等业务百分比允许按原文引用，不会被误判为成交概率。`repeat_purchase` 的历史订单只能来自 `business_context.orders`；邮件自述和 `facts.order_reference` 不能代替后端订单记录。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
+L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。单层 JSON Markdown 代码围栏和重复来源由本地规范化，不触发第二次模型调用；其他 JSON 或业务规则失败时，Agent 才会将具体校验原因和合法来源列表交给模型完整修正一次。第二次仍不合法才返回失败。邮件原文中的付款比例、良率等业务百分比允许按原文引用，不会被误判为成交概率。`repeat_purchase` 的历史订单只能来自 `business_context.orders`；邮件自述和 `facts.order_reference` 不能代替后端订单记录。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
 
 失败时返回 `status=failed`、`list_view=null`、`detail_view=null` 和本地调试错误，不写入分析缓存。
 
@@ -478,7 +496,7 @@ L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交�
 {
   "company_id": "company:example.com",
   "input_version": "sha256:...",
-  "analysis_prompt_version": "analysis-v2",
+  "analysis_prompt_version": "analysis-v3",
   "generated_at": "2026-09-12T10:02:00+08:00",
   "analysis_base_time": "2026-09-12T10:01:00+08:00",
   "status": "completed",
@@ -683,7 +701,6 @@ BAILIAN_MODEL=模型名称
 SALESMATE_BACKEND_AGENT_URL=http://127.0.0.1:8000/api/v1/agent/
 SALESMATE_AGENT_SERVICE_TOKEN=后端生成的Agent服务令牌
 SALESMATE_MAILBOX_ID=后端创建的邮箱UUID
-SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2
 SALESMATE_JOB_LEASE_SECONDS=120
 SALESMATE_BACKEND_TIMEOUT=30
 ```
@@ -734,7 +751,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 ```
 
 自动测试不连接真实 Gmail、百炼、数据库或 HTTP 服务。真实 Gmail 与百炼只做人工冒烟验证。
-当前完整 Agent 离线测试共 124 项。
+当前完整 Agent 离线测试共 126 项。
 
 测试文件分工：
 
@@ -744,7 +761,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 | `agent/tests/test_core.py` | 74 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取、一次校验修正和 EmailSubmission 契约 |
 | `agent/tests/test_integration.py` | 6 | Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
 | `agent/tests/test_analysis_input.py` | 4 | L2 事实归并、业务上下文、版本和错误边界 |
-| `agent/tests/test_mvp_pipeline.py` | 27 | access token、History 增量同步、L1 并发、进度串行写入、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 单次校验修正、确定性规模来源、业务百分比、来源规范化、冲突字段契约、L4、缓存和端到端流程 |
+| `agent/tests/test_mvp_pipeline.py` | 29 | access token、History 增量同步、L1 并发、进度串行写入、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 精简输入、代码围栏本地修复、单次校验修正、确定性规模来源、业务百分比、来源规范化、冲突字段契约、L4、缓存和端到端流程 |
 | `agent/tests/test_http_backend.py` | 7 | Django 服务认证、已有邮件查询、员工邮箱与游标同步、ETag、任务租约、响应归一化和缓存契约 |
 
 `agent/tests/fake_backend.py` 只是测试 fixture，不包含测试方法，也不参与实际运行。

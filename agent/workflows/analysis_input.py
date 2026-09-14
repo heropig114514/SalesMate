@@ -11,9 +11,10 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Mapping
 
 from agent.clients.backend_api import BackendClient
+from agent.skills import load_skill
 
 
-EXTRACT_PROMPT_VERSION = "extract-v6"
+EXTRACT_PROMPT_VERSION = load_skill("email-fact-extraction").version
 ORDINARY_FACT_FIELDS = (
     "contact_name",
     "contact_title",

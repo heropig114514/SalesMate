@@ -93,7 +93,7 @@ python backend/tools/check_docs.py
 
 ## 本机合并后的运行状态
 
-本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env。此次保留 provider、数据库身份和时区，分析提示词版本对齐 `analysis-v2`，移除旧 Web 线程开关；应用持久批次迁移并重新分类历史邮件。测试模拟外部 SDK，已有用户和 .local-access.json 保留。
+本机沿用 `D:/my_files/conda_envs/django_env` 与 WSL PostgreSQL，原 backend/.env 已迁移至仓库根 .env。此次保留 provider、数据库身份和时区，分析版本由 `customer-analysis` Skill 管理，移除旧 Web 线程开关；应用持久批次迁移并重新分类历史邮件。测试模拟外部 SDK，已有用户和 .local-access.json 保留。
 
 共享 Python 环境安装项目依赖时提示若干其他已安装包存在缺失依赖；项目测试结果单独记录，不据此宣称整个共享环境依赖完全一致。
 

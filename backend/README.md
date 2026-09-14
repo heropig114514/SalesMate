@@ -244,7 +244,7 @@ SalesMate/
     └── tests/
 ```
 
-Agent 内没有单独的 `schemas`、`prompts` 或模拟后端运行层。Prompt 直接放在对应 workflow 中；`agent/tests/fake_backend.py` 只服务于离线测试。
+Agent 内没有单独的 `schemas`、`prompts` 或模拟后端运行层。模型能力放在 `agent/skills/*/SKILL.md`，workflow 加载 Skill 后组织输入、调用模型并校验输出；`agent/tests/fake_backend.py` 只服务于离线测试。
 
 ## 6. 统一环境配置
 
@@ -277,7 +277,6 @@ BAILIAN_ENABLE_THINKING=false
 SALESMATE_BACKEND_AGENT_URL=http://127.0.0.1:8000/api/v1/agent/
 SALESMATE_AGENT_SERVICE_TOKEN=
 SALESMATE_MAILBOX_ID=
-SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2
 SALESMATE_JOB_LEASE_SECONDS=120
 SALESMATE_BACKEND_TIMEOUT=30
 ```
@@ -481,7 +480,7 @@ ANALYSIS_PROVIDER=rules
 
 ## 11. 开发约定
 
-- Agent workflow 使用普通字典和少量就地 dataclass，不增加独立 schemas 或 prompts 目录。
+- Agent workflow 使用普通字典和少量就地 dataclass，不增加独立 schemas 或 prompts 目录；模型指令及其版本保存在项目 Skill 中。
 - 后端负责持久化和页面查询，Agent 负责邮件理解与 L1–L4 业务计算。
 - 前端只通过 Django 读取结果，不保存服务密钥。
 - 修改 `backend/`（包括 tools/） 下 Python 文件时，同步维护文件顶部职责、目录、变量索引和关键函数注释。

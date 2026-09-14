@@ -10,7 +10,11 @@ from unittest.mock import Mock, call, patch
 from agent.tools.gmail import GmailHistoryExpiredError, create_service
 from agent.workflows.analysis_input import build_analysis_input
 from agent.workflows.authorized_gmail_sync import sync_authorized_mailboxes_once
-from agent.workflows.customer_analysis import generate_analysis
+from agent.workflows.customer_analysis import (
+    ANALYSIS_PROMPT_VERSION,
+    bailian_analysis_provider,
+    generate_analysis,
+)
 from agent.workflows.gmail_sync import sync_gmail
 from agent.workflows.lead_score import compute_score
 from agent.workflows.orchestration import analyze_company, process_jobs_once
@@ -203,6 +207,40 @@ class AnalysisAndScoreTests(unittest.TestCase):
         })
         self.assertEqual(result["list_view"]["signal"], "repeat_purchase")
 
+    @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
+    def test_l3_provider_sends_compact_skill_input(self, generate):
+        bailian_analysis_provider(self.input)
+
+        system_prompt, user_text = generate.call_args.args
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        first_fact = model_input["facts"]["product_need"][0]
+        self.assertNotIn("member_dedupe_keys", model_input)
+        self.assertNotIn("input_version", model_input)
+        self.assertNotIn("evidences", first_fact)
+        self.assertEqual(
+            set(first_fact),
+            {"value", "dedupe_key", "fact_time"},
+        )
+        self.assertIn("business_context", model_input)
+        self.assertIn("ALLOWED_SOURCE_REFS", user_text)
+        self.assertTrue(system_prompt)
+        self.assertEqual(generate.call_args.kwargs["max_tokens"], 4000)
+        self.assertEqual(ANALYSIS_PROMPT_VERSION, "analysis-v3")
+
+    def test_l3_accepts_single_json_code_fence_without_model_retry(self):
+        payload = _payload(self.input)
+        result = generate_analysis(
+            self.input,
+            analysis_provider=lambda _: (
+                "```json\n"
+                + json.dumps(payload, ensure_ascii=False)
+                + "\n```"
+            ),
+            clock=lambda: NOW,
+        )
+
+        self.assertEqual(result["status"], "completed")
+
     def test_l3_derives_size_source_from_backend_context(self):
         known = _payload(self.input)
         known["list_view"]["size_source"] = "模型猜测来源"
@@ -327,7 +365,8 @@ class AnalysisAndScoreTests(unittest.TestCase):
             "客户要求首付款 30%，验收后支付 60%，剩余 10% 作为质保金"
         )
         payload["detail_view"]["analysis"]["risk"]["facts"][0]["source_refs"] = [
-            f"company_id:{self.input['company_id']}"
+            f"company_id:{self.input['company_id']}",
+            f"company_id:{self.input['company_id']}",
         ]
 
         result = generate_analysis(
