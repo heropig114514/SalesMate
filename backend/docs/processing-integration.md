@@ -1,6 +1,6 @@
 # 邮件处理与复核适配
 
-依据 2026-09-13 的 `AGENT_INTEGRATION_TASKS.md` 实施。Web 只排队，独立 Worker 调用 Agent；已有评分、模型、提示词内容和单轮 20 封扫描上限保持原值。分析版本配置与已合入 Agent 的 `analysis-v2` 对齐。
+依据 2026-09-13 的 `AGENT_INTEGRATION_TASKS.md` 实施。Web 只排队，独立 Worker 调用 Agent；已有评分、模型和单轮 20 封扫描上限保持原值。当前 Agent 从 `customer-analysis` Skill 读取 `analysis-v3`，后端继续按请求中的版本保存和查询缓存，无需固定分析版本配置。
 
 ## 已实现
 

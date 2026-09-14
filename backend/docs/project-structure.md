@@ -1,12 +1,12 @@
 # 项目目录与职责
 
-更新：2026-09-13。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 位于同级 `agent/`，开发和测试人员使用的测试数据工具位于 `test_tools/`；软件与 Agent 共用仓库根目录的 .env 和依赖入口。
+更新：2026-09-14。软件统一放在仓库 `backend/`，包括 Django 服务、原生前端、测试、契约、文档和开发工具。独立 Agent 位于同级 `agent/`，开发和测试人员使用的测试数据工具位于 `test_tools/`；软件与 Agent 共用仓库根目录的 .env 和依赖入口。
 
 ```text
 SalesMate/
 ├── README.md                         # 仓库概览与两方职责入口
 ├── .gitignore                        # 仓库级凭证及运行产物排除
-├── agent/                            # Gmail History、并发 L1、L2–L4、CLI 和 Agent 测试
+├── agent/                            # Gmail History、L1–L4、可路由 Skill、CLI 和 Agent 测试
 ├── test_tools/                       # 独立 Gmail 测试邮件注入器和使用说明
 ├── .env.example                      # 共享配置模板
 ├── requirements.txt                  # 双方依赖入口
@@ -46,7 +46,7 @@ SalesMate/
 
 `backend/` 表示本项目的软件维护边界，其中 `backend/frontend/` 仍单独组织页面代码。Django 入口和 Python 导入路径保持不变；前端与契约按软件根目录定位。双方只读取仓库根目录 `.env`；原 backend/.env 的本机 PostgreSQL 和调试配置已迁移，数据库未替换。所有软件文档，包括软件侧 Agent 接口说明和历史设计摘要，统一归入 `backend/docs/`。
 
-crm 保持邮件与 L1–L4 分析持久化职责，sales 管理交易、协作与工具动作，用户模型归 accounts。Agent 当前通过既有数组接口逐封提交邮件，HTTP 契约和邮件存储结构不变。
+crm 保持邮件与 L1–L4 分析持久化职责，sales 管理交易、协作与工具动作，用户模型归 accounts。Agent 当前通过既有数组接口逐封提交邮件，HTTP 契约和邮件存储结构不变。L1 和 L3 的模型指令位于 `agent/skills/*/SKILL.md`，workflow 从 Skill 元数据读取版本和输出上限。
 
 浏览器不访问数据库、不在客户端生成假业务状态。Agent 不导入 Django、不直接写业务表。规则在 rules 模式的明确业务变更或分析请求后运行，不作为网络或模型失败时的隐式回退。
 

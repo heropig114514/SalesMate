@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from time import perf_counter
 from typing import Any, Callable, Mapping
 
@@ -19,6 +20,7 @@ from agent.clients.backend_api import BackendClient
 SUPPORTED_TRIGGERS = frozenset(
     {"email_ingested", "customer_detail_opened", "external_updated", "grouping_changed"}
 )
+logger = logging.getLogger("salesmate.agent.orchestration")
 
 
 def analyze_company(
@@ -30,13 +32,21 @@ def analyze_company(
     merge_version: str = "merge-v2",
 ) -> dict[str, Any]:
     """一次构建 L2，复用或生成 L3，并计算 L4。"""
+    total_started = perf_counter()
+    l2_started = perf_counter()
     analysis_input = build_analysis_input(
         company_id,
         backend=backend,
         merge_version=merge_version,
         clock=clock,
     )
+    l2_ms = round((perf_counter() - l2_started) * 1000)
     if isinstance(analysis_input, ValidationError):
+        logger.warning(
+            "company_analysis_failed company_id=%s stage=l2 duration_ms=%s",
+            company_id,
+            l2_ms,
+        )
         return {
             "status": "failed",
             "company_id": company_id,
@@ -48,25 +58,50 @@ def analyze_company(
         }
 
     input_document = analysis_input.to_dict()
+    backend_started = perf_counter()
     backend.save_analysis_input(input_document)
     cached = backend.get_cached_analysis(company_id, analysis_input.input_version)
+    backend_ms = round((perf_counter() - backend_started) * 1000)
     cache_hit = bool(
         isinstance(cached, Mapping)
         and cached.get("status") == "completed"
         and cached.get("analysis_prompt_version") == ANALYSIS_PROMPT_VERSION
     )
-    analysis = dict(cached) if cache_hit else generate_analysis(
-        input_document,
-        analysis_provider=analysis_provider,
-        clock=clock,
+    l3_started = perf_counter()
+    analysis = (
+        dict(cached)
+        if cache_hit
+        else generate_analysis(
+            input_document,
+            analysis_provider=analysis_provider,
+            clock=clock,
+        )
     )
+    l3_ms = round((perf_counter() - l3_started) * 1000)
     if analysis.get("status") == "completed" and not cache_hit:
+        backend_started = perf_counter()
         backend.save_analysis(analysis)
+        backend_ms += round((perf_counter() - backend_started) * 1000)
 
     completed = analysis.get("status") == "completed"
+    l4_started = perf_counter()
     score = compute_score(analysis, input_document, clock=clock) if completed else None
+    l4_ms = round((perf_counter() - l4_started) * 1000)
     if score is not None:
+        backend_started = perf_counter()
         backend.save_score(score)
+        backend_ms += round((perf_counter() - backend_started) * 1000)
+    logger.info(
+        "company_analysis_completed company_id=%s status=%s cache_hit=%s total_ms=%s l2_ms=%s l3_ms=%s l4_ms=%s backend_ms=%s",
+        company_id,
+        "completed" if completed else "failed",
+        cache_hit,
+        round((perf_counter() - total_started) * 1000),
+        l2_ms,
+        l3_ms,
+        l4_ms,
+        backend_ms,
+    )
     return {
         "status": "completed" if completed else "failed",
         "company_id": company_id,

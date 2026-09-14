@@ -16,7 +16,7 @@ SalesMate/
 │   ├── tools/        # 注释检查与浏览器验证工具
 │   ├── requirements/ # Python 依赖
 │   └── manage.py     # Django 管理入口
-├── agent/            # Gmail History 增量读取、并发 L1、L2–L4、后端 HTTP 客户端和测试
+├── agent/            # Gmail History、L1–L4、可路由 Skill、后端 HTTP 客户端和测试
 ├── test_tools/       # 开发和测试人员可独立使用的全流程测试数据工具
 ├── .env.example      # 软件与 Agent 共用的配置模板
 ├── requirements.txt  # 两侧依赖的安装入口
@@ -54,7 +54,7 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 
 所有软件修改须遵循 `backend/README.md` 中的开发原则，代码、注释、目录与文档同步维护。在 `backend/` 执行 `python tools/check_docs.py`；修改检查器时同时执行 `python tools/test_check_docs.py`。
 
-Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent` 和 `SALESMATE_ANALYSIS_PROMPT_VERSION=analysis-v2`；HTTP 后端启动后另开终端运行 `python backend/manage.py crm_worker`。
+Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent`；分析版本由对应 `agent/skills/*/SKILL.md` 管理。HTTP 后端启动后另开终端运行 `python backend/manage.py crm_worker`。
 
 同步批次和逐封状态持久化到数据库，独立 Worker 并行调度邮箱同步与公司画像。后端已提供非业务隐藏、人工复核、进度和明确重试接口；执行中断保留失败记录。
 

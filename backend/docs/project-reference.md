@@ -1,12 +1,12 @@
 # SalesMate 项目参考总览
 
-更新：2026-09-13。当前前端、Django 后端和 Agent 已完成本地 HTTP 主链路整合。软件 [README](../README.md) 是范围、数据流、配置、启动和测试的首要文档。
+更新：2026-09-14。当前前端、Django 后端和 Agent 已完成本地 HTTP 主链路整合。软件 [README](../README.md) 是范围、数据流、配置、启动和测试的首要文档。
 
 ## 当前实现
 
 - 原生 HTML/CSS/JavaScript 工作台展示当前员工 Gmail 授权、同步状态、公司、邮件、画像、分析、业务上下文和跟进优先级。
 - Django + DRF 保存用户、员工 Gmail 授权、邮箱、公司、联系人、邮件、抽取、任务和 L2–L4 结果。
-- Agent 首次扫描最近 Gmail 邮件、后续使用 History 游标增量读取；L1 最多四路并发并完成即逐封提交，L2/L3/L4 按公司 Job 执行，通过 HTTP 与 Django 通信。
+- Agent 首次扫描最近 Gmail 邮件、后续使用 History 游标增量读取；L1 最多四路并发并完成即逐封提交，L2/L3/L4 按公司 Job 执行，通过 HTTP 与 Django 通信。L1 与 L3 模型能力由项目 Skill 提供，便于后续路由扩展。
 - 根 `.env` 是唯一配置文件；`DATABASE_URL` 必填，本机使用原 PostgreSQL；SQLite 需显式配置。
 - `rules` 模式保留为无需 Gmail 和百炼的界面演示，不是模型失败回退。
 
@@ -15,7 +15,7 @@
 | 文档 | 定位 |
 |---|---|
 | [软件 README](../README.md) | 当前范围、完整流程、统一配置、启动和验收 |
-| [Agent README](../../agent/README.md) | L1–L4 字段、提示词、校验和 Agent CLI |
+| [Agent README](../../agent/README.md) | L1–L4 字段、Skill、校验和 Agent CLI |
 | [OpenAPI](../contracts/openapi.yaml) | 当前 HTTP 机器可读契约 |
 | [API 契约](api-contract.md) | 认证、路由和传输一致性说明 |
 | [数据模型](data-model.md) | Django 持久化对象与约束 |
