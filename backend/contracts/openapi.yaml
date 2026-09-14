@@ -1131,6 +1131,32 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/sales/connections/qq/:
+    post:
+      operationId: v1_sales_connections_qq_create
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QQSendConnection'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/QQSendConnection'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/QQSendConnection'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+          description: ''
   /api/v1/sales/directory/:
     get:
       operationId: v1_sales_directory_retrieve
@@ -1806,6 +1832,46 @@ components:
       - kind
       - source_refs
       - summary
+    Connection:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        owner:
+          type: integer
+          readOnly: true
+        revision:
+          type: integer
+          readOnly: true
+        archived:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        provider:
+          allOf:
+          - $ref: '#/components/schemas/ProviderEnum'
+          readOnly: true
+        account:
+          type: string
+          readOnly: true
+      required:
+      - account
+      - archived
+      - created_at
+      - id
+      - owner
+      - provider
+      - revision
+      - updated_at
     CrmStatusEnum:
       enum:
       - registered
@@ -2415,6 +2481,16 @@ components:
       - company_ops
       - industry_context
       - intent
+    ProviderEnum:
+      enum:
+      - gmail
+      - qq
+      - calendar
+      type: string
+      description: |-
+        * `gmail` - Gmail 发信
+        * `qq` - QQ 发信
+        * `calendar` - Google 日历
     QQConnect:
       type: object
       properties:
@@ -2432,6 +2508,20 @@ components:
       - address
       - authorization_code
       - sync_options
+    QQSendConnection:
+      type: object
+      properties:
+        address:
+          type: string
+          maxLength: 254
+          pattern: (?i)^[A-Za-z0-9_.+-]+@(qq|foxmail)\.com$
+        authorization_code:
+          type: string
+          writeOnly: true
+          pattern: ^[A-Za-z]{16}$
+      required:
+      - address
+      - authorization_code
     QQSyncOptions:
       type: object
       properties:

@@ -41,9 +41,9 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
-- Connection.provider：gmail 或 calendar 服务提供方。
+- Connection.provider：gmail、qq 或 calendar 服务提供方。
 - Connection.account：外部账号或日历连接名称。
-- Connection.encrypted_credentials：Fernet 加密的 Google 授权 JSON，浏览器不可读取。
+- Connection.encrypted_credentials：Fernet 加密的 Google 授权 JSON 或 QQ 授权码，浏览器不可读取。
 - Connection.Meta.constraints：连接身份联合唯一约束。
 - Record.id：实体 UUID。
 - Record.owner：权威业务归属，禁止客户端指定。
@@ -537,7 +537,7 @@ class Draft(Record):
 
 
 # 功能：明确确认的外部工具动作与执行状态。
-# 逻辑：批准后参数冻结；未知结果禁止自动重试，后台仅执行显式批准记录。
+# 逻辑：支持 Gmail/QQ 发信及日历创建；准备时冻结参数，后台仅执行显式批准记录，未知结果不自动重试。
 # 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
 class ToolAction(Record):
     company = models.ForeignKey(
@@ -552,7 +552,7 @@ class ToolAction(Record):
     )
     tool = models.CharField(
         max_length=40,
-        choices=[("gmail.send", "Gmail 发信"), ("calendar.create", "创建日历会议")],
+        choices=[("gmail.send", "Gmail 发信"), ("qq.send", "QQ 发信"), ("calendar.create", "创建日历会议")],
     )
     parameters = models.JSONField()
     status = models.CharField(
@@ -635,11 +635,11 @@ class Notification(Record):
 
 
 # 功能：保存单独授权的外部服务加密凭证。
-# 逻辑：用显式配置的 Fernet 密钥加密 Google OAuth 载荷，原 Gmail 只读连接不自动扩权。
+# 逻辑：用 Fernet 加密 Google OAuth 或 QQ 授权码载荷，原只读同步连接不自动扩权。
 # 约束：浏览器只可查看连接状态，缺少密钥时明确失败，不回退为明文。
 class Connection(Record):
     provider = models.CharField(
-        max_length=16, choices=[("gmail", "Gmail 发信"), ("calendar", "Google 日历")]
+        max_length=16, choices=[("gmail", "Gmail 发信"), ("qq", "QQ 发信"), ("calendar", "Google 日历")]
     )
     account = models.CharField(max_length=320)
     encrypted_credentials = models.TextField()

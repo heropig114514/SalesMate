@@ -1,10 +1,10 @@
-"""职责：管理销售动作专用 Google OAuth 连接和加密凭证。
-实现：凭证使用显式 Fernet 密钥加密；Gmail 发信与日历连接独立于既有只读同步授权。
+"""职责：管理销售动作专用 Google OAuth 与 QQ SMTP 加密凭证。
+实现：显式 Fernet 密钥加密；按提供方返回 Google 凭证或 QQ 授权码，发信连接独立于只读同步。
 关联：sales API 提供授权回调与安全连接列表；actions 仅在明确批准后使用连接。
 目录：
 - vault：构造必需密钥对应的加密器。
-- encrypt_credentials：加密 Google 授权 JSON。
-- credentials_for：解密并刷新指定连接凭证。
+- encrypt_credentials：加密 Google 或 QQ 授权 JSON。
+- credentials_for：解密 QQ 授权码或刷新 Google 凭证。
 - begin：创建外部服务授权地址。
 - finish：处理 OAuth 回调并保存加密连接。
 变量索引：
@@ -56,8 +56,8 @@ def vault():
         raise InvalidState("SALESMATE_VAULT_KEY 格式无效。") from None
 
 
-# 功能：加密 Google 授权 JSON。
-# 输入：`document` 为 OAuth 返回的字典。
+# 功能：加密 Google 或 QQ 授权 JSON。
+# 输入：`document` 为 Google OAuth 或 QQ 授权码字典。
 # 输出：可保存的密文字符串。
 # 逻辑：UTF-8 JSON 经 Fernet 认证加密。
 # 约束：不将明文写入日志或业务快照。
@@ -65,10 +65,10 @@ def encrypt_credentials(document):
     return vault().encrypt(json.dumps(document).encode("utf-8")).decode("ascii")
 
 
-# 功能：解密并刷新指定连接凭证。
+# 功能：解密指定连接，按提供方返回执行凭证。
 # 输入：`connection` 为已通过 owner 校验的 Connection。
-# 输出：Google Credentials。
-# 逻辑：验证密文并按当前提供方 scope 构造凭证，过期时显式刷新并重新加密。
+# 输出：Google Credentials 或包含 authorization_code 的 QQ 字典。
+# 逻辑：QQ 验证授权码格式直接返回；Google 校验 scope，过期时刷新并重新加密。
 # 约束：任何凭证错误在发送业务内容前失败，不将底层异常或令牌暴露给浏览器。
 def credentials_for(connection):
     if connection.archived:
@@ -77,6 +77,10 @@ def credentials_for(connection):
         document = json.loads(
             vault().decrypt(connection.encrypted_credentials.encode("ascii"))
         )
+        if connection.provider == "qq":
+            from .qq_smtp import validate_credentials
+            validate_credentials(connection.account, document.get("authorization_code"))
+            return {"authorization_code": document["authorization_code"]}
         if not set(SCOPES[connection.provider]).issubset(document.get("scopes", [])):
             raise InvalidState("外部连接缺少所需权限，请重新授权。")
         credentials = Credentials.from_authorized_user_info(document)

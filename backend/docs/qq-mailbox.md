@@ -1,6 +1,6 @@
 # QQ 邮箱接入与试用
 
-QQ 接入与原 Gmail OAuth 并存。QQ 使用 `imap.qq.com:993` 的 TLS 连接和客户端授权码，不使用 Google OAuth、浏览器回调或自有域名。本功能只读取收件箱及已发送邮件，复用当前 L1–L4 分析和持久批次；不包含 QQ SMTP 发信，也不改动原有 Gmail 发信或日历功能。
+QQ 接入与原 Gmail OAuth 并存。QQ 使用 `imap.qq.com:993` 的 TLS 连接和客户端授权码，不使用 Google OAuth、浏览器回调或自有域名。收信读取收件箱及已发送邮件，复用当前 L1–L4 分析和持久批次；发信使用独立的 QQ SMTP 连接和人工确认动作。原有 Gmail 发信及日历功能保留。
 
 ## 部署准备
 
@@ -31,7 +31,7 @@ QQ 接入与原 Gmail OAuth 并存。QQ 使用 `imap.qq.com:993` 的 TLS 连接�
 
 筛选会读取候选邮件的 UID 和日期元数据，元数据数量可能大于封数上限；只有选中邮件才读取正文并进入分析，已有 pending 也不能绕过限制。未选中的邮件留待后续手动同步；扩大天数可补采旧邮件，不会被最大 UID 跳过。重试保留原失败 ID 或冻结时间范围。升级前没有范围的旧批次若尚未登记任何 ID，需要重新选择范围后同步；已登记失败邮件仍可明确重试。已处理历史邮件不会因新范围而被删除。
 
-QQ 授权码本身可能允许收发等操作；本程序只执行只读 EXAMINE、UID SEARCH、日期元数据 FETCH 与 BODY.PEEK[]，不改变已读状态，不发送或删除邮件。
+QQ 授权码本身可能允许收发等操作；收信同步只执行只读 EXAMINE、UID SEARCH、日期元数据 FETCH 与 BODY.PEEK[]，不改变已读状态，不发送或删除邮件。
 
 ## API 与兼容边界
 
@@ -54,3 +54,18 @@ python backend/tools/check_docs.py
 ```
 
 测试模拟 IMAP 与 LLM，数据库、协议校验、权限及持久状态使用真实实现。它们不证明真实 QQ 授权、网络连通性、邮箱实际文件夹布局或百炼输出已验证；首次试用需用自己的邮箱在页面确认。
+
+## QQ 发信
+
+1. 应用 `sales.0004_qq_smtp_send` 迁移，重启 Web。发信执行进程 `python backend/manage.py sales_worker` 与 Web 使用同一数据库和 `SALESMATE_VAULT_KEY`。该进程处理所有员工已经明确批准的外部动作，启动前应核对待执行队列。
+2. 打开「业务管理 → 外部连接 → 新增 → 连接 QQ 发信」，输入邮箱与客户端授权码。后端仅验证 `smtp.qq.com:465` 的 TLS/SMTP 登录，成功后独立加密保存；不自动复用收信授权，不发送测试邮件。无需 OAuth 回调或自有域名，服务器须能出站连接该服务。
+3. 在客户的助手会话中保存含收件人、主题和正文的邮件草稿；打开「外部动作 → 新增」，选择「QQ 发送邮件」及对应发信连接、客户、草稿，可附带已审核报价。
+4. 生成计划后审阅完整发件账号、收件人、主题和正文，再点「确认并加入执行队列」。准备计划不会发信；执行使用已展示的冻结内容，不因后来编辑草稿而改变。连接版本或报价变化会拒绝执行。
+5. 所有收件人获准后才提交正文，任一收件人被拒绝则整封不提交。SMTP 明确拒绝记录为失败，正文提交中断记录为「结果待核对」。同一动作不会自动重发。
+6. 「执行成功 / QQ 服务器已接受」仅表示 SMTP 接受提交，不保证最终送达。若结果未知，可点击「到外部服务核对结果」：只读查询 QQ 已发送目录中的唯一 Message-ID，并核对收发地址及主题。此查询需要 IMAP 和服务器保留发送副本；查不到仍保持未知，不认定未发送。程序不会自行追加发送副本。
+
+API：`POST /api/v1/sales/connections/qq/` 接受 `address`、只写 `authorization_code`，成功 201；非法输入 400，SMTP 认证失败 409，未完成动作占用连接时禁止更换凭证。它继承员工 Session/CSRF，响应不返回密文。`POST /api/v1/sales/records/actions/` 新增 `tool=qq.send`，沿用既有准备、确认、执行与核对契约。
+
+发信自动检查：`python backend/manage.py test tests.integration.test_qq_send`；网络完全模拟，覆盖登录不发信、加密、权限、冻结内容、全部收件人门槛、失败/未知分类及只读核对。真实 QQ SMTP 认证、最终投递和服务器保存副本需在试用中另行验证。
+
+Lightsail 可将 `backend/deploy/lightsail/salesmate-sales.service` 安装到 `/etc/systemd/system/`，执行 `systemctl daemon-reload` 并启用 `salesmate-sales`。安装前核对已批准队列；更新网站前同时停止该进程，完成迁移和就绪检查后再启动。该服务依赖 `salesmate-web` 和 PostgreSQL，不自动重启失败进程；日志通过 `journalctl -u salesmate-sales` 查看，不包含邮件正文或凭证。

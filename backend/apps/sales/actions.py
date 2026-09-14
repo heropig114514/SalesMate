@@ -1,11 +1,11 @@
-"""职责：保存可审查的外部动作、明确审批并执行 Google 工具。
-实现：动作参数冻结、员工幂等键、数据库原子领取；无隐式重试，未知外部结果单独标记。
+"""职责：保存可审查的外部动作、明确审批并执行 Google 或 QQ 工具。
+实现：冻结动作和 QQ 连接版本、原子领取；SMTP 明确拒绝与 DATA 中断分开记录，无隐式重试。
 关联：integrations 提供已授权凭证，后台命令执行已批准动作，报价实际发送后才同步 Agent。
 目录：
 - validate_parameters：形成包含完整内容的可确认动作快照。
 - create_action：幂等创建待确认动作。
 - decide_action：批准或取消尚未执行的动作。
-- execute_provider：执行一次真实 Google 请求。
+- execute_provider：执行一次真实 Google 请求或 QQ SMTP 提交。
 - run_action：领取并执行一个已批准动作，记录明确或未知结果。
 - reconcile_action：把已中断动作标记为未知结果。
 - verify_action：只读核对未知外部动作的真实标识。
@@ -32,6 +32,7 @@ from apps.crm.models import Company
 from . import models
 from .integrations import credentials_for
 from .services import audit, sync_company
+from . import qq_smtp
 
 logger = logging.getLogger("salesmate.actions")
 
@@ -39,12 +40,12 @@ logger = logging.getLogger("salesmate.actions")
 # 功能：形成包含完整内容的可确认动作快照。
 # 输入：`actor`、`company`、`tool`、`parameters`。
 # 输出：普通 JSON 参数，包括连接身份和明确发送内容。
-# 逻辑：发信读取本员工草稿，报价附带确定明细；日历验证时间、参会人及通知方式。
+# 逻辑：Gmail/QQ 发信读取员工草稿及报价明细，QQ 冻结连接版本并限制 ASCII 信封；日历验证时间与通知方式。
 # 约束：不执行外部调用；未知参数拒绝，来源必须与公司和员工一致。
 def validate_parameters(actor, company, tool, parameters):
     if not isinstance(parameters, dict):
         raise ValidationError("parameters 必须是对象。")
-    provider = {"gmail.send": "gmail", "calendar.create": "calendar"}.get(tool)
+    provider = {"gmail.send": "gmail", "qq.send": "qq", "calendar.create": "calendar"}.get(tool)
     if provider is None:
         raise ValidationError("未注册的外部工具。")
     connection = models.Connection.objects.filter(
@@ -56,7 +57,7 @@ def validate_parameters(actor, company, tool, parameters):
     if connection is None:
         raise NotFound("外部连接不存在或未授权。")
     result = {"connection_id": str(connection.pk), "account": connection.account}
-    if tool == "gmail.send":
+    if tool in {"gmail.send", "qq.send"}:
         if set(parameters) - {"connection_id", "draft_id", "quote_id"}:
             raise ValidationError("发信只接受 connection_id、draft_id、quote_id。")
         draft = models.Draft.objects.filter(
@@ -76,6 +77,14 @@ def validate_parameters(actor, company, tool, parameters):
             raise ValidationError("需要同客户、含主题正文和收件人的有效邮件草稿。")
         if "\r" in draft.subject or "\n" in draft.subject:
             raise ValidationError("邮件主题不能包含换行。")
+        if tool == "qq.send":
+            if not isinstance(draft.recipients, list) or not all(isinstance(address, str) and address.isascii() for address in draft.recipients):
+                raise ValidationError("QQ 发信收件地址须为普通 ASCII 邮箱地址。")
+            if len(set(draft.recipients)) != len(draft.recipients):
+                raise ValidationError("QQ 发信收件地址不能重复。")
+            for address in draft.recipients:
+                validate_email(address)
+            result["connection_revision"] = connection.revision
         result.update(
             {
                 "draft_id": str(draft.pk),
@@ -262,13 +271,15 @@ def decide_action(action, actor, expected, decision):
     return action
 
 
-# 功能：执行一次真实 Google 请求。
+# 功能：执行一次真实 Google 请求或 QQ SMTP 提交。
 # 输入：`action` 为 running 动作，`credentials` 为已验证凭证。
-# 输出：只包含外部标识和可选链接的结果字典。
-# 逻辑：Gmail 使用 MIME Base64URL，日历使用动作 UUID 的十六进制作为稳定事件 ID。
-# 约束：只调用一次 execute(num_retries=0)；不自行重试、不生成内容、不扩大收件人范围。
+# 输出：外部标识、可选链接与 QQ 提交状态的结果字典。
+# 逻辑：QQ 使用冻结内容和 qq_smtp，Gmail 使用 MIME Base64URL，日历使用稳定事件 ID。
+# 约束：Google 仅 execute(num_retries=0)，QQ 仅提交一次 DATA；不重试、不生成内容、不扩大收件人范围。
 def execute_provider(action, credentials):
     data = action.parameters
+    if action.tool == "qq.send":
+        return qq_smtp.send(action, credentials)
     if action.tool == "gmail.send":
         message = EmailMessage()
         message["From"] = data["account"]
@@ -311,8 +322,8 @@ def execute_provider(action, credentials):
 # 功能：领取并执行一个已批准动作。
 # 输入：`action_id` 为动作 UUID。
 # 输出：动作最终状态；非 approved 直接返回当前状态。
-# 逻辑：短事务领取后在事务外调用服务，再事务保存结果；发送前核对连接及冻结报价版本。
-# 约束：网络结果不明记 uncertain，不自动重试；进程中断留下 running，需人工核对。
+# 逻辑：短事务领取后调用服务；核对连接提供方、QQ 连接版本及报价；SMTP 明确拒绝 failed，提交结果不明 uncertain。
+# 约束：SMTP 接受不代表最终送达；不自动重试；进程中断留下 running，需人工核对。
 def run_action(action_id):
     with transaction.atomic():
         owner_id = models.ToolAction.objects.values_list("owner_id", flat=True).get(
@@ -335,6 +346,7 @@ def run_action(action_id):
         if (
             not action.owner.is_active
             or connection.account != action.parameters["account"]
+            or (action.tool == "qq.send" and (connection.provider != "qq" or connection.revision != action.parameters.get("connection_revision")))
         ):
             raise InvalidState("账号已停用或外部连接身份已变化。")
         if models.CompanySettings.objects.filter(
@@ -357,6 +369,9 @@ def run_action(action_id):
         sent = True
         result = execute_provider(action, credentials)
         status = "succeeded"
+    except qq_smtp.QQSMTPError as exception:
+        status = "uncertain" if exception.uncertain else "failed"
+        error = {"code": "qq_smtp_result_unknown" if exception.uncertain else "qq_smtp_rejected", "stage": exception.stage, "message": str(exception)}
     except HttpError as exception:
         code = int(exception.resp.status)
         status = "uncertain" if sent and (code >= 500 or code == 408) else "failed"
@@ -420,7 +435,7 @@ def reconcile_action(action, actor, expected):
 # 功能：只读核对未知动作是否已存在于外部服务。
 # 输入：`action`、`actor`、`expected` 为当前版本。
 # 输出：找到明确标识则更新成功，否则保持 uncertain 并抛明确错误。
-# 逻辑：Gmail 查确定 Message-ID，日历查确定事件 ID；结果写入时重新校验版本。
+# 逻辑：QQ 只读核对 IMAP 发送副本，Gmail 查 Message-ID，日历查事件 ID；写回前重新校验版本。
 # 约束：不重新发送或创建；未找到不能证明未执行，不能自动解除报价冻结。
 def verify_action(action, actor, expected):
     action = models.ToolAction.objects.get(pk=action.pk, owner=actor)
@@ -430,9 +445,13 @@ def verify_action(action, actor, expected):
     connection = models.Connection.objects.get(
         pk=action.parameters["connection_id"], owner=actor, archived=False
     )
+    if action.tool == "qq.send" and (connection.account != action.parameters["account"] or connection.provider != "qq"):
+        raise InvalidState("外部连接身份已变化，无法核对原动作。")
     credentials = credentials_for(connection)
     try:
-        if action.tool == "gmail.send":
+        if action.tool == "qq.send":
+            result = qq_smtp.verify_sent(action, credentials)
+        elif action.tool == "gmail.send":
             api = (
                 build("gmail", "v1", credentials=credentials, cache_discovery=False)
                 .users()
