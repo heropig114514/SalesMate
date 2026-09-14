@@ -1,6 +1,6 @@
 """职责：定义邮件理解闭环的持久化实体。
-实现：关系字段承担归属与唯一约束，JSON 保存协议原文；邮件分类独立于原文，导入同步批次模型。
-关联：ingestion、jobs、results 负责事务写入，selectors 提供授权查询。
+实现：关系字段承担归属与唯一约束，JSON 保存协议原文；按 revision 保留分析快照，导入同步与血缘模型。
+关联：ingestion、jobs、results 负责事务写入，selectors 提供授权查询；qq_models 独立注册 QQ 凭证及检查点。
 目录：
 - Mailbox：保存用户拥有的业务邮箱及同步游标。
 - Mailbox.Meta：约束同一用户的邮箱地址不重复。
@@ -14,7 +14,7 @@
 - Extraction：保存单封邮件的版本化抽取结果。
 - Extraction.Meta：限制一个邮件和提示词版本只有一份抽取。
 - AnalysisInput：归档 Agent 提交的分析输入与对应后端 revision。
-- AnalysisInput.Meta：保证同一输入版本的快照不可重复。
+- AnalysisInput.Meta：保证同一 revision 内输入版本不重复，不同代快照保留历史。
 - Analysis：保存 L3 分析的版本化原文。
 - Analysis.Meta：保留不同分析提示词版本。
 - Score：保存 L4 评分及其规则版本。
@@ -75,6 +75,7 @@
 - Extraction.error：显式失败说明，不作为成功结果展示
 - Extraction.facts：可定位的事实结构，失败时按协议为 null
 - Extraction.prompt_version：抽取或分析生产者的版本标识
+- Extraction.repair_generation：普通抽取为零，人工修复为任务 ID，保留旧抽取历史。
 - Extraction.status：当前协议载荷或任务状态，具体允许值见字段声明
 - Job.attempt：任务已被领取的次数
 - Job.company：所属公司外键，访问时须验证用户归属
@@ -209,25 +210,26 @@ class Email(models.Model):
 
 
 # 功能：保存单封邮件的版本化抽取结果。
-# 逻辑：相同提示词版本唯一；仅允许 failed 到 completed 的一次补交。
-# 约束：完成记录不可覆盖；新版本保留历史并通过创建时间选择当前抽取。
+# 逻辑：提示词版本与修复代次联合唯一；普通代次仍仅允许 failed 到 completed 补交。
+# 约束：人工修复使用新代次保留旧记录，不伪造提示词版本；按创建 ID 选择当前抽取。
 class Extraction(models.Model):
     email = models.ForeignKey(Email, related_name="extractions", on_delete=models.CASCADE)
     prompt_version = models.CharField(max_length=100)
+    repair_generation = models.PositiveBigIntegerField(default=0)
     status = models.CharField(max_length=30)
     facts = models.JSONField(null=True)
     error = models.TextField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # 功能：限制一个邮件和提示词版本只有一份抽取。
-    # 逻辑：以联合唯一约束保证事务并发安全。
+    # 功能：限制一个邮件、提示词版本与修复代次只有一份抽取。
+    # 逻辑：普通提交代次为零，人工修复代次使用持久任务 ID。
     # 约束：不以版本字符串字典序判断新旧。
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["email", "prompt_version"], name="crm_extract_version")]
+        constraints = [models.UniqueConstraint(fields=["email", "prompt_version", "repair_generation"], name="crm_extract_generation")]
 
 
 # 功能：归档 Agent 提交的分析输入与对应后端 revision。
-# 逻辑：原样保存载荷，revision 用于拒绝并发变化后的旧结果。
+# 逻辑：原样保存载荷，revision 标识每次业务上下文；相同内容在不同 revision 保留独立快照。
 # 约束：input_version 由 Agent 计算，后端不重定义其哈希算法。
 class AnalysisInput(models.Model):
     company = models.ForeignKey(Company, related_name="inputs", on_delete=models.CASCADE)
@@ -236,11 +238,11 @@ class AnalysisInput(models.Model):
     payload = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # 功能：保证同一输入版本的快照不可重复。
-    # 逻辑：公司与输入版本联合唯一。
-    # 约束：相同键不同载荷返回冲突。
+    # 功能：保证同一 revision 内输入版本的快照不可重复。
+    # 逻辑：公司、输入版本和上下文 revision 联合唯一，支持人工撤销后恢复相同事实。
+    # 约束：同一 revision 相同键不同载荷返回冲突，旧快照及失效记录不覆盖。
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["company", "input_version"], name="crm_input_version")]
+        constraints = [models.UniqueConstraint(fields=["company", "input_version", "revision"], name="crm_input_revision")]
 
 
 # 功能：保存 L3 分析的版本化原文。
@@ -288,3 +290,5 @@ class Job(models.Model):
 
 
 from .processing_models import EmailProcessingJob, MailboxSyncRun  # noqa: E402,F401
+from .durable_models import ExtractionRepair, SnapshotInvalidation, SnapshotSource, StoredMessage, SyncCheckpoint  # noqa: E402,F401
+from .qq_models import QQCredential, QQSyncCheckpoint  # noqa: E402,F401

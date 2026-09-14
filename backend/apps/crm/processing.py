@@ -1,6 +1,6 @@
 """职责：管理邮箱批次、逐封进度和恢复所需的持久状态。
-实现：邮箱行锁串行化请求，批次租约拒绝旧执行者，计数从任务查询派生。
-关联：gmail_oauth 兼容原同步接口，worker 消费批次，processing_views 提供进度和显式重试。
+实现：邮箱行锁串行化请求，批次租约拒绝旧执行者；任务及原文缓存失败状态一致，计数从任务查询派生。
+关联：Gmail 与 QQ 共用持久队列，worker 分发提供方；processing_views 提供进度和显式重试。
 目录：
 - request_run：创建或复用邮箱活动批次。
 - claim_run：领取一个已排队批次。
@@ -24,28 +24,35 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
 from .access import Conflict, InvalidState, mailbox_for
-from .models import Email, EmailProcessingJob, GmailCredential, Job, MailboxSyncRun
+from .models import Email, EmailProcessingJob, GmailCredential, QQCredential, Job, MailboxSyncRun
+from .qq_scope import snapshot
 
 logger = logging.getLogger("salesmate.processing")
 RUN_LEASE_SECONDS = 600
 
 
 # 功能：把同步请求保存为独立批次。
-# 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围。
+# 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围；`sync_options` 为 QQ 限制，`retry_scope` 为内部重试原快照。
 # 输出：新建或复用的 MailboxSyncRun。
-# 逻辑：邮箱锁内查询活动批次；普通重复点击合并，显式范围与活动批次冲突时拒绝。
-# 约束：必须已授权；不启动线程、不访问 Gmail，排队可跨 Web 重启保留。
+# 逻辑：邮箱锁内冻结 QQ 范围；QQ 活动批次拒绝替换，Gmail 普通重复点击合并；重试保留原时间窗口。
+# 约束：必须有 Gmail 或 QQ 凭证；不启动线程或访问邮箱，排队可跨 Web 重启保留。
 @transaction.atomic
-def request_run(owner, mailbox_id, message_ids=None):
+def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry_scope=None):
     mailbox = mailbox_for(owner, mailbox_id, lock=True)
-    if not GmailCredential.objects.filter(mailbox=mailbox).exists():
-        raise InvalidState("该邮箱尚未完成 Google 授权。")
+    is_qq = QQCredential.objects.filter(mailbox=mailbox).exists()
+    if not (GmailCredential.objects.filter(mailbox=mailbox).exists() or is_qq):
+        raise InvalidState("该邮箱尚未完成 Gmail 授权或 QQ 连接。")
     active = mailbox.sync_runs.filter(status__in=["queued", "running"]).first()
     if active:
-        if message_ids:
+        if message_ids or is_qq:
             raise Conflict("该邮箱仍有同步批次，请完成后再确认重新抽取或重试。")
         return active
-    run = MailboxSyncRun.objects.create(mailbox=mailbox, message_ids=message_ids or [])
+    if not is_qq and sync_options is not None:
+        raise InvalidState("该范围设置仅适用于 QQ 邮箱。")
+    scope = (retry_scope if retry_scope is not None else snapshot(sync_options)) if is_qq else {}
+    if is_qq and not scope and not message_ids:
+        raise InvalidState("旧批次没有同步范围，请重新选择范围后同步。")
+    run = MailboxSyncRun.objects.create(mailbox=mailbox, message_ids=message_ids or [], sync_options=scope)
     mailbox.sync_state = {**mailbox.sync_state, "status": "sync_requested", "run_id": str(run.pk), "requested_at": run.requested_at.isoformat(), "error": None}
     mailbox.version += 1
     mailbox.save(update_fields=["sync_state", "version"])
@@ -54,13 +61,16 @@ def request_run(owner, mailbox_id, message_ids=None):
 
 
 # 功能：原子领取当前员工的一个批次。
-# 输入：`owner` 为服务凭证关联员工。
+# 输入：`owner` 为服务凭证关联员工；`gmail_only` 为旧 Gmail CLI 的显式过滤开关。
 # 输出：含邮箱的运行批次，队列为空返回 None。
 # 逻辑：锁邮箱再锁批次，只有 queued 可领取，生成租约凭证。
 # 约束：不自动重试失败或过期批次；避免与请求路径反向加锁。
 @transaction.atomic
-def claim_run(owner):
-    candidate = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued").order_by("requested_at").first()
+def claim_run(owner, *, gmail_only=False):
+    candidates = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued")
+    if gmail_only:
+        candidates = candidates.filter(mailbox__gmail_credential__isnull=False)
+    candidate = candidates.order_by("requested_at").first()
     if candidate is None:
         return None
     mailbox = mailbox_for(owner, candidate.mailbox_id, lock=True)
@@ -124,18 +134,23 @@ def record_event(run_id, token, stage, data):
 # 功能：完成邮箱批次并保存刷新凭证和安全统计。
 # 输入：`run_id`、`token` 为执行凭证，`result` 为 Agent 结果，`authorization` 为可选刷新凭证。
 # 输出：最终批次表示。
-# 逻辑：单封失败产生 partial/failed，未完成记录显式失败；凭证只保存到 GmailCredential。
+# 逻辑：Gmail/QQ 单封失败产生 partial/failed，未完成任务及原文显式失败；仅 Gmail 可提交刷新凭证。
 # 约束：不自动重试；批次完成不宣称所有公司画像完成，后者由 run_data 查询。
 @transaction.atomic
 def finish_run(run_id, token, result, authorization=None):
     candidate = MailboxSyncRun.objects.select_related("mailbox").get(pk=run_id)
     mailbox = mailbox_for(candidate.mailbox.owner, candidate.mailbox_id, lock=True)
     run = require_run(run_id, token)
-    if not GmailCredential.objects.filter(mailbox=mailbox).exists():
+    gmail_connected = GmailCredential.objects.filter(mailbox=mailbox).exists()
+    if not (gmail_connected or QQCredential.objects.filter(mailbox=mailbox).exists()):
         raise InvalidState("该邮箱授权已被移除。")
     if authorization:
+        if not gmail_connected:
+            raise InvalidState("QQ 批次不能保存 Google 刷新凭证。")
         GmailCredential.objects.filter(mailbox=mailbox).update(credentials=authorization, updated_at=timezone.now())
     unfinished = run.email_jobs.filter(status__in=["pending", "running"])
+    from .durable_models import StoredMessage
+    StoredMessage.objects.filter(mailbox=mailbox, message_id__in=unfinished.values("gmail_message_id")).update(status="failed")
     unfinished.update(status="failed", stage="failed", finished_at=timezone.now(), error={"code": "batch_interrupted", "stage": "processing", "message": "批次未完成本邮件，请明确重试。"})
     counts = dict(run.email_jobs.values("status").annotate(n=Count("id")).values_list("status", "n"))
     failed = counts.get("failed", 0) if counts else int(result.get("failed_email_count", 0))
@@ -156,7 +171,7 @@ def finish_run(run_id, token, result, authorization=None):
 
 # 功能：生成不受前端分页影响的批次整体进度。
 # 输入：`run` 为已授权批次。
-# 输出：邮件计数、公司分析计数、逐封错误和时间。
+# 输出：邮件计数、公司分析计数、逐封错误、时间及冻结的同步范围。
 # 逻辑：计数来自实际任务；画像按本批次关联的业务邮件公司去重并检查当前任务。
 # 约束：不返回租约、凭证或原始邮件正文；分析可晚于邮箱批次完成。
 def run_data(run):
@@ -168,7 +183,7 @@ def run_data(run):
         if job:
             analysis["pending" if job.status in {"pending", "running"} else "failed" if job.status == "failed" else "completed"] += 1
     errors = [{"gmail_message_id": item.gmail_message_id, **(item.error or {})} for item in run.email_jobs.filter(status="failed").order_by("created_at")]
-    return {"run_id": str(run.pk), "mailbox_id": str(run.mailbox_id), "status": run.status,
+    return {"run_id": str(run.pk), "mailbox_id": str(run.mailbox_id), "status": run.status, "sync_options": run.sync_options,
             "total_count": sum(counts.values()), "pending_count": counts.get("pending", 0), "running_count": counts.get("running", 0),
             "completed_count": counts.get("completed", 0), "failed_count": counts.get("failed", 0),
             "analysis_pending_count": analysis["pending"], "analysis_completed_count": analysis["completed"], "analysis_failed_count": analysis["failed"],
@@ -179,7 +194,7 @@ def run_data(run):
 # 功能：为明确失败的邮件建立新批次。
 # 输入：`owner` 为员工，`run_id` 为终态批次。
 # 输出：新重试批次；无失败或仍活动时拒绝。
-# 逻辑：只重试失败邮件，尚未登记邮件的批次错误重跑原范围。
+# 逻辑：只重试失败邮件；尚未登记邮件的批次重跑冻结窗口，旧 QQ 批次无窗口且无明确 ID 时拒绝。
 # 约束：保留旧批次审计历史和原 dedupe_key，不覆盖正常邮件。
 def retry_run(owner, run_id):
     run = MailboxSyncRun.objects.filter(pk=run_id, mailbox__owner=owner).first()
@@ -188,13 +203,13 @@ def retry_run(owner, run_id):
     if run.status not in {"failed", "partial"}:
         raise Conflict("只有失败或部分完成批次可重试。")
     ids = list(run.email_jobs.filter(status="failed").values_list("gmail_message_id", flat=True))
-    return request_run(owner, run.mailbox_id, ids or run.message_ids)
+    return request_run(owner, run.mailbox_id, ids or run.message_ids, retry_scope=run.sync_options)
 
 
 # 功能：显式标记租约过期批次，解除邮箱活动占用。
 # 输入：`owner` 为 Worker 绑定员工。
 # 输出：过期数量。
-# 逻辑：逐个锁邮箱和批次后复查时间，保留已完成记录，其他记录标为失败。
+# 逻辑：逐个锁邮箱和批次后复查时间，保留完成记录；中断任务及原文状态一起失败，防止下次同步隐式重试。
 # 约束：不自动重试中断工作；queued 任务不受影响，用户可从进度页明确重试。
 def expire_runs(owner):
     candidates = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="running", lease_until__lte=timezone.now())
@@ -208,6 +223,8 @@ def expire_runs(owner):
             run.status, run.finished_at = "failed", timezone.now()
             run.error = {"code": "worker_interrupted", "message": "同步租约过期，请明确重试未完成邮件。"}
             run.save(update_fields=["status", "finished_at", "error"])
+            from .durable_models import StoredMessage
+            StoredMessage.objects.filter(mailbox=mailbox, message_id__in=run.email_jobs.filter(status__in=["pending", "running"]).values("gmail_message_id")).update(status="failed")
             run.email_jobs.filter(status__in=["pending", "running"]).update(status="failed", stage="failed", finished_at=timezone.now(), error=run.error)
             mailbox.sync_state = {**mailbox.sync_state, "status": "failed", "error": run.error["message"]}
             mailbox.version += 1

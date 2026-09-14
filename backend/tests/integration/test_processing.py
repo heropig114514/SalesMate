@@ -15,6 +15,8 @@
 - ProcessingTests.test_progress_covers_companies_outside_visible_page：验证整体画像进度不依赖分页。
 - ProcessingTests.test_expired_history_preserves_pending_ids：验证过期游标仍保留旧待处理清单。
 - ProcessingTests.test_review_hides_analysis_that_used_removed_email：验证人工隐藏后停止展示污染画像。
+- ProcessingTests.test_saved_mailbox_view_includes_all_classifications：验证按邮箱核对原文、时间排序及权限。
+- ProcessingTests.test_company_row_exposes_actual_email_sources：验证真实邮件与演示样例的来源区分。
 - WorkerPipelineTests：验证跨线程观察事件和真实业务持久化。
 - WorkerPipelineTests.test_worker_persists_stream_and_isolates_read_error：模拟 Gmail 和模型，贯通 Worker、Agent 回调及后端落库。
 变量索引：
@@ -88,6 +90,47 @@ class ProcessingTests(TestCase):
         self.assertEqual(len(context["emails"]), 1)
         self.assertTrue(Email.objects.filter(pk=hidden.pk).exists())
         self.assertEqual(self.browser.post(f"/api/v1/companies/{only_hidden.company_id}/analyze/").status_code, 409)
+
+    # 功能：验证邮箱原文入口不会因业务分类遗漏邮件或混入其他邮箱。
+    # 输入：无外部参数；同邮箱三种分类、另一邮箱邮件以及另一员工会话。
+    # 输出：saved 返回三种分类，原 all 语义不变，跨邮箱隔离且越权 404。
+    # 逻辑：真实 HTTP 查询与数据库排序，核对原文、日期、来源和未改变的分类。
+    # 约束：测试使用合成材料，不调用 IMAP 或模型，不自动确认邮件。
+    def test_saved_mailbox_view_includes_all_classifications(self):
+        items = [self.email("saved-business"), self.email("saved-hidden", "non_business"), self.email("saved-review", "needs_review")]
+        original = {item.pk: item.business_classification for item in items}
+        latest = timezone.now()
+        for index, item in enumerate(items):
+            item.received_at = latest - timedelta(days=index)
+            item.save(update_fields=["received_at"])
+        another = Mailbox.objects.create(owner=self.owner, address="another@processing.example")
+        ingestion.submit_emails(self.owner, [rules.extract_email(another, "other@elsewhere.example", "其他邮箱", "需求：设备", "other-mailbox")])
+        path = f"/api/v1/mailboxes/{self.mailbox.pk}/email-reviews/"
+        response = self.browser.get(path + "?status=saved")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 3)
+        self.assertEqual([row["email_id"] for row in response.data["results"]], [item.pk for item in items])
+        for item, row in zip(items, response.data["results"]):
+            self.assertEqual(row["source"], item.payload["source"])
+            self.assertEqual(row["body_text"], item.payload["body_text"])
+            self.assertEqual(row["received_at"], item.received_at.isoformat())
+        self.assertEqual(self.browser.get(path + "?status=all").data["count"], 2)
+        self.assertEqual(dict(Email.objects.filter(pk__in=original).values_list("pk", "business_classification")), original)
+        self.browser.force_authenticate(self.other)
+        self.assertEqual(self.browser.get(path + "?status=saved").status_code, 404)
+
+    # 功能：验证客户摘要的来源标记来自实际业务邮件。
+    # 输入：无外部参数；同公司两封不同来源的合成夹具。
+    # 输出：邮件来源集合包含两项，且不依据模型 provider 或客户名称推测。
+    # 逻辑：先保存标准夹具，再显式模拟来源混合历史，读取真实 company_row。
+    # 约束：只验证投影，不把测试中的 qq_real 标记当作真实 QQ 授权验证。
+    def test_company_row_exposes_actual_email_sources(self):
+        sample = self.email("sample-source")
+        qq = self.email("qq-source")
+        qq.payload = {**qq.payload, "source": "qq_real"}
+        qq.save(update_fields=["payload"])
+        row = selectors.company_row(sample.company)
+        self.assertEqual(row["email_sources"], sorted({sample.payload["source"], "qq_real"}))
 
     # 功能：验证人工复核的权限、版本和来源保留。
     # 输入：无外部参数；创建待复核合成邮件。
@@ -245,7 +288,7 @@ class WorkerPipelineTests(TransactionTestCase):
     # 功能：贯通批次领取、逐封读取、并发抽取和持久进度。
     # 输入：无外部参数；两封合法合成邮件、一封读取失败的消息。
     # 输出：两个业务邮件保存，批次 partial，失败 ID 保留且公司分析入队。
-    # 逻辑：只替换外部 SDK、LLM 和 HTTP 传输，HTTP mock 仍调用真实 ingestion 事务。
+    # 逻辑：替换 Gmail 分页/原文、LLM 和 HTTP 传输，执行持久检查点及真实 ingestion 事务。
     # 约束：模型输出为合成 fixture；测试通过不代表真实邮箱授权或模型质量已验证。
     def test_worker_persists_stream_and_isolates_read_error(self):
         owner = get_user_model().objects.create_user(username="worker-integration")
@@ -260,10 +303,11 @@ class WorkerPipelineTests(TransactionTestCase):
         with (
             patch("apps.crm.worker.django_backend_from_environment", return_value=client),
             patch("apps.crm.worker.create_service_from_authorization", return_value=(object(), None)),
-            patch("agent.workflows.gmail_sync.resolve_mailbox_address", return_value=mailbox.address),
-            patch("agent.workflows.gmail_sync.get_profile_history_id", return_value="100"),
-            patch("agent.tools.gmail.list_sync_message_ids", return_value=["one", "bad", "three"]),
-            patch("agent.tools.gmail.read_email", side_effect=[{"gmail_message_id": "one"}, RuntimeError("simulated"), {"gmail_message_id": "three"}]),
+            patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=mailbox.address),
+            patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"),
+            patch("apps.crm.durable_sync.history_page", return_value=(["one", "bad", "three"], "")),
+            patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")),
+            patch("apps.crm.durable_sync.read_email", side_effect=[{"gmail_message_id": "one"}, RuntimeError("simulated"), {"gmail_message_id": "three"}]),
             patch("agent.workflows.gmail_sync.process_email", side_effect=lambda email, *_args: payloads[email["gmail_message_id"]]),
         ):
             self.assertTrue(run_sync(owner))

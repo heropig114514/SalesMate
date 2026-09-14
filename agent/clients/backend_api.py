@@ -1,4 +1,61 @@
-"""把 Agent 的最小 BackendClient 协议映射到 Django Agent HTTP API。"""
+"""职责：把 Agent 工作流的最小 BackendClient 协议映射到 Django Agent HTTP API。
+实现：维护身份、ETag 与租约上下文；邮件提交默认 gmail_real，QQ 调用显式指定 qq_real。
+关联：Gmail/QQ Worker 复用此传输；L2–L4 继续使用原协议、参数和提示词版本。
+目录：
+- BackendClient：声明 L1–L4 最小后端协议。
+- BackendClient.submit_emails：声明标准 L1 邮件提交接口。
+- BackendClient.get_stored_email：查询天然键对应的已有抽取。
+- BackendClient.get_company_grouping：读取公司归组。
+- BackendClient.get_company_context：读取公司业务上下文。
+- BackendClient.save_analysis_input：保存 L2 输入并跟踪版本。
+- BackendClient.get_latest_analysis_input：读取最近 L2 快照。
+- BackendClient.get_cached_analysis：查询指定输入和提示词的 L3 缓存。
+- BackendClient.save_analysis：提交 L3 分析。
+- BackendClient.save_score：提交 L4 评分。
+- BackendClient.claim_jobs：领取并缓存公司租约。
+- BackendClient.report_job：回报公司任务。
+- BackendClient.claim_mailbox_syncs：旧 CLI 领取 Gmail 同步。
+- BackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
+- BackendClient.get_sync_state：读取邮箱游标和 ETag。
+- BackendClient.save_sync_state：条件更新邮箱游标。
+- BackendRetrievalError：表示后端读取失败。
+- BackendConfigurationError：表示配置不满足调用前提。
+- BackendContractError：表示响应违反协议。
+- BackendRequestError：包含 HTTP 状态的安全请求异常。
+- BackendRequestError.__init__：保存 HTTP 状态、错误代码和安全说明。
+- _JobContext：保存公司任务与租约上下文。
+- DjangoBackendClient：把简化工作流调用映射到认证 HTTP 接口。
+- DjangoBackendClient.__init__：验证初始化参数并建立实例状态。
+- DjangoBackendClient.submit_emails：提交邮件并统计结果；实现支持默认 Gmail 或显式 QQ 来源。
+- DjangoBackendClient.get_stored_email：查询天然键对应的已有抽取。
+- DjangoBackendClient.get_company_grouping：读取公司归组。
+- DjangoBackendClient.get_company_context：读取公司业务上下文。
+- DjangoBackendClient.save_analysis_input：保存 L2 输入并跟踪版本。
+- DjangoBackendClient.get_latest_analysis_input：读取最近 L2 快照。
+- DjangoBackendClient.get_cached_analysis：查询指定输入和提示词的 L3 缓存。
+- DjangoBackendClient.save_analysis：提交 L3 分析。
+- DjangoBackendClient.save_score：提交 L4 评分。
+- DjangoBackendClient.claim_jobs：领取并缓存公司租约。
+- DjangoBackendClient.report_job：回报公司任务。
+- DjangoBackendClient.claim_mailbox_syncs：旧 CLI 领取 Gmail 同步。
+- DjangoBackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
+- DjangoBackendClient.get_sync_state：读取邮箱游标和 ETag。
+- DjangoBackendClient.save_sync_state：条件更新邮箱游标。
+- DjangoBackendClient._write_headers：构造写请求所需租约与版本头。
+- DjangoBackendClient._request：发起认证 HTTP 并规范化失败。
+- DjangoBackendClient._company_id：验证并提取公司 ID。
+- DjangoBackendClient._object：要求响应为对象。
+- DjangoBackendClient._etag：提取响应版本头。
+- DjangoBackendClient._error：规范化 API 错误。
+- django_backend_from_environment：读取显式环境配置构造 HTTP 客户端。
+变量索引：
+- JsonObject：只读 JSON 映射类型别名。
+- _JobContext.job_id：已领取任务 ID。
+- _JobContext.company_id：任务所属公司 ID。
+- _JobContext.expected_version：领取时的业务版本。
+- _JobContext.lease_token：写入时必须携带的租约，不进入日志。
+- __all__：公开的后端协议、异常、客户端和工厂符号。
+"""
 
 from __future__ import annotations
 
@@ -122,12 +179,19 @@ class DjangoBackendClient:
         self._company_jobs: dict[str, _JobContext] = {}
         self._mailbox_revisions: dict[str, str] = {}
 
+    # 功能：保存指定邮箱来源的抽取结果并聚合业务统计。
+    # 输入：`submissions` 为 L1 载荷；`source` 为 Gmail 默认来源或显式 QQ 来源。
+    # 输出：创建、更新、重复数量及受影响公司 ID。
+    # 逻辑：复制载荷并绑定当前 mailbox_id，经认证 HTTP 提交后严格校验响应。
+    # 约束：不修改原载荷；仅允许 gmail_real/qq_real；默认 Gmail 调用行为保持不变。
     def submit_emails(
-        self, submissions: list[dict[str, Any]]
+        self, submissions: list[dict[str, Any]], *, source: str = "gmail_real"
     ) -> dict[str, Any]:
         """补充 HTTP 传输字段，并把逐封结果聚合为 GmailSyncResult 所需统计。"""
+        if source not in {"gmail_real", "qq_real"}:
+            raise BackendContractError("不支持的真实邮箱来源。")
         if not isinstance(self.mailbox_id, str) or not self.mailbox_id.strip():
-            raise BackendConfigurationError("提交 Gmail 邮件前必须配置 mailbox_id。")
+            raise BackendConfigurationError("提交邮件前必须配置 mailbox_id。")
 
         payload = []
         for submission in submissions:
@@ -135,7 +199,7 @@ class DjangoBackendClient:
                 raise BackendContractError("EmailSubmission 必须是对象。")
             item = copy.deepcopy(dict(submission))
             item["mailbox_id"] = self.mailbox_id
-            item["source"] = "gmail_real"
+            item["source"] = source
             payload.append(item)
 
         response, _ = self._request("POST", "emails/", json=payload)

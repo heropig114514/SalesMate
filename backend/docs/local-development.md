@@ -41,6 +41,8 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 
 ## Agent 联调
 
+QQ 邮箱无需 Google OAuth 回调，按 [QQ 邮箱接入与试用](qq-mailbox.md) 配置现有 vault 密钥、应用迁移并在页面连接。Gmail 原流程继续保留；QQ 与 Gmail 共用当前员工的 `crm_worker`。
+
 在 Google Cloud 创建 Web application OAuth Client，把
 `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/` 配为 Authorized redirect URI，
 并在根 `.env` 填写 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和
@@ -63,6 +65,20 @@ python -m agent.main --process-jobs-once --job-limit 10
 无 Gmail 或百炼配置时，可把 `ANALYSIS_PROVIDER` 暂时改为 `rules`，重启后端后使用页面的演示数据和模拟来信。规则结果只用于界面和后端联调。
 
 ## 检查
+
+### 本地验收示例
+
+需要业务管理页的临时数据时，在仓库根目录运行：
+
+```powershell
+python backend/manage.py seed_sales_demo --username demo
+```
+
+命令仅允许 DEBUG 环境下已有的普通员工账号。它创建 4 个带 `【验收示例】` 标记的独立虚构客户、8 个联系人、6 个产品，以及关联商机、报价、订单、工单、跟进、会话、人工消息和邮件草稿；单据编号以 `DEMO-V1-` 开头。不同订单状态是验收情景，不是真实成交或履约证明。报价没有真实外发记录，命令不会发送邮件、创建会议或调度模型分析。
+
+批次 `sales-demo-v1` 的实体 ID 与数量保存在 `acceptance_seed_completed` 审计事件中。重复运行返回原批次清单，不覆盖验收过程中修改的记录；冲突时整个导入回滚，已有数据保留。记录会进入当前员工的业务统计，验收时应按带标记的客户筛选。示例不会自动到期删除；后续清理可按审计清单精确定位。
+
+### 自动检查
 
 ```powershell
 python -m unittest discover -s agent/tests -p "test_*.py"

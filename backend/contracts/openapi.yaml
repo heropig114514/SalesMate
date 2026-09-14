@@ -27,6 +27,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
           description: ''
+  /api/v1/accounts/register/:
+    post:
+      operationId: v1_accounts_register_create
+      tags:
+      - accounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Registration'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Registration'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Registration'
+        required: true
+      security:
+      - cookieAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/agent/analyses/:
     post:
       operationId: v1_agent_analyses_create
@@ -702,6 +751,11 @@ paths:
         name: status
         schema:
           type: string
+          enum:
+          - all
+          - non_business
+          - pending
+          - saved
       tags:
       - processing
       security:
@@ -889,6 +943,11 @@ paths:
         name: status
         schema:
           type: string
+          enum:
+          - all
+          - non_business
+          - pending
+          - saved
       tags:
       - processing
       security:
@@ -901,6 +960,23 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/mailboxes/{mailbox_id}/qq-authorization/:
+    delete:
+      operationId: v1_mailboxes_qq_authorization_destroy
+      parameters:
+      - in: path
+        name: mailbox_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - mailboxes
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
   /api/v1/mailboxes/{id}/gmail-authorization/:
     delete:
       operationId: v1_mailboxes_gmail_authorization_destroy
@@ -932,6 +1008,17 @@ paths:
         required: true
       tags:
       - mailboxes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
       security:
       - cookieAuth: []
       responses:
@@ -967,6 +1054,32 @@ paths:
       responses:
         '302':
           description: No response body
+  /api/v1/mailboxes/qq-connect/:
+    post:
+      operationId: v1_mailboxes_qq_connect_create
+      tags:
+      - mailboxes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QQConnect'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/QQConnect'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/QQConnect'
+        required: true
+      security:
+      - cookieAuth: []
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailboxResponse'
+          description: ''
   /api/v1/sales/audit/:
     get:
       operationId: v1_sales_audit_retrieve
@@ -2223,6 +2336,8 @@ components:
           format: email
         gmail_authorized:
           type: boolean
+        qq_authorized:
+          type: boolean
         sync_state:
           type: object
           additionalProperties: {}
@@ -2230,6 +2345,7 @@ components:
       - address
       - gmail_authorized
       - mailbox_id
+      - qq_authorized
       - sync_state
     MailboxSyncClaim:
       type: object
@@ -2299,6 +2415,34 @@ components:
       - company_ops
       - industry_context
       - intent
+    QQConnect:
+      type: object
+      properties:
+        address:
+          type: string
+          maxLength: 254
+          pattern: (?i)^[^\s@]+@(qq|foxmail)\.com$
+        authorization_code:
+          type: string
+          writeOnly: true
+          pattern: ^[A-Za-z]{16}$
+        sync_options:
+          $ref: '#/components/schemas/QQSyncOptions'
+      required:
+      - address
+      - authorization_code
+      - sync_options
+    QQSyncOptions:
+      type: object
+      properties:
+        recent_days:
+          type: integer
+          minimum: 1
+          nullable: true
+        max_messages:
+          type: integer
+          minimum: 1
+          nullable: true
     Readiness:
       type: object
       properties:
@@ -2337,6 +2481,19 @@ components:
       - employee_count
       - employee_count_source
       - industry_from_crm
+    Registration:
+      type: object
+      properties:
+        username:
+          type: string
+          maxLength: 150
+        password:
+          type: string
+          writeOnly: true
+          maxLength: 128
+      required:
+      - password
+      - username
     ReviewStatusEnum:
       enum:
       - confirmed_business
@@ -2430,12 +2587,14 @@ components:
     SourceEnum:
       enum:
       - gmail_real
+      - qq_real
       - synthetic_sample
       - research_dataset
       - simulated
       type: string
       description: |-
         * `gmail_real` - gmail_real
+        * `qq_real` - qq_real
         * `synthetic_sample` - synthetic_sample
         * `research_dataset` - research_dataset
         * `simulated` - simulated
@@ -2463,6 +2622,11 @@ components:
         * `created` - created
         * `updated` - updated
         * `duplicate` - duplicate
+    SyncRequest:
+      type: object
+      properties:
+        sync_options:
+          $ref: '#/components/schemas/QQSyncOptions'
     SyncState:
       type: object
       properties:

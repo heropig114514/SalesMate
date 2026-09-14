@@ -1,5 +1,5 @@
 """职责：运行与 Web 生命周期独立的 Gmail 和公司画像任务进程。
-实现：一个邮箱同步通道与少量公司分析通道并行，数据库任务和租约作为权威状态。
+实现：同步通道消费原文同步及人工补抽取，与少量可领取画像任务并行；数据库及租约是权威状态。
 关联：worker 执行业务单元，processing 管理过期批次；不消费 sales 外部动作队列。
 目录：
 - Command：配置并运行持久队列消费者。
@@ -16,8 +16,11 @@ import time
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
+from django.db.models import Q
+from django.utils import timezone
 
-from apps.crm.models import Job, MailboxSyncRun
+from apps.crm.models import ExtractionRepair, MailboxSyncRun
+from apps.crm.jobs import claimable_jobs
 from apps.crm.processing import expire_runs
 from apps.crm.worker import run_analysis, run_sync, worker_owner
 
@@ -43,7 +46,7 @@ class Command(BaseCommand):
     # 功能：调度独立同步和分析通道。
     # 输入：`args` 为位置参数，`options` 含 once/poll/analysis_workers。
     # 输出：无；单轮排空当前可领取工作后退出。
-    # 逻辑：持续检查已完成 future，再填充空闲通道；进程重启继续读取 queued/pending。
+    # 逻辑：持续填充空闲通道；人工补抽取无需同步请求也会调度，画像只排可领取任务以避免失败修复阻塞单轮退出。
     # 约束：中断等待正在执行单元结束；硬中断由租约过期显式失败，不重发外部动作。
     def handle(self, *args, **options):
         if settings.ANALYSIS_PROVIDER != "agent":
@@ -62,8 +65,9 @@ class Command(BaseCommand):
                         if future.done():
                             future.result()
                             del pending[future]
-                    sync_waiting = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued").exists()
-                    analysis_waiting = Job.objects.filter(company__owner=owner, status="pending").exists()
+                    repair_waiting = ExtractionRepair.objects.filter(email__mailbox__owner=owner).filter(Q(status="pending") | Q(status="running", lease_until__lte=timezone.now())).exists()
+                    sync_waiting = repair_waiting or MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued").exists()
+                    analysis_waiting = claimable_jobs(owner).exists()
                     if sync_waiting and "sync" not in pending.values():
                         pending[pool.submit(run_sync, owner)] = "sync"
                     if analysis_waiting:

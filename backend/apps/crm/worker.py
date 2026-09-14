@@ -1,15 +1,13 @@
 """职责：在独立进程中执行邮箱同步和公司分析。
-实现：每个工作单元使用独立 HTTP 客户端及数据库连接；邮箱观察事件保存到批次任务。
+实现：同步单元先消费人工补抽取，再按独立凭证分发 Gmail/QQ 检查点；公司分析使用独立 HTTP 客户端。
 关联：crm_worker 调度本模块；Agent 的 Gmail/L1–L4 仍通过 HTTP 业务协议读写。
 目录：
 - worker_owner：核验本机 Agent 服务令牌绑定的员工。
-- observe_email：持久化观察事件并释放线程连接。
 - run_sync：领取并执行一个持久邮箱批次。
 - run_analysis：领取并执行一个公司任务。
 变量索引：
 - logger：工作单元生命周期和安全错误日志。
 """
-from functools import partial
 import hashlib
 import logging
 import os
@@ -20,11 +18,16 @@ from django.core.management.base import CommandError
 from agent.clients.backend_api import django_backend_from_environment
 from agent.config import load_environment
 from agent.tools.gmail import create_service_from_authorization
-from agent.workflows.gmail_sync import sync_gmail
+from agent.tools import qq_mail
 from agent.workflows.orchestration import process_jobs_once
 
-from .models import AgentCredential, GmailCredential
-from .processing import claim_run, finish_run, record_event
+from .access import Conflict, InvalidState
+from .models import AgentCredential, GmailCredential, QQCredential
+from .qq_connection import authorization_code
+from .qq_sync import sync_persisted as sync_qq
+from .processing import claim_run, finish_run
+from .durable_sync import sync_persisted
+from .lineage import run_repair
 
 logger = logging.getLogger("salesmate.crm_worker")
 
@@ -44,40 +47,35 @@ def worker_owner():
     return credential.owner
 
 
-# 功能：跨 L1 线程保存一个阶段事件。
-# 输入：`run_id`、`token` 为批次凭证，`stage`、`data` 为 Agent 进度事件。
-# 输出：无；持久更新进度，异常向执行者传播。
-# 逻辑：复用原子事件服务，每次回调后关闭该线程数据库连接。
-# 约束：不吞掉租约或数据库错误；不在日志暴露邮件正文。
-def observe_email(run_id, token, stage, data):
-    try:
-        record_event(run_id, token, stage, data)
-    finally:
-        connections.close_all()
-
-
 # 功能：执行一个员工邮箱的持久同步批次。
 # 输入：`owner` 为已认证 Worker 员工。
 # 输出：是否领取了工作；最终状态保存数据库。
-# 逻辑：领取后调用 Agent，同步阶段事件保存；单元异常安全回报，其他工作单元继续。
-# 约束：只读 Gmail；不执行销售发信和日历动作，不自动重试失败批次。
+# 逻辑：优先人工修复；QQ 解密后建立只读 IMAP，其他批次沿 Gmail 原路径；QQ 受控错误另记可操作说明。
+# 约束：只读 Gmail/QQ，不执行销售发信或日历，不自动重试失败；QQ 连接在 finally 释放。
 def run_sync(owner):
     run = None
+    qq_client = None
+    qq_credential = None
     try:
+        if run_repair(owner):
+            return True
         run = claim_run(owner)
         if run is None:
             return False
         backend = django_backend_from_environment(mailbox_id=str(run.mailbox_id))
-        credentials = GmailCredential.objects.get(mailbox_id=run.mailbox_id).credentials
-        service, refreshed = create_service_from_authorization(credentials)
-        result = sync_gmail({"mailbox_id": str(run.mailbox_id), "mailbox_address": run.mailbox.address,
-                             "access_token": "worker-authorized-service", "max_results": 20},
-                            backend=backend, gmail_factory=lambda _token: service,
-                            progress=partial(observe_email, run.pk, run.lease_token),
-                            message_ids=run.message_ids or None)
+        qq_credential = QQCredential.objects.filter(mailbox_id=run.mailbox_id).first()
+        if qq_credential:
+            qq_client = qq_mail.connect(run.mailbox.address, authorization_code(qq_credential))
+            result, refreshed = sync_qq(run, qq_client, backend), None
+        else:
+            credentials = GmailCredential.objects.get(mailbox_id=run.mailbox_id).credentials
+            service, refreshed = create_service_from_authorization(credentials)
+            result = sync_persisted(run, service, backend)
         finish_run(run.pk, run.lease_token, result, refreshed)
         return True
     except Exception as error:
+        if qq_credential is not None and isinstance(error, (qq_mail.QQMailError, Conflict, InvalidState)):
+            logger.error("qq_sync_failed run_id=%s reason=%s action=inspect_qq_connection_or_checkpoint", run.pk, str(error))
         logger.error("sync_worker_failed run_id=%s error_type=%s action=inspect_run_and_retry_explicitly", run.pk if run else None, type(error).__name__)
         if run:
             try:
@@ -86,6 +84,8 @@ def run_sync(owner):
                 logger.error("sync_failure_report_rejected run_id=%s error_type=%s action=inspect_lease", run.pk, type(report_error).__name__)
         return run is not None
     finally:
+        if qq_client is not None:
+            qq_mail.disconnect(qq_client)
         connections.close_all()
 
 

@@ -1,12 +1,12 @@
 """职责：提供员工同步进度、明确重试及邮件人工复核接口。
-实现：Session 身份限定邮箱 owner，复核使用 If-Match 避免覆盖并发判断。
+实现：Session 身份限定邮箱 owner；可查看某邮箱全部已保存邮件，复核使用 If-Match 避免覆盖并发判断。
 关联：urls 注册显式路径，processing 和 classification 承担数据库事务。
 目录：
 - ReviewRequestSerializer：声明人工确认载荷。
 - SyncRunView：查询或明确重试一个同步批次。
 - SyncRunView.get：返回批次整体进度。
 - SyncRunView.post：明确重试失败邮件。
-- EmailReviewsView：查询待复核和已隐藏邮件。
+- EmailReviewsView：查询待复核、已隐藏或全部已保存邮件。
 - EmailReviewsView.get：按员工和可选邮箱分页返回原文证据。
 - EmailReviewView：保存一封邮件的人工决定。
 - EmailReviewView.patch：验证版本并持久化人工确认。
@@ -64,15 +64,15 @@ class SyncRunView(APIView):
 
 
 # 功能：提供人工复核分页列表。
-# 逻辑：默认 needs_review，可查询规则隐藏邮件以便纠错。
+# 逻辑：默认 needs_review，可查询隐藏邮件或显式选择全部已保存邮件。
 # 约束：员工仅访问自己邮箱的原文和证据。
 class EmailReviewsView(APIView):
     # 功能：按邮箱和状态列出可复核邮件。
     # 输入：`request` 可带 status/page，`mailbox_id` 可限定一个邮箱。
     # 输出：最多 20 项、总数和待复核数量。
-    # 逻辑：先授权后筛选，all 包含机器隐藏及已有人工判断。
+    # 逻辑：先授权后筛选；all 保留原复核范围，saved 额外包含未经人工复核的业务邮件，均按接收时间倒序。
     # 约束：不解析正文为 HTML；非法状态或分页返回 400。
-    @extend_schema(responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("status", str), OpenApiParameter("page", int)])
+    @extend_schema(responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("status", str, enum=["pending", "non_business", "all", "saved"]), OpenApiParameter("page", int)])
     def get(self, request, mailbox_id=None):
         query = Email.objects.filter(mailbox__owner=request.user)
         if mailbox_id:
@@ -85,8 +85,10 @@ class EmailReviewsView(APIView):
             query = query.filter(business_classification="non_business")
         elif status == "all":
             query = query.exclude(business_classification="business", review_status="")
+        elif status == "saved":
+            pass
         else:
-            raise ValidationError("status 必须是 pending、non_business 或 all。")
+            raise ValidationError("status 必须是 pending、non_business、all 或 saved。")
         try:
             page = int(request.query_params.get("page", 1))
         except (ValueError, TypeError):

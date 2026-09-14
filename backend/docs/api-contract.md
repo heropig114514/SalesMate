@@ -4,6 +4,10 @@
 
 ## 身份
 
+浏览器先用 `GET /api/v1/session/` 获取 CSRF Cookie，再用 `POST /api/v1/accounts/register/` 提交 `{"username":"...","password":"..."}`。注册仅接受这两个字段，不要求邮箱、手机号或验证码；用户名遵守现有模型规则，密码复用 Django 已配置的校验器。成功返回 201、`authenticated`、`username` 和轮换后的 `csrf_token`，同时建立普通用户 Session。输入错误或重名返回 400，缺少有效 CSRF 返回 403，已登录时再次注册返回 409。密码以哈希存储，不回传。
+
+新账号拥有独立的空工作空间，不复制 demo 数据，也不自动创建 Gmail 授权或 Agent 服务令牌。退出后继续使用 `POST /api/v1/session/` 登录；`DELETE /api/v1/session/` 注销。注册页面中的确认密码仅用于浏览器一致性检查，不作为后端字段发送。
+
 浏览器使用 Django Session 和 CSRF。Agent 路由只接受：
 
 ```http
@@ -31,7 +35,7 @@ Authorization: Agent <service-token>
 | 领取员工邮箱同步 | `POST mailbox-syncs/claim/` | `limit` → 邮箱地址、Google 授权信息和读取上限 |
 | 回报员工邮箱同步 | `POST mailbox-syncs/report/` | 同步汇总、错误及可选刷新凭证 → 浏览器安全状态 |
 
-兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。当前 Gmail 同步通过 SyncState 保存 History cursor、积压 message ID 和失败 message ID；游标无效时回退到最近邮件扫描。失败抽取可在下一次正常邮件同步时直接更新。
+兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。产品 Gmail 同步由 Worker 使用 SyncCheckpoint/StoredMessage 保存历史页、History 游标、原文和 L1 输出；失败明确重试，按阶段复用缓存。Worker 接管邮箱后拒绝旧 CLI 游标双写。旧 CLI 的已配置游标读写异常向上报告。
 
 ## 写入一致性
 
@@ -48,6 +52,7 @@ L2、L3 和 L4 的核心约束：
 - 评分特征只能是 0–3 整数或 JSON `null`。
 - 信号未知、任一评分特征为 `null` 或缺少最近入站时间时，Score 为 `null`。
 - 缓存要求公司、当前 revision、`input_version` 和 `analysis_prompt_version` 全部匹配。
+- 失效血缘对应的 L2/L3/L4 不参与展示和缓存；同一 `input_version` 可在不同 revision 保存独立快照。人工补抽取沿用真实提示词版本，以内部 `repair_generation` 保留原抽取历史，不改变 Agent 的 EmailSubmission 字段。
 
 ## 浏览器路由
 
@@ -67,3 +72,6 @@ L2、L3 和 L4 的核心约束：
 ```powershell
 python backend/manage.py spectacular --file backend/contracts/openapi.yaml --validate --fail-on-warn
 ```
+## QQ 邮箱增量接口
+
+新增 QQ 连接与删除接口，复用现有邮箱同步、进度和明确重试 API。邮箱响应追加 `qq_authorized`，邮件来源追加 `qq_real`；Gmail 路由和 `gmail_authorized` 语义不变。请求格式、认证及兼容字段详见 [QQ 邮箱接入](qq-mailbox.md#api-与兼容边界)，机器可读定义见 `../contracts/openapi.yaml`。

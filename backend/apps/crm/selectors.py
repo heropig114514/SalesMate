@@ -1,5 +1,5 @@
 """职责：生成公司、上下文与页面查询投影。
-实现：业务分类统一约束收件箱与 Agent 上下文；从同一分析载荷派生列表和详情；邮箱地址取权威关系，保留旧结果时间及 stale 标记。
+实现：业务分类统一约束客户列表与 Agent 上下文；列表标明实际邮件来源；血缘失效结果不展示，邮箱地址取权威关系。
 关联：API 在授权后调用；ingestion 和 results 使用同一快照表示；sales 设置人工主要联系人及客户归档。
 目录：
 - latest_extraction：选择邮件最近创建的抽取版本。
@@ -74,10 +74,10 @@ def context_pair(company):
 # 功能：选择最近存储的成功分析及其最新评分。
 # 输入：`company` 为已授权公司。
 # 输出：Analysis 或 None，Score 或 None。
-# 逻辑：来源仍为业务邮件时允许旧结果并标记陈旧；包含已隐藏邮件的旧画像不再展示。
+# 逻辑：只选择未被血缘失效的结果；旧快照额外检查隐藏成员，普通新增邮件允许显示陈旧结果。
 # 约束：失败结果不能覆盖已完成结果的页面展示。
 def latest_result(company):
-    analysis = Analysis.objects.filter(snapshot__company=company, payload__status="completed").select_related("snapshot").order_by("-id").first()
+    analysis = Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot").order_by("-id").first()
     if analysis:
         visible = set(company.emails.filter(business_classification="business").values_list("dedupe_key", flat=True))
         if set(analysis.snapshot.payload.get("member_dedupe_keys", [])) - visible:
@@ -87,8 +87,8 @@ def latest_result(company):
 
 # 功能：生成前端公司列表行。
 # 输入：`company` 为已授权公司。
-# 输出：身份、摘要、信号、评分与处理状态组成的字典。
-# 逻辑：新邮件摘要从当前抽取获取；画像与分数来自同一 Analysis。
+# 输出：身份、摘要、邮件来源集合、信号、评分与处理状态组成的字典。
+# 逻辑：摘要和来源从实际业务邮件获取，混合来源全部列出；画像与分数来自同一 Analysis。
 # 约束：规则输出展示 provider，旧分析展示 stale，未知分值保持 null。
 def company_row(company):
     grouping, context = context_pair(company)
@@ -101,6 +101,7 @@ def company_row(company):
     return {"company_id": str(company.pk), "company_name": company.name,
             "domains": company.domains, "contacts": grouping["contacts"], "crm_status": company.crm_status,
             "revision": company.revision, "email_count": len(emails),
+            "email_sources": sorted({item.get("source") for item in emails if item.get("source")}),
             "last_message_at": latest["sent_at"] if latest else None,
             "last_inbound_at": inbound[-1]["sent_at"] if inbound else None,
             "headline_summary": ((latest.get("facts") or {}).get("message_summary") or latest["subject"]) if latest else "暂无邮件",

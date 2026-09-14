@@ -1,5 +1,5 @@
 """职责：编排 Gmail 同步、并发 L1、逐封提交和可选进度观察。
-实现：保留既有默认参数，独立 Worker 通过回调持久化阶段；兼容旧 CLI 调用。
+实现：保留既有默认参数及逐封处理辅助函数；Worker 使用持久检查点编排，旧 CLI 游标异常强失败。
 关联：软件 Worker 使用本模块，Gmail 工具提供原文，后端 HTTP 客户端保存业务数据。
 目录：
 - sync_gmail：同步一个邮箱并逐封保存 L1 结果。
@@ -491,21 +491,18 @@ def _is_current_failed_extraction(stored: object) -> bool:
 # 输入：`backend` 为业务后端协议客户端；`mailbox_id` 为后端邮箱标识。
 # 输出：状态字典或 None。
 # 逻辑：确认读写方法存在并验证版本类型。
-# 约束：保留旧实现读取异常返回 None 的行为，待后续契约收紧。
+# 约束：只有旧后端未实现游标协议才返回 None；读写协议存在时的错误与非法状态必须失败。
 def _get_sync_state(
     backend: BackendClient, mailbox_id: str
 ) -> dict[str, Any] | None:
-    """后端支持同步游标时读取状态；旧实现自动退回最近邮件扫描。"""
+    """读取支持游标的后端状态；读取失败不能伪装为首次同步。"""
     reader = getattr(backend, "get_sync_state", None)
     writer = getattr(backend, "save_sync_state", None)
     if not callable(reader) or not callable(writer):
         return None
-    try:
-        state = reader(mailbox_id)
-    except Exception:
-        return None
+    state = reader(mailbox_id)
     if not isinstance(state, Mapping) or type(state.get("version")) is not int:
-        return None
+        raise ValueError("同步游标响应缺少有效版本。")
     return dict(state)
 
 
@@ -561,7 +558,7 @@ def _read_email_batch(
 # 输入：`backend` 为业务后端协议客户端；`mailbox_id` 为后端邮箱标识；`previous` 为读取时的同步状态及版本；`cursor` 为待保存的 Gmail 游标；`pending_message_ids` 为尚未处理的消息 ID；`failed_message_ids` 为待重试消息 ID。
 # 输出：是否保存成功的布尔值。
 # 逻辑：采用先读版本执行乐观锁保存。
-# 约束：保留旧尽力保存语义；异常返回 False，完整恢复语义在后续契约补齐。
+# 约束：未配置游标协议返回 False；已配置协议的写入异常向上传播，不声明同步成功。
 def _save_sync_state(
     backend: BackendClient,
     mailbox_id: str,
@@ -570,7 +567,7 @@ def _save_sync_state(
     pending_message_ids: list[str],
     failed_message_ids: list[str],
 ) -> bool:
-    """邮件批次提交成功后尽力保存 Gmail 增量游标。"""
+    """提交成功后保存 Gmail 增量游标，写入异常必须向调用方报告。"""
     writer = getattr(backend, "save_sync_state", None)
     if previous is None or cursor is None or not callable(writer):
         return False
@@ -584,21 +581,8 @@ def _save_sync_state(
             "failed_message_ids": failed_message_ids,
         }
     )
-    try:
-        writer(
-            {
-                "mailbox_id": mailbox_id,
-                "cursor": cursor,
-                "scope": next_scope,
-                "last_synced_at": datetime.now(timezone.utc).isoformat(),
-                "status": "ok",
-                "version": previous["version"],
-            }
-        )
-    except Exception:
-        # 游标只是性能优化。邮件已经由 dedupe_key 安全提交时，保存冲突
-        # 不应把整次同步改成失败；下一轮会重新扫描最近邮件。
-        return False
+    writer({"mailbox_id": mailbox_id, "cursor": cursor, "scope": next_scope,
+            "last_synced_at": datetime.now(timezone.utc).isoformat(), "status": "ok", "version": previous["version"]})
     return True
 
 

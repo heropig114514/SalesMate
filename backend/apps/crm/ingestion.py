@@ -1,5 +1,5 @@
 """职责：执行邮件入库、归组、事实补交和同步游标事务。
-实现：按 owner 串行化写入，独立保存业务分类；仅有效业务更新触发分析任务，保留原文及抽取版本。
+实现：按 owner 串行化写入，独立保存业务分类；来源变化沿血缘失效并重算，保留原文及抽取版本。
 关联：serializers 校验协议，jobs 创建任务，selectors 查询完整邮件；sales.CompanyAlias 提供已确认的人工归组。
 目录：
 - track_saved_email：把已提交邮件关联到活动批次，兼容旧 CLI。
@@ -34,10 +34,11 @@ EXTRACTION_KEYS = frozenset(["extract_status", "extract_prompt_version", "extrac
 # 功能：原子保存一批已授权邮件，返回每项创建或去重状态。
 # 输入：`owner` 为认证用户；`payloads` 为 EmailSubmission 数组。
 # 输出：每封邮件的 dedupe_key、company_id 和 created/updated/duplicate 状态。
-# 逻辑：先完整验证再锁 owner，保存机器分类且人工判断优先，非业务邮件不改变展示公司名称；新邮件优先应用精确联系人映射，再应用域名映射；未配置映射时按原域名规则归组。
+# 逻辑：先验证再锁 owner；机器分类尊重人工，既有来源更改使快照失效；成功补交取消过时修复，新邮件按既定映射归组。
 # 约束：任何一项失败回滚整批；不接收 Gmail 凭证、不调用模型、不静默覆盖事实。
 @transaction.atomic
 def submit_emails(owner, payloads):
+    from .lineage import invalidate_email, schedule_analysis
     serializer = EmailSubmissionSerializer(data=payloads, many=True)
     serializer.is_valid(raise_exception=True)
     if not 1 <= len(serializer.validated_data) <= 100:
@@ -55,16 +56,17 @@ def submit_emails(owner, payloads):
             raise Conflict("同一 dedupe_key 的邮件本体不可修改。")
         if email:
             company = company_for(owner, email.company_id, lock=True)
-            existing = email.extractions.filter(prompt_version=data["extract_prompt_version"]).first()
+            existing = email.extractions.filter(prompt_version=data["extract_prompt_version"]).order_by("-pk").first()
             if existing:
                 if existing.status == "failed" and data["extract_status"] == "completed":
                     existing.status, existing.facts, existing.error = "completed", data["facts"], None
                     existing.save(update_fields=["status", "facts", "error"])
                     apply_classification(email, existing)
+                    email.repairs.filter(status__in=["pending", "running", "failed"]).update(status="skipped")
                     company.revision += 1
                     company.save(update_fields=["revision"])
-                    if email.business_classification == "business" and data["facts"]["has_substantive_update"]:
-                        enqueue(company, "email_ingested")
+                    invalidate_email(email, "extraction_completed")
+                    schedule_analysis(company)
                     track_saved_email(email)
                     results.append({"dedupe_key": email.pk, "company_id": str(company.pk), "status": "updated"})
                     continue
@@ -113,12 +115,18 @@ def submit_emails(owner, payloads):
             email = Email.objects.create(dedupe_key=data["dedupe_key"], mailbox=mailbox, company=company, contact=contact,
                                          payload=body, sent_at=storage_time, received_at=value["received_at"] or storage_time,
                                          direction=data["direction"])
+        replacing = email.extractions.exists()
         extraction = Extraction.objects.create(email=email, prompt_version=data["extract_prompt_version"], status=data["extract_status"], facts=data["facts"], error=data["extract_error"])
         apply_classification(email, extraction)
-        if email.business_classification == "business":
+        if replacing or email.business_classification == "business":
             company.revision += 1
         company.save(update_fields=["revision", "name"])
-        if (
+        if replacing:
+            if extraction.status == "completed":
+                email.repairs.filter(status__in=["pending", "running", "failed"]).update(status="skipped")
+            invalidate_email(email, "extraction_version_changed")
+            schedule_analysis(company)
+        elif (
             data["extract_status"] == "completed"
             and email.business_classification == "business"
             and data["facts"]["has_substantive_update"]
@@ -133,10 +141,11 @@ def submit_emails(owner, payloads):
 # 功能：将失败事实补交为已完成，并保留邮件本体。
 # 输入：`owner` 为认证用户；`payload` 为 FactsResubmission。
 # 输出：公司 ID 与新 revision。
-# 逻辑：锁公司和抽取记录，校验证据后执行 failed → completed，并更新未被人工覆盖的分类。
+# 逻辑：锁公司和抽取记录，校验证据后执行 failed → completed，取消过时修复并沿血缘重算受影响公司。
 # 约束：重复成功补交返回 conflict，不自动重读 Gmail。
 @transaction.atomic
 def resubmit_facts(owner, payload):
+    from .lineage import invalidate_email, schedule_analysis
     serializer = FactsResubmissionSerializer(data=payload)
     serializer.is_valid(raise_exception=True)
     data = plain(serializer.validated_data)
@@ -144,7 +153,7 @@ def resubmit_facts(owner, payload):
     if email is None:
         raise NotFound("邮件不存在。")
     company = company_for(owner, email.company_id, lock=True)
-    record = Extraction.objects.select_for_update().filter(email=email, prompt_version=data["extract_prompt_version"]).first()
+    record = Extraction.objects.select_for_update().filter(email=email, prompt_version=data["extract_prompt_version"]).order_by("-pk").first()
     if record is None:
         raise NotFound("抽取版本不存在。")
     if record.status != "failed":
@@ -153,10 +162,11 @@ def resubmit_facts(owner, payload):
     record.status, record.facts, record.error = "completed", data["facts"], None
     record.save(update_fields=["status", "facts", "error"])
     apply_classification(email, record)
+    email.repairs.filter(status__in=["pending", "running", "failed"]).update(status="skipped")
     company.revision += 1
     company.save(update_fields=["revision"])
-    if email.business_classification == "business" and data["facts"]["has_substantive_update"]:
-        enqueue(company, "email_ingested")
+    invalidate_email(email, "extraction_completed")
+    schedule_analysis(company)
     logger.info("facts_resubmitted company_id=%s revision=%s", company.pk, company.revision)
     return {"company_id": str(company.pk), "revision": company.revision}
 
@@ -175,10 +185,13 @@ def sync_state(mailbox):
 # 输入：`owner` 为认证用户；`data` 为已验证 SyncState；`expected` 为 If-Match。
 # 输出：写入后的 SyncState。
 # 逻辑：锁邮箱、校验版本并递增；保留活动批次身份和运行状态，不以游标写入宣称批次完成。
-# 约束：Agent 必须仅在整批邮件持久化成功后调用；不做令牌托管。
+# 约束：启用持久检查点的邮箱由独立 Worker 管理，拒绝旧 CLI 写入；不做令牌托管。
 @transaction.atomic
 def save_sync_state(owner, data, expected):
     mailbox = mailbox_for(owner, data["mailbox_id"], lock=True)
+    from .durable_models import SyncCheckpoint
+    if SyncCheckpoint.objects.filter(mailbox=mailbox).exists():
+        raise Conflict("此邮箱已使用持久检查点，请通过 crm_worker 同步，不能混用旧 CLI。")
     check_version(expected, mailbox.version)
     if data["version"] != mailbox.version:
         raise Conflict("载荷 version 与 If-Match 不一致。")

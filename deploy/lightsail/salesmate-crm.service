@@ -1,0 +1,24 @@
+# 职责：运行绑定服务器演示员工的 CRM 调度器。
+# 实现：保留项目默认并发和轮询参数，使用环境文件中的独立 Agent 凭证。
+# 关联：依赖本机网站和数据库；业务日志进入 journal，不自动重试失败进程。
+# 目录：无函数或类。
+# 变量索引：EnvironmentFile 为运行配置；ExecStart 为 crm_worker 入口。
+[Unit]
+Description=SalesMate CRM worker
+After=network.target salesmate-web.service
+Requires=salesmate-web.service
+
+[Service]
+Type=simple
+User=salesmate
+Group=salesmate
+WorkingDirectory=/opt/salesmate/app
+EnvironmentFile=/opt/salesmate/app/.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.lightsail
+ExecStart=/opt/salesmate/venv/bin/python backend/manage.py crm_worker
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

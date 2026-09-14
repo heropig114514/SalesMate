@@ -1,5 +1,5 @@
 """职责：提供可移除的显式规则占位，帮助前后端在 Agent 未接入时联调。
-实现：只抽取带中文标签的原文行，确定性归并与七维模板输出；通过正式保存服务校验载荷。
+实现：只抽取带中文标签的原文行，确定性归并与七维模板输出；按当前 revision 复用结果，通过正式保存服务校验。
 关联：仅 ANALYSIS_PROVIDER=rules 时由页面动作调用；agent 模式只入队，不隐式回退。
 目录：
 - extract_email：将显式模拟邮件转换为 L1 标准提交。
@@ -232,7 +232,7 @@ def compute_score(analysis):
 # 功能：执行当前公司的一次规则任务。
 # 输入：`owner` 为会话用户；`company_id` 为已授权公司。
 # 输出：最终 JobReport 简要响应；无待办时返回 None。
-# 逻辑：正式领取任务、构建协议对象、调用共用结果服务；完整缓存复用，缺少评分时仅补评分。
+# 逻辑：正式领取任务、构建协议对象、调用共用结果服务；按当前 revision 复用缓存，缺少评分时仅补评分。
 # 约束：异常记录脱敏类型并显式失败后继续抛出；不重试、不调用真实模型、不降级其他模式。
 def run_company(owner, company_id):
     jobs = claim(owner, 1, 120, company_id)
@@ -255,8 +255,8 @@ def run_company(owner, company_id):
             save_analysis(owner, analysis, job["expected_version"], job["job_id"], job["lease_token"], provider="rules")
             produced_analysis = True
         else:
-            analysis = company.inputs.get(input_version=version).analyses.get(prompt_version=ANALYSIS_VERSION).payload
-        stored_analysis = company.inputs.get(input_version=version).analyses.get(prompt_version=ANALYSIS_VERSION)
+            analysis = company.inputs.get(input_version=version, revision=company.revision).analyses.get(prompt_version=ANALYSIS_VERSION).payload
+        stored_analysis = company.inputs.get(input_version=version, revision=company.revision).analyses.get(prompt_version=ANALYSIS_VERSION)
         if not stored_analysis.scores.exists():
             save_score(owner, compute_score(analysis), job["expected_version"], job["job_id"], job["lease_token"])
             produced_score = True

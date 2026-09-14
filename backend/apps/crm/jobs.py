@@ -1,9 +1,10 @@
 """职责：管理持久化分析任务、领取租约和回报。
-实现：所有者锁与任务行锁保证公司级互斥，固定输入 revision、随机凭证；过期显式失败。
+实现：所有者锁与任务行锁保证公司级互斥，未完成 L1 修复阻塞画像；固定 revision、随机凭证，过期显式失败。
 关联：ingestion 入队，rules 或独立 Agent 消费，results 验证租约。
 目录：
 - enqueue：合并公司尚未领取的同类分析工作。
 - job_data：映射任务为 README Job 并附领取凭证。
+- claimable_jobs：查询未被公司运行任务或 L1 修复阻塞的待办。
 - claim：原子领取当前用户的待处理任务。
 - require_lease：核验任务领取凭证和上下文版本。
 - report：保存任务最终状态并核验产出声明。
@@ -57,10 +58,22 @@ def job_data(job):
             "expected_version": job.revision}
 
 
+# 功能：统一调度器和领取端的可执行工作条件。
+# 输入：`owner` 为已认证员工。
+# 输出：当前可领取的 Job QuerySet。
+# 逻辑：排除有效运行租约及未完成/失败的业务邮件补抽取，跨公司独立。
+# 约束：仅查询不加锁；实际领取仍须在所有者锁内重新求值。
+def claimable_jobs(owner):
+    from .durable_models import ExtractionRepair
+    running = Job.objects.filter(company_id=OuterRef("company_id"), status="running", lease_until__gt=timezone.now())
+    repairing = ExtractionRepair.objects.filter(email__company_id=OuterRef("company_id"), email__business_classification="business", status__in=["pending", "running", "failed"])
+    return Job.objects.filter(company__owner=owner, status="pending").annotate(company_running=Exists(running), repairing=Exists(repairing)).filter(company_running=False, repairing=False)
+
+
 # 功能：原子领取当前用户的待处理任务。
 # 输入：`owner` 为服务凭证用户；`limit` 为数量；`lease_seconds` 为显式租期；`company_id` 可限制公司。
 # 输出：领取后的 Job 数组。
-# 逻辑：过期运行任务显式失败；所有者锁串行化领取，排除已有运行任务的公司，同批每公司至多一个。
+# 逻辑：过期任务显式失败；所有者锁串行化领取，排除运行中公司及等待或失败的业务 L1 修复。
 # 约束：不重派已过期任务，不自动重试；需用户显式重新分析。
 @transaction.atomic
 def claim(owner, limit, lease_seconds, company_id=None):
@@ -74,9 +87,11 @@ def claim(owner, limit, lease_seconds, company_id=None):
     if expired:
         logger.warning("job_leases_expired count=%s owner_id=%s action=request_new_analysis", expired, owner.pk)
     # 只锁任务表，避免先锁任务再锁公司的反向锁序；enqueue 在公司锁之后锁待办。
-    running = Job.objects.filter(company_id=OuterRef("company_id"), status="running", lease_until__gt=now)
+    available = claimable_jobs(owner)
+    if company_id:
+        available = available.filter(company_id=company_id)
     # 锁住所有者后再领取任务，使多个工作进程的公司互斥检查与领取原子化。
-    jobs = list(scope.annotate(company_running=Exists(running)).select_for_update(of=("self",), skip_locked=True).filter(status="pending", company_running=False).order_by("enqueued_at")[:limit])
+    jobs = list(available.select_for_update(of=("self",), skip_locked=True).order_by("enqueued_at")[:limit])
     selected = []
     companies = set()
     for job in jobs:

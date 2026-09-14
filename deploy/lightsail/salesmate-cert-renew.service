@@ -1,0 +1,13 @@
+# 职责：检查短期 IP 证书是否到期并在需要时续期。
+# 实现：Certbot 保留 ACME 验证与失败日志，成功续期后检查并重载 Nginx。
+# 关联：salesmate-cert-renew.timer；网站 80 端口必须保持 ACME 验证路径可达。
+# 目录：无函数或类。
+# 变量索引：ExecStart 为续期命令及成功后部署钩子。
+[Unit]
+Description=Renew SalesMate IP TLS certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/certbot/bin/certbot renew --non-interactive --deploy-hook "/usr/sbin/nginx -t && /usr/bin/systemctl reload nginx"

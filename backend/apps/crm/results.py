@@ -1,5 +1,5 @@
 """职责：保存分析输入、判断与评分并验证并发和来源。
-实现：在公司行锁下验证 revision、租约、引用范围及不可变键；保留 Agent 原始 input_version。
+实现：在公司行锁下验证 revision、租约、引用及不可变键；登记来源边并排除血缘失效结果。
 关联：API 与规则占位共用该入口，selectors 从这些快照投影页面。
 目录：
 - save_input：保存 L2 原始输入快照。
@@ -37,7 +37,7 @@ DEAL_PROBABILITY_PATTERN = re.compile(
 # 功能：保存 L2 原始输入快照。
 # 输入：`owner` 为认证用户；`payload` 为 AnalysisInput；`expected` 为读取版本；`job_id`、`token` 为租约凭证。
 # 输出：原始快照载荷。
-# 逻辑：核查当前成员、外部版本、未解析数量与事实全集，拒绝遗漏、重复或篡改已有事实。
+# 逻辑：核查当前成员、外部版本、未解析数量与事实全集，并为当前 revision 登记精确抽取来源边。
 # 约束：后端不重算 input_version；相同版本的实质内容不可变，built_at 不作为业务内容比较。
 @transaction.atomic
 def save_input(owner, payload, expected, job_id, token):
@@ -112,9 +112,11 @@ def save_input(owner, payload, expected, job_id, token):
             actual_facts.append((field, item["dedupe_key"], item["value"], tuple(item["evidences"])))
     if sorted(actual_facts) != sorted(expected_facts):
         raise ValidationError("L2 必须完整保留已完成抽取的事实，不得遗漏或重复。")
-    snapshot, created = AnalysisInput.objects.get_or_create(company=company, input_version=data["input_version"], defaults={"revision": company.revision, "payload": data})
+    snapshot, created = AnalysisInput.objects.get_or_create(company=company, input_version=data["input_version"], revision=company.revision, defaults={"payload": data})
     if not created and (snapshot.revision != company.revision or {k: v for k, v in snapshot.payload.items() if k != "built_at"} != {k: v for k, v in data.items() if k != "built_at"}):
         raise Conflict("相同 input_version 对应不同内容或后端 revision。")
+    from .lineage import bind_sources
+    bind_sources(snapshot, company)
     logger.info("analysis_input_saved company_id=%s revision=%s created=%s", company.pk, company.revision, created)
     return snapshot.payload
 
@@ -140,7 +142,7 @@ def validate_refs(value, allowed):
 # 功能：保存经验证的 L3 分析。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 指定用户、分析、版本与任务；`provider` 标识 rules 或 agent。
 # 输出：已保存 Analysis 原始载荷。
-# 逻辑：当前 revision 与快照一致后检查来源、时间、缺失信息和强信号门槛。
+# 逻辑：当前 revision 与未失效快照一致后检查来源、时间、缺失信息和强信号门槛。
 # 约束：失败不覆盖成功，不接受未知来源或详情中的成交概率；原文业务百分比可以保留。
 @transaction.atomic
 def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
@@ -150,7 +152,7 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     company = company_for(owner, data["company_id"], lock=True)
     check_version(expected, company.revision)
     require_lease(company, job_id, token)
-    snapshot = company.inputs.filter(input_version=data["input_version"], revision=company.revision).first()
+    snapshot = company.inputs.filter(input_version=data["input_version"], revision=company.revision, invalidation__isnull=True).first()
     if snapshot is None:
         raise Conflict("请先保存当前 revision 的 AnalysisInput。")
     _, context = context_pair(company)
@@ -207,7 +209,7 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
 # 功能：保存与当前成功分析对应的评分。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 为身份、Score、后端版本与任务凭证。
 # 输出：Score 原始载荷。
-# 逻辑：绑定当前输入最新成功分析；按规则版本和 scored_at 去重允许显式时间重评分。
+# 逻辑：绑定当前输入未失效的成功分析；按规则版本和 scored_at 去重允许显式时间重评分。
 # 约束：无有效分析不接收分数，缺失特征不允许非空分值。
 @transaction.atomic
 def save_score(owner, payload, expected, job_id, token):
@@ -217,7 +219,7 @@ def save_score(owner, payload, expected, job_id, token):
     company = company_for(owner, data["company_id"], lock=True)
     check_version(expected, company.revision)
     require_lease(company, job_id, token)
-    analysis = Analysis.objects.filter(snapshot__company=company, snapshot__revision=company.revision,
+    analysis = Analysis.objects.filter(snapshot__company=company, snapshot__revision=company.revision, snapshot__invalidation__isnull=True,
                                        snapshot__input_version=data["input_version"], payload__status="completed").order_by("-id").first()
     if analysis is None:
         raise InvalidState("当前输入尚无成功分析。")
@@ -237,10 +239,10 @@ def save_score(owner, payload, expected, job_id, token):
 # 功能：查询指定版本的分析缓存元数据。
 # 输入：`company` 为授权公司；`input_version` 为 Agent 输入键；`prompt_version` 可限定提示词版本。
 # 输出：README CachedAnalysis，未命中可附旧结果时间。
-# 逻辑：命中要求当前 revision、输入版本、成功状态及可选提示词一致。
+# 逻辑：命中要求未失效、当前 revision、输入版本、成功状态及可选提示词一致。
 # 约束：旧结果 hit 为 false，不冒充新分析。
 def cached_analysis(company, input_version, prompt_version=None):
-    query = Analysis.objects.filter(snapshot__company=company, payload__status="completed").select_related("snapshot")
+    query = Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot")
     exact = query.filter(snapshot__input_version=input_version, snapshot__revision=company.revision)
     if prompt_version:
         exact = exact.filter(prompt_version=prompt_version)

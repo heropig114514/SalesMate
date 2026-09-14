@@ -181,16 +181,16 @@ class StrictSerializer(s.Serializer):
     # 功能：校验输入对象及其字段集合。
     # 输入：`data` 为客户端原始 JSON。
     # 输出：DRF 验证后的字段字典；未知字段抛 ValidationError。
-    # 逻辑：仅接收字典并排除不在声明中的字段。
+    # 逻辑：仅接收字典并排除未声明字段；对象级错误使用 DRF non_field_errors 字典以正确返回 400。
     # 约束：无数据库或日志副作用。
     def to_internal_value(self, data):
         if not isinstance(data, dict) or set(data) - set(self.fields):
-            raise s.ValidationError("必须为对象，且不得包含未声明字段。")
+            raise s.ValidationError({s.api_settings.NON_FIELD_ERRORS_KEY: ["必须为对象，且不得包含未声明字段。"]})
         return super().to_internal_value(data)
 
 
 # 功能：声明单封邮件标准载荷。
-# 逻辑：将 from 映射回原始 JSON 名称，要求实际时间、方向与来源。
+# 逻辑：将 from 映射回原始 JSON 名称，要求实际时间、方向与来源；qq_real 标记 QQ IMAP 原文。
 # 约束：授权邮箱所有权在服务层验证，不信任载荷自报身份。
 class EmailSubmissionSerializer(StrictSerializer):
     dedupe_key = s.CharField(max_length=400)
@@ -205,7 +205,7 @@ class EmailSubmissionSerializer(StrictSerializer):
     subject = s.CharField(max_length=1000, allow_blank=True)
     body_text = s.CharField(max_length=200000, allow_blank=True, trim_whitespace=False)
     direction = s.ChoiceField(choices=["inbound", "outbound", "unknown"])
-    source = s.ChoiceField(choices=["gmail_real", "synthetic_sample", "research_dataset", "simulated"])
+    source = s.ChoiceField(choices=["gmail_real", "qq_real", "synthetic_sample", "research_dataset", "simulated"])
     contact_email = s.EmailField(allow_null=True)
     non_business_hint = s.BooleanField()
     non_business_reason = s.CharField(allow_null=True, allow_blank=True)

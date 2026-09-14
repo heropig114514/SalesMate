@@ -6,6 +6,8 @@
 
 ## 1. 当前范围
 
+2026-09-13 软件集成更新：产品入口由 Django 独立 `crm_worker` 调度，支持原文/L1 输出持久缓存、完整历史分页补采、History 增量及人工补抽取。下文一次性 CLI 描述保留用于模块调试；已由 Worker 接管的邮箱不可再用旧 CLI 写游标。所有 `non_sales` 进入复核，来源变化自动失效并重算 L2–L4。当前产品运行与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。本轮验证使用模拟 Gmail/模型，不代表新增流程已完成真实外部联调。
+
 本目录负责 Gmail 邮件理解和公司级销售分析：
 
 ```text
@@ -26,7 +28,7 @@ Agent 不自行提供 HTTP 服务或数据库。现有 Django 后端负责员工
 
 每个 Agent 服务凭证只绑定一名后端员工。Agent 领取的是这名员工从页面请求的邮箱同步任务，后端归组和页面查询也继续按员工隔离，因此前端表示“当前员工的 Gmail 收件箱”，不是整个公司的共享收件箱。
 
-当前仍不包含常驻 Worker、Gmail 发送、翻译、会议排期、右侧自由对话助手、知识库或行业资讯。页面筛选、排序、分页、CRM 建档及实际持久化由前后端负责。
+Agent 目录本身不包含常驻 Worker、Gmail 发送、翻译、会议排期、右侧自由对话助手、知识库或行业资讯。常驻 Worker、页面筛选、排序、分页、CRM 建档及实际持久化由前后端负责。
 
 ## 2. 目录职责
 
@@ -62,6 +64,8 @@ agent/
 ```
 
 没有单独的 `schemas` 或 `prompts` 层。每套提示词直接放在对应 workflow 文件中，数据结构使用普通字典和少量就地 dataclass。
+
+QQ 邮箱已作为独立 IMAP 读取源追加，保留现有 Gmail 接入。`tools/qq_mail.py` 提供固定 QQ TLS 服务的只读适配，后端 `qq_sync` 持久同步并复用现有 L1–L4；无需 Google 回调域名。配置及协议兼容边界见 [QQ 邮箱试用](../backend/docs/qq-mailbox.md)。QQ 通过 `crm_worker` 运行，旧 Gmail CLI 不领取 QQ 任务。
 
 ## 2.1 模块交互流程图
 

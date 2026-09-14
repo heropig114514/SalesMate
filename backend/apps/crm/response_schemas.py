@@ -44,6 +44,7 @@
 - MailboxResponseSerializer.mailbox_id：后端业务邮箱 UUID。
 - MailboxResponseSerializer.address：业务邮箱展示地址。
 - MailboxResponseSerializer.gmail_authorized：当前邮箱是否已经完成 Google OAuth。
+- MailboxResponseSerializer.qq_authorized：当前邮箱是否已验证 QQ IMAP 授权码。
 - MailboxResponseSerializer.sync_state：业务同步游标及状态。
 - MailboxSyncClaimResponseSerializer.authorization：仅向 Agent 返回的 Google authorized user JSON。
 - MailboxSyncClaimResponseSerializer.mailbox_address：已经由 Gmail profile 验证的邮箱地址。
@@ -117,12 +118,13 @@ class CompanyContextResponseSerializer(s.Serializer):
 
 
 # 功能：描述浏览器邮箱列表行。
-# 逻辑：只显示业务标识、地址与不含凭证的同步状态。
+# 逻辑：显示业务标识、Gmail/QQ 独立授权标志与不含凭证的同步状态。
 # 约束：返回地址不代表已完成 Gmail OAuth。
 class MailboxResponseSerializer(s.Serializer):
     mailbox_id = s.UUIDField()
     address = s.EmailField()
     gmail_authorized = s.BooleanField()
+    qq_authorized = s.BooleanField()
     sync_state = s.DictField()
 
 

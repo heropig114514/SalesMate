@@ -1,5 +1,5 @@
 """职责：保存可恢复的邮箱同步批次及逐封处理状态。
-实现：一个邮箱至多存在一个活动批次，邮件任务在批次内按 Gmail ID 唯一。
+实现：一个邮箱至多存在一个活动批次，邮件任务在批次内按提供方消息 ID 唯一；QQ 范围保存在批次内。
 关联：processing 管理领取和进度，worker 调用独立 Agent；models 导入以注册 Django 模型。
 目录：
 - MailboxSyncRun：持久化同步请求、租约和最终汇总。
@@ -18,10 +18,11 @@
 - MailboxSyncRun.error：批次错误，不包含凭证或原始异常正文。
 - MailboxSyncRun.result：Agent 汇总，不包含 Gmail 授权。
 - MailboxSyncRun.message_ids：显式重试的消息范围，空数组表示常规扫描。
+- MailboxSyncRun.sync_options：QQ 批次冻结的时间和封数范围；Gmail 与旧批次为空对象。
 - MailboxSyncRun.Meta.constraints：同邮箱活动批次唯一约束。
 - EmailProcessingJob.id：逐封任务 UUID。
 - EmailProcessingJob.run：所属同步批次。
-- EmailProcessingJob.gmail_message_id：Gmail 原始消息 ID。
+- EmailProcessingJob.gmail_message_id：沿用协议字段名，保存 Gmail ID 或 QQ 稳定消息标识。
 - EmailProcessingJob.dedupe_key：既定邮箱地址加消息 ID 去重键。
 - EmailProcessingJob.stage：discovered/fetching/extracting/persisting/completed/failed。
 - EmailProcessingJob.status：pending/running/completed/failed。
@@ -39,7 +40,7 @@ from django.db import models
 
 
 # 功能：保存一个员工邮箱的同步批次。
-# 逻辑：租约凭证标识当前执行者，重复点击复用活动批次。
+# 逻辑：租约凭证标识当前执行者，QQ 范围按批次冻结；活动批次的合并或拒绝由 processing 决定。
 # 约束：错误批次不自动重试；活动批次互斥由数据库保证。
 class MailboxSyncRun(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -53,6 +54,7 @@ class MailboxSyncRun(models.Model):
     error = models.JSONField(null=True)
     result = models.JSONField(default=dict)
     message_ids = models.JSONField(default=list)
+    sync_options = models.JSONField(default=dict)
 
     # 功能：防止重复点击和多进程建立并行邮箱批次。
     # 逻辑：仅 queued/running 参与邮箱唯一约束。

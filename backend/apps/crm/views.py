@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 只排队，独立 Worker 执行；会话路由与 Agent 凭证路由隔离；本机调试可自动建立普通用户会话；校验后交给事务服务。
+实现：Web 校验 QQ 同步范围后排队，独立 Worker 执行；会话与 Agent 凭证路由隔离；本机调试可建立普通用户会话；事务服务校验归属。
 关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -85,6 +85,7 @@ from apps.sales.services import audit
 from . import gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
 from .models import Company, Email, Mailbox
+from .qq_scope import SyncRequestSerializer
 from .response_schemas import (SubmissionResultSerializer, JobResponseSerializer, CachedAnalysisResponseSerializer,
                                GroupingResponseSerializer, CompanyContextResponseSerializer, MailboxResponseSerializer,
                                MailboxSyncClaimResponseSerializer)
@@ -362,15 +363,17 @@ class MailboxViewSet(ViewSet):
             query = urlencode(query_data)
         return redirect(f"/?{query}")
 
-    # 功能：让当前员工请求刷新自己的 Gmail 邮件。
-    # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。
+    # 功能：让当前员工请求刷新自己的 Gmail 或 QQ 邮件。
+    # 输入：`request` 为当前员工请求及 QQ sync_options，`pk` 为 URL 中的 mailbox_id。
     # 输出：不含凭证的最新连接及同步状态。
     # 逻辑：创建持久批次并返回 HTTP 202，独立 Worker 领取。
     # 约束：不可请求其他员工或未授权邮箱。
-    @extend_schema(request=None, responses={202: OBJECT}, tags=["mailboxes"])
+    @extend_schema(request=SyncRequestSerializer, responses={202: OBJECT}, tags=["mailboxes"])
     @action(detail=True, methods=["post"], url_path="request-sync")
     def request_sync(self, request, pk=None):
-        mailbox = gmail_oauth.request_mailbox_sync(request.user, pk)
+        serializer = SyncRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mailbox = gmail_oauth.request_mailbox_sync(request.user, pk, serializer.validated_data.get("sync_options"))
         return Response(mailbox, status=202)
 
     # 功能：移除当前员工的 Gmail 本地授权。
