@@ -1,8 +1,8 @@
-# 职责：在 Gmail 测试工具更新后验证其独立安装能力，并生成可直接下载的 ZIP。
-# 实现：只复制公开分发文件，通过独立 requirements 安装与 dry-run 后上传 Actions Artifact。
-# 关联：test_tools/README.md、requirements.txt、gmail_test_injector.py 和邮件模板。
+# 职责：验证 Gmail 与 QQ 测试邮件工具，并生成包含两者的独立下载包。
+# 实现：离线测试、注释检查、两种 dry-run；仅复制公开文件，并在打包目录复验后上传 Artifact。
+# 关联：test_tools 中 Gmail/QQ 注入脚本、模板及说明；QQ 仅显式 --apply 才能写入邮箱。
 # 目录：package-test-tools 打包任务；无函数或类。
-# 变量索引：无。
+# 变量索引：package_dir 为固定分发目录；流水线不读取邮箱授权码或 OAuth token。
 name: Package test tools
 
 on:
@@ -37,8 +37,16 @@ jobs:
       - name: Install standalone dependencies
         run: python -m pip install -r test_tools/requirements.txt
 
-      - name: Verify standalone injector
-        run: python test_tools/gmail_test_injector.py --dry-run
+      - name: Test QQ injector without mailbox access
+        run: python -m unittest discover -s test_tools/tests -v
+
+      - name: Check QQ tool documentation
+        run: python backend/tools/check_docs.py test_tools/qq_test_injector.py test_tools/tests/test_qq_test_injector.py
+
+      - name: Preview Gmail and QQ test messages
+        run: |
+          python test_tools/gmail_test_injector.py --dry-run
+          python test_tools/qq_test_injector.py --dry-run
 
       - name: Build package directory
         shell: bash
@@ -50,6 +58,15 @@ jobs:
           cp test_tools/requirements.txt "$package_dir/"
           cp test_tools/gmail_test_injector.py "$package_dir/"
           cp test_tools/gmail_test_messages.template.json "$package_dir/"
+          cp test_tools/qq_test_injector.py "$package_dir/"
+          cp test_tools/qq_test_messages.template.json "$package_dir/"
+          cp test_tools/QQ_README.md "$package_dir/"
+
+      - name: Verify packaged tools in isolation
+        working-directory: dist/SalesMate-test-tools
+        run: |
+          python -I gmail_test_injector.py --dry-run
+          python -I qq_test_injector.py --dry-run
 
       - name: Upload ZIP
         uses: actions/upload-artifact@v4

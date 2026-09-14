@@ -1,10 +1,19 @@
 # SalesMate 测试工具
 
+下载包同时提供 Gmail 和 QQ 测试邮件注入器。两者用于验证「收件箱同步 → 邮件抽取 → 客户分析」，不会向外部地址发信。
+
+| 邮箱 | 脚本 | 使用说明 |
+|---|---|---|
+| Gmail | `gmail_test_injector.py` | 本文后续章节；需要独立 Google Desktop OAuth |
+| QQ / foxmail | `qq_test_injector.py` | [QQ 测试工具说明](QQ_README.md)；只需 Python 标准库和 QQ 客户端授权码 |
+
 本目录提供 Gmail 测试邮件注入器，供开发和测试人员反复验证 SalesMate 全流程。注入器可以脱离 SalesMate 主项目独立安装和运行，只依赖本目录的 `requirements.txt`。它通过 Gmail API 将合成邮件直接插入测试人员自己的 Gmail 收件箱，随后可以在 SalesMate 网页中执行正常的 Gmail 同步，让邮件依次经过 L1 事实抽取、后端公司归组以及 L2–L4 客户分析。
 
 工具不会修改 SalesMate 后端，也不会把邮件发送到外部地址。它使用 Gmail `messages.insert`，因此只验证 Gmail 读取和 SalesMate 处理链路，不验证 SMTP 投递、SPF、DKIM 或垃圾邮件分类。
 
-每次 `test_tools` 更新并推送到 `main` 或 `master` 后，GitHub Actions 会自动验证并生成 `salesmate-test-tools.zip`。在 GitHub 仓库的 **Actions → Package test tools → 最新成功运行 → Artifacts** 中下载 `salesmate-test-tools`，解压后即可按照本文操作。Artifact 保留 30 天，也可以从该工作流页面手动重新打包。
+每次 `test_tools` 或该流水线配置更新并推送到 `main` 后，GitHub Actions 会自动验证并生成包含两种工具的 ZIP。相关 PR 和手动执行也会触发检查。在 GitHub 仓库的 **Actions → Package test tools → 最新成功运行 → Artifacts** 中下载 `salesmate-test-tools`，解压后即可按照本文操作。Artifact 保留 30 天，也可以从该工作流页面手动重新打包。
+
+流水线运行 QQ 离线单元测试及 Gmail/QQ 的 `--dry-run`，并在实际分发目录复验。它不使用邮箱凭证，不写入邮箱、不测试 SMTP 投递；下载包只包含脚本、模板、依赖清单和说明，不含个人凭证或 `*.local.json`。
 
 ## 1. 独立安装 Gmail 注入器
 
