@@ -18,7 +18,7 @@
 - ProcessingTests.test_saved_mailbox_view_includes_all_classifications：验证按邮箱核对原文、时间排序及权限。
 - ProcessingTests.test_company_row_exposes_actual_email_sources：验证真实邮件与演示样例的来源区分。
 - WorkerPipelineTests：验证跨线程观察事件和真实业务持久化。
-- WorkerPipelineTests.test_worker_persists_stream_and_isolates_read_error：模拟 Gmail 和模型，贯通 Worker、Agent 回调及后端落库。
+- WorkerPipelineTests.test_worker_persists_stream_and_isolates_read_error：模拟 Gmail 和模型，贯通临时员工身份、Worker 回调及后端落库。
 变量索引：
 - 无
 """
@@ -288,7 +288,7 @@ class WorkerPipelineTests(TransactionTestCase):
     # 功能：贯通批次领取、逐封读取、并发抽取和持久进度。
     # 输入：无外部参数；两封合法合成邮件、一封读取失败的消息。
     # 输出：两个业务邮件保存，批次 partial，失败 ID 保留且公司分析入队。
-    # 逻辑：替换 Gmail 分页/原文、LLM 和 HTTP 传输，执行持久检查点及真实 ingestion 事务。
+    # 逻辑：替换 Gmail、LLM 和临时身份的 HTTP 客户端，执行检查点及真实 ingestion 事务。
     # 约束：模型输出为合成 fixture；测试通过不代表真实邮箱授权或模型质量已验证。
     def test_worker_persists_stream_and_isolates_read_error(self):
         owner = get_user_model().objects.create_user(username="worker-integration")
@@ -301,7 +301,7 @@ class WorkerPipelineTests(TransactionTestCase):
         client.get_stored_email.return_value = None
         client.submit_emails.side_effect = lambda submissions: {"created_count": len(ingestion.submit_emails(owner, submissions)), "updated_count": 0, "duplicate_count": 0, "affected_company_ids": []}
         with (
-            patch("apps.crm.worker.django_backend_from_environment", return_value=client),
+            patch("apps.crm.dispatch.django_backend_from_environment", return_value=client),
             patch("apps.crm.worker.create_service_from_authorization", return_value=(object(), None)),
             patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=mailbox.address),
             patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"),

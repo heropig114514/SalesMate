@@ -13,7 +13,7 @@ QQ 接入与原 Gmail OAuth 并存。QQ 使用 `imap.qq.com:993` 的 TLS 连接�
    ```
 
    将输出保存为 `.env` 的 `SALESMATE_VAULT_KEY` 并妥善备份。不要提交 Git、放进网页或分享给其他人。应用不会自动生成密钥，也不会将授权码回退为明文存储。
-4. 重启 Web 和当前员工的 `crm_worker`。沿用现有 `SALESMATE_AGENT_SERVICE_TOKEN` 与内部 HTTP 地址；一个 Worker 只处理其服务令牌绑定的员工。QQ 和 Gmail 都走此 Worker；旧 `--sync-authorized-mailboxes-once` CLI 仍仅领取 Gmail。
+4. 重启 Web 和共享 `crm_worker`。沿用内部 HTTP 地址；Worker 自动发现所有有效员工的排队任务，每个执行单元使用独立临时身份，不依赖固定员工的 `SALESMATE_AGENT_SERVICE_TOKEN`。QQ 和 Gmail 都走此 Worker；旧 `--sync-authorized-mailboxes-once` CLI 仍仅领取 Gmail。
 5. 服务器须能出站访问 `imap.qq.com:993`。网页无需 OAuth 回调域名，但公网提交授权码仍应使用 HTTPS；不要为此关闭既有 HTTPS 和安全 Cookie 设置。
 
 ## 页面操作

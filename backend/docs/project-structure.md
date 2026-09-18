@@ -54,4 +54,4 @@ crm 保持邮件与 L1–L4 分析持久化职责，sales 管理交易、协作�
 
 源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。交易维护、发送/日历确认、会话草稿与团队权限已放入 sales；知识库、翻译和自主助手仍待后续接入。未引入 RAG、LangGraph、Celery 或容器。
 
-新增 `processing_models.py`、`processing.py`、`classification.py`、`processing_views.py` 管理持久批次、阶段和复核；`management/commands/crm_worker.py` 消费任务，`classify_emails.py` 回填历史分类。
+新增 `processing_models.py`、`processing.py`、`classification.py`、`processing_views.py` 管理持久批次、阶段和复核；`dispatch.py` 轮转员工并管理临时 HTTP 身份，`management/commands/crm_worker.py` 共享消费任务，`classify_emails.py` 回填历史分类。

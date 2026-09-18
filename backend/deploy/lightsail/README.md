@@ -1,5 +1,7 @@
 # Lightsail 自动部署
 
+CRM Worker 现为所有有效员工共享调度，升级后自动处理已排队的新员工批次，不需要重新绑定旧凭证。身份隔离与验收说明见 [多员工共享 CRM Worker](../../docs/shared-crm-worker.md)。
+
 `main` 推送触发 GitHub Actions 的 **Verify and deploy**：隔离 PostgreSQL 上的后端测试、Agent 测试、邮箱工具测试、注释和迁移检查，以及模拟 API 的页面测试通过后，才允许部署。PR 只执行验证；可从 Actions 手动运行 `main` 的工作流。流程采用 [GitHub Actions 部署与并发控制](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments)。
 
 ## 运行方式

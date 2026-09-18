@@ -29,6 +29,7 @@
 - _JobContext：保存公司任务与租约上下文。
 - DjangoBackendClient：把简化工作流调用映射到认证 HTTP 接口。
 - DjangoBackendClient.__init__：验证初始化参数并建立实例状态。
+- DjangoBackendClient.close：释放当前实例的 HTTP 连接池。
 - DjangoBackendClient.submit_emails：提交邮件并统计结果；实现支持默认 Gmail 或显式 QQ 来源。
 - DjangoBackendClient.get_stored_email：查询天然键对应的已有抽取。
 - DjangoBackendClient.get_company_grouping：读取公司归组。
@@ -53,9 +54,10 @@
 - DjangoBackendClient._object：要求响应为对象。
 - DjangoBackendClient._etag：提取响应版本头。
 - DjangoBackendClient._error：规范化 API 错误。
-- django_backend_from_environment：读取显式环境配置构造 HTTP 客户端。
+- django_backend_from_environment：读取连接配置，允许任务显式提供独立身份和邮箱。
 变量索引：
 - JsonObject：只读 JSON 映射类型别名。
+- _DEFAULT_ANALYSIS_PROMPT_VERSION：从实际分析 Skill 读取的提示词版本。
 - _JobContext.job_id：已领取任务 ID。
 - _JobContext.company_id：任务所属公司 ID。
 - _JobContext.expected_version：领取时的业务版本。
@@ -193,6 +195,14 @@ class DjangoBackendClient:
         self._jobs: dict[str, _JobContext] = {}
         self._company_jobs: dict[str, _JobContext] = {}
         self._mailbox_revisions: dict[str, str] = {}
+
+    # 功能：释放工作单元使用的 HTTP 连接。
+    # 输入：无参数，读取实例 session。
+    # 输出：无返回值。
+    # 逻辑：关闭当前连接池，不影响其他客户端。
+    # 约束：调用者应在所有请求和工作线程结束后调用。
+    def close(self):
+        self._session.close()
 
     # 功能：保存指定邮箱来源的抽取结果并聚合业务统计。
     # 输入：`submissions` 为 L1 载荷；`source` 为 Gmail 默认来源或显式 QQ 来源。
@@ -722,16 +732,21 @@ class DjangoBackendClient:
         return str(code or "http_error"), str(detail or "后端请求被拒绝。")
 
 
+# 功能：构造独立 HTTP 客户端，支持 CLI 环境身份或 Worker 的显式任务身份。
+# 输入：`mailbox_id` 为目标邮箱；`service_token` 为可选任务令牌；其余连接参数读取环境。
+# 输出：无共享可变状态的 DjangoBackendClient；无效配置抛 BackendConfigurationError。
+# 逻辑：显式令牌时只采用传入邮箱，避免继承其他员工的环境邮箱；未提供令牌时保留 CLI 行为。
+# 约束：不写入进程环境，不改变既定超时、租约或分析提示词版本。
 def django_backend_from_environment(
-    *, mailbox_id: str | None = None
+    *, mailbox_id: str | None = None, service_token: str | None = None
 ) -> DjangoBackendClient:
-    """从已加载的 Agent 环境变量创建真实 Django 后端适配器。"""
+    """从连接配置与可选独立任务身份创建后端适配器。"""
     base_url = os.getenv(
         "SALESMATE_BACKEND_AGENT_URL",
         "http://127.0.0.1:8000/api/v1/agent/",
     )
-    service_token = os.getenv("SALESMATE_AGENT_SERVICE_TOKEN", "")
-    resolved_mailbox = mailbox_id or os.getenv("SALESMATE_MAILBOX_ID")
+    resolved_mailbox = mailbox_id if service_token is not None else mailbox_id or os.getenv("SALESMATE_MAILBOX_ID")
+    service_token = service_token if service_token is not None else os.getenv("SALESMATE_AGENT_SERVICE_TOKEN", "")
     try:
         lease_seconds = int(os.getenv("SALESMATE_JOB_LEASE_SECONDS", "120"))
         timeout = float(os.getenv("SALESMATE_BACKEND_TIMEOUT", "30"))

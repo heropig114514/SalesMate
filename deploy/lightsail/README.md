@@ -9,7 +9,7 @@
 服务文件：
 
 - `salesmate-web.service`：网站，启用开机启动。
-- `salesmate-crm.service`：演示员工 CRM worker，保留项目默认并发与轮询。
+- `salesmate-crm.service`：共享 CRM worker，轮转所有有效员工，保留项目默认并发与轮询。
 - `nginx.conf`：HTTPS 入口、HTTP 跳转和 ACME 验证目录。
 - `salesmate-cert-renew.service` / `.timer`：每日两次检查短期 IP 证书续期，成功续期后检查并重载 Nginx。
 
@@ -21,7 +21,7 @@ Lightsail 防火墙新增 TCP 443 的公网 IPv4 规则。原 22/80 规则保持
 
 外部发信和日历动作的 `sales_worker` 在本次试用中不启动；本次验证不执行对外通信。真实 Gmail 流程需要用户在浏览器完成 OAuth，并保证回调地址与 Google Cloud 配置一致。现有 Google 回调仍是本机地址，尚未为公网部署完成配置；真实 Gmail 同步和 LLM 分析没有端到端验收。
 
-网站已支持公开的简易账号注册：登录页点击“注册新账号”，填写用户名、密码和确认密码即可自动登录。无需邮箱、手机号或验证码，密码仍采用项目现有的 Django 校验与哈希存储。新账号没有 demo 数据，可直接创建自己的客户记录。当前 `salesmate-crm.service` 只处理 demo 用户；新用户的 Gmail 同步还需要配置其 Agent 凭证、对应 worker 和公网 OAuth 回调，注册本身不创建这些资源。
+网站已支持公开的简易账号注册：登录页点击“注册新账号”，填写用户名、密码和确认密码即可自动登录。无需邮箱、手机号或验证码，密码仍采用项目现有的 Django 校验与哈希存储。新账号没有 demo 数据，可直接创建自己的客户记录。当前 `salesmate-crm.service` 共享处理所有有效用户；新用户完成邮箱授权后即可被调度，无需手工配置其 Agent 凭证或专用 Worker。Gmail 仍需正确的公网 OAuth 回调。
 
 日常检查（服务器）：
 

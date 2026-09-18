@@ -12,7 +12,7 @@
 - QQMailTests.test_authentication_failure_is_safe_and_atomic：失败不落库且不泄露原始错误。
 - QQMailTests.test_disconnect_is_owned_and_preserves_gmail：员工隔离及 Gmail 共存。
 - QQMailTests.test_legacy_gmail_claim_skips_qq：旧 CLI 不误领 QQ 队列。
-- QQMailTests.test_worker_persists_qq_and_deduplicates_incremental：Worker、原文、L1 与增量去重。
+- QQMailTests.test_worker_persists_qq_and_deduplicates_incremental：临时员工身份、Worker、原文、L1 与增量去重。
 - QQMailTests.test_failure_requires_explicit_retry：逐封失败隔离及明确重试。
 - QQMailTests.test_checkpoint_rolls_back_on_generation_change：UIDVALIDITY 改变不推进游标。
 - QQMailTests.test_session_csrf_is_required：连接写操作的 Session/CSRF 边界。
@@ -180,13 +180,13 @@ class QQMailTests(TransactionTestCase):
     # 功能：验证 Worker 选择 QQ 路径并增量去重。
     # 输入：无外部参数；模拟两个文件夹 UID 及单封有证据邮件。
     # 输出：真实原文/邮件/抽取持久，二次同步无重复 LLM 调用。
-    # 逻辑：仅替换外部边界，Worker、HTTP 载荷及事务均执行真实代码。
+    # 逻辑：仅替换临时身份的 HTTP 客户端和外部边界，Worker、载荷及事务执行真实代码。
     # 约束：确认没有 Gmail SDK 调用；不触发真实 L3 模型。
     def test_worker_persists_qq_and_deduplicates_incremental(self):
         value = qq_mail.message_id("INBOX", 10, 1)
         raw = self.raw(value)
         request_run(self.owner, self.mailbox.pk, sync_options={"recent_days": 7, "max_messages": 20})
-        with patch("apps.crm.worker.django_backend_from_environment", return_value=self.backend), patch("apps.crm.worker.create_service_from_authorization") as gmail, patch.object(qq_mail, "connect", return_value=Mock()), patch.object(qq_mail, "disconnect"), patch.object(qq_mail, "folders", return_value=["INBOX", "Sent Messages"]), patch.object(qq_mail, "select_folder", return_value=10), patch.object(qq_mail, "list_uids", side_effect=lambda client, after, since=None: [1] if after == 0 else []), patch.object(qq_mail, "read_email", return_value=raw) as read, patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=json.dumps(raw["facts"])) as model:
+        with patch("apps.crm.dispatch.django_backend_from_environment", return_value=self.backend), patch("apps.crm.worker.create_service_from_authorization") as gmail, patch.object(qq_mail, "connect", return_value=Mock()), patch.object(qq_mail, "disconnect"), patch.object(qq_mail, "folders", return_value=["INBOX", "Sent Messages"]), patch.object(qq_mail, "select_folder", return_value=10), patch.object(qq_mail, "list_uids", side_effect=lambda client, after, since=None: [1] if after == 0 else []), patch.object(qq_mail, "read_email", return_value=raw) as read, patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=json.dumps(raw["facts"])) as model:
             # 本测试的 Sent Messages 保持空箱，INBOX 首次有一封。
             with patch.object(qq_mail, "list_uids", side_effect=[[1], []]):
                 self.assertTrue(run_sync(self.owner))

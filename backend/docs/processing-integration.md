@@ -39,7 +39,7 @@ python backend/manage.py crm_worker --analysis-workers 2 --poll 1
 
 `--once` 排空当前可领取队列后退出，会实际调用 Gmail 与百炼，不能用于纯只读检查。Worker 要求 `ANALYSIS_PROVIDER=agent`；规则演示仍由页面的既有 rules 入口执行，不作为 Agent 失败回退。此次没有改变现有 provider。
 
-Web 内的旧调度线程及其开关已移除。一个 Worker 绑定当前 Agent 服务令牌所属员工；多员工分别使用各自服务凭证运行 Worker。代码不创建操作系统服务，也不在 Web 启动时创建子进程。`sales_worker` 继续只负责已确认的发信/日历动作与跟进提醒。
+Web 内的旧调度线程及其开关已移除。共享 Worker 从数据库轮转调度所有有效员工；每个工作单元使用独立临时凭证和客户端，执行后撤销凭证，员工无需手工绑定进程。代码不创建操作系统服务，也不在 Web 启动时创建子进程。`sales_worker` 继续只负责已确认的发信/日历动作与跟进提醒。
 
 ## 状态、恢复和兼容
 

@@ -347,7 +347,7 @@ class DurableLineageTests(TransactionTestCase):
     # 功能：验证独立 Worker 调度人工修复而不要求点击同步。
     # 输入：无外部参数；仅有补抽取与被其阻塞的画像任务。
     # 输出：模型被调用一次、失败持久化，--once 不被阻塞画像无限挂起。
-    # 逻辑：调用真实 management command，仅替换员工配置及模型边界。
+    # 逻辑：调用真实共享 management command，从数据库发现员工，仅替换模型边界。
     # 约束：测试明确开启 agent 模式但不允许真实 Gmail/LLM 调用。
     @override_settings(ANALYSIS_PROVIDER="agent")
     def test_worker_dispatches_repair_without_sync_and_once_exits(self):
@@ -356,7 +356,7 @@ class DurableLineageTests(TransactionTestCase):
         ingestion.submit_emails(self.owner, [data])
         email = Email.objects.get(pk=data["dedupe_key"])
         review_email(self.owner, email.pk, "confirmed_business", email.review_revision)
-        with patch("apps.crm.management.commands.crm_worker.worker_owner", return_value=self.owner), patch("apps.crm.lineage.bailian_extraction_provider", side_effect=RuntimeError("mock model failure")) as model:
+        with patch("apps.crm.lineage.bailian_extraction_provider", side_effect=RuntimeError("mock model failure")) as model:
             call_command("crm_worker", once=True)
         model.assert_called_once()
         self.assertEqual(email.repairs.get().status, "failed")
