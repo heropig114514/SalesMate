@@ -18,6 +18,9 @@
 - BackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
 - BackendClient.get_sync_state：读取邮箱游标和 ETag。
 - BackendClient.save_sync_state：条件更新邮箱游标。
+- BackendClient.claim_answer_request：领取一条销售聊天回答请求。
+- BackendClient.get_answer_context：读取请求绑定的客户和知识上下文。
+- BackendClient.report_answer：回报带 Prompt 版本的聊天结果。
 - BackendRetrievalError：表示后端读取失败。
 - BackendConfigurationError：表示配置不满足调用前提。
 - BackendContractError：表示响应违反协议。
@@ -41,6 +44,9 @@
 - DjangoBackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
 - DjangoBackendClient.get_sync_state：读取邮箱游标和 ETag。
 - DjangoBackendClient.save_sync_state：条件更新邮箱游标。
+- DjangoBackendClient.claim_answer_request：映射聊天请求领取接口。
+- DjangoBackendClient.get_answer_context：映射聊天上下文接口。
+- DjangoBackendClient.report_answer：映射聊天回答保存接口。
 - DjangoBackendClient._write_headers：构造写请求所需租约与版本头。
 - DjangoBackendClient._request：发起认证 HTTP 并规范化失败。
 - DjangoBackendClient._company_id：验证并提取公司 ID。
@@ -74,7 +80,7 @@ _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
 
 
 class BackendClient(Protocol):
-    """L1–L4 workflow 使用的最小真实后端接口。"""
+    """L1–L4 与只读聊天 workflow 使用的最小真实后端接口。"""
 
     def submit_emails(self, submissions: list[dict[str, Any]]) -> JsonObject: ...
 
@@ -109,6 +115,12 @@ class BackendClient(Protocol):
     def get_sync_state(self, mailbox_id: str) -> JsonObject: ...
 
     def save_sync_state(self, sync_state: JsonObject) -> JsonObject: ...
+
+    def claim_answer_request(self) -> JsonObject | None: ...
+
+    def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
+
+    def report_answer(self, result: JsonObject) -> JsonObject: ...
 
 
 class BackendRetrievalError(RuntimeError):
@@ -485,6 +497,148 @@ class DjangoBackendClient:
             raise BackendContractError("保存 SyncState 的响应缺少 ETag。")
         self._mailbox_revisions[mailbox_id] = returned_revision
         return saved
+
+    def claim_answer_request(self) -> dict[str, Any] | None:
+        """领取零个或一个待回答聊天请求。"""
+        response, _ = self._request(
+            "POST", "chat/requests/claim/", json={}
+        )
+        document = self._object(response, "Answer request claim")
+        if "request" not in document:
+            raise BackendContractError("Answer request claim 响应缺少 request。")
+
+        raw_request = document["request"]
+        if raw_request is None:
+            return None
+        if not isinstance(raw_request, Mapping):
+            raise BackendContractError("Answer request claim 的 request 必须是对象或 null。")
+
+        request = copy.deepcopy(dict(raw_request))
+        for field in (
+            "request_id",
+            "conversation_id",
+            "company_id",
+            "user_message_id",
+        ):
+            self._required_string(request, field, "Answer request claim")
+        return request
+
+    def get_answer_context(self, request_id: str, scope: str) -> dict[str, Any]:
+        """读取当前聊天请求绑定的客户及指定知识范围上下文。"""
+        self._required_string(
+            {"request_id": request_id}, "request_id", "Answer context 请求"
+        )
+        if scope not in {"internal", "external"}:
+            raise BackendContractError("Answer context scope 必须是 internal 或 external。")
+
+        response, _ = self._request(
+            "POST",
+            "chat/context/",
+            json={"request_id": request_id, "scope": scope},
+        )
+        document = self._object(response, "Answer context")
+        if document.get("request_id") != request_id:
+            raise BackendContractError("Answer context 的 request_id 与请求不一致。")
+        if document.get("scope") != scope:
+            raise BackendContractError("Answer context 的 scope 与请求不一致。")
+
+        customer_context = document.get("customer_context")
+        context_items = document.get("context_items")
+        self._object_list(customer_context, "Answer context customer_context")
+        self._object_list(context_items, "Answer context context_items")
+
+        customer_status = document.get("customer_context_status")
+        allowed_customer_statuses = (
+            {"completed", "failed"}
+            if scope == "internal"
+            else {"not_applicable"}
+        )
+        if customer_status not in allowed_customer_statuses:
+            raise BackendContractError(
+                "Answer context 的 customer_context_status 与 scope 不一致。"
+            )
+        if scope == "external" and customer_context:
+            raise BackendContractError("External answer context 不得包含 customer_context。")
+
+        if document.get("knowledge_status") not in {"completed", "failed"}:
+            raise BackendContractError("Answer context 的 knowledge_status 无效。")
+        self._retrieval_gaps(document.get("retrieval_gaps"))
+        if type(document.get("external_available")) is not bool:
+            raise BackendContractError("Answer context 的 external_available 必须是布尔值。")
+        if scope == "external" and document["external_available"] is not True:
+            raise BackendContractError(
+                "External answer context 的 external_available 必须为 true。"
+            )
+        return document
+
+    def report_answer(self, result: Mapping[str, Any]) -> dict[str, Any]:
+        """回报一次稳定的 completed 或 failed 聊天结果。"""
+        if not isinstance(result, Mapping):
+            raise BackendContractError("Report answer 载荷必须是对象。")
+        payload = copy.deepcopy(dict(result))
+        request_id = self._required_string(payload, "request_id", "Report answer")
+        self._required_string(
+            payload, "chat_prompt_version", "Report answer"
+        )
+        status = payload.get("status")
+        if status not in {"completed", "failed"}:
+            raise BackendContractError("Report answer 的 status 必须是 completed 或 failed。")
+
+        response, _ = self._request(
+            "POST", "chat/answers/", json=payload
+        )
+        document = self._object(response, "Report answer")
+        if document.get("request_id") != request_id:
+            raise BackendContractError("Report answer 响应的 request_id 与请求不一致。")
+        if document.get("saved") is not True:
+            raise BackendContractError("Report answer 响应未确认保存。")
+        if type(document.get("duplicate")) is not bool:
+            raise BackendContractError("Report answer 响应的 duplicate 必须是布尔值。")
+        if "assistant_message_id" not in document:
+            raise BackendContractError("Report answer 响应缺少 assistant_message_id。")
+        assistant_message_id = document["assistant_message_id"]
+        if status == "completed":
+            if not isinstance(assistant_message_id, str) or not assistant_message_id.strip():
+                raise BackendContractError(
+                    "Completed report 响应缺少 assistant_message_id。"
+                )
+        elif assistant_message_id is not None and (
+            not isinstance(assistant_message_id, str)
+            or not assistant_message_id.strip()
+        ):
+            raise BackendContractError(
+                "Failed report 响应的 assistant_message_id 无效。"
+            )
+        return document
+
+    @staticmethod
+    def _required_string(
+        document: Mapping[str, Any], field: str, name: str
+    ) -> str:
+        value = document.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise BackendContractError(f"{name} 缺少 {field}。")
+        return value
+
+    @staticmethod
+    def _object_list(value: object, name: str) -> None:
+        if not isinstance(value, list):
+            raise BackendContractError(f"{name} 必须是数组。")
+        if any(not isinstance(item, Mapping) for item in value):
+            raise BackendContractError(f"{name} 的每一项都必须是对象。")
+
+    @classmethod
+    def _retrieval_gaps(cls, value: object) -> None:
+        if not isinstance(value, list):
+            raise BackendContractError("Answer context 的 retrieval_gaps 必须是数组。")
+        required_fields = {"scope", "code", "message"}
+        for gap in value:
+            if not isinstance(gap, Mapping) or set(gap) != required_fields:
+                raise BackendContractError(
+                    "Answer context retrieval gap 必须仅包含 scope、code 和 message。"
+                )
+            for field in required_fields:
+                cls._required_string(gap, field, "Answer context retrieval gap")
 
     def _write_headers(self, company_id: str) -> dict[str, str]:
         context = self._company_jobs.get(company_id)

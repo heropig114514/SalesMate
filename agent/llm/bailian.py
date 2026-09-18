@@ -10,8 +10,12 @@ class LLMError(RuntimeError):
     """模型配置、网络或响应格式错误。"""
 
 
-def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048) -> str:
-    """执行一次模型请求；具体 JSON 字段通过调用方的提示词规定。"""
+_CHAT_ROLES = frozenset({"system", "user", "assistant"})
+_CHAT_MESSAGE_KEYS = frozenset({"role", "content"})
+
+
+def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
+    """Send a validated JSON-object request through the shared Bailian transport."""
     if type(max_tokens) is not int or max_tokens <= 0:
         raise LLMError("max_tokens 必须是正整数。")
     api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
@@ -28,10 +32,7 @@ def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048)
 
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text},
-        ],
+        "messages": messages,
         "response_format": {"type": "json_object"},
         "max_tokens": max_tokens,
     }
@@ -64,3 +65,38 @@ def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048)
     except (ValueError, KeyError, IndexError, TypeError):
         raise LLMError("百炼没有返回完整文本结果，请检查输出长度和模型兼容性。") from None
     return content
+
+
+def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048) -> str:
+    """执行一次模型请求；具体 JSON 字段通过调用方的提示词规定。"""
+    return _request_json(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+        max_tokens=max_tokens,
+    )
+
+
+def generate_chat_json(
+    messages: list[dict[str, str]],
+    *,
+    max_tokens: int = 2000,
+) -> str:
+    """按原顺序发送严格校验的聊天消息并返回模型原始 JSON 文本。"""
+    if type(messages) is not list or not messages:
+        raise LLMError("messages 必须是非空列表。")
+
+    validated_messages = []
+    for message in messages:
+        if type(message) is not dict or set(message) != _CHAT_MESSAGE_KEYS:
+            raise LLMError("每条消息必须且只能包含 role 和 content。")
+        role = message["role"]
+        content = message["content"]
+        if type(role) is not str or role not in _CHAT_ROLES:
+            raise LLMError("消息 role 只能是 system、user 或 assistant。")
+        if type(content) is not str or not content.strip():
+            raise LLMError("消息 content 必须是非空字符串。")
+        validated_messages.append({"role": role, "content": content})
+
+    return _request_json(validated_messages, max_tokens=max_tokens)

@@ -254,5 +254,440 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertNotIn("service-secret", str(raised.exception))
 
 
+    def test_chat_claim_maps_zero_and_single_work_with_authenticated_transport(self):
+        claimed_request = {
+            "request_id": "request-1",
+            "conversation_id": "conversation-1",
+            "company_id": "company-1",
+            "user_message_id": "message-1",
+            "question": "这个客户最近最关心什么？",
+            "recent_history": [
+                {"role": "user", "content": "先看最近往来。"},
+                {"role": "assistant", "content": "请问关注需求还是风险？"},
+            ],
+        }
+        session = _Session(
+            _Response({"request": None}),
+            _Response({"request": claimed_request}),
+        )
+        backend = self.client(session, mailbox_id=None)
+
+        self.assertIsNone(backend.claim_answer_request())
+        claimed = backend.claim_answer_request()
+
+        self.assertEqual(claimed, claimed_request)
+        self.assertIsNot(claimed, claimed_request)
+        claimed["recent_history"][0]["content"] = "changed"
+        self.assertEqual(
+            claimed_request["recent_history"][0]["content"], "先看最近往来。"
+        )
+        for method, url, kwargs in session.calls:
+            with self.subTest(url=url):
+                self.assertEqual(method, "POST")
+                self.assertTrue(url.endswith("agent/chat/requests/claim/"))
+                self.assertEqual(kwargs["json"], {})
+                self.assertEqual(
+                    kwargs["headers"]["Authorization"], "Agent service-secret"
+                )
+                self.assertEqual(kwargs["timeout"], 30.0)
+
+    def test_chat_context_maps_scopes_and_independent_retrieval_statuses(self):
+        customer_item = {
+            "source_id": "mail:1",
+            "source_type": "customer_email",
+            "title_or_label": "采购咨询",
+            "content": "需要正式报价。",
+        }
+        internal_gap = {
+            "scope": "internal_knowledge",
+            "code": "temporarily_unavailable",
+            "message": "内部知识暂时不可用。",
+        }
+        external_gap = {
+            "scope": "external_knowledge",
+            "code": "temporarily_unavailable",
+            "message": "外部知识暂时不可用。",
+        }
+        internal_partial = {
+            "request_id": "request-1",
+            "scope": "internal",
+            "customer_context": [customer_item],
+            "context_items": [],
+            "customer_context_status": "completed",
+            "knowledge_status": "failed",
+            "retrieval_gaps": [internal_gap],
+            "external_available": True,
+        }
+        internal_customer_failure = {
+            "request_id": "request-1",
+            "scope": "internal",
+            "customer_context": [],
+            "context_items": [
+                {
+                    "source_id": "kb:1",
+                    "source_type": "internal_knowledge",
+                    "title_or_label": "报价规则",
+                    "content": "报价需要审批。",
+                }
+            ],
+            "customer_context_status": "failed",
+            "knowledge_status": "completed",
+            "retrieval_gaps": [],
+            "external_available": False,
+        }
+        external_failure = {
+            "request_id": "request-1",
+            "scope": "external",
+            "customer_context": [],
+            "context_items": [],
+            "customer_context_status": "not_applicable",
+            "knowledge_status": "failed",
+            "retrieval_gaps": [external_gap],
+            "external_available": True,
+        }
+        session = _Session(
+            _Response(internal_partial),
+            _Response(internal_customer_failure),
+            _Response(external_failure),
+        )
+        backend = self.client(session, mailbox_id=None)
+
+        first_internal = backend.get_answer_context("request-1", "internal")
+        second_internal = backend.get_answer_context("request-1", "internal")
+        external = backend.get_answer_context("request-1", "external")
+
+        self.assertEqual(first_internal["customer_context_status"], "completed")
+        self.assertEqual(first_internal["knowledge_status"], "failed")
+        self.assertEqual(first_internal["retrieval_gaps"], [internal_gap])
+        self.assertEqual(second_internal["customer_context_status"], "failed")
+        self.assertEqual(second_internal["knowledge_status"], "completed")
+        self.assertEqual(external["customer_context_status"], "not_applicable")
+        self.assertEqual(external["knowledge_status"], "failed")
+        self.assertEqual(external["retrieval_gaps"], [external_gap])
+        first_internal["customer_context"][0]["content"] = "changed"
+        self.assertEqual(customer_item["content"], "需要正式报价。")
+
+        expected_scopes = ["internal", "internal", "external"]
+        for call, expected_scope in zip(session.calls, expected_scopes):
+            with self.subTest(scope=expected_scope):
+                method, url, kwargs = call
+                self.assertEqual(method, "POST")
+                self.assertTrue(url.endswith("agent/chat/context/"))
+                self.assertEqual(
+                    kwargs["json"],
+                    {"request_id": "request-1", "scope": expected_scope},
+                )
+                self.assertEqual(
+                    kwargs["headers"]["Authorization"], "Agent service-secret"
+                )
+
+    def test_chat_report_maps_completed_failed_and_duplicate_results(self):
+        completed = {
+            "request_id": "request-1",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "客户关注正式报价。[1]",
+            "citations": [
+                {
+                    "source_id": "mail:1",
+                    "source_type": "customer_email",
+                    "title_or_label": "采购咨询",
+                }
+            ],
+            "status": "completed",
+            "error": None,
+        }
+        failed = {
+            "request_id": "request-2",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "",
+            "citations": [],
+            "status": "failed",
+            "error": {
+                "code": "model_unavailable",
+                "message": "回答模型暂时不可用，请稍后重试。",
+            },
+        }
+        session = _Session(
+            _Response(
+                {
+                    "request_id": "request-1",
+                    "saved": True,
+                    "duplicate": False,
+                    "assistant_message_id": "assistant-1",
+                }
+            ),
+            _Response(
+                {
+                    "request_id": "request-2",
+                    "saved": True,
+                    "duplicate": False,
+                    "assistant_message_id": None,
+                }
+            ),
+            _Response(
+                {
+                    "request_id": "request-1",
+                    "saved": True,
+                    "duplicate": True,
+                    "assistant_message_id": "assistant-1",
+                }
+            ),
+        )
+        backend = self.client(session, mailbox_id=None)
+
+        saved = backend.report_answer(completed)
+        failure_saved = backend.report_answer(failed)
+        duplicate = backend.report_answer(completed)
+
+        self.assertFalse(saved["duplicate"])
+        self.assertIsNone(failure_saved["assistant_message_id"])
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["assistant_message_id"], "assistant-1")
+        self.assertIsNot(saved, session.responses)
+        for call, expected_payload in zip(
+            session.calls, (completed, failed, completed)
+        ):
+            with self.subTest(request_id=expected_payload["request_id"]):
+                method, url, kwargs = call
+                self.assertEqual(method, "POST")
+                self.assertTrue(url.endswith("agent/chat/answers/"))
+                self.assertEqual(kwargs["json"], expected_payload)
+                self.assertIsNot(kwargs["json"], expected_payload)
+                self.assertEqual(
+                    kwargs["headers"]["Authorization"], "Agent service-secret"
+                )
+
+    def test_chat_scope_and_report_input_validation_happens_before_transport(self):
+        session = _Session()
+        backend = self.client(session, mailbox_id=None)
+
+        invalid_context_calls = (
+            ("", "internal"),
+            ("request-1", "partner"),
+            ("request-1", "INTERNAL"),
+        )
+        for request_id, scope in invalid_context_calls:
+            with self.subTest(request_id=request_id, scope=scope):
+                with self.assertRaises(BackendContractError):
+                    backend.get_answer_context(request_id, scope)
+        with self.assertRaises(BackendContractError):
+            backend.report_answer([])
+        with self.assertRaises(BackendContractError):
+            backend.report_answer({"request_id": "request-1", "status": "pending"})
+        with self.assertRaises(BackendContractError):
+            backend.report_answer(
+                {"request_id": "request-1", "status": "completed"}
+            )
+        with self.assertRaises(BackendContractError):
+            backend.report_answer(
+                {
+                    "request_id": "request-1",
+                    "chat_prompt_version": " ",
+                    "status": "completed",
+                }
+            )
+
+        self.assertEqual(session.calls, [])
+
+    def test_chat_claim_rejects_malformed_response_objects(self):
+        malformed_payloads = (
+            [],
+            {},
+            {"request": []},
+            {
+                "request": {
+                    "request_id": "",
+                    "conversation_id": "conversation-1",
+                    "company_id": "company-1",
+                    "user_message_id": "message-1",
+                }
+            },
+            {
+                "request": {
+                    "request_id": "request-1",
+                    "conversation_id": "",
+                    "company_id": "company-1",
+                    "user_message_id": "message-1",
+                }
+            },
+        )
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload):
+                session = _Session(_Response(payload))
+                with self.assertRaises(BackendContractError):
+                    self.client(session, mailbox_id=None).claim_answer_request()
+
+    def test_chat_context_rejects_mismatches_and_malformed_status_objects(self):
+        valid = {
+            "request_id": "request-1",
+            "scope": "internal",
+            "customer_context": [],
+            "context_items": [],
+            "customer_context_status": "completed",
+            "knowledge_status": "completed",
+            "retrieval_gaps": [],
+            "external_available": True,
+        }
+        malformed_payloads = (
+            [],
+            dict(valid, request_id="request-2"),
+            dict(valid, scope="external"),
+            dict(valid, customer_context="not-a-list"),
+            dict(valid, context_items=["not-an-object"]),
+            dict(valid, customer_context_status="not_applicable"),
+            dict(valid, knowledge_status="partial"),
+            dict(valid, retrieval_gaps="not-a-list"),
+            dict(
+                valid,
+                retrieval_gaps=[
+                    {
+                        "scope": "internal_knowledge",
+                        "code": "unavailable",
+                        "message": "暂时不可用。",
+                        "raw_detail": "must-not-be-accepted",
+                    }
+                ],
+            ),
+            dict(valid, external_available="true"),
+        )
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload):
+                session = _Session(_Response(payload))
+                with self.assertRaises(BackendContractError):
+                    self.client(session, mailbox_id=None).get_answer_context(
+                        "request-1", "internal"
+                    )
+
+        invalid_external = dict(
+            valid,
+            scope="external",
+            customer_context=[{"unexpected": "customer-data"}],
+            customer_context_status="not_applicable",
+        )
+        session = _Session(_Response(invalid_external))
+        with self.assertRaises(BackendContractError):
+            self.client(session, mailbox_id=None).get_answer_context(
+                "request-1", "external"
+            )
+
+        unavailable_external = dict(
+            valid,
+            scope="external",
+            customer_context_status="not_applicable",
+            external_available=False,
+        )
+        session = _Session(_Response(unavailable_external))
+        with self.assertRaises(BackendContractError):
+            self.client(session, mailbox_id=None).get_answer_context(
+                "request-1", "external"
+            )
+
+    def test_chat_report_rejects_mismatched_and_malformed_response_objects(self):
+        result = {
+            "request_id": "request-1",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "有依据的回答。[1]",
+            "citations": [],
+            "status": "completed",
+            "error": None,
+        }
+        malformed_payloads = (
+            [],
+            {
+                "request_id": "request-2",
+                "saved": True,
+                "duplicate": False,
+                "assistant_message_id": "assistant-1",
+            },
+            {
+                "request_id": "request-1",
+                "saved": False,
+                "duplicate": False,
+                "assistant_message_id": "assistant-1",
+            },
+            {
+                "request_id": "request-1",
+                "saved": True,
+                "duplicate": "false",
+                "assistant_message_id": "assistant-1",
+            },
+            {
+                "request_id": "request-1",
+                "saved": True,
+                "duplicate": False,
+            },
+            {
+                "request_id": "request-1",
+                "saved": True,
+                "duplicate": False,
+                "assistant_message_id": None,
+            },
+        )
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload):
+                session = _Session(_Response(payload))
+                with self.assertRaises(BackendContractError):
+                    self.client(session, mailbox_id=None).report_answer(result)
+
+    def test_chat_non_json_and_http_failures_are_safe(self):
+        import io
+        import logging
+
+        class _NonJsonResponse(_Response):
+            def json(self):
+                raise ValueError("raw response body")
+
+        sensitive_values = (
+            "service-secret",
+            "SENSITIVE QUESTION BODY",
+            "SENSITIVE CONTEXT BODY",
+            "SENSITIVE ANSWER BODY",
+            "raw response body",
+        )
+        captured_logs = io.StringIO()
+        logger = logging.getLogger("agent.clients.backend_api")
+        handler = logging.StreamHandler(captured_logs)
+        logger.addHandler(handler)
+        errors = []
+        try:
+            non_json_session = _Session(
+                _NonJsonResponse({"untrusted": "raw response body"})
+            )
+            with self.assertRaises(BackendContractError) as non_json_error:
+                self.client(
+                    non_json_session, mailbox_id=None
+                ).claim_answer_request()
+            errors.append(str(non_json_error.exception))
+
+            http_session = _Session(
+                _Response(
+                    {
+                        "question": "SENSITIVE QUESTION BODY",
+                        "context": "SENSITIVE CONTEXT BODY",
+                        "assistant_text": "SENSITIVE ANSWER BODY",
+                        "error": {
+                            "code": "temporarily_unavailable",
+                            "detail": "聊天后端暂时不可用。",
+                        },
+                    },
+                    status=503,
+                )
+            )
+            with self.assertRaises(BackendRequestError) as http_error:
+                self.client(http_session, mailbox_id=None).get_answer_context(
+                    "request-1", "internal"
+                )
+            errors.append(str(http_error.exception))
+            self.assertEqual(http_error.exception.status_code, 503)
+            self.assertEqual(http_error.exception.code, "temporarily_unavailable")
+        finally:
+            logger.removeHandler(handler)
+
+        observable_failure_output = "\n".join(errors) + captured_logs.getvalue()
+        for sensitive in sensitive_values:
+            with self.subTest(sensitive=sensitive):
+                self.assertNotIn(sensitive, observable_failure_output)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,28 +28,92 @@ Agent 不自行提供 HTTP 服务或数据库。现有 Django 后端负责员工
 
 每个 Agent 服务凭证只绑定一名后端员工。Agent 领取的是这名员工从页面请求的邮箱同步任务，后端归组和页面查询也继续按员工隔离，因此前端表示“当前员工的 Gmail 收件箱”，不是整个公司的共享收件箱。
 
-Agent 目录本身不包含常驻 Worker、Gmail 发送、翻译、会议排期、右侧自由对话助手、知识库或行业资讯。常驻 Worker、页面筛选、排序、分页、CRM 建档及实际持久化由前后端负责。
+Agent 目录已经包含只读销售聊天的 Skill、模型适配、工作流、一次性 CLI 和离线测试，但不包含聊天 HTTP 服务、数据库、权威会话存储、知识库基础设施、业务工具执行器、常驻 Worker 或轮询循环。Gmail 发送、日历操作、CRM/文件写入及其他业务或外部数据创建、修改、删除均不在 Initial Release 能力范围内。页面筛选、排序、分页、CRM 建档和实际持久化仍由前后端负责。
+
+### 1.1 只读销售聊天（Agent 侧已实现）
+
+Agent Delivery 中已实现的聊天能力如下：
+
+- `skills/sales-chat/SKILL.md` 通过现有 loader 提供独立 `sales-chat` Skill，版本为 `chat-v2`。它规定客户/内部来源优先、外部来源仅补缺、资料不足/部分支持/冲突/判断表达、精确 Citation 和提示注入隔离。
+- `llm/bailian.py` 的 `generate_chat_json(messages, *, max_tokens)` 接收原序 `system|user|assistant` 消息并请求 JSON Object；请求不包含 `tools`、`tool_choice` 或函数调用字段。Existing L1–L4 Pipeline 继续使用原有 `generate_json()` 两消息接口。
+- `workflows/chat.py` 严格解析请求、历史、上下文和模型候选；先读取 internal，再只在 `external_available=true` 时预取 external；按 customer → internal → external 裁剪，并把上下文、历史和当前问题包装为不可信数据。外部资料只能补足客户/内部证据没有支持的部分。
+- 直接要求发送邮件、安排日历、写 CRM/文件等 Tool Action 时，工作流在读取客户或知识上下文前就在本地返回“未执行、当前仅支持问答”，不调用模型或业务工具。生成邮件文本、解释会议信息等无副作用文本请求仍属于只读问答。
+- 可用资料为空时，本地返回资料不足和零引用；非空上下文完整交给模型结合当前问题与最近历史判断，不使用关键词规则提前丢弃同义表达。等价的简短资料不足措辞可以通过校验；事项指代不足时只返回一个简短澄清问题。其余请求至多调用模型一次，不自动修复或重试。
+- 模型结果必须通过精确字段、Citation 三元组白名单与来源标识唯一性、marker、数值引用、受控语义关联、冲突声明和判断措辞校验。检索缺口只有与当前问题有关时才应进入回答；Agent 不再因为无关知识源失败而强制添加缺口说明，也不根据不同业务指标中的数字自动推断来源冲突。失败结果不包含未经验证的事实性回答。
+- `process_chat_once()` 每次最多领取一个请求并尝试回报一次；无工作返回 `None`。回报失败只返回本地 `report_failed`，不会自动重试或声称已经保存。
+
+Initial Release 的工具扩展点是关闭的：模型看不到工具 schema、回调或业务写接口，整个请求的 Tool Action 调用数为零。Agent 仍不是服务端，不监听 HTTP、不建数据库、不保存会话、不实现检索基础设施，也不自行持续领取请求。
+
+### 1.2 一次性聊天 CLI
+
+在项目根目录运行：
+
+```powershell
+python -m agent.main --process-chat-once
+```
+
+命令复用现有 `.env` 加载和 `DjangoBackendClient`：领取零个或一个聊天请求、生成稳定结果、尝试回报后立即退出。标准输出是 UTF-8 JSON；无工作或 `completed` 正常退出，`failed`（包括本地 `report_failed`）返回非零。该参数与 `--analysis-company-id`、`--process-jobs-once`、`--sync-authorized-mailboxes-once` 互斥。它不是 daemon；Demo 期间的重复触发必须由外部调度器或现有 Worker 串行完成。
+
+### 1.3 三接口联调契约
+
+`DjangoBackendClient` 已实现下列 Agent 侧 HTTP 映射，均复用既有 `Authorization: Agent <service-token>` 和 timeout，并对响应做最小契约校验：
+
+| Agent 方法 | 受保护路径 | Agent 侧行为 |
+|---|---|---|
+| `claim_answer_request()` | `POST chat/requests/claim/` | 发送 `{}`；把 `{"request": null}` 规范为无工作，否则返回一条已绑定的请求 |
+| `get_answer_context(request_id, scope)` | `POST chat/context/` | `scope` 仅允许 `internal|external`；独立校验客户上下文状态、知识状态、检索缺口和 external 可用性 |
+| `report_answer(result)` | `POST chat/answers/` | 回报 `chat_prompt_version`、`completed|failed`、回答、Citation 和安全错误；接受后端首存或幂等重复响应 |
+
+这些是 **Agent 适配器和 mocked contract**，不是“真实 Django 已经提供聊天接口”的声明。联调时，Backend Team 必须在现有 `/api/v1/agent/` 基址下实现并保护以上路径，按 service token 对员工、conversation、company、user message 和 request_id 做授权绑定；Agent 不发送任意 company/query 覆盖，也不得直连知识库。自动测试使用 fake session/backend，不连接真实 HTTP、模型、数据库或知识服务。
+
+### 1.4 Agent Delivery 与 Web Demo Delivery
+
+当前文档中的 **Agent Delivery** 仅指 `agent/` 内已有的 Chat Skill、有序模型边界、只读回答工作流、BackendClient 三接口映射、一次性 CLI，以及单元、示例、失败路径和四个确定性属性测试。它不等于网页可聊天 Demo 已交付。
+
+以下仍是 **Web Demo Delivery 的外部阻塞依赖**：
+
+1. **Backend Team**：实现 pending/processing/completed/failed answer request、原子 claim、员工与客户授权隔离、request_id 幂等 report、唯一 immutable assistant Message、Citation/安全错误持久化和浏览器可读状态投影。
+2. **知识与上下文基础设施**：按当前 request 返回授权的最近客户邮件、最新有效 L3 画像、可用工单/报价/订单摘要、内部/外部知识，以及独立的 `customer_context_status`、`knowledge_status` 和安全 `retrieval_gaps`；Agent 当前只消费该契约，不检索或保存这些数据。
+3. **Frontend Team**：提交 user Message 后显示生成中状态，以有界间隔轮询状态或会话历史，completed 时自动展示唯一 assistant Message 和 Citation，failed 时显示安全错误；切换客户/会话或关闭侧栏时取消旧轮询。
+4. **Deployment/Backend Team**：Demo 运行期间由外部调度器或现有 Worker 串行、持续触发 `python -m agent.main --process-chat-once`。Agent 本身不会增加常驻循环。
+5. **端到端验收**：只有“网页提问 → pending → Agent 领取 → 授权上下文/知识读取 → 一次模型回答 → 后端保存 → 网页自动显示回答与引用”通过，并且 Existing L1–L4 Pipeline 回归不变，才能声明 Web Demo Delivery 完成。
+
+不要把 Agent 的 fake backend、mocked HTTP 测试或手工执行一次 CLI 当作真实后端持久化、浏览器自动刷新或持续运行能力。
+
+### 1.5 聊天离线测试
+
+```powershell
+# 聊天工作流、CLI/百炼回归和三接口 mocked contract
+python -m unittest agent.tests.test_chat agent.tests.test_core agent.tests.test_http_backend
+
+# 包含 Existing L1–L4 Pipeline 回归的完整 Agent 离线套件
+python -m unittest discover -s agent/tests -p "test_*.py"
+```
+
+`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
 
 ## 2. 目录职责
 
 ```text
 agent/
-├── main.py                         # Gmail、L2 和真实后端一次性任务 CLI
+├── main.py                         # Gmail、L2、聊天和真实后端一次性任务 CLI
 ├── config.py                       # 从项目根目录 .env 读取共享配置
 ├── clients/
 │   ├── __init__.py                 # 外部服务客户端包出口
-│   └── backend_api.py              # BackendClient 协议与 Django API 调用
+│   └── backend_api.py              # BackendClient 协议、Django API 与聊天三接口映射
 ├── tools/
 │   ├── gmail.py                    # 后端授权信息、Gmail History 与邮件读取
 │   └── email_parser.py             # MIME、正文和历史回复解析
 ├── llm/
-│   └── bailian.py                  # 百炼 JSON Object 请求
+│   └── bailian.py                  # L1/L3 与有序聊天的百炼 JSON Object 请求
 ├── skills/
 │   ├── loader.py                   # Skill 发现、元数据解析和进程内缓存
 │   ├── email-fact-extraction/
 │   │   └── SKILL.md                # L1 抽取指令、版本和输出上限
-│   └── customer-analysis/
-│       └── SKILL.md                # L3 画像指令、版本和输出上限
+│   ├── customer-analysis/
+│   │   └── SKILL.md                # L3 画像指令、版本和输出上限
+│   └── sales-chat/
+│       └── SKILL.md                # chat-v2 只读问答、grounding 与安全规则
 ├── workflows/
 │   ├── l1_email.py                 # L1 单封邮件事实抽取
 │   ├── gmail_sync.py               # 前端 Gmail 同步服务函数
@@ -57,28 +121,31 @@ agent/
 │   ├── analysis_input.py           # L2 公司事实归并和指标
 │   ├── customer_analysis.py        # L3 客户画像和分析
 │   ├── lead_score.py               # L4 确定性优先级评分
-│   └── orchestration.py            # L2–L4 和一次任务处理
+│   ├── orchestration.py            # L2–L4 和一次任务处理
+│   └── chat.py                     # 只读聊天验证、裁剪、回答和一次性编排
 └── tests/
     ├── __init__.py                 # 测试包标记
     ├── email_submission_exploration.py  # L1 公共 fixture 与数据契约边界测试
     ├── fake_backend.py             # 仅供离线测试使用的协议假实现
-    ├── test_core.py                # L1、Gmail、百炼客户端和数据契约单元测试
+    ├── test_chat.py                # 聊天示例、失败路径和四个属性测试
+    ├── test_core.py                # L1、CLI、百炼客户端和数据契约单元测试
     ├── test_integration.py         # Gmail 只读读取、History 与百炼客户端集成测试
     ├── test_analysis_input.py      # L2 AnalysisInput 行为测试
-    ├── test_http_backend.py        # Django HTTP 传输映射测试
+    ├── test_http_backend.py        # Django HTTP 传输与聊天 mocked contract 测试
     └── test_mvp_pipeline.py        # Gmail 同步及 L2–L4 主链测试
 ```
 
 没有单独的 `schemas` 或 `prompts` 层。模型能力以 `agent/skills/<skill-name>/SKILL.md` 组织，frontmatter 提供路由名称、用途描述、版本和输出 token 上限，正文保存模型指令。workflow 按名称加载 Skill，只负责拼装本次输入、调用百炼和校验结果。数据结构继续使用普通字典和少量就地 dataclass。
 
-当前提供两个 Skill：
+当前提供三个 Skill：
 
 | Skill | 调用阶段 | 输入边界 | 产出 |
 |---|---|---|---|
 | `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
 | `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
+| `sales-chat` (`chat-v2`) | 只读聊天 | 当前问题、最近历史和本次授权上下文 | 经校验的自然语言回答与简单 Citation |
 
-`agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。以后增加邮件回复或会议排期时，应新增职责单一的 Skill，再由路由层按名称或 description 选择；工具执行权限和员工确认流程仍由工作流及后端控制。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`，缓存键和提交结果会直接使用该版本。
+`agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他 Tool Action 必须经过独立规格、权限和确认设计；当前 `sales-chat` 不提供或预留可调用执行器。
 
 QQ 邮箱已作为独立 IMAP 读取源追加，保留现有 Gmail 接入。`tools/qq_mail.py` 提供固定 QQ TLS 服务的只读适配，后端 `qq_sync` 持久同步并复用现有 L1–L4；无需 Google 回调域名。配置及协议兼容边界见 [QQ 邮箱试用](../backend/docs/qq-mailbox.md)。QQ 通过 `crm_worker` 运行，旧 Gmail CLI 不领取 QQ 任务。
 
@@ -716,7 +783,12 @@ python -m agent.main --process-jobs-once --job-limit 10
 
 # 领取员工在网页请求的 Gmail 同步，并运行本次 L1-L4
 python -m agent.main --sync-authorized-mailboxes-once
+
+# 领取并回答至多一条聊天请求，然后立即退出
+python -m agent.main --process-chat-once
 ```
+
+`--process-chat-once` 是只读聊天的一次性 Agent 客户端入口，依次使用受保护的 claim/context/report 接口；它不启动 HTTP 服务、数据库、常驻循环或工具执行器。后端的回答请求、授权上下文、assistant/Citation 持久化和浏览器状态投影，以及持续触发该一次性命令的运行器，仍是 Web Demo 的外部依赖。
 
 网页授权通过 Django 建立员工邮箱连接；浏览器不接触 token，Django 按需启动的 Agent 或 `--sync-authorized-mailboxes-once` 调试命令从受保护的 Agent API 领取。旧的 `--message-id`、`--recent` 和 `--sync-gmail` 本机 Desktop OAuth 命令已经删除，避免与正式网页授权流程维护两套凭据。
 
@@ -750,21 +822,22 @@ python -m unittest discover -s agent/tests -p "test_*.py"
 python -m unittest agent.tests.test_mvp_pipeline
 ```
 
-自动测试不连接真实 Gmail、百炼、数据库或 HTTP 服务。真实 Gmail 与百炼只做人工冒烟验证。
-当前完整 Agent 离线测试共 126 项。
+自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。本次聊天文档一致性验证中，目标命令通过 139 项测试，完整离线发现命令通过 186 项测试。
 
 测试文件分工：
 
-| 文件 | 测试数 | 职责 |
-|---|---:|---|
-| `agent/tests/email_submission_exploration.py` | 6 | 提供 L1 公共 fixture，并覆盖 EmailSubmission 的数据契约边界；文件名不以 `test_` 开头，由 `test_core.py` 导入执行 |
-| `agent/tests/test_core.py` | 74 | 百炼客户端、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取、一次校验修正和 EmailSubmission 契约 |
-| `agent/tests/test_integration.py` | 6 | Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
-| `agent/tests/test_analysis_input.py` | 4 | L2 事实归并、业务上下文、版本和错误边界 |
-| `agent/tests/test_mvp_pipeline.py` | 29 | access token、History 增量同步、L1 并发、进度串行写入、完成即提交、逐封提交隔离、已有抽取复用、积压续传、失败保留与重试、异步公司任务、L3 精简输入、代码围栏本地修复、单次校验修正、确定性规模来源、业务百分比、来源规范化、冲突字段契约、L4、缓存和端到端流程 |
-| `agent/tests/test_http_backend.py` | 7 | Django 服务认证、已有邮件查询、员工邮箱与游标同步、ETag、任务租约、响应归一化和缓存契约 |
+| 文件 | 职责 |
+|---|---|
+| `agent/tests/email_submission_exploration.py` | 提供 L1 公共 fixture，并覆盖 EmailSubmission 的数据契约边界；文件名不以 `test_` 开头，由 `test_core.py` 导入执行 |
+| `agent/tests/test_chat.py` | 覆盖只读聊天消息构造、裁剪、回答策略、失败路径、一次性编排和四个确定性属性 |
+| `agent/tests/test_core.py` | 覆盖百炼客户端、聊天 CLI 回归、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
+| `agent/tests/test_integration.py` | 覆盖 Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
+| `agent/tests/test_analysis_input.py` | 覆盖 L2 事实归并、业务上下文、版本和错误边界 |
+| `agent/tests/test_mvp_pipeline.py` | 覆盖 Gmail 同步、L1 并发与失败隔离、L2–L4、缓存和既有端到端流程 |
+| `agent/tests/test_http_backend.py` | 覆盖 Django 服务认证、邮箱/游标/ETag/任务租约、响应归一化及聊天三接口 mocked contract |
+| `agent/tests/test_qq_mail.py` | 覆盖 QQ IMAP 只读适配边界 |
 
-`agent/tests/fake_backend.py` 只是测试 fixture，不包含测试方法，也不参与实际运行。
+`agent/tests/fake_backend.py` 只是既有流程的测试 fixture；聊天测试中的内存 fake backend 也只模拟外部契约。二者都不参与运行时或真实后端持久化。
 
 ## 11. Django 后端已对齐的契约
 

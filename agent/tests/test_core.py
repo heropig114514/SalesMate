@@ -156,6 +156,439 @@ class BailianClientTests(unittest.TestCase):
         post.assert_called_once()
 
 
+class BailianChatRegressionTests(unittest.TestCase):
+    """Task 1.3 ordered-chat coverage; every transport call is mocked."""
+
+    @staticmethod
+    def generate_chat(messages, *, max_tokens=2000):
+        from agent.llm.bailian import generate_chat_json
+
+        return generate_chat_json(messages, max_tokens=max_tokens)
+
+    @patch.dict("os.environ", BAILIAN_CONFIG, clear=True)
+    @patch("agent.llm.bailian.requests.post")
+    def test_generate_chat_json_preserves_order_and_transport_contract(self, post):
+        messages = [
+            {"role": "system", "content": "Follow the trusted chat policy."},
+            {"role": "user", "content": "First question"},
+            {"role": "assistant", "content": "First answer"},
+            {"role": "user", "content": "Follow-up question"},
+        ]
+        post.return_value = BailianClientTests.successful_response()
+
+        result = self.generate_chat(messages, max_tokens=731)
+
+        self.assertEqual(result, GENERIC_JSON_RESULT)
+        post.assert_called_once()
+        self.assertEqual(
+            post.call_args.args[0],
+            BAILIAN_CONFIG["BAILIAN_BASE_URL"] + "/chat/completions",
+        )
+        request = post.call_args.kwargs
+        self.assertEqual(
+            request["headers"],
+            {"Authorization": "Bearer " + BAILIAN_CONFIG["DASHSCOPE_API_KEY"]},
+        )
+        self.assertEqual(request["json"]["messages"], messages)
+        self.assertEqual(
+            [message["role"] for message in request["json"]["messages"]],
+            ["system", "user", "assistant", "user"],
+        )
+        self.assertEqual(request["json"]["model"], BAILIAN_CONFIG["BAILIAN_MODEL"])
+        self.assertEqual(request["json"]["response_format"], {"type": "json_object"})
+        self.assertEqual(request["json"]["max_tokens"], 731)
+        self.assertEqual(
+            set(request["json"]),
+            {"model", "messages", "response_format", "max_tokens"},
+        )
+        for forbidden_field in ("tools", "tool_choice", "functions", "function_call"):
+            self.assertNotIn(forbidden_field, request["json"])
+        self.assertEqual(request["timeout"], (10, 90))
+        self.assertFalse(request["allow_redirects"])
+
+    @patch.dict("os.environ", BAILIAN_CONFIG, clear=True)
+    @patch("agent.llm.bailian.requests.post")
+    def test_generate_chat_json_rejects_invalid_input_before_transport(self, post):
+        valid_message = {"role": "user", "content": "Valid question"}
+        cases = [
+            ("messages must be a list", None, 2000),
+            ("messages must not be empty", [], 2000),
+            ("tuple is not a list", (valid_message,), 2000),
+            ("message must be an object", ["not-an-object"], 2000),
+            ("role is required", [{"content": "Question"}], 2000),
+            ("content is required", [{"role": "user"}], 2000),
+            (
+                "extra message fields are rejected",
+                [{"role": "user", "content": "Question", "name": "caller"}],
+                2000,
+            ),
+            ("role must be allowed", [{"role": "tool", "content": "Question"}], 2000),
+            ("role must be text", [{"role": 1, "content": "Question"}], 2000),
+            ("content must not be blank", [{"role": "user", "content": " \t"}], 2000),
+            ("content must be text", [{"role": "user", "content": 1}], 2000),
+            ("max tokens must be positive", [valid_message], 0),
+            ("max tokens must not be bool", [valid_message], True),
+        ]
+
+        for name, messages, max_tokens in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(LLMError):
+                    self.generate_chat(messages, max_tokens=max_tokens)
+
+        post.assert_not_called()
+
+    def test_generate_chat_json_fails_safely_without_retry(self):
+        messages = [{"role": "user", "content": "Safe failure question"}]
+        failure_cases = ("http", "timeout", "incomplete")
+
+        for failure in failure_cases:
+            with self.subTest(failure=failure):
+                with (
+                    patch.dict("os.environ", BAILIAN_CONFIG, clear=True),
+                    patch("agent.llm.bailian.requests.post") as post,
+                ):
+                    if failure == "http":
+                        post.return_value = Mock(
+                            status_code=503,
+                            text="raw-provider-detail fake-test-key",
+                        )
+                    elif failure == "timeout":
+                        post.side_effect = requests.Timeout(
+                            "raw-provider-detail fake-test-key"
+                        )
+                    else:
+                        post.return_value = Mock(status_code=200)
+                        post.return_value.json.return_value = {
+                            "choices": [
+                                {
+                                    "finish_reason": "length",
+                                    "message": {
+                                        "content": "raw-provider-detail fake-test-key"
+                                    },
+                                }
+                            ]
+                        }
+
+                    with self.assertRaises(LLMError) as error:
+                        self.generate_chat(messages)
+
+                    post.assert_called_once()
+                    self.assertNotIn("raw-provider-detail", str(error.exception))
+                    self.assertNotIn("fake-test-key", str(error.exception))
+
+    @patch.dict("os.environ", BAILIAN_CONFIG, clear=True)
+    @patch("agent.llm.bailian.requests.post")
+    def test_generate_json_legacy_contract_remains_unchanged(self, post):
+        post.return_value = BailianClientTests.successful_response()
+
+        result = generate_json(
+            GENERIC_SYSTEM_PROMPT,
+            GENERIC_USER_TEXT,
+            max_tokens=409,
+        )
+
+        self.assertEqual(result, GENERIC_JSON_RESULT)
+        post.assert_called_once()
+        self.assertEqual(
+            post.call_args.args[0],
+            BAILIAN_CONFIG["BAILIAN_BASE_URL"] + "/chat/completions",
+        )
+        request = post.call_args.kwargs
+        self.assertEqual(
+            request["json"],
+            {
+                "model": BAILIAN_CONFIG["BAILIAN_MODEL"],
+                "messages": [
+                    {"role": "system", "content": GENERIC_SYSTEM_PROMPT},
+                    {"role": "user", "content": GENERIC_USER_TEXT},
+                ],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 409,
+            },
+        )
+        self.assertEqual(
+            request["headers"],
+            {"Authorization": "Bearer " + BAILIAN_CONFIG["DASHSCOPE_API_KEY"]},
+        )
+        self.assertEqual(request["timeout"], (10, 90))
+        self.assertFalse(request["allow_redirects"])
+
+
+class AgentMainCliTests(unittest.TestCase):
+    """Task 4.2 one-shot CLI wiring tests; every dependency is mocked."""
+
+    @staticmethod
+    def invoke(argv):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+
+        import agent.main as agent_main
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = agent_main.main(argv)
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def test_command_selection_remains_required_exclusive_and_validated(self):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+
+        import agent.main as agent_main
+
+        invalid_argv = (
+            ("selection required", []),
+            (
+                "chat and analysis are exclusive",
+                ["--process-chat-once", "--analysis-company-id", "company-1"],
+            ),
+            (
+                "chat and jobs are exclusive",
+                ["--process-chat-once", "--process-jobs-once"],
+            ),
+            (
+                "chat and mailbox sync are exclusive",
+                ["--process-chat-once", "--sync-authorized-mailboxes-once"],
+            ),
+            (
+                "merge version remains analysis-only",
+                ["--process-jobs-once", "--merge-version", "merge-test"],
+            ),
+            (
+                "job limit remains positive",
+                ["--sync-authorized-mailboxes-once", "--job-limit", "0"],
+            ),
+        )
+        with (
+            patch.object(agent_main, "load_environment") as load_environment,
+            patch.object(agent_main, "django_backend_from_environment") as backend_factory,
+            patch.object(agent_main, "build_analysis_input") as build_analysis_input,
+            patch.object(agent_main, "process_jobs_once") as process_jobs_once,
+            patch.object(agent_main, "_process_chat_once") as process_chat_once,
+            patch.object(
+                agent_main, "sync_authorized_mailboxes_once"
+            ) as sync_authorized_mailboxes_once,
+        ):
+            for name, argv in invalid_argv:
+                with self.subTest(name=name):
+                    stdout = StringIO()
+                    stderr = StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        with self.assertRaises(SystemExit) as caught:
+                            agent_main.main(argv)
+
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertIn("usage:", stderr.getvalue())
+
+            load_environment.assert_not_called()
+            backend_factory.assert_not_called()
+            build_analysis_input.assert_not_called()
+            process_jobs_once.assert_not_called()
+            process_chat_once.assert_not_called()
+            sync_authorized_mailboxes_once.assert_not_called()
+
+    def test_chat_no_work_completed_failed_and_report_failed_json_exit_contract(self):
+        import agent.main as agent_main
+
+        completed = {
+            "request_id": "request-completed",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "客户关注正式报价。[1]",
+            "citations": [
+                {
+                    "source_id": "mail:1",
+                    "source_type": "customer_email",
+                    "title_or_label": "采购咨询",
+                }
+            ],
+            "status": "completed",
+            "error": None,
+        }
+        failed = {
+            "request_id": "request-failed",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "",
+            "citations": [],
+            "status": "failed",
+            "error": {"code": "model_unavailable", "message": "回答模型暂时不可用。"},
+        }
+        report_failed = {
+            "request_id": "request-report-failed",
+            "chat_prompt_version": "chat-v2",
+            "assistant_text": "",
+            "citations": [],
+            "status": "failed",
+            "error": {"code": "report_failed", "message": "回答结果暂时无法保存。"},
+        }
+        scenarios = (
+            ("no work", None, 0),
+            ("completed", completed, 0),
+            ("failed", failed, 1),
+            ("report failed", report_failed, 1),
+        )
+
+        for name, result, expected_exit_code in scenarios:
+            with self.subTest(name=name):
+                backend = object()
+                with (
+                    patch.object(agent_main, "load_environment") as load_environment,
+                    patch.object(
+                        agent_main,
+                        "django_backend_from_environment",
+                        return_value=backend,
+                    ) as backend_factory,
+                    patch.object(
+                        agent_main, "_process_chat_once", return_value=result
+                    ) as process_chat_once,
+                    patch.object(agent_main, "build_analysis_input") as build_analysis_input,
+                    patch.object(agent_main, "process_jobs_once") as process_jobs_once,
+                    patch.object(
+                        agent_main, "sync_authorized_mailboxes_once"
+                    ) as sync_authorized_mailboxes_once,
+                ):
+                    exit_code, stdout, stderr = self.invoke(["--process-chat-once"])
+
+                self.assertEqual(exit_code, expected_exit_code)
+                self.assertEqual(json.loads(stdout), result)
+                self.assertEqual(stderr, "")
+                if result is None:
+                    self.assertEqual(stdout.strip(), "null")
+                else:
+                    self.assertNotIn("\\u", stdout)
+                load_environment.assert_called_once_with()
+                backend_factory.assert_called_once_with()
+                process_chat_once.assert_called_once_with(backend=backend)
+                build_analysis_input.assert_not_called()
+                process_jobs_once.assert_not_called()
+                sync_authorized_mailboxes_once.assert_not_called()
+
+    def test_existing_analysis_command_keeps_parsing_and_call_path(self):
+        import agent.main as agent_main
+
+        backend = object()
+        analysis = Mock()
+        document = {"company_id": "company-17", "status": "completed"}
+        analysis.to_dict.return_value = document
+        with (
+            patch.object(agent_main, "load_environment") as load_environment,
+            patch.object(
+                agent_main,
+                "django_backend_from_environment",
+                return_value=backend,
+            ) as backend_factory,
+            patch.object(
+                agent_main,
+                "build_analysis_input",
+                return_value=analysis,
+            ) as build_analysis_input,
+            patch.object(agent_main, "process_jobs_once") as process_jobs_once,
+            patch.object(agent_main, "_process_chat_once") as process_chat_once,
+            patch.object(
+                agent_main, "sync_authorized_mailboxes_once"
+            ) as sync_authorized_mailboxes_once,
+        ):
+            exit_code, stdout, stderr = self.invoke(
+                [
+                    "--analysis-company-id",
+                    "company-17",
+                    "--merge-version",
+                    "merge-test",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout), document)
+        self.assertEqual(stderr, "")
+        load_environment.assert_called_once_with()
+        backend_factory.assert_called_once_with()
+        build_analysis_input.assert_called_once()
+        self.assertEqual(build_analysis_input.call_args.args, ("company-17",))
+        self.assertIs(build_analysis_input.call_args.kwargs["backend"], backend)
+        self.assertEqual(build_analysis_input.call_args.kwargs["merge_version"], "merge-test")
+        self.assertTrue(callable(build_analysis_input.call_args.kwargs["clock"]))
+        process_jobs_once.assert_not_called()
+        process_chat_once.assert_not_called()
+        sync_authorized_mailboxes_once.assert_not_called()
+
+    def test_existing_jobs_command_keeps_parsing_and_call_path(self):
+        import agent.main as agent_main
+
+        backend = object()
+        reports = [{"job_id": "job-1", "status": "completed"}]
+        with (
+            patch.object(agent_main, "load_environment") as load_environment,
+            patch.object(
+                agent_main,
+                "django_backend_from_environment",
+                return_value=backend,
+            ) as backend_factory,
+            patch.object(agent_main, "build_analysis_input") as build_analysis_input,
+            patch.object(
+                agent_main, "process_jobs_once", return_value=reports
+            ) as process_jobs_once,
+            patch.object(agent_main, "_process_chat_once") as process_chat_once,
+            patch.object(
+                agent_main, "sync_authorized_mailboxes_once"
+            ) as sync_authorized_mailboxes_once,
+        ):
+            exit_code, stdout, stderr = self.invoke(
+                ["--process-jobs-once", "--job-limit", "3"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout), reports)
+        self.assertEqual(stderr, "")
+        load_environment.assert_called_once_with()
+        backend_factory.assert_called_once_with()
+        process_jobs_once.assert_called_once_with(
+            backend=backend,
+            limit=3,
+            analysis_provider=agent_main.bailian_analysis_provider,
+        )
+        build_analysis_input.assert_not_called()
+        process_chat_once.assert_not_called()
+        sync_authorized_mailboxes_once.assert_not_called()
+
+    def test_existing_mailbox_sync_command_keeps_parsing_and_call_path(self):
+        import agent.main as agent_main
+
+        backend = object()
+        reports = [{"mailbox_id": "mailbox-1", "status": "completed"}]
+        with (
+            patch.object(agent_main, "load_environment") as load_environment,
+            patch.object(
+                agent_main,
+                "django_backend_from_environment",
+                return_value=backend,
+            ) as backend_factory,
+            patch.object(agent_main, "build_analysis_input") as build_analysis_input,
+            patch.object(agent_main, "process_jobs_once") as process_jobs_once,
+            patch.object(agent_main, "_process_chat_once") as process_chat_once,
+            patch.object(
+                agent_main,
+                "sync_authorized_mailboxes_once",
+                return_value=reports,
+            ) as sync_authorized_mailboxes_once,
+        ):
+            exit_code, stdout, stderr = self.invoke(
+                ["--sync-authorized-mailboxes-once", "--job-limit", "25"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout), reports)
+        self.assertEqual(stderr, "")
+        load_environment.assert_called_once_with()
+        backend_factory.assert_called_once_with()
+        sync_authorized_mailboxes_once.assert_called_once_with(
+            backend=backend,
+            limit=10,
+        )
+        build_analysis_input.assert_not_called()
+        process_jobs_once.assert_not_called()
+        process_chat_once.assert_not_called()
+
+
 class GmailResourceContractTests(unittest.TestCase):
     """Task 3.1 Gmail resource/profile contract; all inputs are in memory."""
 

@@ -19,7 +19,7 @@ from agent.workflows.orchestration import process_jobs_once
 
 
 def main(argv: list[str] | None = None) -> int:
-    """执行一次公司分析、任务处理或员工授权邮箱同步。"""
+    """执行一次公司分析、任务处理、聊天回答或员工授权邮箱同步。"""
     raw_argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(description="SalesMate 一次性 Agent 命令")
     selection = parser.add_mutually_exclusive_group(required=True)
@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
         "--process-jobs-once",
         action="store_true",
         help="从 Django 后端领取一批任务并运行一次 L2-L4",
+    )
+    selection.add_argument(
+        "--process-chat-once",
+        action="store_true",
+        help="从 Django 后端领取并回答一条聊天请求，然后立即退出",
     )
     selection.add_argument(
         "--sync-authorized-mailboxes-once",
@@ -59,7 +64,32 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.process_jobs_once:
         return _run_jobs_once(args.job_limit)
+    if args.process_chat_once:
+        return _run_chat_once()
     return _run_authorized_sync(args.job_limit)
+
+
+def _run_chat_once() -> int:
+    """从真实 Django 后端领取并处理至多一条聊天回答请求。"""
+    try:
+        load_environment()
+        backend = django_backend_from_environment()
+        result = _process_chat_once(backend=backend)
+    except Exception:
+        return _print_safe_error(
+            "chat_processing_failed",
+            "聊天请求处理失败，请检查 Agent 配置或稍后重试。",
+            1,
+        )
+    _print_json(result)
+    return 1 if result is not None and result.get("status") == "failed" else 0
+
+
+def _process_chat_once(*, backend):
+    """延迟加载聊天模块，避免聊天 Skill 配置影响现有 L1-L4 命令。"""
+    from agent.workflows.chat import process_chat_once
+
+    return process_chat_once(backend=backend)
 
 
 def _run_l2(
