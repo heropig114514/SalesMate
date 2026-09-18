@@ -1,14 +1,14 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：简易注册/登录、哈希路由和单客户持续读取；QQ 同步每次询问范围，会话隔离旧响应，保留阅读位置及独立草稿。
- * 关联：workspace.js 共享导航、真实待办及 URL 客户上下文；api.js 通信，qq.js 管理 QQ 连接与原文入口，mail-source.js 统一标注演示和真实来源，assistant.js 管理私有草稿。
+ * 关联：workspace.js 共享导航；api.js 通信，qq.js 管理 QQ，mail-source.js 标注来源，assistant.js 管理草稿，notice.js 管理提示的自动关闭与阅读暂停。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
  * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
- * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理当前页面的客户草稿与展开状态。
+ * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理草稿，notices 管理页面提示生命周期。
  */
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260914-mail-source';
 import { mailSourceLabel } from './mail-source.js';
@@ -17,11 +17,13 @@ import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } f
 import { request, escapeHtml as e } from './api.js?v=20260914-signup';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
 import { AssistantPanel } from './assistant.js?v=20260913-sales';
+import { Notice } from './notice.js';
 
 const assistant = new AssistantPanel();
 
 /** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
 const $ = id => document.getElementById(id);
+const notices = new Notice($('notice'));
 const state = { page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0, listSignature: null };
 const signals = { unknown: '待确认', inquiry_intent: '询盘', new_lead_no_profile: '新线索未建档', quoted_not_closed: '已报价未成交', repeat_purchase: '复购' };
 const sizes = { unknown: '规模未知', lt_50: '少于 50 人', '50_100': '50–99 人', '100_200': '100–199 人', '200_500': '200–499 人', gte_500: '500 人及以上' };
@@ -55,15 +57,10 @@ function companyName(row) {
 function pill(text, kind = '') { return `<span class="pill ${e(kind)}">${e(text)}</span>`; }
 
 /** 功能：展示操作结果或错误。输入：message、error 是否失败。输出：无。
- * 逻辑：使用 textContent，提供关闭按钮。约束：不插入服务器 HTML，不静默吞错。 */
+ * 逻辑：交给 Notice 显示纯文本，按类型自动关闭，阅读时暂停并允许手动关闭。
+ * 约束：不插入服务器 HTML，不改变业务状态或自动重试失败请求。 */
 function notice(message, error = true) {
-  const box = $('notice');
-  box.textContent = message;
-  box.className = error ? 'notice error' : 'notice success';
-  box.hidden = false;
-  const close = document.createElement('button');
-  close.textContent = '×'; close.setAttribute('aria-label', '关闭提示'); close.onclick = () => { box.hidden = true; };
-  box.append(close);
+  notices.show(message, error);
 }
 
 /** 功能：在异步操作期间禁用触发按钮并展示失败。输入：button、operation 异步函数。输出：无。
