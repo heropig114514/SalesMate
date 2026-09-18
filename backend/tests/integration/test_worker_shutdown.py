@@ -1,6 +1,6 @@
 """职责：验证部署停止不会打断当前外部动作或领取后续动作。
 实现：模拟动作和信号调用，真实执行 Worker 循环及处理器恢复，不发送 OS 信号或邮件。
-关联：common.shutdown 和 sales_worker；CRM 线程池排空依赖相同停止状态。
+关联：common.shutdown 和 sales_worker；CRM 执行器排空依赖相同停止状态。
 目录：
 - ShutdownTests：停止边界测试。
 - ShutdownTests.test_handler_restored_after_exception：异常后恢复信号处理器。
@@ -39,12 +39,12 @@ class ShutdownTests(TestCase):
     # 功能：部署停止时必须读取所有在途 CRM 单元的结果。
     # 输入：模拟共享调度器选择员工并调度同步 Future，随后收到停止请求；分别返回成功或抛异常。
     # 输出：Future.result 被等待一次，异常继续向上报告。
-    # 逻辑：模拟调度边界，仅在轮询等待处设置停止状态，不执行数据库或网络工作。
-    # 约束：不把线程池退出当作业务成功，不吞掉未完成单元的错误。
+    # 逻辑：模拟公共执行器及调度边界，仅在轮询等待处设置停止状态，不执行数据库或网络工作。
+    # 约束：不把执行器退出当作业务成功，不吞掉未完成单元的错误。
     @override_settings(ANALYSIS_PROVIDER="agent")
     def test_crm_waits_for_pending_result(self):
         for failure in (False, True):
-            with self.subTest(failure=failure), patch.object(crm_worker, "load_environment"), patch.object(crm_worker, "close_old_connections"), patch.object(crm_worker, "next_owner", side_effect=lambda kind, after: Mock(pk=1) if kind == "sync" else None), patch.object(crm_worker, "ThreadPoolExecutor") as executor, patch.object(crm_worker.time, "sleep", side_effect=lambda seconds: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)):
+            with self.subTest(failure=failure), patch.object(crm_worker, "load_environment"), patch.object(crm_worker, "close_old_connections"), patch.object(crm_worker, "next_owner", side_effect=lambda kind, after: Mock(pk=1) if kind == "sync" else None), patch.object(crm_worker, "work_executor") as executor, patch.object(crm_worker.time, "sleep", side_effect=lambda seconds: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)):
                 future = executor.return_value.__enter__.return_value.submit.return_value
                 if failure:
                     future.result.side_effect = RuntimeError("synthetic")

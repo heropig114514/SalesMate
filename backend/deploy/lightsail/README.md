@@ -9,11 +9,11 @@ CRM Worker 现为所有有效员工共享调度，升级后自动处理已排队
 1. Actions 使用专用 SSH 密钥连接 `salesmate-deploy@47.131.232.143`，只传已验证的完整提交 SHA。
 2. 强制 SSH 命令只允许 root 安装的 `deploy-trigger.sh`；任意 Shell、端口转发及非 SHA 输入均不被允许。它启动独立 systemd 临时服务，连接断开不会主动中止服务器部署。
 3. 服务器用自己的只读 GitHub Deploy Key 拉取 `main`。如果提交已过时，记录跳过；同一版本且服务健康时不重复部署。服务器部署锁与 Actions 并发组共同阻止发布交叉执行。
-4. 发送 SIGTERM 给 CRM 和发信 Worker，等待当前工作结束后再停 Web。期间不领取后续工作，既有轮询、并发、模型参数和失败重试语义不变。
-5. 备份数据库、应用、虚拟环境和旧版本记录，然后更新 Git 跟踪文件；仅删除上一版本跟踪而新版本已删除的文件。服务器 `.env` 和未跟踪数据保留。
-6. 安装依赖、迁移数据库、收集静态文件，启动 Web 并检查 HTTPS 就绪接口，再启动两个 Worker。所有服务正常后才更新 `/opt/salesmate/deployed-revision`。
+4. 在独立目录构建候选代码、虚拟环境和静态资源；检查保守迁移门禁与 Redis/pgvector。
+5. 停止调度器并等待在途工作，再停 Celery 消费者；旧 Web 保持运行。备份数据库并执行兼容迁移。
+6. 启动候选 Gunicorn 实例，健康检查通过后 Nginx 切流；启动新消费者、验证消息往返，再启动调度器，排空旧请求后停旧 Web。
 
-部署含一个维护窗口。长时间执行中的工作可能延长等待；Worker 的 `TimeoutStopSec=infinity` 防止 systemd 强杀正在发送的邮件。Actions 最长等待 40 分钟；若 SSH 超时或被取消，先检查服务器是否仍在执行，不能直接把它当作部署失败并重复操作。
+首次初始化、目录、失败边界、向量接口和服务配置见 [服务器基础设施与在线发布](../../docs/server-infrastructure.md)。后台有短暂停领窗口，破坏性迁移默认拒绝自动发布；不能把所有数据库变更都视为无中断更新。
 
 ## 一次性安装与凭证边界
 
@@ -38,16 +38,16 @@ CRM Worker 现为所有有效员工共享调度，升级后自动处理已排队
 
 ## 失败与人工恢复
 
-失败不会隐式重试、回滚数据库或重发邮件。GitHub Actions 保留失败步骤；服务器日志记录提交、阶段和备份位置。拉取或预检失败时应用尚未停机；维护窗口内失败则保留现场，可能需要人工恢复服务。
+失败不会隐式重试、回滚数据库或重发邮件。GitHub Actions 保留失败步骤；服务器日志记录提交、阶段和备份位置。拉取或预检失败时应用尚未停机；排空后台后失败则保留现场，可能需要人工恢复后台；切流后失败应同时核对 active-port。
 
 ```bash
 sudo cat /var/lib/salesmate-deploy/status
 sudo tail -n 80 /var/lib/salesmate-deploy/deploy.log
 sudo journalctl -u salesmate-deploy --no-pager
-systemctl is-active salesmate-web salesmate-crm salesmate-sales
+systemctl is-active salesmate-crm salesmate-sales salesmate-celery@crm salesmate-celery@sales
 cat /opt/salesmate/deployed-revision
 ```
 
-备份位于 `/opt/salesmate/backups/auto-<SHA>-<UTC时间>/`，包含 `database.dump`、`app.tar.gz`、`venv.tar.gz` 和 `previous-revision`。恢复前先确认当前进程、迁移结果和发信状态，再由管理员明确选择恢复代码、环境或数据库；备份不会自动清理，应定期检查磁盘空间。
+备份位于 `/opt/salesmate/backups/online-<SHA>-<UTC时间>/`，包含 `database.dump`、旧代码/环境路径、Nginx 配置及 `previous-revision`；旧代码和独立环境保留在 releases 中。恢复前先确认当前进程、迁移结果和发信状态，再由管理员明确选择恢复代码、环境或数据库；备份不会自动清理，应定期检查磁盘空间。
 
 需要暂停自动部署时，在 GitHub Actions 中禁用 **Verify and deploy**，同时确认已有部署任务是否结束。不要通过删除邮箱配置或停止 PostgreSQL 来暂停发布。

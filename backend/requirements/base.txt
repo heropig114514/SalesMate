@@ -1,5 +1,8 @@
-# Runtime dependencies and transitive versions verified by the unified root setup.
-# Update deliberately and rerun dependency, schema and application checks.
+# 职责：声明后端及部署所需的 Python 依赖。
+# 实现：固定直接版本，更新后执行依赖、迁移和回归检查。
+# 关联：开发安装、CI 与服务器独立版本环境使用此清单。
+# 目录：无函数或类。
+# 变量索引：Django/psycopg 为业务及数据库；celery[redis] 为任务传输；gunicorn/uvicorn-worker 为生产 ASGI；pgvector 为向量适配；其余为现有接口和工具依赖。
 Django==5.2.17
 djangorestframework==3.18.1
 django-environ==0.14.0
@@ -24,3 +27,9 @@ google-api-python-client==2.200.0
 google-auth==2.58.0
 google-auth-oauthlib==1.4.1
 cryptography==50.0.1
+
+# Task transport, production ASGI process management and explicit vector storage.
+celery[redis]==5.6.3
+gunicorn==26.2.0; sys_platform != "win32"
+uvicorn-worker==0.4.0
+pgvector==0.5.0

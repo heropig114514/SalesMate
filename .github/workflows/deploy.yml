@@ -4,6 +4,7 @@
 # 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
 # DEPLOY_KEY/DEPLOY_HOST_KEY 为 GitHub 加密 secrets，前者只允许受限触发，后者固定服务器身份。
+# CELERY_BROKER_URL/CELERY_RESULT_BACKEND 为 CI Redis 地址；celery_pid 为临时消费者 PID。
 # SALESMATE_PLAYWRIGHT_MODULE/SALESMATE_BROWSER_PATH 指向 RUNNER_TEMP 中的隔离浏览器运行时。
 name: Verify and deploy
 on:
@@ -21,7 +22,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:0.8.2-pg16
         env:
           POSTGRES_USER: salesmate
           POSTGRES_PASSWORD: ci-only-password
@@ -32,12 +33,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7.0
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://salesmate:ci-only-password@127.0.0.1:5432/salesmate?connect_timeout=3
       DJANGO_SECRET_KEY: ci-only-isolated-tests-no-production-credentials-2026
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
       DJANGO_TIME_ZONE: UTC
       ANALYSIS_PROVIDER: rules
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,12 +69,23 @@ jobs:
           python backend/tools/test_check_doc_changes.py
           bash -n backend/deploy/lightsail/deploy-from-git.sh
           bash -n backend/deploy/lightsail/deploy-trigger.sh
+          bash -n deploy/lightsail/bootstrap-infrastructure.sh
       - name: Run backend, Agent and mailbox tool tests
         run: |
           python backend/manage.py test tests --noinput
           python -m unittest discover -s agent/tests
           python -m unittest discover -s test_tools/tests
           python backend/manage.py makemigrations --check --dry-run
+      - name: Verify actual Redis and Celery roundtrip
+        run: |
+          export TASK_EXECUTION_MODE=celery
+          export DJANGO_SETTINGS_MODULE=config.settings.local
+          export PYTHONPATH="$PWD/backend:$PWD"
+          python backend/manage.py migrate --noinput
+          python -m celery -A config.celery:app worker --pool=solo --queues=crm,sales --loglevel=WARNING > "$RUNNER_TEMP/celery.log" 2>&1 &
+          celery_pid=$!
+          trap 'kill -TERM "$celery_pid"; wait "$celery_pid"' EXIT
+          python backend/manage.py check_infrastructure --workers
       - name: Check provider-free tool previews
         run: |
           python test_tools/gmail_test_injector.py --dry-run

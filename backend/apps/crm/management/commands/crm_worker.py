@@ -1,6 +1,6 @@
 """职责：以共享进程消费所有有效员工的邮箱同步和公司画像任务。
 实现：同步与画像分别轮转员工，保留全局并发；SIGTERM 后停止领取并排空在途单元。
-关联：dispatch 发现员工并管理身份，worker 执行业务，common.shutdown 处理停止；不消费外部销售动作。
+关联：dispatch 发现员工并管理身份，worker 执行业务，common.execution 显式选择本地线程或 Celery，common.shutdown 处理停止；不消费外部销售动作。
 目录：
 - Command：配置并运行持久队列消费者。
 - Command.add_arguments：声明单轮、轮询和画像并发参数。
@@ -9,7 +9,7 @@
 - logger：进程生命周期日志。
 - Command.help：管理命令说明。
 """
-from concurrent.futures import ThreadPoolExecutor
+from common.execution import work_executor
 import logging
 import time
 
@@ -44,7 +44,8 @@ class Command(BaseCommand):
     # 输入：`args` 为位置参数，`options` 含 once/poll/analysis_workers。
     # 输出：无；单轮排空当前可领取工作后退出。
     # 逻辑：pending 保存 Future 到通道及员工的映射，last_owner 分别记录公平轮转游标；
-    # 每次填充空闲通道时从持久队列重新选员工，SIGTERM 后等待 pending 的结果。
+    # 每次填充空闲通道时从持久队列重新选员工；work_executor 显式选择线程或 Celery，
+    # 消息提交失败向上传播，SIGTERM 后等待 pending 的结果。
     # 约束：停止时依然报告任务异常，等待期间需要 Web 可用；不改变并发、租约或业务重试语义。
     def handle(self, *args, **options):
         if settings.ANALYSIS_PROVIDER != "agent":
@@ -56,7 +57,7 @@ class Command(BaseCommand):
         pending = {}
         last_owner = {"sync": 0, "analysis": 0}
         try:
-            with graceful_shutdown() as stop, ThreadPoolExecutor(max_workers=options["analysis_workers"] + 1, thread_name_prefix="crm") as pool:
+            with graceful_shutdown() as stop, work_executor(max_workers=options["analysis_workers"] + 1, thread_name_prefix="crm") as pool:
                 while not stop["requested"]:
                     close_old_connections()
                     for future in list(pending):

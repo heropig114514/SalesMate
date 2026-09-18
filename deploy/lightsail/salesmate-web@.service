@@ -1,0 +1,28 @@
+# 职责：运行独立版本的 Gunicorn/Uvicorn Web 实例。
+# 实现：端口实例从 slots 读取固定版本及独立虚拟环境，双进程承载 ASGI。
+# 关联：蓝绿发布在健康检查后切换 Nginx；每个实例使用同一份受保护运行配置。
+# 目录：无。
+# 变量索引：%i 为 8001/8002 端口；workers 为 2；TimeoutStopSec 等待请求自然结束。
+[Unit]
+Description=SalesMate Web release on %i
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=salesmate
+Group=salesmate
+WorkingDirectory=/opt/salesmate/slots/%i/app
+EnvironmentFile=/opt/salesmate/shared/runtime.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.lightsail
+Environment=PYTHONPATH=/opt/salesmate/slots/%i/app
+ExecStart=/opt/salesmate/slots/%i/venv/bin/gunicorn --chdir backend config.asgi:application --worker-class uvicorn_worker.UvicornWorker --bind 127.0.0.1:%i --workers 2 --access-logfile - --error-logfile - --forwarded-allow-ips=127.0.0.1 --graceful-timeout 120
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=150
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

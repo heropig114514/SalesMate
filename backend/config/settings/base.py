@@ -13,7 +13,7 @@
 - DEBUG：共用配置中的调试开关，默认关闭。
 - ALLOWED_HOSTS：允许的 Host 列表，从 DJANGO_ALLOWED_HOSTS 读取。
 - CSRF_TRUSTED_ORIGINS：允许的 CSRF 来源列表。
-- INSTALLED_APPS：框架、API、账号、crm 邮件与 sales 业务应用的注册顺序。
+- INSTALLED_APPS：框架、API、账号、crm 邮件、sales 业务与 vectors 向量应用的注册顺序。
 - MIDDLEWARE：请求处理链，日志中间件位于最外层。
 - ROOT_URLCONF：根路由模块路径。
 - WSGI_APPLICATION：WSGI 应用导入路径。
@@ -37,6 +37,9 @@
 - SALESMATE_VAULT_KEY：新外部动作连接的 Fernet 密钥，空值时授权与解密明确失败。
 - REST_FRAMEWORK：会话认证、默认权限、JSON 渲染、Schema 与异常处理器配置。
 - SPECTACULAR_SETTINGS：API 元数据、枚举名称及默认仅管理员访问的文档配置。
+- TASK_EXECUTION_MODE：显式 local/celery 执行方式，本地默认 local，无连接失败回退。
+- CELERY_BROKER_URL：服务器 Redis 消息地址，celery 模式必填。
+- CELERY_RESULT_BACKEND：服务器 Redis 结果地址，celery 模式必填。
 - LOGGING：控制台日志格式、处理器和 Django/SalesMate 日志级别。
 """
 
@@ -74,6 +77,7 @@ INSTALLED_APPS = [
     "apps.accounts.apps.AccountsConfig",
     "apps.crm.apps.CRMConfig",
     "apps.sales.apps.SalesConfig",
+    "apps.vectors",
 ]
 MIDDLEWARE = [
     # 最外层先生成 request_id，使后续视图、错误响应和完成日志能够关联。
@@ -176,3 +180,11 @@ LOGGING = {
         },
     },
 }
+
+TASK_EXECUTION_MODE = env.str("TASK_EXECUTION_MODE", default="local")
+if TASK_EXECUTION_MODE not in {"local", "celery"}:
+    raise ImproperlyConfigured("TASK_EXECUTION_MODE must be local or celery")
+CELERY_BROKER_URL = env.str("CELERY_BROKER_URL", default="")
+CELERY_RESULT_BACKEND = env.str("CELERY_RESULT_BACKEND", default="")
+if TASK_EXECUTION_MODE == "celery" and (not CELERY_BROKER_URL or not CELERY_RESULT_BACKEND):
+    raise ImproperlyConfigured("Celery mode requires explicit broker and result URLs")

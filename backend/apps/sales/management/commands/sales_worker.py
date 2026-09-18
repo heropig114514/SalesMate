@@ -1,6 +1,6 @@
 """职责：处理已明确批准的外部动作和到期跟进提醒。
 实现：每轮领取 approved 动作；SIGTERM 后完成当前动作并停止领取，中断的 running 不自动重试。
-关联：actions 负责外部调用，services.notify_due 提醒，common.shutdown 处理部署停止信号。
+关联：actions 负责外部调用，services.notify_due 提醒，common.execution 选择本地或 Celery 执行，common.shutdown 处理部署停止信号。
 目录：
 - Command：销售任务工作进程。
 - Command.add_arguments：声明单轮及轮询参数。
@@ -15,6 +15,7 @@ import time
 from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 from common.shutdown import graceful_shutdown
+from common.execution import execute_sales
 from apps.sales.actions import run_action
 from apps.sales.models import ToolAction
 from apps.sales.services import notify_due
@@ -40,7 +41,7 @@ class Command(BaseCommand):
     # 功能：循环处理明确批准的任务。
     # 输入：`args` 为位置参数，`options` 包含 once/poll。
     # 输出：无；错误抛 CommandError，中断正常退出。
-    # 逻辑：清理连接、生成提醒并执行批准队列；SIGTERM 后完成当前动作，下一边界停止领取。
+    # 逻辑：清理连接、生成提醒并通过显式执行器逐项等待批准动作；SIGTERM 后完成当前动作，下一边界停止领取。
     # 约束：未批准动作不执行，未知结果留待核对；stop 状态只影响停止，不改变原轮询参数。
     def handle(self, *args, **options):
         if options["poll"] <= 0 or options["poll"] > 60:
@@ -58,7 +59,7 @@ class Command(BaseCommand):
                     ):
                         if stop["requested"]:
                             break
-                        run_action(key)
+                        execute_sales(key, run_action)
                     if options["once"] or stop["requested"]:
                         break
                     time.sleep(options["poll"])

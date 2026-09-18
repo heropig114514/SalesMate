@@ -1,6 +1,6 @@
 """职责：让后台 Worker 在部署停止信号后完成当前工作单元。
 实现：临时 SIGTERM 处理器仅设置标志；调用方在领取新任务前检查，退出时恢复旧处理器。
-关联：crm_worker 等待线程池完成，sales_worker 等待当前外部动作持久化。
+关联：crm_worker 等待显式执行器中的本地或 Celery 工作完成，sales_worker 等待当前外部动作持久化。
 目录：
 - graceful_shutdown：提供停止请求状态的上下文。
 - graceful_shutdown.request_shutdown：记录 SIGTERM 停止请求。

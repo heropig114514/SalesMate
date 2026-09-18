@@ -1,0 +1,28 @@
+# 职责：运行 CRM 或销售队列的独立 Celery 消费者。
+# 实现：预派生进程池通过 Redis 接收任务，TERM 仅发主进程以温和排空。
+# 关联：crm/sales 调度器先停止并等待结果，再停止消费者；不自动重启未知外部副作用。
+# 目录：无。
+# 变量索引：%i 为 crm/sales；CELERY_CONCURRENCY 分别为 3/1，保留原业务并发上限。
+[Unit]
+Description=SalesMate Celery %i
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=salesmate
+Group=salesmate
+WorkingDirectory=/opt/salesmate/app
+EnvironmentFile=/opt/salesmate/shared/runtime.env
+EnvironmentFile=/etc/salesmate/celery-%i.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.lightsail
+Environment=PYTHONPATH=/opt/salesmate/app/backend:/opt/salesmate/app
+ExecStart=/opt/salesmate/venv/bin/python -m celery -A config.celery:app worker --loglevel=WARNING --queues=%i --hostname=%i@%%h --concurrency=${CELERY_CONCURRENCY} --without-gossip --without-mingle
+KillMode=mixed
+TimeoutStopSec=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
