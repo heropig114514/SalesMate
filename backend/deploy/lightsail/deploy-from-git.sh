@@ -48,7 +48,7 @@ fi
 previous=$(cat /opt/salesmate/deployed-revision)
 if [[ "$revision" == "$previous" ]]; then
     systemctl is-active --quiet salesmate-web salesmate-crm salesmate-sales
-    curl --fail --silent --show-error --max-time 15 https://47.131.232.143/api/v1/health/ready/ > /dev/null
+    curl --fail --silent --show-error --max-time 15 https://milkdragon.dev/api/v1/health/ready/ > /dev/null
     printf 'UNCHANGED healthy_revision=%s\n' "$revision"
     printf 'healthy %s\n' "$revision" > "$state/status"
     exit 0
@@ -121,7 +121,7 @@ nginx -t
 stage=health
 systemctl start salesmate-web
 for attempt in $(seq 1 30); do
-    if curl --fail --silent --max-time 5 https://47.131.232.143/api/v1/health/ready/ > "$backup/health.json"; then break; fi
+    if curl --fail --silent --max-time 5 https://milkdragon.dev/api/v1/health/ready/ > "$backup/health.json"; then break; fi
     if [[ "$attempt" == 30 ]]; then exit 1; fi
     sleep 1
 done
