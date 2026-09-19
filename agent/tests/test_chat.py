@@ -720,6 +720,38 @@ class ChatAnswerModeTests(unittest.TestCase):
         self.assertEqual(result["assistant_text"], "客户需要 50 台检测设备。[1]")
         self.assertEqual(result["citations"], [citation(item)])
 
+    def test_nonstandard_source_tag_number_is_not_treated_as_business_quantity(self):
+        item = context_item(content="客户需要 50 台检测设备，实行轮班制生产。")
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(
+            model_json(
+                "客户需要 50 台检测设备。[1]\n"
+                "判断客户对系统连续性敏感 [分析:3]。",
+                item,
+            )
+        )
+        with self.assertLogs("salesmate.chat", level="INFO") as logs:
+            result = answer_conversation_request(
+                conversation_request(question="总结客户需求"),
+                backend=backend,
+                chat_provider=provider,
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertNotIn("[分析:3]", result["assistant_text"])
+        self.assertIn("chat_nonstandard_source_tags_removed", "\n".join(logs.output))
+
+    def test_real_unsupported_business_quantity_still_fails(self):
+        item = context_item(content="客户需要 50 台检测设备。")
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        result = answer_conversation_request(
+            conversation_request(),
+            backend=backend,
+            chat_provider=FakeChatProvider(
+                model_json("客户需要 3 台检测设备。[1]", item)
+            ),
+        )
+        self.assertEqual(result["error"]["code"], "invalid_model_output")
+
     def test_internal_knowledge_failure_allows_only_supported_partial_answer(self):
         item = context_item()
         gap = {

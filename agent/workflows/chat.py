@@ -156,6 +156,9 @@ _FAILURE_MESSAGES = {
     "report_failed": "回答结果暂时无法保存。",
 }
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
+_NONSTANDARD_SOURCE_TAG = re.compile(
+    r"[ \t]*\[(?:分析|邮件|画像|知识|来源|证据)[ \t]*[:：][ \t]*\d+\]"
+)
 logger = logging.getLogger("salesmate.chat")
 
 
@@ -567,6 +570,13 @@ def parse_model_candidate(
     assistant_text = _nonblank(
         candidate["assistant_text"], "model_candidate.assistant_text"
     )
+    nonstandard_tags = _NONSTANDARD_SOURCE_TAG.findall(assistant_text)
+    if nonstandard_tags:
+        assistant_text = _NONSTANDARD_SOURCE_TAG.sub("", assistant_text)
+        logger.info(
+            "chat_nonstandard_source_tags_removed request_id=%s count=%s",
+            request_id, len(nonstandard_tags),
+        )
     citations = validate_citation_allowlist(
         candidate["citations"], allowed_context_items
     )
