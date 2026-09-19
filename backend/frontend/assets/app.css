@@ -83,5 +83,7 @@
 
 /* 持久化助手：历史文本保持换行；会话选择与保存入口在窄侧栏中允许换行。 */
 .assistant-session-controls{display:flex;gap:8px;align-items:center;margin-bottom:18px}.assistant-session-controls select{min-width:0;flex:1}.assistant-session-controls button{white-space:nowrap}.assistant-message{border:1px solid #dce7df;border-radius:9px;padding:12px;margin-bottom:12px;background:#f6faf7}.assistant-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.assistant-send-row{flex-wrap:wrap;gap:8px}.assistant-send-row>span{width:100%}
+.assistant-sources{margin-top:10px;font-size:13px}.assistant-sources>summary,.assistant-source>summary{cursor:pointer;overflow-wrap:anywhere}.assistant-sources>summary{color:var(--muted)}.assistant-source-list{display:grid;gap:8px;margin-top:8px}.assistant-source{border:1px solid #dce7df;border-radius:7px;padding:8px;background:#fff}.assistant-source-content{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px;padding-top:8px;border-top:1px solid #edf1ed;font-size:12px;line-height:1.5}
+.assistant-source-note{font-size:12px;color:var(--muted)}.assistant-source a{display:inline-block;margin-top:8px}
 
 .detail-live-status{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:14px 0;color:var(--muted);font-size:12px;min-height:24px}

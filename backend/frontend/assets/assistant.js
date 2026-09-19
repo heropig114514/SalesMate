@@ -372,7 +372,7 @@ export class AssistantPanel {
   }
 
   /** 功能：显示真实持久化的历史消息。输入：messages 数组。
-   * 输出：无。逻辑：消息关联本次请求状态，助手消息展开后端冻结证据，最后一次失败可明确重试。
+   * 输出：无。逻辑：消息关联本次请求状态；证据默认收起，画像来源指向可读客户页，其他来源按需展开；最后一次失败可明确重试。
    * 约束：全部文本转义，引用不执行 HTML 或不可信 URL；不伪造回复或执行结果。 */
   draw(messages) {
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
@@ -383,7 +383,12 @@ export class AssistantPanel {
       ? messages
           .map((message) => {
             const answer = byMessage.get(message.id), question = byQuestion.get(message.id);
-            const citations = (answer?.citations || []).map((citation) => `<details><summary>[${citation.position}] ${esc(citation.title_or_label)}</summary><p>${esc(citation.content)}</p></details>`).join("");
+            const sources = answer?.citations || [];
+            const citations = sources.length
+              ? `<details class="assistant-sources"><summary>查看依据（${sources.length}）</summary><div class="assistant-source-list">${sources.map((citation) => citation.source_type === "customer_analysis"
+                ? `<div class="assistant-source"><strong>[${esc(citation.position)}] ${esc(citation.title_or_label)}</strong><p class="assistant-source-note">依据来自客户画像与分析，可在客户页面按维度查看。</p>${this.companyId ? `<a href="/#company/${encodeURIComponent(this.companyId)}">查看当前客户画像 →</a>` : ""}</div>`
+                : `<details class="assistant-source"><summary>[${esc(citation.position)}] ${esc(citation.title_or_label)}</summary><div class="assistant-source-content">${esc(citation.content)}</div></details>`).join("")}</div></details>`
+              : "";
             const state = question ? `<p class="fine">${labels[question.status] || "状态未知"}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? `<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
             return `<article class="assistant-message"><small>${message.role === "user" ? "我" : "助手"} · ${esc(new Date(message.created_at).toLocaleString())}</small><p>${esc(message.content)}</p>${citations}${state}</article>`;
           })
