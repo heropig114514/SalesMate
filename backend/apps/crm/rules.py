@@ -48,7 +48,7 @@ LABELS = {"contact_name": "联系人", "contact_title": "职位", "company_self_
 # 功能：将显式模拟邮件转换为 L1 标准提交。
 # 输入：`mailbox` 为业务邮箱；`sender`、`subject`、`body` 为人工文本；`message_id` 和 `sent_at` 可指定合成样例身份与时间。
 # 输出：source=synthetic_sample 的 EmailSubmission。
-# 逻辑：仅提取“标签：内容”行，采购关键词只决定单封倾向；未提及事实字段保持空数组。
+# 逻辑：仅提取“标签：内容”行，主题或正文中的采购关键词决定单封倾向；未提及事实字段保持空数组。
 # 约束：不读取 Gmail，不解析真实邮箱授权，不推断币种、日期或公司关系。
 def extract_email(mailbox, sender, subject, body, message_id=None, sent_at=None):
     facts = {field: [] for field in FACT_FIELDS}
@@ -56,7 +56,7 @@ def extract_email(mailbox, sender, subject, body, message_id=None, sent_at=None)
         match = re.search(r"(?m)^" + label + r"[：:]\s*([^\n\r]+)", body)
         if match:
             facts[field] = [{"value": match.group(1).strip(), "evidences": [match.group(0)]}]
-    intent_match = re.search(r"询价|采购|购买|报价|需求", body)
+    intent_match = re.search(r"询价|采购|购买|报价|需求", subject) or re.search(r"询价|采购|购买|报价|需求", body)
     facts.update({"has_substantive_update": any(facts[key] for key in ["product_need", "quantity", "budget", "delivery_time", "decision_process", "concerns", "quote_reference", "order_reference"]),
                   "message_summary": subject[:80], "intent_hint": "L1 Exploring" if intent_match else None,
                   "intent_evidences": [intent_match.group(0)] if intent_match else []})
