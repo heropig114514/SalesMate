@@ -69,7 +69,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：记录、关系和状态沿用现有模型，特殊能力独立列举。
+# 逻辑：记录、关系和状态沿用现有模型；会话支持通用/客户筛选，特殊能力独立列举。
 # 约束：不注册外部动作批准/执行、任意 SQL、凭证读取、数据库运维或虚构新闻查询。
 def build_registry():
     entries = []
@@ -77,6 +77,8 @@ def build_registry():
         serializer = SERIALIZERS[resource]
         names = {field.name for field in serializer.Meta.model._meta.fields}
         filters = {**PAGE, "archived": {"enum": ["true", "false", "all"]}}
+        if resource == "conversations":
+            filters["conversation_scope"] = {"enum": ["general", "customer"]}
         for key in ("company", "conversation", "quote", "order", "team", "status"):
             if key in names:
                 filters[key] = {"type": "string"} if key == "status" else UUID

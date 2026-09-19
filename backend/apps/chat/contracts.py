@@ -70,12 +70,12 @@ def identifier(value):
 # 功能：规范并校验 Agent 结果。
 # 输入：`value` JSON 回报。
 # 输出：普通字典；非法字段、版本或引用抛 400。
-# 逻辑：成功与失败互斥，正文引用必须覆盖全部有序引用；错误文案限安全集合。
+# 逻辑：接受客户 chat-v2 与通用 general-chat-v1，成功与失败互斥，正文引用必须覆盖全部有序引用；错误文案限安全集合。
 # 约束：仅验证结构，来源授权和快照白名单由事务服务再次检查。
 def report(value):
     fields(value, REPORT_FIELDS)
     identifier(value["request_id"])
-    if value["chat_prompt_version"] != "chat-v2":
+    if value["chat_prompt_version"] not in ("chat-v2", "general-chat-v1"):
         raise ValidationError("不支持的 chat_prompt_version。")
     citations = value["citations"]
     if not isinstance(citations, list):

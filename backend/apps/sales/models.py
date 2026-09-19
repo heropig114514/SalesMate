@@ -28,10 +28,10 @@
 - OrderLine：订单明细快照。
 - OrderLine.Meta：声明抽象性或数据库唯一及数值约束。
 - FollowUp：客户跟进与到期提醒。
-- Conversation：员工自己的客户助手会话。
+- Conversation：员工自己的通用或客户助手会话。
 - Message：不可变会话消息。
 - Message.Meta：声明抽象性或数据库唯一及数值约束。
-- Draft：客户会话中的可编辑草稿。
+- Draft：私有会话中的可编辑草稿。
 - ToolAction：明确确认的外部工具动作与执行状态。
 - ToolAction.Meta：声明抽象性或数据库唯一及数值约束。
 - Attachment：员工私有文件及客户关联。
@@ -125,7 +125,7 @@
 - FollowUp.description：跟进说明。
 - FollowUp.due_at：到期时间。
 - FollowUp.status：open/completed/cancelled。
-- Conversation.company：当前客户。
+- Conversation.company：可空客户；空值表示通用会话。
 - Conversation.title：会话显示标题。
 - Message.conversation：所属会话。
 - Message.role：消息来源角色。
@@ -489,12 +489,16 @@ class FollowUp(CompanyRecord):
     status = models.CharField(max_length=20, default="open", db_index=True)
 
 
-# 功能：员工自己的客户助手会话。
-# 逻辑：会话不随公司业务共享，消息不可伪造为 Agent 输出。
+# 功能：员工自己的通用或客户助手会话。
+# 逻辑：空公司表示通用聊天；客户会话不随业务共享，消息不可伪造为 Agent 输出。
 # 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
 class Conversation(Record):
     company = models.ForeignKey(
-        "crm.Company", on_delete=models.PROTECT, related_name="conversations"
+        "crm.Company",
+        on_delete=models.PROTECT,
+        related_name="conversations",
+        null=True,
+        blank=True,
     )
     title = models.CharField(max_length=240, default="新对话")
 
@@ -521,7 +525,7 @@ class Message(Record):
         ]
 
 
-# 功能：客户会话中的可编辑草稿。
+# 功能：私有会话中的可编辑草稿。
 # 逻辑：浏览器输入与邮件草稿分开，只有显式确认动作可执行外发。
 # 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
 class Draft(Record):
@@ -552,7 +556,11 @@ class ToolAction(Record):
     )
     tool = models.CharField(
         max_length=40,
-        choices=[("gmail.send", "Gmail 发信"), ("qq.send", "QQ 发信"), ("calendar.create", "创建日历会议")],
+        choices=[
+            ("gmail.send", "Gmail 发信"),
+            ("qq.send", "QQ 发信"),
+            ("calendar.create", "创建日历会议"),
+        ],
     )
     parameters = models.JSONField()
     status = models.CharField(
@@ -639,7 +647,12 @@ class Notification(Record):
 # 约束：浏览器只可查看连接状态，缺少密钥时明确失败，不回退为明文。
 class Connection(Record):
     provider = models.CharField(
-        max_length=16, choices=[("gmail", "Gmail 发信"), ("qq", "QQ 发信"), ("calendar", "Google 日历")]
+        max_length=16,
+        choices=[
+            ("gmail", "Gmail 发信"),
+            ("qq", "QQ 发信"),
+            ("calendar", "Google 日历"),
+        ],
     )
     account = models.CharField(max_length=320)
     encrypted_credentials = models.TextField()

@@ -3,7 +3,7 @@
 关联：chat.views/Worker 调用，复用 sales Conversation/Message 与 crm 认证。
 目录：
 - lock_owner：取得既有员工锁。
-- conversation_for：读取员工自有客户会话。
+- conversation_for：读取员工自有通用或客户会话。
 - request_for：核验请求及全部绑定。
 - submit：事务内保存问题与待回答任务。
 - retry：为失败任务创建唯一新尝试。
@@ -43,15 +43,16 @@ def lock_owner(owner):
     get_user_model().objects.select_for_update().get(pk=owner.pk, is_active=True)
 
 
-# 功能：读取可用于完整客户问答的会话。
+# 功能：读取可用于通用或客户问答的会话。
 # 输入：`owner` 当前员工，`conversation_id` UUID。
-# 输出：已关联公司的 Conversation；越权返回 404。
-# 逻辑：员工同时拥有会话和公司，不将团队业务共享扩展为邮箱授权。
+# 输出：Conversation，其公司可为空；越权返回 404。
+# 逻辑：员工必须拥有会话；存在公司时还须拥有公司，不将业务共享扩展为邮箱授权。
 # 约束：归档公司或会话不接受新任务和上下文读取。
 def conversation_for(owner, conversation_id):
     conversation = (
         Conversation.objects.select_related("company")
-        .filter(pk=conversation_id, owner=owner, company__owner=owner, archived=False)
+        .filter(pk=conversation_id, owner=owner, archived=False)
+        .filter(Q(company__isnull=True) | Q(company__owner=owner))
         .first()
     )
     if (
@@ -67,12 +68,16 @@ def conversation_for(owner, conversation_id):
 # 功能：验证回答请求的全链路归属。
 # 输入：`owner` 当前员工，`request_id` UUID，`lock` 是否取得请求行锁。
 # 输出：带会话和消息的 AnswerRequest；越权或绑定异常返回 404。
-# 逻辑：检查请求、公司、会话、用户消息及可选助手消息的员工和会话身份。
+# 逻辑：检查请求、会话、用户消息及可选助手消息的身份；公司可空，非空时必须属于员工且与会话绑定一致。
 # 约束：锁定查询只锁请求表，避免可空助手关联导致数据库锁错误。
 def request_for(owner, request_id, lock=False):
-    query = AnswerRequest.objects.select_related(
-        "company", "conversation", "user_message", "assistant_message"
-    ).filter(pk=request_id, owner=owner, company__owner=owner)
+    query = (
+        AnswerRequest.objects.select_related(
+            "company", "conversation", "user_message", "assistant_message"
+        )
+        .filter(pk=request_id, owner=owner)
+        .filter(Q(company__isnull=True) | Q(company__owner=owner))
+    )
     if lock:
         query = query.select_for_update(of=("self",))
     request = query.first()
@@ -189,7 +194,7 @@ def retry(owner, request_id):
 
 # 功能：原子领取当前员工的一条任务并冻结历史。
 # 输入：`owner` Agent 服务令牌绑定员工。
-# 输出：严格六字段请求或 None。
+# 输出：严格六字段请求或 None；通用会话 company_id 为 JSON null，客户会话为 UUID 字符串。
 # 逻辑：员工锁保证并发领取不重复；历史截止于原问题之前，最近 20 条恢复时间正序。
 # 约束：撤销/归档请求显式失败，不阻挡后续有效任务；模型不在事务内调用。
 @transaction.atomic
@@ -240,7 +245,7 @@ def claim(owner):
         return {
             "request_id": str(request.pk),
             "conversation_id": str(request.conversation_id),
-            "company_id": str(request.company_id),
+            "company_id": str(request.company_id) if request.company_id else None,
             "user_message_id": str(message.pk),
             "question": message.content,
             "recent_history": request.recent_history,
@@ -251,7 +256,7 @@ def claim(owner):
 # 功能：返回请求绑定的稳定证据。
 # 输入：`owner` 当前 Agent 员工，`request_id` 请求 UUID，`scope` internal/external。
 # 输出：首次生成并持久化的 internal AnswerContext。
-# 逻辑：只对 processing 提供上下文；公司行锁与既有版本更新协调，后续读取返回同一快照。
+# 逻辑：只对 processing 提供上下文；有客户时取得公司锁，通用聊天仅冻结本人知识，后续返回同一快照。
 # 约束：external 尚未启用时明确拒绝；不吞数据库错误或伪装空资料。
 @transaction.atomic
 def context_for(owner, request_id, scope):
@@ -264,15 +269,16 @@ def context_for(owner, request_id, scope):
     if scope == "external":
         raise InvalidState("当前未启用外部知识。")
     if request.context_snapshot is None:
-        request.company = Company.objects.select_for_update().get(
-            pk=request.company_id, owner=owner
-        )
+        if request.company_id:
+            request.company = Company.objects.select_for_update().get(
+                pk=request.company_id, owner=owner
+            )
         request.context_snapshot = build_context(request)
         request.save(update_fields=["context_snapshot"])
         logger.info(
             "chat_context_frozen request_id=%s revision=%s customer_items=%s knowledge_items=%s",
             request.pk,
-            request.company.revision,
+            request.company.revision if request.company_id else None,
             len(request.context_snapshot["customer_context"]),
             len(request.context_snapshot["context_items"]),
         )
@@ -282,13 +288,16 @@ def context_for(owner, request_id, scope):
 # 功能：保存 Agent 的一次最终结果。
 # 输入：`owner` 令牌绑定员工，`data` 严格回报对象。
 # 输出：request_id/saved/duplicate/assistant_message_id。
-# 逻辑：终态精确去重，引用仅从该请求证据快照匹配；消息、引用和状态同事务写入。
+# 逻辑：校验会话对应提示版本，终态精确去重，引用仅从本请求快照匹配；消息、引用和状态同事务写入。
 # 约束：不要求零引用回答预先读取上下文；不创建失败助手正文；拒绝迟到或异值结果。
 @transaction.atomic
 def save_answer(owner, data):
     result = contracts.report(data)
     lock_owner(owner)
     request = request_for(owner, contracts.identifier(result["request_id"]), lock=True)
+    expected_prompt = "chat-v2" if request.company_id else "general-chat-v1"
+    if result["chat_prompt_version"] != expected_prompt:
+        raise ValidationError("回答版本与会话类型不一致。")
     duplicate = request.status in ("completed", "failed") and request.result == result
     if not duplicate:
         if request.status != "processing":
@@ -352,9 +361,9 @@ def save_answer(owner, data):
         "request_id": str(request.pk),
         "saved": True,
         "duplicate": duplicate,
-        "assistant_message_id": str(request.assistant_message_id)
-        if request.assistant_message_id
-        else None,
+        "assistant_message_id": (
+            str(request.assistant_message_id) if request.assistant_message_id else None
+        ),
     }
 
 
@@ -368,9 +377,9 @@ def request_data(request):
         "request_id": str(request.pk),
         "conversation_id": str(request.conversation_id),
         "user_message_id": str(request.user_message_id),
-        "assistant_message_id": str(request.assistant_message_id)
-        if request.assistant_message_id
-        else None,
+        "assistant_message_id": (
+            str(request.assistant_message_id) if request.assistant_message_id else None
+        ),
         "status": request.status,
         "error": request.error,
         "created_at": request.created_at,

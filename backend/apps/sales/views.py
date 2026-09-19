@@ -179,7 +179,7 @@ class ResourceView(SalesView):
     # 功能：读取单条或分页列表。
     # 输入：`request`、`resource`、可选 `record_id`。
     # 输出：单条记录或含 results 的分页响应。
-    # 逻辑：支持本模型实际关系、status、archived 过滤，默认列表排除归档。
+    # 逻辑：支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
     # 约束：关联过滤仍经过 scope；不支持 arbitrary ORM 查询表达式。
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_records_read")
     def get(self, request, resource, record_id=None):
@@ -203,6 +203,13 @@ class ResourceView(SalesView):
             for name in search_fields:
                 condition |= Q(**{name + "__icontains": request.query_params["q"]})
             query = query.filter(condition)
+        if "conversation_scope" in request.query_params:
+            mode = request.query_params["conversation_scope"]
+            if resource != "conversations" or mode not in {"general", "customer"}:
+                raise ValidationError(
+                    "conversation_scope 仅支持会话的 general/customer。"
+                )
+            query = query.filter(company__isnull=mode == "general")
         archived = request.query_params.get("archived", "false")
         if archived not in ("true", "false", "all"):
             raise ValidationError("archived 应为 true/false/all。")
@@ -566,9 +573,9 @@ class CatalogView(SalesView):
                         "required": field.required,
                         "readonly": field.read_only,
                         "nullable": field.allow_null,
-                        "choices": list(field.choices)
-                        if hasattr(field, "choices")
-                        else [],
+                        "choices": (
+                            list(field.choices) if hasattr(field, "choices") else []
+                        ),
                     }
                 )
             resources.append(

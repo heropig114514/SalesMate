@@ -1,10 +1,11 @@
-"""职责：把授权客户记录投影为有限、可追溯的聊天证据。
+"""职责：把本人知识及可选授权客户记录投影为有限、可追溯的聊天证据。
 实现：仅读取员工自有业务邮件、当前有效画像和业务投影；知识由显式导入提供。
 关联：chat.services 在公司锁内首次调用并冻结结果；不执行模型或外部网络。
 目录：
 - item：生成严格四字段证据条目。
 - readable：把已存储结构转换成带字段标签的文本。
 - build_context：组装当前请求的 internal 上下文。
+- customer_items：读取明确绑定客户的证据。
 变量索引：
 - 无
 """
@@ -23,9 +24,11 @@ def item(source_id, source_type, title, content):
         "source_id": source_id,
         "source_type": source_type,
         "title_or_label": title,
-        "content": content
-        if len(content) <= 2000
-        else content[:1985] + "\n[节选，原文未完整提供]",
+        "content": (
+            content
+            if len(content) <= 2000
+            else content[:1985] + "\n[节选，原文未完整提供]"
+        ),
     }
 
 
@@ -51,16 +54,58 @@ def readable(value, prefix=""):
 
 
 # 功能：组装有界、员工隔离的本次证据。
-# 输入：`request` 为已授权且持有公司锁的 AnswerRequest。
+# 输入：`request` 为已授权 AnswerRequest；绑定客户时持有公司锁。
 # 输出：严格 internal AnswerContext，不可用资料以缺口描述。
-# 逻辑：至多 4 封邮件、1 份画像、每类 1 条业务记录及 4 条知识，合计不超过 Agent 的 12 条。
+# 逻辑：通用会话只读取本人知识；客户会话至多 4 封邮件、1 份画像、每类 1 条业务记录及 4 条知识，合计不超过 Agent 的 12 条。
 # 约束：仅自有邮箱业务邮件；画像须当前 revision、未失效且 provider=agent；无外部检索。
 def build_context(request):
     company = request.company
     customer = []
     gaps = []
+    if company is not None:
+        customer, gaps = customer_items(company, request.owner)
+    entries = KnowledgeEntry.objects.filter(owner=request.owner, active=True).order_by(
+        "-created_at", "id"
+    )
+    # 提问匹配优先使用完整问题词段；未匹配条目仍按版本时间排序提供，Agent 判断是否相关。
+    terms = request.user_message.content.split()
+    candidates = list(entries)
+    candidates.sort(
+        key=lambda entry: sum(
+            term in entry.title or term in entry.content for term in terms
+        ),
+        reverse=True,
+    )
+    knowledge = [
+        item(
+            f"knowledge:{entry.pk}",
+            "internal_knowledge",
+            f"{entry.title}（{entry.version}）",
+            entry.content,
+        )
+        for entry in candidates[:4]
+    ]
+    return {
+        "request_id": str(request.pk),
+        "scope": "internal",
+        "customer_context": customer,
+        "context_items": knowledge,
+        "customer_context_status": "completed",
+        "knowledge_status": "completed",
+        "retrieval_gaps": gaps,
+        "external_available": False,
+    }
+
+
+# 功能：读取明确绑定客户的证据。
+# 输入：`company` 自有客户、`owner` 员工。
+# 输出：客户证据和资料缺口。
+# 逻辑：沿用邮件、有效画像及交易投影的既定数量与顺序。
+# 约束：通用会话不调用本函数，不跨客户搜索。
+def customer_items(company, owner):
+    customer, gaps = [], []
     emails = company.emails.filter(
-        mailbox__owner=request.owner, business_classification="business"
+        mailbox__owner=owner, business_classification="business"
     ).order_by("-sent_at", "dedupe_key")[:4]
     for email in emails:
         payload = email.payload
@@ -120,34 +165,4 @@ def build_context(request):
                         readable(record),
                     )
                 )
-    entries = KnowledgeEntry.objects.filter(owner=request.owner, active=True).order_by(
-        "-created_at", "id"
-    )
-    # 提问匹配优先使用完整问题词段；未匹配条目仍按版本时间排序提供，Agent 判断是否相关。
-    terms = request.user_message.content.split()
-    candidates = list(entries)
-    candidates.sort(
-        key=lambda entry: sum(
-            term in entry.title or term in entry.content for term in terms
-        ),
-        reverse=True,
-    )
-    knowledge = [
-        item(
-            f"knowledge:{entry.pk}",
-            "internal_knowledge",
-            f"{entry.title}（{entry.version}）",
-            entry.content,
-        )
-        for entry in candidates[:4]
-    ]
-    return {
-        "request_id": str(request.pk),
-        "scope": "internal",
-        "customer_context": customer,
-        "context_items": knowledge,
-        "customer_context_status": "completed",
-        "knowledge_status": "completed",
-        "retrieval_gaps": gaps,
-        "external_available": False,
-    }
+    return customer, gaps

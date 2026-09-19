@@ -5,9 +5,9 @@
 ## 1. 边界和复用
 
 - 复用 `sales.Conversation`、`sales.Message`、消息 `client_key` 和员工绑定的 `AgentAuthentication`。不重建会话，不回填旧消息任务。
-- 新应用 `apps.chat` 维护 `AnswerRequest`、`Citation`、`KnowledgeEntry`；新增 `chat.0001_initial`，不修改 L1–L4 的协议、参数或数据。
+- 新应用 `apps.chat` 维护 `AnswerRequest`、`Citation`、`KnowledgeEntry`；初始结构为 `chat.0001_initial`；通用聊天新增 `sales.0005_general_conversation` 与 `chat.0002_general_answer_request`，解除两处 company 非空约束，不修改 L1–L4 的协议、参数或数据。
 - 普通 `sales/records/messages/` 仍只保存用户消息；只有受保护的聊天回报服务能创建 assistant。草稿保存不会触发模型。
-- 聊天仅支持员工自己的公司和私有会话。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
+- 聊天支持无客户绑定的通用私有会话，以及员工自己公司的客户私有会话。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
 - 外部知识关闭；不执行 Function Calling、发信、日历、CRM/文件写操作，不引入向量库或分布式队列。
 
 ## 2. 数据与状态不变量
@@ -33,7 +33,11 @@ failed --用户明确重试--> 新 request_id 的 pending
 
 ## 3. 浏览器接口
 
-主页左侧“聊天助手”直接进入 `/#assistant`，可搜索并选择当前员工的邮件客户；已有客户上下文的导航使用 `/#assistant/<company_id>`，直接恢复该客户的聊天面板。入口不触发客户分析、不自动创建会话或提交问题。搜索、空结果与读取失败均在入口页展示，手机端复用原聊天面板。该入口仍遵循原有客户及会话权限，不提供跨客户通用聊天。
+主页左侧“聊天助手”始终进入 `/#assistant`，直接展示可输入的通用聊天页面，无需客户或邮箱。支持一般问答、写作、翻译及计划；历史与草稿只属于当前员工。进入页面只读取历史，显式提问、保存草稿或新建会话时才写入。手机端保留导航交互。
+
+客户详情的 AI 助手仍使用当前客户的授权资料；已有 `/#assistant/<company_id>` 链接可继续恢复该客户会话，但一级导航始终回到通用聊天。客户证据不足不会自动切换为通用模式。
+
+通过 `POST /api/v1/sales/records/conversations/` 创建通用会话时，company 可省略或为 null；客户会话继续传 UUID。列表新增 `conversation_scope=general|customer` 筛选，通用页使用 general；`?company=<uuid>` 继续用于客户会话。绑定创建后不可修改。MCP/CLI 的 `conversations.list` 也暴露此筛选。
 
 前缀 `/api/v1/sales/chat/`，使用既有 SessionAuthentication、CSRF 和统一错误响应。
 
@@ -54,7 +58,7 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-不接收 employee_id/company_id/role。公司由既有会话解析，员工从登录身份取得。新建返回 201，同内容重传返回 200。
+不接收 employee_id/company_id/role。可空公司由既有会话解析，员工从登录身份取得。新建返回 201，同内容重传返回 200。
 
 状态响应包含 `request_id`、`conversation_id`、`user_message_id`、`assistant_message_id`、`status`、`error`、`created_at`、`processing_started_at`、`finished_at`、`chat_prompt_version`、`citations`。浏览器引用包含 position、三元组及后端保存的 content，供展开证据；这些额外字段不发送给 Agent。
 
@@ -81,6 +85,8 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
+通用领取结构保持同样六字段，但 `company_id` 必须显式为 null；缺字段或空字符串不是通用模式。Agent 按此字段选择 `general_chat.answer` 或原客户工作流。
+
 历史只包含同员工同会话、原问题之前的最近 20 条非空 user/assistant 消息，恢复为时间正序；不含当前问题和后来问题。领取时冻结，不改动 Agent 的 6000 字符历史预算。
 
 ### context
@@ -104,7 +110,9 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 
 首次 internal 请求在事务内读取并保存快照；同请求后续读取返回同样内容。后端不接收任意 company 或 query 覆盖。
 
-当前新适配的证据选择策略：最近最多 4 封员工自有邮箱的业务邮件、1 份当前有效模型画像、工单/报价/订单各至多 1 条现有投影记录、最多 4 条内部知识，共不超过原 Agent 12 条预算。邮件按 sent_at 倒序；业务取现有投影末条；知识按问题空白分隔词段的直接包含匹配数优先，再按导入时间倒序。该策略是 Demo 的确定性选择，不声称实现语义检索或完整历史检索。
+通用模式只提供当前员工的内部知识，customer_context 为空；没有知识也可调用模型进行一般交流，知识读取失败仍明确失败。通用模式不读取或搜索任何客户的邮件、交易或画像。
+
+客户模式的证据选择策略：最近最多 4 封员工自有邮箱的业务邮件、1 份当前有效模型画像、工单/报价/订单各至多 1 条现有投影记录、最多 4 条内部知识，共不超过原 Agent 12 条预算。邮件按 sent_at 倒序；业务取现有投影末条；知识按问题空白分隔词段的直接包含匹配数优先，再按导入时间倒序。该策略是 Demo 的确定性选择，不声称实现语义检索或完整历史检索。
 
 - 邮件正文提供明确节选，包含时间、方向和主题，排除非业务/隐藏邮件；来源 ID 包含数据库邮件身份与复核版本，兼容 Gmail/QQ。
 - 模型画像必须 `provider=agent`、成功、当前 company revision、快照未失效。不会把页面可展示的 stale 画像或 rules 占位当作当前模型结论。
@@ -130,7 +138,7 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 }
 ```
 
-`chat_prompt_version` 是实际 Agent 必传字段。当前明确支持 chat-v2，新版本需同步适配，不自动接受未知行为版本。
+`chat_prompt_version` 是实际 Agent 必传字段。客户会话必须使用 `chat-v2`，通用会话必须使用 `general-chat-v1`，后端按会话绑定拒绝错配版本。通用回答允许一般知识和创作不附引用；引用内部知识时仍须满足快照白名单。新版本需同步适配，不自动接受未知行为版本。
 
 失败示例：
 
@@ -239,3 +247,9 @@ python tools/check_doc_changes.py
 - 新建数据库迁移、`makemigrations --check --dry-run` 和 OpenAPI 生成校验通过；针对目标生产库执行的只读在线迁移门禁与聊天令牌归属预检通过。
 - Python 文档结构与变更检查覆盖 141 个文件，0 错误、0 待复核；检查器测试 12 + 9 项通过。另人工复核前端、部署文件和第三方资源说明。
 - 以上记录为发布前验证，不等同真实模型质量或生产部署成功；最终以对应提交的 GitHub Actions 结果和服务器版本、健康检查为准。
+
+## 通用模式发布顺序
+
+先应用新增的两条数据库迁移，再启动同时支持两种模式的 Web 与 chat_worker。旧 Worker 不接受空 company_id，不能与通用聊天混用。回滚为非空字段前须先处理通用会话及回答记录，迁移不会自动删除历史。保守在线迁移门禁会要求对 AlterField 单独审核；本次未修改门禁策略。
+
+这两条 AlterField 已按结构审阅：仅将 `sales_conversation.company_id` 与 `chat_answerrequest.company_id` 改为可空，保留列类型、外键、索引和 PROTECT 语义，不删除或改写历史记录。生产发布先在部署锁内备份数据库，使用待发布提交的迁移检查实际 SQL 与计划，再显式应用这两条迁移；保守自动迁移门禁保持不变。旧 Web 仍要求客户字段，因此过渡期间不会从旧界面创建通用任务。随后按既有蓝绿流程排空旧聊天 Worker、切换 Web 并启动新 Worker，防止旧消费者领取通用任务。

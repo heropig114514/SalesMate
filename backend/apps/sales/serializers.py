@@ -38,11 +38,11 @@
 - OrderLineSerializer.Meta：声明本实体字段和不可直接写入的状态。
 - FollowUpSerializer：客户跟进与到期提醒的授权字段契约。
 - FollowUpSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- ConversationSerializer：员工自己的客户助手会话的授权字段契约。
+- ConversationSerializer：员工自己的通用或客户助手会话的授权字段契约。
 - ConversationSerializer.Meta：声明本实体字段和不可直接写入的状态。
 - MessageSerializer：不可变会话消息的授权字段契约。
 - MessageSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- DraftSerializer：客户会话中的可编辑草稿的授权字段契约。
+- DraftSerializer：私有会话中的可编辑草稿的授权字段契约。
 - DraftSerializer.Meta：声明本实体字段和不可直接写入的状态。
 - ToolActionSerializer：明确确认的外部工具动作与执行状态的授权字段契约。
 - ToolActionSerializer.Meta：声明本实体字段和不可直接写入的状态。
@@ -703,7 +703,7 @@ class FollowUpSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明员工自己的客户助手会话的字段契约。
+# 功能：声明员工自己的通用或客户助手会话的字段契约。
 # 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
 # 约束：不接受客户端指定 owner、revision 或伪造执行结果。
 class ConversationSerializer(StrictModelSerializer):
@@ -765,7 +765,7 @@ class MessageSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明客户会话中的可编辑草稿的字段契约。
+# 功能：声明私有会话中的可编辑草稿的字段契约。
 # 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
 # 约束：不接受客户端指定 owner、revision 或伪造执行结果。
 class DraftSerializer(StrictModelSerializer):

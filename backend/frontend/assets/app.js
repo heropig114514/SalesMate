@@ -1,6 +1,6 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接选择客户，QQ 同步每次询问范围，旧响应隔离并保留独立草稿。
+ * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接打开通用会话，QQ 同步每次询问范围，旧响应隔离并保留独立草稿。
  * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
@@ -8,7 +8,7 @@
  * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
- * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理聊天，assistantEntry 管理客户选择入口，notices 管理页面提示生命周期。
+ * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理聊天，assistantEntry 管理通用聊天入口，notices 管理页面提示生命周期。
  */
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260914-mail-source';
 import { mailSourceLabel } from './mail-source.js';
@@ -16,8 +16,8 @@ import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260914-mail
 import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js';
 import { request, escapeHtml as e } from './api.js?v=20260914-signup';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
-import { AssistantPanel } from './assistant.js?v=20260919-entry';
-import { AssistantEntry } from './assistant-entry.js';
+import { AssistantPanel } from './assistant.js?v=20260919-general';
+import { AssistantEntry } from './assistant-entry.js?v=20260919-general';
 import { Notice } from './notice.js';
 
 const assistant = new AssistantPanel();
@@ -189,7 +189,7 @@ async function loadDetail(id, trigger = true) {
 }
 
 /** 功能：按哈希切换列表、详情和聊天入口。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止旧观察；聊天路由独立加载客户选择或指定客户会话，不经过详情分析入口。
+ * 逻辑：切换时停止旧观察；聊天路由独立加载通用或显式指定的客户会话，不经过详情分析入口。
  * 约束：聊天、复核和授权入口不触发分析；原客户详情的分析条件保持不变。 */
 async function navigate() {
   detailObserver.stop();

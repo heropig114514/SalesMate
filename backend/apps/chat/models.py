@@ -11,7 +11,7 @@
 变量索引：
 - AnswerRequest.id：Agent 幂等键。
 - AnswerRequest.owner：提交员工。
-- AnswerRequest.company：固定客户绑定。
+- AnswerRequest.company：固定的可空客户绑定；空值为通用问答。
 - AnswerRequest.conversation：固定私有会话。
 - AnswerRequest.user_message：原始问题；多次显式尝试可复用。
 - AnswerRequest.assistant_message：每次尝试最多一条不可变回答。
@@ -51,12 +51,14 @@ from django.db import models
 
 
 # 功能：记录单次回答尝试与权威绑定。
-# 逻辑：活动状态在同一会话内唯一；用户消息可被失败后的新尝试复用。
+# 逻辑：空公司标识对应通用会话，非空对应固定客户；活动状态在同一会话内唯一；用户消息可被失败后的新尝试复用。
 # 约束：终态不可覆盖，快照和结果仅由受保护服务维护。
 class AnswerRequest(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
-    company = models.ForeignKey("crm.Company", on_delete=models.PROTECT)
+    company = models.ForeignKey(
+        "crm.Company", on_delete=models.PROTECT, null=True, blank=True
+    )
     conversation = models.ForeignKey("sales.Conversation", on_delete=models.PROTECT)
     user_message = models.ForeignKey(
         "sales.Message", on_delete=models.PROTECT, related_name="chat_requests"

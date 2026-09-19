@@ -24,12 +24,12 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：聊天助手与世界消息为主入口，聊天链接携带当前客户，次级资源分组收起，保留用户展开状态和当前资源。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：聊天助手与世界消息为主入口，聊天链接始终进入通用会话，次级资源分组收起，保留用户展开状态和当前资源。约束：客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const open = new Set([...nav.querySelectorAll('details[open]')].map(node => node.dataset.group));
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''} ${key === 'assistant' ? 'data-assistant-entry' : ''}>${e(title)}</a>`;
-  nav.innerHTML = `<p class="workspace-nav-label">我的工作空间</p>${link('home', '工作台', '/#home')}${link('assistant', '聊天助手', context ? '/#assistant/' + encodeURIComponent(context.id) : '/#assistant')}${link('directory', '客户', businessHref('directory'))}${link('inbox', '邮件与分析', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', '世界消息', '/world/')}${link('follow-ups', '跟进', businessHref('follow-ups'))}${link('notifications', '通知', businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
+  nav.innerHTML = `<p class="workspace-nav-label">我的工作空间</p>${link('home', '工作台', '/#home')}${link('assistant', '聊天助手', '/#assistant')}${link('directory', '客户', businessHref('directory'))}${link('inbox', '邮件与分析', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', '世界消息', '/world/')}${link('follow-ups', '跟进', businessHref('follow-ups'))}${link('notifications', '通知', businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。

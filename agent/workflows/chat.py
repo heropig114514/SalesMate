@@ -1,4 +1,91 @@
-"""只读销售聊天的严格数据边界、裁剪与模型消息构造基础。"""
+"""职责：提供客户证据问答及统一聊天消费入口。
+实现：保持客户严格证据流程；明确空客户请求分派 general_chat，不修改原模型参数与裁剪预算。
+关联：后端 chat 服务、sales-chat Skill、general_chat 通用流程。
+目录：
+- ChatValidationError：聊天边界数据不符合当前 Demo 的严格契约。
+- parse_recent_history：严格解析后端按原序返回的 user/assistant 最近历史。
+- parse_conversation_request：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求。
+- parse_context_item：严格解析一个可引用来源；空 content 只能作为无证据元数据保留。
+- deduplicate_context_items：按完整四字段去重并保留第一次出现的 Context Item。
+- parse_retrieval_gap：解析不含原始提供商细节的稳定检索缺口对象。
+- parse_answer_context：严格解析一次 request-bound 的 internal 或 external 上下文响应。
+- trim_recent_history：删除完整的最旧消息，直到保留历史的 content 字符数不超预算。
+- trim_context_items：按 customer → internal → external 优先级去重、限量并截断内容。
+- build_chat_messages：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息。
+- validate_citation_allowlist：要求每个 citation 三元组精确命中本次上下文中的同一来源。
+- parse_model_candidate：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。
+- parse_report_answer：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本。
+- stable_failure_result：为已识别 request_id 生成不含事实正文的固定失败结果。
+- answer_conversation_request：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次。
+- _completed_result：组装客户模式 completed 结果并经回报解析器校验。
+- _recognizable_request_id：仅从映射中提取非空字符串请求标识，无法识别时返回 None。
+- _failed_external_context：构造外部检索失败的严格上下文与安全缺口。
+- _add_missing_failure_gap：只在缺少对应 scope 缺口时追加检索失败描述。
+- _is_direct_tool_action：按中英文动作模式识别直接执行请求，排除教程式问法。
+- _needs_matter_clarification：结合问题代词、剩余词段及历史判断是否需要澄清事项。
+- _history_has_specific_matter：通过移除泛化词后的词元判断历史是否提及具体事项。
+- _lexical_units：提取英文词及中文片段并移除既定停用词。
+- _support_units：将词元与既定概念同义词映射成证据比较单元。
+- _validate_answer_policy：串联客户回答的动作、证据、判断和冲突措辞约束。
+- _is_insufficiency_only：识别短文本中不含引用和数字的明确资料不足声明。
+- _validate_factual_sentence_markers：规范句末引用位置后逐句要求事实性文字带编号。
+- _is_nonfactual_gap_sentence：识别不含引用的资料缺口或未确认措辞。
+- _validate_deterministic_citation_support：逐句核对引用证据覆盖数值且存在共同词元或概念。
+- _number_tokens：提取数值和百分号并归一化整数及小数尾零。
+- _validate_judgment_wording：要求包含推测建议线索的文字明确标注判断或可能。
+- _validate_conflict_wording：要求冲突声明引用至少两个来源且标注待确认。
+- _flatten_context：按客户、内部、外部的固定顺序展开证据数组。
+- _parse_context_item_array：校验数组后按索引路径解析每个来源条目。
+- _deduplicate_parsed_context_items：按四字段身份保留首次出现的来源副本。
+- _truncate_context_item：仅截断超预算正文并追加节选标记，保留来源身份。
+- _context_item_key：按身份三字段及正文构造完整去重键。
+- _citation_key：按来源标识、类型和标题构造引用身份键。
+- _record_unique_citation_identity：记录来源身份对应正文并拒绝同身份的内容冲突。
+- _ensure_unique_citation_identities：遍历来源并验证同一引用身份只有一种正文。
+- _parse_citations：严格解析有序的三字段引用数组并拒绝重复。
+- _validate_citation_markers：检查正文编号集合与引用数组位置完整一致。
+- _parse_report_error：要求错误代码及文案精确命中安全失败集合。
+- _untrusted_block：将证据序列化为明确标注不可信数据的消息块。
+- _decode_json_object：解析 JSON 对象并拒绝无效语法、重复键和非对象根值。
+- _unique_json_object：从有序键值对构造对象并拒绝重复键。
+- _object：要求输入为映射对象，否则抛带字段路径的校验异常。
+- _array：要求输入为 list，否则抛带字段路径的校验异常。
+- _keys：要求对象键集合与协议字段精确一致。
+- _string：要求输入为字符串，不做隐式类型转换。
+- _nonblank：要求字符串去空白后非空，返回原始字符串。
+- _enum：要求字符串属于明确的枚举集合。
+- _boolean：只接受 bool 类型，不把整数当作布尔值。
+- _nonnegative_integer：只接受非负整数预算，排除 bool 类型。
+- bailian_chat_provider：通过聊天专用百炼边界发送有序消息，不提供任何工具能力。
+- process_chat_once：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报。
+变量索引：
+- _SALES_CHAT_SKILL：客户聊天 Skill 元数据。
+- CHAT_PROMPT：客户专用提示。
+- CHAT_PROMPT_VERSION：客户提示版本。
+- CHAT_MAX_TOKENS：原输出 token 上限。
+- DEFAULT_HISTORY_CHARACTER_BUDGET：原历史字符预算。
+- DEFAULT_CONTEXT_ITEM_LIMIT：原证据条数预算。
+- DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT：原单条证据字符预算。
+- TRUNCATION_MARKER：裁剪标记。
+- _REQUEST_FIELDS：对应协议字段或枚举白名单。
+- _HISTORY_FIELDS：对应协议字段或枚举白名单。
+- _CONTEXT_ITEM_FIELDS：对应协议字段或枚举白名单。
+- _ANSWER_CONTEXT_FIELDS：对应协议字段或枚举白名单。
+- _RETRIEVAL_GAP_FIELDS：对应协议字段或枚举白名单。
+- _CANDIDATE_FIELDS：对应协议字段或枚举白名单。
+- _CITATION_FIELDS：对应协议字段或枚举白名单。
+- _REPORT_FIELDS：对应协议字段或枚举白名单。
+- _ERROR_FIELDS：对应协议字段或枚举白名单。
+- _HISTORY_ROLES：对应协议字段或枚举白名单。
+- _CONTEXT_SCOPES：对应协议字段或枚举白名单。
+- _KNOWLEDGE_STATUSES：对应协议字段或枚举白名单。
+- _REPORT_STATUSES：对应协议字段或枚举白名单。
+- _FAILURE_MESSAGES：安全错误文案。
+- _CITATION_MARKER：引用编号匹配表达式。
+- _LEXICAL_STOP_UNITS：相关性词元中的泛化停用词。
+- _SUPPORT_CONCEPTS：确定性证据比较的同义概念词组。
+- __all__：公开导出符号。
+"""
 
 from __future__ import annotations
 
@@ -66,10 +153,18 @@ _FAILURE_MESSAGES = {
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 
 
+# 功能：聊天边界数据不符合当前 Demo 的严格契约。
+# 逻辑：以 ValueError 子类标识可控聊天契约失败。
+# 约束：错误不包含服务凭证。
 class ChatValidationError(ValueError):
     """聊天边界数据不符合当前 Demo 的严格契约。"""
 
 
+# 功能：严格解析后端按原序返回的 user/assistant 最近历史。
+# 输入：`value` 待验证数据。
+# 输出：list[dict[str, str]]。
+# 逻辑：严格解析后端按原序返回的 user/assistant 最近历史，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_recent_history(value: object) -> list[dict[str, str]]:
     """严格解析后端按原序返回的 user/assistant 最近历史。"""
     history = _array(value, "recent_history")
@@ -87,6 +182,11 @@ def parse_recent_history(value: object) -> list[dict[str, str]]:
     return parsed
 
 
+# 功能：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求。
+# 输入：`value` 待验证数据、`expected_company_id` 预期客户绑定。
+# 输出：dict[str, Any]。
+# 逻辑：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_conversation_request(
     value: object,
     *,
@@ -115,6 +215,11 @@ def parse_conversation_request(
     }
 
 
+# 功能：严格解析一个可引用来源；空 content 只能作为无证据元数据保留。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：dict[str, str]。
+# 逻辑：严格解析一个可引用来源；空 content 只能作为无证据元数据保留，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_context_item(value: object, *, path: str = "context_item") -> dict[str, str]:
     """严格解析一个可引用来源；空 content 只能作为无证据元数据保留。"""
     item = _object(value, path)
@@ -122,13 +227,16 @@ def parse_context_item(value: object, *, path: str = "context_item") -> dict[str
     return {
         "source_id": _nonblank(item["source_id"], f"{path}.source_id"),
         "source_type": _nonblank(item["source_type"], f"{path}.source_type"),
-        "title_or_label": _nonblank(
-            item["title_or_label"], f"{path}.title_or_label"
-        ),
+        "title_or_label": _nonblank(item["title_or_label"], f"{path}.title_or_label"),
         "content": _string(item["content"], f"{path}.content"),
     }
 
 
+# 功能：按完整四字段去重并保留第一次出现的 Context Item。
+# 输入：`value` 待验证数据。
+# 输出：list[dict[str, str]]。
+# 逻辑：按完整四字段去重并保留第一次出现的 Context Item，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def deduplicate_context_items(value: object) -> list[dict[str, str]]:
     """按完整四字段去重并保留第一次出现的 Context Item。"""
     items = _array(value, "context_items")
@@ -143,7 +251,14 @@ def deduplicate_context_items(value: object) -> list[dict[str, str]]:
     return result
 
 
-def parse_retrieval_gap(value: object, *, path: str = "retrieval_gap") -> dict[str, str]:
+# 功能：解析不含原始提供商细节的稳定检索缺口对象。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：dict[str, str]。
+# 逻辑：解析不含原始提供商细节的稳定检索缺口对象，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
+def parse_retrieval_gap(
+    value: object, *, path: str = "retrieval_gap"
+) -> dict[str, str]:
     """解析不含原始提供商细节的稳定检索缺口对象。"""
     gap = _object(value, path)
     _keys(gap, _RETRIEVAL_GAP_FIELDS, path)
@@ -154,6 +269,11 @@ def parse_retrieval_gap(value: object, *, path: str = "retrieval_gap") -> dict[s
     }
 
 
+# 功能：严格解析一次 request-bound 的 internal 或 external 上下文响应。
+# 输入：`value` 待验证数据、`expected_request_id` 预期请求标识、`expected_scope` 预期知识范围。
+# 输出：dict[str, Any]。
+# 逻辑：严格解析一次 request-bound 的 internal 或 external 上下文响应，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_answer_context(
     value: object,
     *,
@@ -233,6 +353,11 @@ def parse_answer_context(
     }
 
 
+# 功能：删除完整的最旧消息，直到保留历史的 content 字符数不超预算。
+# 输入：`value` 待验证数据、`character_budget` 既定字符预算。
+# 输出：list[dict[str, str]]。
+# 逻辑：删除完整的最旧消息，直到保留历史的 content 字符数不超预算，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def trim_recent_history(
     value: object,
     *,
@@ -249,6 +374,11 @@ def trim_recent_history(
     return [dict(message) for message in history[first_retained:]]
 
 
+# 功能：按 customer → internal → external 优先级去重、限量并截断内容。
+# 输入：`customer_context` 客户证据、`internal_knowledge` 内部知识、`external_knowledge` 外部知识、`item_limit` 最大来源条数、`content_character_limit` 既定单条字符预算。
+# 输出：dict[str, list[dict[str, str]]]。
+# 逻辑：按 customer → internal → external 优先级去重、限量并截断内容，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def trim_context_items(
     customer_context: object,
     internal_knowledge: object,
@@ -302,6 +432,11 @@ def trim_context_items(
     return result
 
 
+# 功能：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息。
+# 输入：`request` 后端领取的请求、`internal_context` 内部上下文、`external_context` 外部上下文、`expected_company_id` 预期客户绑定、`history_character_budget` 历史字符预算、`context_item_limit` 既定条目预算、`context_content_character_limit` 单条来源字符预算。
+# 输出：list[dict[str, str]]。
+# 逻辑：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def build_chat_messages(
     request: object,
     *,
@@ -376,6 +511,11 @@ def build_chat_messages(
     return messages
 
 
+# 功能：要求每个 citation 三元组精确命中本次上下文中的同一来源。
+# 输入：`citations` 有序引用、`allowed_context_items` 当前授权证据。
+# 输出：list[dict[str, str]]。
+# 逻辑：要求每个 citation 三元组精确命中本次上下文中的同一来源，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def validate_citation_allowlist(
     citations: object,
     allowed_context_items: object,
@@ -395,6 +535,11 @@ def validate_citation_allowlist(
     return parsed_citations
 
 
+# 功能：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。
+# 输入：`value` 待验证数据、`allowed_context_items` 当前授权证据。
+# 输出：dict[str, Any]。
+# 逻辑：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_model_candidate(
     value: object,
     *,
@@ -414,6 +559,11 @@ def parse_model_candidate(
     return {"assistant_text": assistant_text, "citations": citations}
 
 
+# 功能：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本。
+# 输入：`value` 待验证数据、`expected_request_id` 预期请求标识、`allowed_context_items` 当前授权证据。
+# 输出：dict[str, Any]。
+# 逻辑：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def parse_report_answer(
     value: object,
     *,
@@ -440,9 +590,7 @@ def parse_report_answer(
             report["assistant_text"], "report_answer.assistant_text"
         )
         citations = (
-            validate_citation_allowlist(
-                report["citations"], allowed_context_items
-            )
+            validate_citation_allowlist(report["citations"], allowed_context_items)
             if allowed_context_items is not None
             else _parse_citations(report["citations"])
         )
@@ -469,6 +617,11 @@ def parse_report_answer(
     }
 
 
+# 功能：为已识别 request_id 生成不含事实正文的固定失败结果。
+# 输入：`request_id` 当前请求标识、`code` 稳定错误码。
+# 输出：dict[str, Any]。
+# 逻辑：为已识别 request_id 生成不含事实正文的固定失败结果，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     """为已识别 request_id 生成不含事实正文的固定失败结果。"""
     parsed_request_id = _nonblank(request_id, "request_id")
@@ -488,6 +641,11 @@ def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     }
 
 
+# 功能：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次。
+# 输入：`request` 后端领取的请求、`backend` 后端客户端、`chat_provider` 单次模型调用边界。
+# 输出：dict[str, Any]。
+# 逻辑：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def answer_conversation_request(
     request: Mapping[str, Any],
     *,
@@ -626,6 +784,11 @@ def answer_conversation_request(
     )
 
 
+# 功能：组装客户模式 completed 结果并经回报解析器校验。
+# 输入：`request_id` 当前请求标识、`assistant_text` 助手正文、`citations` 有序引用。
+# 输出：dict[str, Any]。
+# 逻辑：组装客户模式 completed 结果并经回报解析器校验，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _completed_result(
     request_id: str,
     assistant_text: str,
@@ -641,6 +804,11 @@ def _completed_result(
     }
 
 
+# 功能：仅从映射中提取非空字符串请求标识，无法识别时返回 None。
+# 输入：`value` 待验证数据。
+# 输出：str | None。
+# 逻辑：仅从映射中提取非空字符串请求标识，无法识别时返回 None，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _recognizable_request_id(value: object) -> str | None:
     if not isinstance(value, Mapping):
         return None
@@ -650,6 +818,11 @@ def _recognizable_request_id(value: object) -> str | None:
     return request_id
 
 
+# 功能：构造外部检索失败的严格上下文与安全缺口。
+# 输入：`request_id` 当前请求标识。
+# 输出：dict[str, Any]。
+# 逻辑：构造外部检索失败的严格上下文与安全缺口，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _failed_external_context(request_id: str) -> dict[str, Any]:
     return {
         "request_id": request_id,
@@ -669,6 +842,11 @@ def _failed_external_context(request_id: str) -> dict[str, Any]:
     }
 
 
+# 功能：只在缺少对应 scope 缺口时追加检索失败描述。
+# 输入：`context` 当前校验或裁剪参数、`scope` 知识范围、`message` 安全错误说明。
+# 输出：None。
+# 逻辑：只在缺少对应 scope 缺口时追加检索失败描述，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _add_missing_failure_gap(
     context: dict[str, Any], *, scope: str, message: str
 ) -> None:
@@ -683,10 +861,18 @@ def _add_missing_failure_gap(
     )
 
 
+# 功能：按中英文动作模式识别直接执行请求，排除教程式问法。
+# 输入：`question` 用户问题。
+# 输出：bool。
+# 逻辑：按中英文动作模式识别直接执行请求，排除教程式问法，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _is_direct_tool_action(question: str) -> bool:
     normalized = re.sub(r"\s+", "", question).lower()
     english = question.lower()
-    if re.search(r"(?:如何|怎么|怎样|说明|解释|教程).{0,8}(?:发送|安排|创建|更新|删除|写入)", normalized):
+    if re.search(
+        r"(?:如何|怎么|怎样|说明|解释|教程).{0,8}(?:发送|安排|创建|更新|删除|写入)",
+        normalized,
+    ):
         return False
 
     side_effect_patterns = (
@@ -696,7 +882,10 @@ def _is_direct_tool_action(question: str) -> bool:
         r"(?:请|帮我|替我|直接|马上|现在)*(?:创建|新增|更新|修改|删除|写入|保存).{0,20}(?:crm|客户记录|商机|机会|工单|报价|订单|联系人)",
         r"(?:请|帮我|替我|直接|马上|现在)*(?:创建|新建|写入|保存|上传|移动|修改|删除).{0,20}(?:文件|文档|表格|附件)",
     )
-    if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in side_effect_patterns):
+    if any(
+        re.search(pattern, normalized, re.IGNORECASE)
+        for pattern in side_effect_patterns
+    ):
         return True
     return bool(
         re.search(
@@ -707,6 +896,11 @@ def _is_direct_tool_action(question: str) -> bool:
     )
 
 
+# 功能：结合问题代词、剩余词段及历史判断是否需要澄清事项。
+# 输入：`question` 用户问题、`recent_history` 会话历史。
+# 输出：bool。
+# 逻辑：结合问题代词、剩余词段及历史判断是否需要澄清事项，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _needs_matter_clarification(
     question: str, recent_history: list[dict[str, str]]
 ) -> bool:
@@ -729,18 +923,49 @@ def _needs_matter_clarification(
     )
     if len(residue) >= 2:
         return False
-    return not any(_history_has_specific_matter(item["content"]) for item in recent_history)
+    return not any(
+        _history_has_specific_matter(item["content"]) for item in recent_history
+    )
 
 
+# 功能：通过移除泛化词后的词元判断历史是否提及具体事项。
+# 输入：`content` 来源或历史文本。
+# 输出：bool。
+# 逻辑：通过移除泛化词后的词元判断历史是否提及具体事项，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _history_has_specific_matter(content: str) -> bool:
     units = _lexical_units(content)
     return bool(units - {"可以", "请问", "客户", "需求", "风险", "情况"})
 
 
 _LEXICAL_STOP_UNITS = {
-    "这个", "那个", "什么", "怎么", "如何", "是否", "可以", "请问", "帮我",
-    "客户", "公司", "目前", "现在", "相关", "资料", "信息", "情况", "一下",
-    "the", "and", "for", "with", "what", "how", "this", "that", "customer",
+    "这个",
+    "那个",
+    "什么",
+    "怎么",
+    "如何",
+    "是否",
+    "可以",
+    "请问",
+    "帮我",
+    "客户",
+    "公司",
+    "目前",
+    "现在",
+    "相关",
+    "资料",
+    "信息",
+    "情况",
+    "一下",
+    "the",
+    "and",
+    "for",
+    "with",
+    "what",
+    "how",
+    "this",
+    "that",
+    "customer",
 }
 
 _SUPPORT_CONCEPTS = {
@@ -757,6 +982,11 @@ _SUPPORT_CONCEPTS = {
 }
 
 
+# 功能：提取英文词及中文片段并移除既定停用词。
+# 输入：`value` 待验证数据。
+# 输出：set[str]。
+# 逻辑：提取英文词及中文片段并移除既定停用词，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _lexical_units(value: str) -> set[str]:
     text = value.lower()
     units = {
@@ -770,7 +1000,9 @@ def _lexical_units(value: str) -> set[str]:
         if len(sequence) == 2:
             candidates = (sequence,)
         else:
-            candidates = tuple(sequence[index : index + 2] for index in range(len(sequence) - 1))
+            candidates = tuple(
+                sequence[index : index + 2] for index in range(len(sequence) - 1)
+            )
         units.update(
             candidate
             for candidate in candidates
@@ -779,6 +1011,11 @@ def _lexical_units(value: str) -> set[str]:
     return units
 
 
+# 功能：将词元与既定概念同义词映射成证据比较单元。
+# 输入：`value` 待验证数据。
+# 输出：set[str]。
+# 逻辑：将词元与既定概念同义词映射成证据比较单元，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _support_units(value: str) -> set[str]:
     units = _lexical_units(value)
     lowered = value.lower()
@@ -790,6 +1027,11 @@ def _support_units(value: str) -> set[str]:
     return units
 
 
+# 功能：串联客户回答的动作、证据、判断和冲突措辞约束。
+# 输入：`candidate` 模型候选结果、`relevant_context` 本请求裁剪后的证据。
+# 输出：None。
+# 逻辑：串联客户回答的动作、证据、判断和冲突措辞约束，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_answer_policy(
     candidate: Mapping[str, Any],
     *,
@@ -810,6 +1052,11 @@ def _validate_answer_policy(
     _validate_conflict_wording(text, citations, relevant_context)
 
 
+# 功能：识别短文本中不含引用和数字的明确资料不足声明。
+# 输入：`text` 待检查文本。
+# 输出：bool。
+# 逻辑：识别短文本中不含引用和数字的明确资料不足声明，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _is_insufficiency_only(text: str) -> bool:
     compact = re.sub(r"\s+", "", text)
     if len(compact) > 120 or _CITATION_MARKER.search(compact):
@@ -822,11 +1069,18 @@ def _is_insufficiency_only(text: str) -> bool:
         )
     )
     uncertainty_cue = bool(
-        re.search(r"(?:无法|不能|不足以|暂时无法).{0,12}(?:回答|确认|判断|确定)", compact)
+        re.search(
+            r"(?:无法|不能|不足以|暂时无法).{0,12}(?:回答|确认|判断|确定)", compact
+        )
     )
     return gap_cue and uncertainty_cue and not _number_tokens(compact)
 
 
+# 功能：规范句末引用位置后逐句要求事实性文字带编号。
+# 输入：`text` 待检查文本。
+# 输出：None。
+# 逻辑：规范句末引用位置后逐句要求事实性文字带编号，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_factual_sentence_markers(text: str) -> None:
     normalized = re.sub(
         r"([。！？!?])\s*((?:\[\d+\]\s*)+)",
@@ -845,6 +1099,11 @@ def _validate_factual_sentence_markers(text: str) -> None:
             raise ChatValidationError("每个事实性句子都必须含 Citation marker。")
 
 
+# 功能：识别不含引用的资料缺口或未确认措辞。
+# 输入：`sentence` 当前语句。
+# 输出：bool。
+# 逻辑：识别不含引用的资料缺口或未确认措辞，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _is_nonfactual_gap_sentence(sentence: str) -> bool:
     compact = re.sub(r"\s+", "", sentence)
     return bool(
@@ -856,6 +1115,11 @@ def _is_nonfactual_gap_sentence(sentence: str) -> bool:
     ) and not _CITATION_MARKER.search(compact)
 
 
+# 功能：逐句核对引用证据覆盖数值且存在共同词元或概念。
+# 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
+# 输出：None。
+# 逻辑：逐句核对引用证据覆盖数值且存在共同词元或概念，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_deterministic_citation_support(
     text: str,
     citations: list[dict[str, str]],
@@ -894,6 +1158,12 @@ def _validate_deterministic_citation_support(
         if not (_support_units(claim) & _support_units(evidence_text)):
             raise ChatValidationError("事实性句子与所引用来源缺少可验证的语义关联。")
 
+
+# 功能：提取数值和百分号并归一化整数及小数尾零。
+# 输入：`value` 待验证数据。
+# 输出：set[str]。
+# 逻辑：提取数值和百分号并归一化整数及小数尾零，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _number_tokens(value: str) -> set[str]:
     tokens: set[str] = set()
     for raw_number, percent in re.findall(r"(\d+(?:\.\d+)?)(%?)", value):
@@ -905,6 +1175,11 @@ def _number_tokens(value: str) -> set[str]:
     return tokens
 
 
+# 功能：要求包含推测建议线索的文字明确标注判断或可能。
+# 输入：`text` 待检查文本。
+# 输出：None。
+# 逻辑：要求包含推测建议线索的文字明确标注判断或可能，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_judgment_wording(text: str) -> None:
     has_judgment_cue = bool(
         re.search(r"(?:预计|推测|倾向|大概|或许|看起来|看来|意味着|建议|认为)", text)
@@ -913,6 +1188,11 @@ def _validate_judgment_wording(text: str) -> None:
         raise ChatValidationError("证据判断或建议必须使用‘判断’或‘可能’。")
 
 
+# 功能：要求冲突声明引用至少两个来源且标注待确认。
+# 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
+# 输出：None。
+# 逻辑：要求冲突声明引用至少两个来源且标注待确认，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_conflict_wording(
     text: str,
     citations: list[dict[str, str]],
@@ -936,6 +1216,11 @@ def _validate_conflict_wording(
         )
 
 
+# 功能：按客户、内部、外部的固定顺序展开证据数组。
+# 输入：`relevant_context` 本请求裁剪后的证据。
+# 输出：list[dict[str, str]]。
+# 逻辑：按客户、内部、外部的固定顺序展开证据数组，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _flatten_context(
     relevant_context: Mapping[str, list[dict[str, str]]]
 ) -> list[dict[str, str]]:
@@ -946,6 +1231,11 @@ def _flatten_context(
     ]
 
 
+# 功能：校验数组后按索引路径解析每个来源条目。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：list[dict[str, str]]。
+# 逻辑：校验数组后按索引路径解析每个来源条目，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _parse_context_item_array(value: object, path: str) -> list[dict[str, str]]:
     items = _array(value, path)
     return [
@@ -954,6 +1244,11 @@ def _parse_context_item_array(value: object, path: str) -> list[dict[str, str]]:
     ]
 
 
+# 功能：按四字段身份保留首次出现的来源副本。
+# 输入：`items` 已解析来源数组。
+# 输出：list[dict[str, str]]。
+# 逻辑：按四字段身份保留首次出现的来源副本，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _deduplicate_parsed_context_items(
     items: list[dict[str, str]],
 ) -> list[dict[str, str]]:
@@ -967,6 +1262,11 @@ def _deduplicate_parsed_context_items(
     return result
 
 
+# 功能：仅截断超预算正文并追加节选标记，保留来源身份。
+# 输入：`item` 来源条目、`content_character_limit` 既定单条字符预算。
+# 输出：dict[str, str]。
+# 逻辑：仅截断超预算正文并追加节选标记，保留来源身份，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _truncate_context_item(
     item: Mapping[str, str], *, content_character_limit: int
 ) -> dict[str, str]:
@@ -981,6 +1281,11 @@ def _truncate_context_item(
     }
 
 
+# 功能：按身份三字段及正文构造完整去重键。
+# 输入：`item` 来源条目。
+# 输出：tuple[str, str, str, str]。
+# 逻辑：按身份三字段及正文构造完整去重键，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _context_item_key(item: Mapping[str, str]) -> tuple[str, str, str, str]:
     return (
         item["source_id"],
@@ -990,10 +1295,20 @@ def _context_item_key(item: Mapping[str, str]) -> tuple[str, str, str, str]:
     )
 
 
+# 功能：按来源标识、类型和标题构造引用身份键。
+# 输入：`item` 来源条目。
+# 输出：tuple[str, str, str]。
+# 逻辑：按来源标识、类型和标题构造引用身份键，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _citation_key(item: Mapping[str, str]) -> tuple[str, str, str]:
     return item["source_id"], item["source_type"], item["title_or_label"]
 
 
+# 功能：记录来源身份对应正文并拒绝同身份的内容冲突。
+# 输入：`item` 来源条目、`source_contents` 已见引用身份到正文的映射、`path` 错误定位路径。
+# 输出：None。
+# 逻辑：记录来源身份对应正文并拒绝同身份的内容冲突，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _record_unique_citation_identity(
     item: Mapping[str, str],
     source_contents: dict[tuple[str, str, str], str],
@@ -1002,20 +1317,26 @@ def _record_unique_citation_identity(
     identity = _citation_key(item)
     content = item["content"]
     if identity in source_contents and source_contents[identity] != content:
-        raise ChatValidationError(
-            f"{path} 中同一引用标识对应了不同内容。"
-        )
+        raise ChatValidationError(f"{path} 中同一引用标识对应了不同内容。")
     source_contents[identity] = content
 
 
-def _ensure_unique_citation_identities(
-    items: list[dict[str, str]], path: str
-) -> None:
+# 功能：遍历来源并验证同一引用身份只有一种正文。
+# 输入：`items` 已解析来源数组、`path` 错误定位路径。
+# 输出：None。
+# 逻辑：遍历来源并验证同一引用身份只有一种正文，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
+def _ensure_unique_citation_identities(items: list[dict[str, str]], path: str) -> None:
     source_contents: dict[tuple[str, str, str], str] = {}
     for item in items:
         _record_unique_citation_identity(item, source_contents, path)
 
 
+# 功能：严格解析有序的三字段引用数组并拒绝重复。
+# 输入：`value` 待验证数据。
+# 输出：list[dict[str, str]]。
+# 逻辑：严格解析有序的三字段引用数组并拒绝重复，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _parse_citations(value: object) -> list[dict[str, str]]:
     raw_citations = _array(value, "citations")
     citations: list[dict[str, str]] = []
@@ -1025,9 +1346,7 @@ def _parse_citations(value: object) -> list[dict[str, str]]:
         _keys(citation, _CITATION_FIELDS, path)
         citations.append(
             {
-                "source_id": _nonblank(
-                    citation["source_id"], f"{path}.source_id"
-                ),
+                "source_id": _nonblank(citation["source_id"], f"{path}.source_id"),
                 "source_type": _nonblank(
                     citation["source_type"], f"{path}.source_type"
                 ),
@@ -1039,6 +1358,11 @@ def _parse_citations(value: object) -> list[dict[str, str]]:
     return citations
 
 
+# 功能：检查正文编号集合与引用数组位置完整一致。
+# 输入：`assistant_text` 助手正文、`citations` 有序引用。
+# 输出：None。
+# 逻辑：检查正文编号集合与引用数组位置完整一致，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_citation_markers(
     assistant_text: str, citations: list[dict[str, str]]
 ) -> None:
@@ -1054,6 +1378,11 @@ def _validate_citation_markers(
         raise ChatValidationError("每个 citation 都必须由正文中的对应 marker 使用。")
 
 
+# 功能：要求错误代码及文案精确命中安全失败集合。
+# 输入：`value` 待验证数据。
+# 输出：dict[str, str]。
+# 逻辑：要求错误代码及文案精确命中安全失败集合，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _parse_report_error(value: object) -> dict[str, str]:
     error = _object(value, "report_answer.error")
     _keys(error, _ERROR_FIELDS, "report_answer.error")
@@ -1066,11 +1395,21 @@ def _parse_report_error(value: object) -> dict[str, str]:
     }
 
 
+# 功能：将证据序列化为明确标注不可信数据的消息块。
+# 输入：`label` 数据块标签、`payload` 不可信输入载荷。
+# 输出：str。
+# 逻辑：将证据序列化为明确标注不可信数据的消息块，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _untrusted_block(label: str, payload: object) -> str:
     serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"BEGIN_{label}\n{serialized}\nEND_{label}"
 
 
+# 功能：解析 JSON 对象并拒绝无效语法、重复键和非对象根值。
+# 输入：`value` 待验证数据。
+# 输出：object。
+# 逻辑：解析 JSON 对象并拒绝无效语法、重复键和非对象根值，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _decode_json_object(value: str) -> object:
     if not value.strip():
         raise ChatValidationError("模型候选必须是非空 JSON 文本。")
@@ -1082,6 +1421,11 @@ def _decode_json_object(value: str) -> object:
         raise ChatValidationError("模型候选不是有效 JSON Object。") from None
 
 
+# 功能：从有序键值对构造对象并拒绝重复键。
+# 输入：`pairs` 解码键值对。
+# 输出：dict[str, Any]。
+# 逻辑：从有序键值对构造对象并拒绝重复键，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -1091,29 +1435,54 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+# 功能：要求输入为映射对象，否则抛带字段路径的校验异常。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：Mapping[str, Any]。
+# 逻辑：要求输入为映射对象，否则抛带字段路径的校验异常，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _object(value: object, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ChatValidationError(f"{path} 必须是对象。")
     return value
 
 
+# 功能：要求输入为 list，否则抛带字段路径的校验异常。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：list[Any]。
+# 逻辑：要求输入为 list，否则抛带字段路径的校验异常，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _array(value: object, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise ChatValidationError(f"{path} 必须是数组。")
     return value
 
 
+# 功能：要求对象键集合与协议字段精确一致。
+# 输入：`value` 待验证数据、`expected` 允许字段集合、`path` 错误定位路径。
+# 输出：None。
+# 逻辑：要求对象键集合与协议字段精确一致，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
     if set(value) != expected:
         raise ChatValidationError(f"{path} 字段必须与契约完全一致。")
 
 
+# 功能：要求输入为字符串，不做隐式类型转换。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：str。
+# 逻辑：要求输入为字符串，不做隐式类型转换，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _string(value: object, path: str) -> str:
     if not isinstance(value, str):
         raise ChatValidationError(f"{path} 必须是字符串。")
     return value
 
 
+# 功能：要求字符串去空白后非空，返回原始字符串。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：str。
+# 逻辑：要求字符串去空白后非空，返回原始字符串，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _nonblank(value: object, path: str) -> str:
     text = _string(value, path)
     if not text.strip():
@@ -1121,6 +1490,11 @@ def _nonblank(value: object, path: str) -> str:
     return text
 
 
+# 功能：要求字符串属于明确的枚举集合。
+# 输入：`value` 待验证数据、`allowed` 允许枚举集合、`path` 错误定位路径。
+# 输出：str。
+# 逻辑：要求字符串属于明确的枚举集合，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     text = _nonblank(value, path)
     if text not in allowed:
@@ -1128,18 +1502,33 @@ def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     return text
 
 
+# 功能：只接受 bool 类型，不把整数当作布尔值。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：bool。
+# 逻辑：只接受 bool 类型，不把整数当作布尔值，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _boolean(value: object, path: str) -> bool:
     if type(value) is not bool:
         raise ChatValidationError(f"{path} 必须是布尔值。")
     return value
 
 
+# 功能：只接受非负整数预算，排除 bool 类型。
+# 输入：`value` 待验证数据、`path` 错误定位路径。
+# 输出：int。
+# 逻辑：只接受非负整数预算，排除 bool 类型，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _nonnegative_integer(value: object, path: str) -> int:
     if type(value) is not int or value < 0:
         raise ChatValidationError(f"{path} 必须是非负整数。")
     return value
 
 
+# 功能：通过聊天专用百炼边界发送有序消息，不提供任何工具能力。
+# 输入：`messages` 有序模型消息、`max_tokens` 既定输出上限。
+# 输出：str。
+# 逻辑：通过聊天专用百炼边界发送有序消息，不提供任何工具能力，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def bailian_chat_provider(
     messages: list[dict[str, str]],
     *,
@@ -1151,6 +1540,11 @@ def bailian_chat_provider(
     return generate_chat_json(messages, max_tokens=max_tokens)
 
 
+# 功能：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报。
+# 输入：`backend` 后端客户端、`chat_provider` 单次模型调用边界。
+# 输出：dict[str, Any] | None。
+# 逻辑：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报，保持现有字段规则与处理顺序。
+# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def process_chat_once(
     *,
     backend: Any,
@@ -1171,16 +1565,22 @@ def process_chat_once(
             chat_provider=chat_provider,
         )
 
-    result = answer_conversation_request(
-        claimed_request,
-        backend=backend,
-        chat_provider=chat_provider,
-    )
+    if claimed_request.get("company_id", "missing") is None:
+        from .general_chat import answer
+
+        result = answer(claimed_request, backend=backend, chat_provider=chat_provider)
+    else:
+        result = answer_conversation_request(
+            claimed_request, backend=backend, chat_provider=chat_provider
+        )
     try:
         backend.report_answer(result)
     except Exception:
         # Report Answer 失败只形成本地结果。Demo 不自动重试，也不伪装已保存。
-        return stable_failure_result(request_id, "report_failed")
+        return {
+            **stable_failure_result(request_id, "report_failed"),
+            "chat_prompt_version": result["chat_prompt_version"],
+        }
     return result
 
 
