@@ -90,6 +90,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Mapping
 
@@ -151,6 +152,7 @@ _FAILURE_MESSAGES = {
     "report_failed": "回答结果暂时无法保存。",
 }
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
+logger = logging.getLogger("salesmate.chat")
 
 
 # 功能：聊天边界数据不符合当前 Demo 的严格契约。
@@ -760,9 +762,19 @@ def answer_conversation_request(
 
     try:
         raw_candidate = chat_provider(messages, max_tokens=CHAT_MAX_TOKENS)
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "chat_model_failed request_id=%s stage=provider error_type=%s",
+            request_id,
+            type(error).__name__,
+        )
         return stable_failure_result(request_id, "model_unavailable")
     if not isinstance(raw_candidate, str):
+        logger.warning(
+            "chat_model_invalid request_id=%s stage=response_type actual_type=%s",
+            request_id,
+            type(raw_candidate).__name__,
+        )
         return stable_failure_result(request_id, "invalid_model_output")
 
     try:
@@ -770,11 +782,25 @@ def answer_conversation_request(
             raw_candidate,
             allowed_context_items=allowed_items,
         )
+    except ChatValidationError as error:
+        logger.warning(
+            "chat_model_invalid request_id=%s stage=candidate reason=%s",
+            request_id,
+            error,
+        )
+        return stable_failure_result(request_id, "invalid_model_output")
+
+    try:
         _validate_answer_policy(
             candidate,
             relevant_context=usable,
         )
-    except ChatValidationError:
+    except ChatValidationError as error:
+        logger.warning(
+            "chat_model_invalid request_id=%s stage=policy reason=%s",
+            request_id,
+            error,
+        )
         return stable_failure_result(request_id, "invalid_model_output")
 
     return _completed_result(
@@ -1083,7 +1109,7 @@ def _is_insufficiency_only(text: str) -> bool:
 # 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _validate_factual_sentence_markers(text: str) -> None:
     normalized = re.sub(
-        r"([。！？!?])\s*((?:\[\d+\]\s*)+)",
+        r"([。！？!?])[ \t]*((?:\[\d+\][ \t]*)+)",
         lambda match: match.group(2) + match.group(1),
         text,
     )
@@ -1093,10 +1119,23 @@ def _validate_factual_sentence_markers(text: str) -> None:
         if sentence.strip()
     ]
     for sentence in sentences:
-        if _is_nonfactual_gap_sentence(sentence):
+        if _is_nonfactual_gap_sentence(sentence) or _is_nonfactual_heading(sentence):
             continue
         if not _CITATION_MARKER.search(sentence):
             raise ChatValidationError("每个事实性句子都必须含 Citation marker。")
+
+
+# 只有纯结构标题可不带引用；包含预算、时间等客户事实的标题仍须引用。
+def _is_nonfactual_heading(sentence: str) -> bool:
+    label = re.sub(r"^#{1,6}\s*", "", sentence.strip()).strip("*_ ").rstrip("：:")
+    return label in {
+        "需求总结",
+        "客户需求",
+        "待确认信息",
+        "需要进一步确认的信息",
+        "需要确认的信息",
+        "待确认事项",
+    }
 
 
 # 功能：识别不含引用的资料缺口或未确认措辞。
@@ -1130,7 +1169,7 @@ def _validate_deterministic_citation_support(
         item_lookup.setdefault(_citation_key(item), []).append(item)
 
     normalized = re.sub(
-        r"([。！？!?])\s*((?:\[\d+\]\s*)+)",
+        r"([。！？!?])[ \t]*((?:\[\d+\][ \t]*)+)",
         lambda match: match.group(2) + match.group(1),
         text,
     )
@@ -1150,6 +1189,12 @@ def _validate_deterministic_citation_support(
             f'{item["title_or_label"]} {item["content"]}' for item in cited_items
         )
         claim = _CITATION_MARKER.sub("", sentence)
+        # 列表序号是排版，不是来源中必须出现的业务数字。
+        claim = re.sub(
+            r"^\s*(?:[-*]\s*)?(?:\d{1,2}[.、)]|[（(]\d{1,2}[）)])(?!\d)\s*",
+            "",
+            claim,
+        )
         claim_numbers = _number_tokens(claim)
         evidence_numbers = _number_tokens(evidence_text)
         if claim_numbers - evidence_numbers:

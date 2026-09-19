@@ -82,7 +82,7 @@ python -m unittest agent.tests.test_chat agent.tests.test_core agent.tests.test_
 python -m unittest discover -s agent/tests -p "test_*.py"
 ```
 
-`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
+`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。纯结构标题不要求引用，列表序号不作为业务数字核对；事实标题和正文仍须由证据支持。句末引用规范化会保留换行，避免分点回答产生孤立标点。模型结果不合规时，Agent 日志记录 `request_id`、失败阶段和校验规则，不记录模型原文、客户上下文或凭证；部署后可用 `journalctl -u salesmate-chat` 对照请求排查。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
 
 ## 2. 目录职责
 
@@ -811,7 +811,7 @@ python -m unittest discover -s agent/tests -p "test_*.py"
 python -m unittest agent.tests.test_mvp_pipeline
 ```
 
-自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。当前完整离线发现命令通过 204 项测试。
+自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。当前完整离线发现命令通过 207 项测试。
 
 测试文件分工：
 

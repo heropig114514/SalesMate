@@ -80,10 +80,11 @@ def answer(request, *, backend, chat_provider):
         }
     except Exception as error:
         logging.getLogger("salesmate.general_chat").warning(
-            "general_chat_failed request_id=%s stage=%s error_type=%s",
+            "general_chat_failed request_id=%s stage=%s error_type=%s reason=%s",
             request_id,
             code,
             type(error).__name__,
+            str(error) if isinstance(error, chat.ChatValidationError) else "unavailable",
         )
         if request_id is None:
             raise
