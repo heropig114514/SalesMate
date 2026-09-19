@@ -39,6 +39,7 @@ Windows 需要把 GNU gettext 工具目录加入 PATH。开发机可使用 Git f
 
 - 后端新增 5 项语言测试，验证 cookie/请求头优先级、登录和注册错误、目录契约、中文数据往返及账户隔离。完整启用范围后端测试共 **199 项通过**，沿用现有配置排除已禁用的 QQ 专用集成测试。
 - 新增 `tools/browser_i18n.cjs`：英文登录、三个入口、跨页/刷新、自动与手动选择、草稿取消保护、静态/动态正文隔离、行业值、API 语言头及手机布局。
+- 真实 Django 聊天联合验收 `tools.chat_browser_e2e` 的客户/通用两种模式共 **2 项通过**；`browser_chat_live.cjs` 显式固定 `zh-CN`，保持既有中文断言并排除运行机器语言差异。
 - 原有 `browser_workspace.cjs`、`browser_chat.cjs`、`browser_processing.cjs`、`browser_world_news.cjs` 全部通过；旧中文测试显式使用 `zh-CN`。
 - GNU gettext 目录检查、前端语法/翻译占位符核对、`python tools/check_docs.py` 与 `python tools/check_doc_changes.py --base HEAD --fail-on-review` 通过；已人工核对新增变量目录、语言边界和日期时区说明。
 - 本地真实 Django 已重启：英文页面读取原有 7 个客户，目录 API 返回 200、`Content-Language: en` 和英文标签。浏览器模拟测试不代表真实邮箱或模型服务已验证。
