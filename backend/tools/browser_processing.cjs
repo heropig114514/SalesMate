@@ -45,7 +45,7 @@ async function main() {
       else if (endpoint === 'sales/records/actions/') data = { results: [], count: 0 };
       else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'UTC' };
       else if (endpoint === 'companies/') data = { results: [{ company_id: 'sample-company', company_name: '演示客户', domains: ['demo.example'], contacts: [], crm_status: 'unregistered', email_count: 1, email_sources: ['synthetic_sample'], headline_summary: '演示样例摘要', industry: 'unknown', size_band: 'unknown', signal: 'unknown', score: null }], count: 1, page: 1, page_size: 20, stats: { companies: 1, unregistered: 1, new_emails_today: 0 } };
-      else if (endpoint === 'mailboxes/') data = [{ mailbox_id: 'mb1', address: 'sales@example.com', gmail_authorized: true, qq_authorized: false, sync_state: { status: runId ? 'sync_running' : 'completed', run_id: runId } }, ...(qqConnected ? [{ mailbox_id: 'qq1', address: 'demo@qq.com', qq_authorized: true, gmail_authorized: false, sync_state: { status: 'completed', run_id: 'qq-run' } }] : [])];
+      else if (endpoint === 'mailboxes/') data = [{ mailbox_id: 'mb1', address: 'sales@example.com', gmail_authorized: true, qq_authorized: false, sync_state: { status: runId ? 'sync_running' : 'completed', run_id: runId } }, ...(qqConnected ? [{ mailbox_id: 'qq1', address: 'demo@qq.com', qq_authorized: true, gmail_authorized: false, sync_state: { status: 'completed', run_id: qqSyncs ? 'qq-run-2' : 'qq-run' } }] : [])];
       else if (endpoint === 'mailboxes/qq-connect/') {
         assert.equal(request.method(), 'POST');
         assert.deepEqual(request.postDataJSON(), { address: 'demo@qq.com', authorization_code: 'abcdefghijklmnop', sync_options: { recent_days: 7, max_messages: 20 } });
@@ -62,8 +62,11 @@ async function main() {
         const results = url.searchParams.get('status') === 'saved' ? items : items.slice(0, 1);
         data = { results, count: results.length, pending_count: 1, page: 1, page_size: 20 };
       }
-      else if (endpoint === 'mailboxes/qq1/request-sync/') { assert.deepEqual(request.postDataJSON(), { sync_options: { recent_days: null, max_messages: 3 } }); qqSyncs += 1; data = { mailbox_id: 'qq1', run_id: 'qq-run' }; }
-      else if (endpoint === 'mailbox-sync-runs/qq-run/') data = { run_id: 'qq-run', mailbox_id: 'qq1', status: 'completed', sync_options: { recent_days: null, max_messages: 3, until: '2026-09-14T10:00:00Z' }, total_count: 0, completed_count: 0, failed_count: 0, pending_count: 0, running_count: 0, analysis_completed_count: 0, analysis_pending_count: 0, analysis_failed_count: 0, error: null, email_errors: [] };
+      else if (endpoint === 'mailboxes/qq1/request-sync/') { assert.deepEqual(request.postDataJSON(), { sync_options: { recent_days: null, max_messages: 3 } }); qqSyncs += 1; data = { mailbox_id: 'qq1', run_id: 'qq-run-2' }; }
+      else if (endpoint === 'mailbox-sync-runs/qq-run/' || endpoint === 'mailbox-sync-runs/qq-run-2/') {
+        const newRun = endpoint === 'mailbox-sync-runs/qq-run-2/';
+        data = { run_id: newRun ? 'qq-run-2' : 'qq-run', mailbox_id: 'qq1', status: 'completed', sync_options: { recent_days: newRun ? null : 7, max_messages: newRun ? 3 : 20, until: '2026-09-14T10:00:00Z' }, total_count: 0, completed_count: 0, failed_count: 0, pending_count: 0, running_count: 0, analysis_completed_count: 0, analysis_pending_count: 0, analysis_failed_count: 0, error: null, email_errors: [] };
+      }
       else if (endpoint === 'mailboxes/mb1/request-sync/') { runId = 'run1'; data = { run_id: runId, mailbox_id: 'mb1', status: 'queued' }; }
       else if (endpoint === 'email-reviews/') data = { results: reviewed ? [] : [{ email_id: 'sales@example.com:review', sender: 'buyer@example.com', subject: '<img src=x onerror=alert(1)>', body_text: '模拟复核原文', reason: '员工确认业务，模拟补抽取失败', revision: 2, intent_evidences: ['模拟证据'], repair_status: 'failed' }], pending_count: reviewed ? 0 : 1, count: reviewed ? 0 : 1, page: 1, page_size: 20 };
       else if (endpoint.startsWith('email-reviews/') && request.method() === 'PATCH') {
