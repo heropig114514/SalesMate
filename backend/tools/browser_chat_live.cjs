@@ -46,10 +46,12 @@ async function main() {
       assert.equal(await page.locator('#assistant-company').textContent(), '通用聊天');
       assert.equal(await page.locator('#assistant-history details').count(), 0);
     } else {
-      await page.locator('#assistant-history summary').waitFor({ timeout: 30000 });
+      const sources = page.locator('#assistant-history .assistant-sources');
+      await sources.locator(':scope > summary').waitFor({ timeout: 30000 });
       assert.match(await page.locator('#assistant-history').textContent(), /客户需要设备。\[1\]/);
-      await page.locator('#assistant-history summary').click();
-      assert.match(await page.locator('#assistant-history details p').textContent(), /客户需要设备/);
+      await sources.locator(':scope > summary').click();
+      await sources.locator('.assistant-source > summary').click();
+      assert.match(await sources.locator('.assistant-source-content').textContent(), /客户需要设备/);
     }
     assert.equal(await page.locator('#assistant-submit').isEnabled(), true);
     assert.deepEqual(errors, []);
