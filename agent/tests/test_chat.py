@@ -7,6 +7,8 @@ import json
 import unittest
 from typing import Any
 
+from agent.clients.backend_api import BackendRequestError
+from agent.llm.bailian import LLMError
 from agent.skills import load_skill
 from agent.workflows.chat import (
     CHAT_MAX_TOKENS,
@@ -666,6 +668,58 @@ class ChatAnswerModeTests(unittest.TestCase):
         )
         self.assertEqual(len(provider.calls), 1)
 
+    def test_unused_model_citations_are_removed_without_changing_supported_answer(self):
+        demand = context_item()
+        budget = context_item(
+            source_id="mail:2", title_or_label="预算邮件", content="客户预算为 28 万元。"
+        )
+        backend = InMemoryChatBackend(
+            internal=answer_context(customer_context=[demand, budget])
+        )
+        provider = FakeChatProvider(
+            model_json("客户需要 50 台检测设备。[1]", demand, budget)
+        )
+        with self.assertLogs("salesmate.chat", level="INFO") as logs:
+            result = answer_conversation_request(
+                conversation_request(), backend=backend, chat_provider=provider
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(demand)])
+        self.assertIn("chat_model_citations_compacted request_id=request-1", "\n".join(logs.output))
+
+    def test_used_model_citation_is_renumbered_when_earlier_source_is_unused(self):
+        demand = context_item()
+        budget = context_item(
+            source_id="mail:2", title_or_label="预算邮件", content="客户预算为 28 万元。"
+        )
+        backend = InMemoryChatBackend(
+            internal=answer_context(customer_context=[demand, budget])
+        )
+        result = answer_conversation_request(
+            conversation_request(question="客户预算是多少？"),
+            backend=backend,
+            chat_provider=FakeChatProvider(
+                model_json("客户预算为 28 万元。[2]", demand, budget)
+            ),
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["assistant_text"], "客户预算为 28 万元。[1]")
+        self.assertEqual(result["citations"], [citation(budget)])
+
+    def test_duplicate_model_citations_are_merged_before_reporting(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        result = answer_conversation_request(
+            conversation_request(),
+            backend=backend,
+            chat_provider=FakeChatProvider(
+                model_json("客户需要 50 台检测设备。[1][2]", item, item)
+            ),
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["assistant_text"], "客户需要 50 台检测设备。[1]")
+        self.assertEqual(result["citations"], [citation(item)])
+
     def test_internal_knowledge_failure_allows_only_supported_partial_answer(self):
         item = context_item()
         gap = {
@@ -1269,6 +1323,17 @@ class ChatFailurePathTests(unittest.TestCase):
         self.assertNotIn("secret", json.dumps(result, ensure_ascii=False))
         self.assertEqual(len(provider.calls), 1)
 
+    def test_bailian_failure_logs_safe_transport_reason(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(exception=LLMError("百炼返回 HTTP 429。"))
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(), backend=backend, chat_provider=provider
+            )
+        self.assertEqual(result["error"]["code"], "model_unavailable")
+        self.assertIn("reason=百炼返回 HTTP 429。", "\n".join(logs.output))
+
     def test_invalid_json_extra_field_marker_and_citation_are_rejected(self):
         item = context_item()
         forged = citation(item)
@@ -1317,6 +1382,22 @@ class ChatFailurePathTests(unittest.TestCase):
                 self.assertEqual(result["citations"], [])
                 self.assertEqual(len(provider.calls), 1)
 
+    def test_out_of_range_citation_log_identifies_marker_without_answer_text(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(),
+                backend=backend,
+                chat_provider=FakeChatProvider(
+                    model_json("private-candidate-marker [2]", item)
+                ),
+            )
+        self.assertEqual(result["error"]["code"], "invalid_model_output")
+        output = "\n".join(logs.output)
+        self.assertIn("marker=2 citation_count=1", output)
+        self.assertNotIn("private-candidate-marker", output)
+
     def test_process_chat_once_report_failure_is_local_and_not_retried(self):
         item = context_item()
         request = conversation_request()
@@ -1340,6 +1421,27 @@ class ChatFailurePathTests(unittest.TestCase):
         self.assertEqual(len(backend.report_calls), 1)
         self.assertEqual(backend.report_calls[0]["status"], "completed")
         self.assertNotIn("database detail", json.dumps(result, ensure_ascii=False))
+
+    def test_report_validation_failure_logs_safe_backend_reason(self):
+        item = context_item()
+        backend = InMemoryChatBackend(
+            request=conversation_request(),
+            internal=answer_context(customer_context=[item]),
+            report_exception=BackendRequestError(
+                400, "invalid", "引用身份不能重复。"
+            ),
+        )
+        with self.assertLogs("salesmate.chat", level="ERROR") as logs:
+            result = process_chat_once(
+                backend=backend,
+                chat_provider=FakeChatProvider(
+                    model_json("客户需要 50 台检测设备。[1]", item)
+                ),
+            )
+        assert result is not None
+        self.assertEqual(result["error"]["code"], "report_failed")
+        self.assertIn("http_status=400", "\n".join(logs.output))
+        self.assertIn("引用身份不能重复", "\n".join(logs.output))
 
     def test_process_chat_once_no_work_calls_no_other_dependency(self):
         backend = InMemoryChatBackend(request=None)

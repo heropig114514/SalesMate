@@ -43,6 +43,7 @@
 - _record_unique_citation_identity：记录来源身份对应正文并拒绝同身份的内容冲突。
 - _ensure_unique_citation_identities：遍历来源并验证同一引用身份只有一种正文。
 - _parse_citations：严格解析有序的三字段引用数组并拒绝重复。
+- _compact_model_citations：移除模型多列但正文未使用的来源，并保持编号连续。
 - _validate_citation_markers：检查正文编号集合与引用数组位置完整一致。
 - _parse_report_error：要求错误代码及文案精确命中安全失败集合。
 - _untrusted_block：将证据序列化为明确标注不可信数据的消息块。
@@ -95,6 +96,8 @@ import re
 from time import perf_counter
 from typing import Any, Mapping
 
+from agent.clients.backend_api import BackendRequestError
+from agent.llm.bailian import LLMError
 from agent.skills import load_skill
 
 
@@ -555,6 +558,7 @@ def parse_model_candidate(
     value: object,
     *,
     allowed_context_items: object,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。"""
     candidate_value = _decode_json_object(value) if isinstance(value, str) else value
@@ -565,6 +569,9 @@ def parse_model_candidate(
     )
     citations = validate_citation_allowlist(
         candidate["citations"], allowed_context_items
+    )
+    assistant_text, citations = _compact_model_citations(
+        assistant_text, citations, request_id=request_id
     )
     _validate_citation_markers(assistant_text, citations)
     return {"assistant_text": assistant_text, "citations": citations}
@@ -829,10 +836,11 @@ def answer_conversation_request(
         raw_candidate = chat_provider(messages, max_tokens=CHAT_MAX_TOKENS)
     except Exception as error:
         logger.warning(
-            "chat_model_failed request_id=%s stage=provider error_type=%s duration_ms=%s",
+            "chat_model_failed request_id=%s stage=provider error_type=%s duration_ms=%s reason=%s",
             request_id,
             type(error).__name__,
             round((perf_counter() - model_started) * 1000),
+            str(error) if isinstance(error, LLMError) else "details_hidden",
         )
         return stable_failure_result(request_id, "model_unavailable")
     logger.info(
@@ -852,6 +860,7 @@ def answer_conversation_request(
         candidate = parse_model_candidate(
             raw_candidate,
             allowed_context_items=allowed_items,
+            request_id=request_id,
         )
     except ChatValidationError as error:
         logger.warning(
@@ -1485,6 +1494,45 @@ def _parse_citations(value: object) -> list[dict[str, str]]:
     return citations
 
 
+# 只合并同一授权来源并删除未使用来源；没有 marker 或 marker 越界仍交给原校验拒绝。
+def _compact_model_citations(
+    assistant_text: str,
+    citations: list[dict[str, str]],
+    *,
+    request_id: str | None,
+) -> tuple[str, list[dict[str, str]]]:
+    raw_markers = _CITATION_MARKER.findall(assistant_text)
+    if not raw_markers or any(
+        raw != str(int(raw)) or not 1 <= int(raw) <= len(citations)
+        for raw in raw_markers
+    ):
+        return assistant_text, citations
+    used_indexes = sorted({int(raw) for raw in raw_markers})
+    renumber: dict[int, int] = {}
+    unique_citations: list[dict[str, str]] = []
+    positions: dict[tuple[str, str, str], int] = {}
+    for old_index in used_indexes:
+        citation = citations[old_index - 1]
+        key = _citation_key(citation)
+        if key not in positions:
+            positions[key] = len(unique_citations) + 1
+            unique_citations.append(citation)
+        renumber[old_index] = positions[key]
+    if len(unique_citations) == len(citations) and all(
+        old == new for old, new in renumber.items()
+    ):
+        return assistant_text, citations
+    normalized_text = _CITATION_MARKER.sub(
+        lambda match: f"[{renumber[int(match.group(1))]}]", assistant_text
+    )
+    normalized_text = re.sub(r"(\[\d+\])(?:[ \t]*\1)+", r"\1", normalized_text)
+    logger.info(
+        "chat_model_citations_compacted request_id=%s original=%s retained=%s",
+        request_id, len(citations), len(unique_citations),
+    )
+    return normalized_text, unique_citations
+
+
 # 功能：检查正文编号集合与引用数组位置完整一致。
 # 输入：`assistant_text` 助手正文、`citations` 有序引用。
 # 输出：None。
@@ -1498,11 +1546,17 @@ def _validate_citation_markers(
     for raw_marker in raw_markers:
         marker = int(raw_marker)
         if raw_marker != str(marker) or marker < 1 or marker > len(citations):
-            raise ChatValidationError("assistant_text 含越界或非规范 Citation marker。")
+            raise ChatValidationError(
+                "assistant_text 含越界或非规范 Citation marker。"
+                f" marker={raw_marker} citation_count={len(citations)}"
+            )
         marker_indexes.add(marker)
     expected_indexes = set(range(1, len(citations) + 1))
     if marker_indexes != expected_indexes:
-        raise ChatValidationError("每个 citation 都必须由正文中的对应 marker 使用。")
+        raise ChatValidationError(
+            "每个 citation 都必须由正文中的对应 marker 使用。"
+            f" marker_count={len(marker_indexes)} citation_count={len(citations)}"
+        )
 
 
 # 功能：要求错误代码及文案精确命中安全失败集合。
@@ -1708,9 +1762,17 @@ def process_chat_once(
     try:
         backend.report_answer(result)
     except Exception as error:
+        backend_detail = (
+            _diagnostic_excerpt(error.detail)
+            if isinstance(error, BackendRequestError) and error.status_code == 400
+            else "details_hidden"
+        )
         logger.error(
-            "chat_report_failed request_id=%s result_status=%s error_type=%s",
+            "chat_report_failed request_id=%s result_status=%s error_type=%s http_status=%s backend_code=%s detail=%r",
             request_id, result["status"], type(error).__name__,
+            error.status_code if isinstance(error, BackendRequestError) else None,
+            error.code if isinstance(error, BackendRequestError) else None,
+            backend_detail,
         )
         # Report Answer 失败只形成本地结果。Demo 不自动重试，也不伪装已保存。
         return {
