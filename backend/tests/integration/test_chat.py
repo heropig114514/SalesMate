@@ -25,7 +25,6 @@
 - ChatTests.test_current_analysis_and_business_sources：有效画像和三类业务证据可引用。
 - ChatTests.test_answer_transaction_rollback：引用保存失败回滚助手消息。
 - ChatTests.test_worker_report_failure_stops：回报失败停止消费者且不重试。
-- ChatTests.test_worker_owner_requires_active_credential：合并后聊天命令保留有效员工与令牌校验。
 - ChatTests.test_processing_access_revoked：领取后撤销权限不能读证据或保存结果。
 - ChatTests.test_bad_pagination：非法分页返回 400。
 - ChatConcurrencyTests：真实数据库并发不变量。
@@ -129,9 +128,9 @@ def result_for(request, citation=None):
         "chat_prompt_version": "chat-v2",
         "status": "completed",
         "error": None,
-        "assistant_text": "客户需要设备。[1]"
-        if citation
-        else "现有资料不足，无法回答该问题。",
+        "assistant_text": (
+            "客户需要设备。[1]" if citation else "现有资料不足，无法回答该问题。"
+        ),
         "citations": [citation] if citation else [],
     }
 
@@ -725,7 +724,7 @@ class ChatTests(TestCase):
     # 功能：验证未知回报结果停止消费且不重派。
     # 输入：无外部参数，模拟 process_chat_once 返回 report_failed。
     # 输出：CommandError 且只执行一次工作流。
-    # 逻辑：常驻模式也立即停止，需要人工查询请求真实状态。
+    # 逻辑：共享调度选择员工后，常驻模式遇到回报不确定也立即停止，需要人工查询请求真实状态。
     # 约束：模拟 Agent 执行边界，不声明真实进程或网络故障已复现。
     def test_worker_report_failure_stops(self):
         failure = {
@@ -736,12 +735,10 @@ class ChatTests(TestCase):
         # 不让 Worker 的连接清理关闭 TestCase 外层事务；生产 finally 行为不变。
         with (
             patch(
-                "apps.chat.management.commands.chat_worker.worker_owner",
+                "apps.chat.management.commands.chat_worker.next_owner",
                 return_value=self.owner,
             ),
-            patch(
-                "apps.chat.management.commands.chat_worker.django_backend_from_environment"
-            ),
+            patch("apps.chat.management.commands.chat_worker.scoped_backend"),
             patch("apps.chat.management.commands.chat_worker.connections.close_all"),
             patch(
                 "apps.chat.management.commands.chat_worker.process_chat_once",
@@ -751,30 +748,6 @@ class ChatTests(TestCase):
             with self.assertRaises(CommandError):
                 call_command("chat_worker")
             process.assert_called_once()
-
-    # 功能：验证聊天身份校验独立于新版共享 CRM 调度，且继续拒绝无效身份。
-    # 输入：无外部参数；隔离数据库中的合成员工及令牌，环境读取与客户端构造使用模拟。
-    # 输出：有效令牌返回原员工；停用员工或删除凭证均抛 CommandError。
-    # 逻辑：直接导入合并后的命令，使用真实数据库查询验证身份撤销边界。
-    # 约束：不读取运行凭证，不访问 HTTP，不证明真实服务已启动。
-    def test_worker_owner_requires_active_credential(self):
-        from apps.chat.management.commands.chat_worker import worker_owner
-
-        with (
-            patch("apps.chat.management.commands.chat_worker.load_environment"),
-            patch("apps.chat.management.commands.chat_worker.django_backend_from_environment"),
-            patch.dict("os.environ", {"SALESMATE_AGENT_SERVICE_TOKEN": "chat-test-token"}),
-        ):
-            self.assertEqual(worker_owner().pk, self.owner.pk)
-            self.owner.is_active = False
-            self.owner.save(update_fields=["is_active"])
-            with self.assertRaises(CommandError):
-                worker_owner()
-            self.owner.is_active = True
-            self.owner.save(update_fields=["is_active"])
-            AgentCredential.objects.filter(owner=self.owner).delete()
-            with self.assertRaises(CommandError):
-                worker_owner()
 
     # 功能：验证领取后的权限撤销。
     # 输入：无外部参数，领取后归档会话。

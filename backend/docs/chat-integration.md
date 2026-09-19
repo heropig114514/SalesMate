@@ -166,15 +166,15 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 ```powershell
 python backend/manage.py migrate
 python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --port 8000
-# 另一个终端；一个进程使用一个员工绑定 token
+# 另一个终端；共享进程轮转所有有效员工的 pending 请求
 python backend/manage.py chat_worker
 # 只处理至多一个请求
 python backend/manage.py chat_worker --once
 ```
 
-沿用 `SALESMATE_BACKEND_AGENT_URL`、`SALESMATE_AGENT_SERVICE_TOKEN` 及 Agent 现有模型配置。chat_worker 独立于 ANALYSIS_PROVIDER 和 crm_worker；不会改变 L1/L3 模型参数、邮箱读取范围或画像并发。聊天仍需要可用模型配置，不存在规则聊天降级。
+共享 chat_worker 沿用 `SALESMATE_BACKEND_AGENT_URL` 及 Agent 模型配置，每个工作单元通过服务器内部 `scoped_backend` 生成临时员工令牌，退出即撤销；不再由环境中的固定 `SALESMATE_AGENT_SERVICE_TOKEN` 限定消费用户。独立 Agent CLI 仍使用其显式配置的固定身份。chat_worker 独立于 ANALYSIS_PROVIDER 和 crm_worker；不会改变 L1/L3 模型参数、邮箱读取范围或画像并发。聊天仍需要可用模型配置，不存在规则聊天降级。
 
-常驻消费者串行处理任务，空队列默认每 2 秒查询；`--poll` 可显式指定 (0,60] 秒。SIGTERM 等待在途任务完成后停止领取。普通已保存失败保留失败记录；领取异常或 report_failed 停止消费者并非零退出，不隐式重试。日志只记录任务标识、员工、状态、错误码和异常类型。
+常驻消费者按员工主键轮转待办，排除停用员工，仅发现 pending；每次以该员工的独立 HTTP 身份串行处理一条，空队列默认每 2 秒查询；`--poll` 可显式指定 (0,60] 秒。SIGTERM 等待在途任务完成后停止领取。普通已保存失败保留失败记录；领取异常或 report_failed 停止消费者并非零退出，不隐式重试。日志只记录任务标识、员工、状态、错误码和异常类型。
 
 恢复步骤：先查询 request 状态，尤其回报响应丢失时，数据库可能已经 completed。确认原进程中断且请求仍 processing 后执行：
 
@@ -200,13 +200,13 @@ python backend/manage.py chat_knowledge --owner <username> --file <knowledge.jso
 
 ## 7. Lightsail 部署
 
-新增 `backend/deploy/lightsail/salesmate-chat.service`，普通 salesmate 用户运行，使用共享的 `/opt/salesmate/shared/runtime.env`，不自动重启失败进程。蓝绿部署先排空聊天、CRM/销售调度器及 Celery 消费者，再备份和迁移；旧 Web 保持服务，候选 Web 健康且切流成功后再启动聊天，最后排空并退役旧 Web。聊天仍按固定令牌绑定单员工，身份校验由聊天命令维护，不依赖新版 CRM 的共享调度身份。
+新增 `backend/deploy/lightsail/salesmate-chat.service`，普通 salesmate 用户运行，使用共享的 `/opt/salesmate/shared/runtime.env`，不自动重启失败进程。蓝绿部署先排空聊天、CRM/销售调度器及 Celery 消费者，再备份和迁移；旧 Web 保持服务，候选 Web 健康且切流成功后再启动聊天，最后排空并退役旧 Web。聊天共享调度复用已有 scoped_backend 临时身份机制；每个 HTTP 客户端仍只绑定一名员工，原权限检查不变。
 
 仓库 `deploy-from-git.sh` 已补充聊天服务预检、停止、启动和健康检查。服务器该脚本是 root 保护的独立副本，**不会因普通代码拉取自动升级**；首次上线需按既有运维方式先审阅安装聊天 service（暂不启动）、更新受保护部署脚本，再发布本次代码。脚本在停机前检查 service 已安装，不自动从普通代码替换 systemd 配置。仅合并代码不代表聊天消费者已经启动，应以部署结果和 systemd 实际状态为准。
 
 首次发布前已确认目标生产数据库尚未应用聊天迁移，将 `chat.0001_initial` 的四项约束放入对应 `CreateModel.options.constraints`。迁移只创建三个新表，不修改既有业务表；活动会话唯一性、请求状态、引用位置及知识版本约束保持相同。在线迁移门禁不变，仍拒绝单独的 `AddConstraint`。发布时按既有流程先备份再迁移；此后不得改写已应用的迁移。
 
-手工部署时完成迁移后，安装服务文件到 `/etc/systemd/system/`，执行 daemon-reload，再明确启用/启动 salesmate-chat；此前核对员工 token 和待处理队列。日志使用 `journalctl -u salesmate-chat`。多员工需独立配置及进程，本单服务不领取其他员工请求。
+手工部署时完成迁移后，安装服务文件到 `/etc/systemd/system/`，执行 daemon-reload，再明确启用/启动 salesmate-chat；此前核对模型与后端地址配置及待处理队列。日志使用 `journalctl -u salesmate-chat`。单服务覆盖全部有效员工，无需为新注册员工配置永久服务令牌或独立进程。
 
 ## 8. 验证与交付边界
 
@@ -253,3 +253,7 @@ python tools/check_doc_changes.py
 先应用新增的两条数据库迁移，再启动同时支持两种模式的 Web 与 chat_worker。旧 Worker 不接受空 company_id，不能与通用聊天混用。回滚为非空字段前须先处理通用会话及回答记录，迁移不会自动删除历史。保守在线迁移门禁会要求对 AlterField 单独审核；本次未修改门禁策略。
 
 这两条 AlterField 已按结构审阅：仅将 `sales_conversation.company_id` 与 `chat_answerrequest.company_id` 改为可空，保留列类型、外键、索引和 PROTECT 语义，不删除或改写历史记录。生产发布先在部署锁内备份数据库，使用待发布提交的迁移检查实际 SQL 与计划，再显式应用这两条迁移；保守自动迁移门禁保持不变。旧 Web 仍要求客户字段，因此过渡期间不会从旧界面创建通用任务。随后按既有蓝绿流程排空旧聊天 Worker、切换 Web 并启动新 Worker，防止旧消费者领取通用任务。
+
+## 多用户排队故障回归
+
+旧聊天服务只以环境固定凭证轮询一位员工，其他员工的请求会长期 pending，即使 systemd 显示 active。共享调度修复通过真实 HTTP 验证两位无服务凭证用户的 ping 均能落库回答、临时凭证撤销、跨用户读取拒绝；保留单任务串行、默认两秒轮询、失败不重试及 SIGTERM 完成在途回报后退出的语义。已有 pending 会自然被领取，不重建消息或重置 processing。
