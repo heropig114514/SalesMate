@@ -102,6 +102,7 @@
 - EvidenceSerializer.source_refs：可定位的邮件或业务记录 ID 数组
 - EvidenceSerializer.text：事实或证据解释文本
 - FACT_FIELDS：L1 中多值事实字段名称集合
+- PURCHASE_STAGES：extract-v7 六级采购阶段枚举
 - FactsResubmissionSerializer.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
 - FactsResubmissionSerializer.extract_error：抽取失败摘要，成功时为空
 - FactsResubmissionSerializer.extract_prompt_version：L1 提示词或规则版本
@@ -171,6 +172,10 @@ from drf_spectacular.utils import extend_schema_field
 FACT_FIELDS = ("contact_name", "contact_title", "company_self_reported", "business_background",
                "employee_scale_hint", "product_need", "quantity", "budget", "delivery_time",
                "decision_process", "concerns", "quote_reference", "order_reference")
+PURCHASE_STAGES = frozenset({
+    "L1 Exploring", "L2 Interested", "L3 Qualified", "L4 Evaluating",
+    "L5 Negotiating", "L6 Purchase Ready",
+})
 SIGNALS = ("repeat_purchase", "quoted_not_closed", "inquiry_intent", "new_lead_no_profile", "unknown")
 INDUSTRIES = ("半导体检测", "精密量测", "光学检测", "工业检测", "unknown")
 SIZES = ("lt_50", "50_100", "100_200", "200_500", "gte_500", "unknown")
@@ -279,6 +284,8 @@ def evidence_is_locatable(evidence, subject, body_text):
 # 逻辑：完成状态要求全部事实字段；证据按 Agent 允许的空白和不可见格式差异定位。
 # 约束：仅验证可定位性，不声称证明模型语义正确。
 def validate_extraction(data, subject, body_text):
+    if data["extract_prompt_version"] != "extract-v7":
+        raise s.ValidationError("仅接受 extract-v7 邮件事实结构。")
     facts = data["facts"]
     if data["extract_status"] != "completed":
         if facts is not None or (data["extract_status"] == "failed" and not data["extract_error"]):
@@ -289,7 +296,10 @@ def validate_extraction(data, subject, body_text):
         raise s.ValidationError("完成抽取必须包含完整 facts 且 extract_error 为 null。")
     if type(facts["has_substantive_update"]) is not bool or not isinstance(facts["message_summary"], str) or len(facts["message_summary"]) > 80:
         raise s.ValidationError("实质更新必须为布尔值，摘要不得超过 80 字。")
-    if facts["intent_hint"] not in ["purchase_inquiry", "meeting", "support", "non_sales", "unknown"]:
+    intent_hint = facts["intent_hint"]
+    if intent_hint is not None and not isinstance(intent_hint, str):
+        raise s.ValidationError("intent_hint 无效。")
+    if intent_hint is not None and intent_hint not in PURCHASE_STAGES:
         raise s.ValidationError("intent_hint 无效。")
     intent_evidences = facts["intent_evidences"]
     if not isinstance(intent_evidences, list):
@@ -306,6 +316,8 @@ def validate_extraction(data, subject, body_text):
                 f"intent_evidences[{index}] 必须是可定位且不重复的原文证据。"
             )
         seen_intent_evidences.add(evidence)
+    if (intent_hint is None and intent_evidences) or (intent_hint is not None and not intent_evidences):
+        raise s.ValidationError("extract-v7 的采购阶段与原文证据不一致。")
     for field in FACT_FIELDS:
         groups = facts[field]
         if not isinstance(groups, list):

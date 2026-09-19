@@ -1,6 +1,6 @@
 # SalesMate 软件与 Agent 联调
 
-正式公司优先级 `score-v2` 已提供后端评分上下文、销售方资料维护、解释保存和版本触发；数据口径、接口及 Agent 待接提交字段见 [L4 后端适配](docs/l4-priority.md)。解释展示尚需 Agent 提交 `score_details` 及前端接入。
+正式公司优先级 `score-v2` 已提供后端评分上下文、销售方资料维护、解释保存和版本触发；数据口径及接口见 [L4 后端适配](docs/l4-priority.md)。资料齐全时 Agent 会随分数提交 `score_details`；网页展示完整解释仍需前端接入。
 
 面向用户协作的 123 个后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
 
@@ -13,7 +13,7 @@
 SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取往来邮件，提取客户意向和可定位证据，按公司归组，生成客户画像、销售分析与跟进优先级，并把结果展示在浏览器工作台中。
 
 更新日期：2026-09-19
-当前状态：既有 L1–L4 链路已完成整合；正式 score-v2 的后端上下文、保存及查询接口已适配，解释的 Agent 自动提交和前端展示待接入。真实 Gmail 和阿里百炼需要开发者自己的授权与 API Key。
+当前状态：既有 L1–L4 链路已完成整合；正式 score-v2 的后端上下文、保存及查询接口已适配，资料齐全时 Agent 自动提交解释，前端完整解释展示待接入。真实 Gmail 和阿里百炼需要开发者自己的授权与 API Key。
 
 ## 1. 当前 MVP 范围
 
@@ -125,7 +125,7 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
   "non_business_hint": false,
   "non_business_reason": null,
   "extract_status": "completed",
-  "extract_prompt_version": "extract-v6",
+  "extract_prompt_version": "extract-v7",
   "extract_error": null,
   "facts": {}
 }
@@ -138,7 +138,7 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 - `intent_hint`
 - `intent_evidences`
 
-`intent_hint` 枚举为 `purchase_inquiry`、`meeting`、`support`、`non_sales`、`unknown`。
+`extract-v7` 的 `intent_hint` 是单封客户邮件可证实的最高采购阶段：`L1 Exploring`、`L2 Interested`、`L3 Qualified`、`L4 Evaluating`、`L5 Negotiating`、`L6 Purchase Ready`；没有可证实阶段时为 `null`。有阶段必须提供 `intent_evidences`，无阶段时该数组为空。邮件提交接口只接受 `extract-v7`；部署前清理旧邮件与持久同步游标后重新同步。
 
 其余 13 个事实字段为 `contact_name`、`contact_title`、`company_self_reported`、`business_background`、`employee_scale_hint`、`product_need`、`quantity`、`budget`、`delivery_time`、`decision_process`、`concerns`、`quote_reference`、`order_reference`。
 

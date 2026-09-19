@@ -368,7 +368,7 @@ def _sample_email(
         "non_business_hint": False,
         "non_business_reason": None,
         "extract_status": status,
-        "extract_prompt_version": "extract-v6",
+        "extract_prompt_version": "extract-v7",
         "extract_error": None if status == "completed" else "Mock extraction failure.",
         "facts": _sample_facts(token, sequence) if status == "completed" else None,
     }
@@ -382,7 +382,7 @@ def _sample_facts(token: str, sequence: int) -> dict[str, Any]:
             if sequence == 1
             else "Sales sent a formal quotation."
         ),
-        "intent_hint": "purchase_inquiry",
+        "intent_hint": "L1 Exploring",
         "intent_evidences": ["industrial sensors"],
     }
     for field in _FACT_FIELDS:

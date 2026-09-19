@@ -88,7 +88,7 @@ class LegacyFactTests(TestCase):
     # 约束：测试中的新事实来自确定性规则，不调用外部模型。
     def test_newer_extraction_is_not_replaced(self):
         payload = rules.extract_email(self.mailbox, "buyer@client.example", "采购", "需求：设备\n预算：30 万")
-        newer = Extraction.objects.create(email=self.email, prompt_version="extract-v6", status="completed", facts=payload["facts"])
+        newer = Extraction.objects.create(email=self.email, prompt_version="extract-v7", status="completed", facts=payload["facts"])
         migration.migrate_facts(apps, SimpleNamespace(connection=connection))
         self.assertEqual(Extraction.objects.count(), 2)
         self.assertEqual(selectors.latest_extraction(self.email).pk, newer.pk)

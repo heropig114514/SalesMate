@@ -1,6 +1,5 @@
 """公司级 L4 正式优先级规则，不访问后端或模型。"""
 
-import json
 import unittest
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -10,7 +9,6 @@ from agent.workflows.lead_score import (
     SCORE_VERSION,
     compute_priority_result,
     compute_score,
-    extract_priority_signals,
     rank_company_scores,
 )
 
@@ -120,26 +118,26 @@ class CompanyPriorityTests(unittest.TestCase):
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
                          "无明确紧急时间，按基础档位 10 分")
 
-    def test_missing_data_or_intent_returns_null(self):
+    def test_missing_business_data_gives_provisional_score_but_missing_intent_is_null(self):
         for field in ("average_deal_currency", "products", "similar_won_deals"):
             with self.subTest(field=field):
                 data = context()
                 del data["seller"][field]
                 result = scored(data)
-                self.assertIsNone(result["score"])
-                self.assertEqual(result["score_reasons"][0]["feature"], "insufficient_data")
+                self.assertIsInstance(result["score"], int)
+                self.assertIn("暂定分", result["score_reasons"][2]["note"])
         data = context()
         data["signals"] = data["signals"][:1]
         self.assertIsNone(scored(data)["score"])
         data = context()
         data["seller"]["average_deal_currency"] = "USD"
-        self.assertIsNone(scored(data)["score"])
+        self.assertIsInstance(scored(data)["score"], int)
         data = context()
         data["deal"]["status"] = "CLOSED"
-        self.assertIsNone(scored(data)["score"])
+        self.assertIsInstance(scored(data)["score"], int)
         data = context()
         data["deal"]["deal_value"] = "0"
-        self.assertIsNone(scored(data)["score"])
+        self.assertIsInstance(scored(data)["score"], int)
 
     def test_amount_and_fit_change_company_score(self):
         high = scored()["score"]
@@ -210,42 +208,37 @@ class CompanyPriorityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "本公司邮件"):
             scored(data)
 
-    def test_l4_can_extract_signals_inside_existing_step(self):
+    def test_l4_uses_structured_l1_stage_without_model(self):
         data = context()
-        signals = data.pop("signals")
+        data["signals"][1]["type"] = "L4 Evaluating"
         data["communications"] = [{
             "message_id": "sales@example.com:mail-1",
             "sender": "customer",
             "content": "请明天前给正式报价；请给正式报价。",
         }]
-        provider = lambda _: json.dumps({"signals": signals}, ensure_ascii=False)
         result = compute_score(
             {"status": "completed"}, analysis_input(), clock=lambda: NOW,
-            priority_context=data, signal_provider=provider,
+            priority_context=data,
         )
         self.assertEqual(result["score"], 88)
-        bad = deepcopy(signals)
-        bad[1]["evidence"] = "已经签署合同"
+        data["signals"][1]["evidence"] = "已经签署合同"
         with self.assertRaisesRegex(ValueError, "证据"):
-            extract_priority_signals(
-                data, analysis_input(),
-                provider=lambda _: json.dumps({"signals": bad}, ensure_ascii=False),
-            )
+            compute_score({"status": "completed"}, analysis_input(), clock=lambda: NOW,
+                          priority_context=data)
 
-    def test_l4_does_not_call_signal_model_when_deal_data_is_missing(self):
+    def test_l4_missing_deal_uses_known_dimensions(self):
         data = context()
-        del data["signals"]
         del data["deal"]
         data["communications"] = [{
             "message_id": "sales@example.com:mail-1", "sender": "customer",
-            "content": "请给正式报价", "timestamp": NOW.isoformat(),
+            "content": "请明天前给正式报价；请给正式报价。", "timestamp": NOW.isoformat(),
         }]
         result = compute_score(
             {"status": "completed"}, analysis_input(), clock=lambda: NOW,
             priority_context=data,
-            signal_provider=lambda _: self.fail("缺少商机时不应调用模型"),
         )
-        self.assertIsNone(result["score"])
+        self.assertIsInstance(result["score"], int)
+        self.assertIn("暂定分", result["score_reasons"][2]["note"])
 
     def test_ranking_is_company_level_and_null_last(self):
         high = scored()

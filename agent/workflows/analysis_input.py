@@ -39,9 +39,10 @@ FACT_FIELDS = (
 )
 DIRECTIONS = frozenset({"inbound", "outbound", "unknown"})
 EXTRACT_STATUSES = frozenset({"completed", "failed", "skipped_non_business"})
-INTENT_HINTS = frozenset(
-    {"purchase_inquiry", "meeting", "support", "non_sales", "unknown"}
-)
+INTENT_HINTS = frozenset({
+    "L1 Exploring", "L2 Interested", "L3 Qualified", "L4 Evaluating",
+    "L5 Negotiating", "L6 Purchase Ready", None,
+})
 CRM_STATUSES = frozenset({"unregistered", "registered"})
 
 
@@ -153,28 +154,41 @@ def build_analysis_input(
     except Exception as error:
         return ValidationError("analysis_input_failed", f"L2 构建失败：{error}")
 
-    priority_context = context.get("priority_context")
-    if priority_context is not None and "communications" not in priority_context:
-        recent_emails = sorted(
-            (
-                email for email in emails
-                if email["extract_status"] == "completed"
-                and email["facts"]["intent_hint"] != "non_sales"
-                and email["direction"] in {"inbound", "outbound"}
+    priority_context = dict(context.get("priority_context") or {})
+    recent_emails = sorted(
+        (
+            email for email in emails
+            if email["extract_status"] == "completed"
+            and email["direction"] in {"inbound", "outbound"}
+        ),
+        key=_email_time_key,
+    )[-20:]
+    priority_context["communications"] = [
+        {
+            "message_id": email["dedupe_key"],
+            "sender": "customer" if email["direction"] == "inbound" else "employee",
+            "timestamp": email["sent_at"],
+            "content": "\n".join(
+                part for part in (email["subject"], email.get("body_text"))
+                if isinstance(part, str) and part.strip()
             ),
-            key=_email_time_key,
-        )[-20:]
-        priority_context["communications"] = [
-            {
-                "message_id": email["dedupe_key"],
-                "sender": "customer" if email["direction"] == "inbound" else "employee",
-                "timestamp": email["sent_at"],
-                "content": "\n".join(part for part in (email["subject"], email.get("body_text"))
-                                     if isinstance(part, str) and part.strip()),
-            }
-            for email in recent_emails
-            if email["subject"] or email.get("body_text")
-        ]
+        }
+        for email in recent_emails
+        if email["subject"] or email.get("body_text")
+    ]
+    priority_context["signals"] = [
+        {
+            "type": email["facts"]["intent_hint"],
+            "value": None,
+            "confidence": 1.0,
+            "evidence": email["facts"]["intent_evidences"][0],
+            "source_id": email["dedupe_key"],
+        }
+        for email in recent_emails
+        if email["direction"] == "inbound"
+        and email["facts"]["intent_hint"] in INTENT_HINTS - {None}
+        and email["facts"]["intent_evidences"]
+    ]
 
     return AnalysisInput(
         company_id=company_id,
@@ -386,8 +400,9 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
     status = email.get("extract_status")
     if status not in EXTRACT_STATUSES:
         raise ValueError(f"emails[{index}].extract_status 无效。")
-    if email.get("extract_prompt_version") != EXTRACT_PROMPT_VERSION:
-        raise ValueError(f"emails[{index}] 不是当前 extract-v6 结构。")
+    extract_version = email.get("extract_prompt_version")
+    if extract_version != EXTRACT_PROMPT_VERSION:
+        raise ValueError(f"emails[{index}] 不是受支持的 L1 结构。")
 
     sent_at = email.get("sent_at")
     if sent_at is not None:
@@ -413,7 +428,7 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
         thread_id=thread_id,
         subject=subject,
         extract_status=status,
-        extract_prompt_version=EXTRACT_PROMPT_VERSION,
+        extract_prompt_version=extract_version,
         facts=facts,
     )
     return result
@@ -422,15 +437,20 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
 def _validate_facts(raw: object, email_index: int) -> dict[str, Any]:
     facts = _mapping(raw, f"emails[{email_index}].facts")
     if set(facts) != set(FACT_FIELDS):
-        raise ValueError(f"emails[{email_index}].facts 字段与 extract-v6 不一致。")
+        raise ValueError(f"emails[{email_index}].facts 字段与 {EXTRACT_PROMPT_VERSION} 不一致。")
     if type(facts["has_substantive_update"]) is not bool:
         raise ValueError("has_substantive_update 必须是布尔值。")
     summary = facts["message_summary"]
     if not isinstance(summary, str) or len(summary) > 80:
         raise ValueError("message_summary 必须是 80 字以内的字符串。")
-    if facts["intent_hint"] not in INTENT_HINTS:
+    intent_hint = facts["intent_hint"]
+    if (intent_hint is not None and not isinstance(intent_hint, str)) or intent_hint not in INTENT_HINTS:
         raise ValueError("intent_hint 枚举无效。")
-    _string_list(facts["intent_evidences"], "intent_evidences", allow_empty=True)
+    intent_evidences = _string_list(facts["intent_evidences"], "intent_evidences", allow_empty=True)
+    if intent_hint is None and intent_evidences:
+        raise ValueError("无采购阶段时 intent_evidences 必须为空。")
+    if intent_hint is not None and not intent_evidences:
+        raise ValueError("采购阶段必须提供原文依据。")
 
     normalized = copy.deepcopy(dict(facts))
     for field in ORDINARY_FACT_FIELDS:

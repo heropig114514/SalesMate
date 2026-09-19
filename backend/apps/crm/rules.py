@@ -10,7 +10,7 @@
 - run_company：执行当前公司的一次规则任务。
 变量索引：
 - ANALYSIS_VERSION：规则占位 L3 版本 rules-analysis-v1
-- EXTRACT_VERSION：与真实 L1 契约一致的 extract-v6
+- EXTRACT_VERSION：与真实 L1 契约一致的 extract-v7
 - LABELS：保守提取的中文行标签与事实字段映射
 - MERGE_VERSION：与真实 L2 契约一致的 merge-v2
 - SCORE_VERSION：独立占位评分版本 rules-score-v1，不修改正式权重
@@ -32,10 +32,10 @@ from .access import company_for
 from .jobs import claim, report
 from .results import cached_analysis, save_analysis, save_input, save_score
 from .selectors import context_pair
-from .serializers import FACT_FIELDS, INDUSTRIES
+from .serializers import FACT_FIELDS, INDUSTRIES, PURCHASE_STAGES
 
 logger = logging.getLogger("salesmate.rules")
-EXTRACT_VERSION = "extract-v6"
+EXTRACT_VERSION = "extract-v7"
 MERGE_VERSION = "merge-v2"
 ANALYSIS_VERSION = "rules-analysis-v1"
 SCORE_VERSION = "rules-score-v1"
@@ -58,7 +58,7 @@ def extract_email(mailbox, sender, subject, body, message_id=None, sent_at=None)
             facts[field] = [{"value": match.group(1).strip(), "evidences": [match.group(0)]}]
     intent_match = re.search(r"询价|采购|购买|报价|需求", body)
     facts.update({"has_substantive_update": any(facts[key] for key in ["product_need", "quantity", "budget", "delivery_time", "decision_process", "concerns", "quote_reference", "order_reference"]),
-                  "message_summary": subject[:80], "intent_hint": "purchase_inquiry" if intent_match else "unknown",
+                  "message_summary": subject[:80], "intent_hint": "L1 Exploring" if intent_match else None,
                   "intent_evidences": [intent_match.group(0)] if intent_match else []})
     message_id = message_id or f"sample-{uuid.uuid4()}"
     sent_at = sent_at or timezone.now().isoformat()
@@ -160,7 +160,7 @@ def dimension(snapshot, fields):
 # 约束：不输出冲突推断或新闻；标签模板不能替代真实 Agent 质量验证。
 def generate_analysis(snapshot, grouping, context):
     emails = context["emails"]
-    inquiry = [item for item in emails if item["direction"] == "inbound" and (item.get("facts") or {}).get("intent_hint") == "purchase_inquiry"]
+    inquiry = [item for item in emails if item["direction"] == "inbound" and (item.get("facts") or {}).get("intent_hint") in PURCHASE_STAGES]
     signal, refs, signal_text = "unknown", [], "暂无足够证据"
     if inquiry:
         signal, refs, signal_text = "inquiry_intent", [inquiry[-1]["dedupe_key"]], "邮件出现明确采购或询价表达（规则占位）"

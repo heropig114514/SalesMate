@@ -10,6 +10,7 @@ from agent.workflows.analysis_input import (
     build_analysis_input,
     compute_input_version,
 )
+from agent.workflows.lead_score import compute_score
 from agent.tests.fake_backend import FakeBackend
 
 
@@ -77,10 +78,41 @@ class AnalysisInputTests(unittest.TestCase):
             "company-demo", backend=WithPriorityContext(seed="l2"), clock=lambda: NOW
         )
         self.assertIsInstance(result, AnalysisInput)
-        self.assertEqual(result.priority_context["signals"], [])
+        self.assertEqual(result.priority_context["signals"][0]["type"], "L1 Exploring")
         self.assertTrue(result.priority_context["communications"])
         self.assertIn("message_id", result.priority_context["communications"][0])
         self.assertNotIn("priority_context", result.to_dict())
+
+    def test_v7_stage_reaches_rule_score_without_deal_or_seller(self):
+        class StageBackend(FakeBackend):
+            def get_company_context(self, company_id):
+                context = super().get_company_context(company_id)
+                email = next(item for item in context["emails"] if item["direction"] == "inbound")
+                email["extract_prompt_version"] = "extract-v7"
+                email["facts"]["intent_hint"] = "L3 Qualified"
+                email["facts"]["intent_evidences"] = ["industrial sensors"]
+                return context
+
+        result = build_analysis_input("company-demo", backend=StageBackend(seed="stage"), clock=lambda: NOW)
+        self.assertIsInstance(result, AnalysisInput)
+        self.assertEqual(result.priority_context["signals"][0]["type"], "L3 Qualified")
+        score = compute_score({"status": "completed"}, result, clock=lambda: NOW,
+                              priority_context=result.priority_context)
+        self.assertEqual(score["score"], 35)
+        self.assertIn("暂定分", score["score_reasons"][2]["note"])
+
+    def test_old_l1_email_is_rejected(self):
+        class OldEmailBackend(FakeBackend):
+            def get_company_context(self, company_id):
+                context = super().get_company_context(company_id)
+                context["emails"][0]["extract_prompt_version"] = "extract-v6"
+                return context
+
+        result = build_analysis_input(
+            "company-demo", backend=OldEmailBackend(seed="old-l1"), clock=lambda: NOW
+        )
+        self.assertIsInstance(result, ValidationError)
+        self.assertEqual(result.code, "invalid_backend_data")
 
     def test_backend_retrieval_and_scope_errors_are_returned(self):
         failed = build_analysis_input(

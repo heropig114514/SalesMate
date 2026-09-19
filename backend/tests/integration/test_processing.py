@@ -69,7 +69,7 @@ class ProcessingTests(TestCase):
         if kind == "non_business":
             payload.update(extract_status="skipped_non_business", facts=None, non_business_hint=True, non_business_reason="automated_sender")
         elif kind == "needs_review":
-            payload["facts"].update(intent_hint="non_sales", has_substantive_update=False)
+            payload["facts"].update(intent_hint=None, intent_evidences=[], has_substantive_update=False)
         ingestion.submit_emails(self.owner, [payload])
         return Email.objects.get(pk=payload["dedupe_key"])
 

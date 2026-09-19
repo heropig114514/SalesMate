@@ -9,7 +9,10 @@
 - DurableLineageTests.start：创建并领取独立批次。
 - DurableLineageTests.store：保存一封测试业务邮件。
 - DurableLineageTests.fail_after_raw：在模型边界核验原文已提交后模拟失败。
-- DurableLineageTests.test_all_non_sales_require_review：覆盖有实质更新的 non_sales。
+- DurableLineageTests.test_no_purchase_stage_requires_review：覆盖有实质更新但无采购阶段的邮件。
+- DurableLineageTests.test_new_purchase_stage_is_saved_as_business：新版采购阶段邮件可保存为业务邮件。
+- DurableLineageTests.test_new_mail_without_purchase_stage_waits_for_review：新版无采购阶段的来信进入复核，阶段与证据不一致时拒绝。
+- DurableLineageTests.test_old_l1_submission_is_rejected：旧抽取版本和意图值不能进入新邮件接口。
 - DurableLineageTests.test_repair_preserves_source_and_unblocks_analysis：人工补抽取保留历史并解除画像阻塞。
 - DurableLineageTests.test_stale_repair_is_rejected：模型返回期间人工决定改变时拒绝旧结果。
 - DurableLineageTests.test_failed_repair_requires_explicit_retry：失败持久可见且明确重试。
@@ -32,6 +35,7 @@ from django.core.management import call_command
 from django.db import connections
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
 from agent.workflows.analysis_input import build_analysis_input
 from agent.workflows.gmail_sync import _get_sync_state, _save_sync_state
@@ -112,18 +116,73 @@ class DurableLineageTests(TransactionTestCase):
             connections.close_all()
         raise RuntimeError("mock model failure after durable raw")
 
-    # 功能：验证所有 non_sales 都进入复核。
-    # 输入：无外部参数，构造有事实更新的 non_sales。
+    # 功能：验证无采购阶段的来信进入复核。
+    # 输入：无外部参数，构造有事实更新但无采购阶段的来信。
     # 输出：needs_review 且无画像任务。
-    # 逻辑：回归先前仅无更新才复核的分支。
-    # 约束：不改变 support 或 unknown 的既定分类。
-    def test_all_non_sales_require_review(self):
-        data = self.payload("non-sales")
-        data["facts"]["intent_hint"] = "non_sales"
+    # 逻辑：有无实质更新不影响无阶段来信的人工复核。
+    # 约束：不调用模型或外部邮箱。
+    def test_no_purchase_stage_requires_review(self):
+        data = self.payload("no-purchase-stage")
+        data["facts"]["intent_hint"] = None
+        data["facts"]["intent_evidences"] = []
         ingestion.submit_emails(self.owner, [data])
         email = Email.objects.get(pk=data["dedupe_key"])
         self.assertEqual(email.business_classification, "needs_review")
         self.assertFalse(email.company.jobs.exists())
+
+    # 功能：验证新版采购阶段可通过真实入库校验。
+    # 输入：带可定位数量证据的 extract-v7 合成邮件。
+    # 输出：邮件归为业务且抽取版本保持 v7。
+    # 逻辑：经 submit_emails 保存后读取分类与 Extraction。
+    # 约束：不调用模型或外部邮箱。
+    def test_new_purchase_stage_is_saved_as_business(self):
+        data = self.payload("purchase-stage")
+        data["extract_prompt_version"] = "extract-v7"
+        data["facts"]["intent_hint"] = "L3 Qualified"
+        data["facts"]["intent_evidences"] = ["数量：2 台"]
+        ingestion.submit_emails(self.owner, [data])
+        email = Email.objects.get(pk=data["dedupe_key"])
+        self.assertEqual(email.business_classification, "business")
+        self.assertEqual(email.extractions.get().prompt_version, "extract-v7")
+
+    # 功能：验证无阶段来信的复核与阶段证据约束。
+    # 输入：intent_hint 为 null 的 v7 邮件及缺少证据的 v7 阶段邮件。
+    # 输出：前者进入待复核且不入分析队列，后者被拒绝。
+    # 逻辑：调用真实邮件写入服务并读取分类和任务状态。
+    # 约束：不把 null 直接认定为非业务，也不调用模型。
+    def test_new_mail_without_purchase_stage_waits_for_review(self):
+        data = self.payload("no-stage")
+        data["extract_prompt_version"] = "extract-v7"
+        data["facts"]["intent_hint"] = None
+        data["facts"]["intent_evidences"] = []
+        ingestion.submit_emails(self.owner, [data])
+        email = Email.objects.get(pk=data["dedupe_key"])
+        self.assertEqual(email.business_classification, "needs_review")
+        self.assertFalse(email.company.jobs.exists())
+
+        invalid = self.payload("missing-stage-evidence")
+        invalid["extract_prompt_version"] = "extract-v7"
+        invalid["facts"]["intent_hint"] = "L3 Qualified"
+        invalid["facts"]["intent_evidences"] = []
+        with self.assertRaises(ValidationError):
+            ingestion.submit_emails(self.owner, [invalid])
+
+    # 功能：验证新邮件接口拒绝旧版 L1 格式。
+    # 输入：旧抽取版本及旧版意图枚举的合成邮件。
+    # 输出：两种输入都被拒绝且不入库。
+    # 逻辑：调用真实入库校验，不触发模型或外部邮箱。
+    # 约束：历史迁移文件保持不变。
+    def test_old_l1_submission_is_rejected(self):
+        old_version = self.payload("old-version")
+        old_version["extract_prompt_version"] = "extract-v6"
+        with self.assertRaises(ValidationError):
+            ingestion.submit_emails(self.owner, [old_version])
+
+        old_intent = self.payload("old-intent")
+        old_intent["facts"]["intent_hint"] = "purchase_inquiry"
+        with self.assertRaises(ValidationError):
+            ingestion.submit_emails(self.owner, [old_intent])
+        self.assertFalse(Email.objects.exists())
 
     # 功能：验证误判修复先补 L1 再执行画像。
     # 输入：无外部参数；规则跳过的合成邮件与模拟 L1 事实。
@@ -133,6 +192,7 @@ class DurableLineageTests(TransactionTestCase):
     def test_repair_preserves_source_and_unblocks_analysis(self):
         data = self.payload("skipped")
         facts = deepcopy(data["facts"])
+        facts["intent_hint"] = "L1 Exploring"
         data.update(extract_status="skipped_non_business", facts=None, non_business_hint=True, non_business_reason="命中 no-reply 发件地址规则。")
         ingestion.submit_emails(self.owner, [data])
         email = Email.objects.get(pk=data["dedupe_key"])
@@ -154,7 +214,7 @@ class DurableLineageTests(TransactionTestCase):
         backend.get_company_context.return_value = context
         result = build_analysis_input(str(email.company_id), backend=backend, clock=timezone.now).to_dict()
         self.assertEqual(result.get("unparsed_message_count"), 0, result)
-        self.assertEqual(model.call_count, 1)
+        model.assert_called_once_with(data["subject"], data["body_text"], direction="inbound")
         self.assertEqual(len(jobs.claim(self.owner, 1, 120)), 1)
 
     # 功能：拒绝人工决定改变后的旧补抽取结果。
@@ -244,6 +304,7 @@ class DurableLineageTests(TransactionTestCase):
     # 约束：Gmail 和百炼全部 mock，游标值为合成标识。
     def test_raw_survives_failure_and_incremental_reuses_results(self):
         raw = self.payload("raw-first")
+        raw["facts"]["intent_hint"] = "L1 Exploring"
         raw["eligible_body_text"] = raw["body_text"]
         run = self.start()
         with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"), patch("apps.crm.durable_sync.history_page", return_value=(["raw-first"], "")), patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", side_effect=self.fail_after_raw):
@@ -326,6 +387,7 @@ class DurableLineageTests(TransactionTestCase):
     # 约束：模拟 HTTP 中断，不宣称真实外部服务恢复已验证。
     def test_completed_l1_retries_submission_without_model(self):
         raw = self.payload("submission-retry")
+        raw["facts"]["intent_hint"] = "L1 Exploring"
         run = self.start()
         self.backend.submit_emails.side_effect = RuntimeError("mock HTTP down")
         with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"), patch("apps.crm.durable_sync.history_page", return_value=(["submission-retry"], "")), patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=raw["facts"]):

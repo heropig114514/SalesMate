@@ -94,13 +94,13 @@
 
 公司详情现有 `score_detail` 是完整评分载荷，解释读取路径为 **`score_detail.score_details`**。邮件定位键为 `source_id == dedupe_key`，可在详情的授权 `context.emails` 中查找。原有血缘失效及邮件可见范围检查继续生效。
 
-**Agent 尚需配合**：当前 `analyze_company()` 仅把 `score` 传入 `backend.save_score()`。请将同一次计算的 `score_details` 作为该评分载荷的可选字段一起提交，不新增第二次写入。后端已接收、验证、保存并通过详情返回；本次未修改 Agent 编排或前端展示。
+Agent `analyze_company()` 在资料齐全时将同一次计算的 `score_details` 作为可选字段随 `score` 一起提交；暂定分缺少完整分项时只提交 `score_reasons` 中的缺项说明。后端验证、保存并通过详情返回完整解释；前端目前尚未展示完整解释。
 
 ## 5. 上线与后续范围
 
 - 应用 `sales.0006_l4_priority_context`：创建 SellerProfile，并给商机添加可空 `product_names`。历史资料保持未知，不自动生成测试业务记录。
 - 生产继续显式使用 `ANALYSIS_PROVIDER=agent`；代码没有修改已有运行配置。正式模式页面仅取 `score-v2`，旧分数保留在数据库但不冒充正式结果；未重新评分时页面分数为空。
-- 维护真实客户、商机产品及销售方资料后，通过既有分析任务重新评分。解释完整展示需 Agent 与前端完成上述对接。
+- 维护真实客户、商机产品及销售方资料后，通过既有分析任务重新评分。解释完整展示还需前端接入。
 - 定时 `priority_refresh`、独立 Signal 生命周期、自动外部操作不在此次后端适配范围；没有为时间流逝伪造业务版本。
 
 ## 6. 验证

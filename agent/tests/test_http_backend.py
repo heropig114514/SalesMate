@@ -68,7 +68,7 @@ class DjangoBackendClientTests(unittest.TestCase):
             _Response(
                 {
                     "dedupe_key": dedupe_key,
-                    "extract_prompt_version": "extract-v6",
+                    "extract_prompt_version": "extract-v7",
                     "extract_status": "completed",
                 }
             ),

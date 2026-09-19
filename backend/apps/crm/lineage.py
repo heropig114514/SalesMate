@@ -146,7 +146,11 @@ def run_repair(owner):
         raw = StoredMessage.objects.filter(mailbox_id=email.mailbox_id, message_id=email.payload["gmail_message_id"]).first()
         body = raw.raw.get("eligible_body_text", raw.raw.get("body_text", "")) if raw and raw.raw else email.payload["body_text"]
         subject = email.payload["subject"]
-        facts = validate_facts(bailian_extraction_provider(subject, body), subject, body)
+        facts = validate_facts(
+            bailian_extraction_provider(subject, body, direction=email.direction),
+            subject,
+            body,
+        )
         complete_repair(repair, facts)
     except Exception as error:
         ExtractionRepair.objects.filter(pk=repair.pk, status="running").update(status="failed", error="repair_extraction_failed")

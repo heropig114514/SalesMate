@@ -124,7 +124,10 @@ def analyze_company(
     l4_ms = round((perf_counter() - l4_started) * 1000)
     if score is not None:
         backend_started = perf_counter()
-        backend.save_score(score)
+        score_payload = dict(score)
+        if score_details and score_details.get("score_breakdown") is not None:
+            score_payload["score_details"] = score_details
+        backend.save_score(score_payload)
         backend_ms += round((perf_counter() - backend_started) * 1000)
     logger.info(
         "company_analysis_completed company_id=%s status=%s cache_hit=%s total_ms=%s l2_ms=%s l3_ms=%s l4_ms=%s backend_ms=%s",

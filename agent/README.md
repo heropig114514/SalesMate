@@ -6,7 +6,7 @@
 
 ## 1. 当前范围
 
-2026-09-13 软件集成更新：产品入口由 Django 独立 `crm_worker` 调度，支持原文/L1 输出持久缓存、完整历史分页补采、History 增量及人工补抽取。下文一次性 CLI 描述保留用于模块调试；已由 Worker 接管的邮箱不可再用旧 CLI 写游标。所有 `non_sales` 进入复核，来源变化自动失效并重算 L2–L4。当前产品运行与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。本轮验证使用模拟 Gmail/模型，不代表新增流程已完成真实外部联调。
+2026-09-13 软件集成更新：产品入口由 Django 独立 `crm_worker` 调度，支持原文/L1 输出持久缓存、完整历史分页补采、History 增量及人工补抽取。下文一次性 CLI 描述保留用于模块调试；已由 Worker 接管的邮箱不可再用旧 CLI 写游标。无采购阶段的入站邮件进入复核，来源变化自动失效并重算 L2–L4。当前产品运行与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。本轮验证使用模拟 Gmail/模型，不代表新增流程已完成真实外部联调。
 
 本目录负责 Gmail 邮件理解和公司级销售分析：
 
@@ -111,8 +111,6 @@ agent/
 │   │   └── SKILL.md                # L1 抽取指令、版本和输出上限
 │   ├── customer-analysis/
 │   │   └── SKILL.md                # L3 画像指令、版本和输出上限
-│   ├── l4-priority-signals/
-│   │   └── SKILL.md                # 公司级 L4 邮件信号抽取
 │   └── sales-chat/
 │       └── SKILL.md                # chat-v2 只读问答、grounding 与安全规则
 ├── workflows/
@@ -139,13 +137,12 @@ agent/
 
 没有单独的 `schemas` 或 `prompts` 层。模型能力以 `agent/skills/<skill-name>/SKILL.md` 组织，frontmatter 提供路由名称、用途描述、版本和输出 token 上限，正文保存模型指令。workflow 按名称加载 Skill，只负责拼装本次输入、调用百炼和校验结果。数据结构继续使用普通字典和少量就地 dataclass。
 
-当前提供四个 Skill：
+当前提供三个 Skill：
 
 | Skill | 调用阶段 | 输入边界 | 产出 |
 |---|---|---|---|
 | `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
 | `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
-| `l4-priority-signals` | L4 内部 | 一家公司的相关邮件通信 | 有原文证据的紧急度与采购意向信号，不直接生成分数 |
 | `sales-chat` (`chat-v2`) | 只读聊天 | 当前问题、最近历史和本次授权上下文 | 经校验的自然语言回答与简单 Citation |
 
 `agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他 Tool Action 必须经过独立规格、权限和确认设计；当前 `sales-chat` 不提供或预留可调用执行器。
@@ -216,7 +213,6 @@ flowchart TB
     BAILIAN -->|"画像、信号、分析、评分特征 JSON"| L3
     L3 -->|"Analysis<br/>list_view / detail_view / status / error"| ORCH
     ORCH -->|"Analysis + metrics + 正式评分所需 priority_context"| L4
-    SKILLS -->|"有新上下文时 l4-priority-signals"| L4
     L4 -->|"Score<br/>score / score_reasons / score_version"| ORCH
 
     ORCH -->|"保存 Analysis / Score / JobReport"| RESULT
@@ -238,8 +234,8 @@ flowchart TB
 | 9. 公司级事实归并 | L2 → 编排和后端 | 公司数据集合 | AnalysisInput：company、business_context、facts、metrics、input_version、unparsed_message_count | 形成 L3 唯一可信的分析输入 |
 | 10. 分析缓存判断 | 后端 → 编排 | company_id、input_version | 已存在的 Analysis 或空值 | 相同数据版本不重复调用模型 |
 | 11. 客户画像与分析 | Skill → L3 ↔ 百炼 | `customer-analysis` 指令、精简后的 AnalysisInput 推理视图 | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析；旧评分特征暂留供后端校验 | 完整 L2 继续用于校验和存储；L4 不再使用旧评分特征计算分数 |
-| 12. 跟进优先级 | 编排 → L4 | 公司邮件及评分上下文 | 公司级 Score、分项、前三原因、证据与下一步建议 | Skill 仅抽取信号，规则引擎计算正式优先级；信息不足时 `score=null` |
-| 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | `score_details` 目前只随 Agent 分析结果返回，待后端增补持久化契约 |
+| 12. 跟进优先级 | 编排 → L4 | L1 采购阶段及公司评分上下文 | 公司级 Score、分项、原因、证据与下一步建议 | 纯 Python 规则计算；有阶段但业务资料缺失时给暂定分并标注缺项 |
+| 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | 资料齐全时在同一次 Score 提交中附带 `score_details`；暂定分的缺项写在 `score_reasons` |
 | 14. 返回调用方 | 编排 → 后端 → 浏览器 | 完整分析结果 | AnalysisBundle、JobReport 与公司页面投影 | CLI 输出处理报告；前端通过后端读取结果 |
 
 当前没有“前端上传 JSON 文件”或“后端返回磁盘文件”的过程。Agent workflow 内部交换普通字典，`DjangoBackendClient` 将这些字典转换成 HTTP JSON 请求和响应。前端页面查询、筛选、排序和分页继续调用 Django 的浏览器接口。
@@ -292,7 +288,7 @@ process_email(email, mailbox_address, extraction_provider) -> EmailSubmission
   "non_business_hint": false,
   "non_business_reason": null,
   "extract_status": "completed",
-  "extract_prompt_version": "extract-v6",
+  "extract_prompt_version": "extract-v7",
   "extract_error": null,
   "facts": {}
 }
@@ -331,6 +327,8 @@ process_email(email, mailbox_address, extraction_provider) -> EmailSubmission
 
 未知事实返回空数组。一项事实可以有多个 value，每个 value 可以有多条证据。项目不再使用 `requirements` 字段。
 
+`intent_hint` 表示单封客户邮件中可核实的最高采购阶段：`L1 Exploring`、`L2 Interested`、`L3 Qualified`、`L4 Evaluating`、`L5 Negotiating`、`L6 Purchase Ready`。没有可核实采购意向时为 `null`，此时 `intent_evidences=[]`；有阶段时必须附至少一条当前邮件原文证据。字段数量和其余普通事实结构不变。邮件提交与 L2 只接受 `extract-v7`，不读取旧版阶段枚举。
+
 ## 4. Gmail 同步接口
 
 正式页面链路由员工在 Django 页面完成 OAuth；后端随后自动启动 Agent。以下命令保留为关闭自动运行后的手工调试入口：
@@ -363,7 +361,7 @@ result = sync_gmail(
 )
 ```
 
-`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v6` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。默认百炼输出若只是不符合 L1 JSON 或原文证据约束，会在当前线程内修正重试一次；网络、配置和第二次校验失败仍作为单封失败隔离。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
+`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v7` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。默认百炼输出若只是不符合 L1 JSON 或原文证据约束，会在当前线程内修正重试一次；网络、配置和第二次校验失败仍作为单封失败隔离。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
 
 如果传入的测试后端或旧适配器没有 `get_sync_state()` 与 `save_sync_state()`，`sync_gmail()` 会兼容退回原来的最近邮件扫描。游标读取或保存不可用不会改变邮件提交的正确性，只会让下一次同步重新扫描最近邮件。
 
@@ -657,7 +655,7 @@ L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交�
 compute_score(analysis, analysis_input, clock=clock, priority_context=context) -> dict
 ```
 
-`score` 表示当前销售处理优先级，不表示成交概率。每家公司仍只生成一份分数，流程仍为 L2→L3→L4。旧版六项权重已移除，L4 只按正式规则计算；当前后端资料不足时返回 `score=null`，不会回退到旧权重。
+`score` 表示当前销售处理优先级，不表示成交概率。每家公司仍只生成一份分数，流程仍为 L2→L3→L4。L4 不调用 LLM；L1 的 `intent_hint` 阶段由 L2 连同邮件来源和证据传入 L4。缺少可核实采购阶段时返回 `score=null`；有阶段但缺少商机或匹配资料时按已有维度折算暂定分，并在 `score_reasons` 中说明缺项。
 
 公式为 `35% × urgency + 35% × buying_intent + 30% × opportunity_value`，其中 `opportunity_value = 60% × deal_value + 40% × customer_fit`。紧急度按 4 小时内 100、24 小时内 90、2 天内 80、7 天内 65、14 天内 45、更晚 25、无明确时间节点 10；只有客户催促但无截止时间也按 10。邮件只给日期时按评分时钟的日历日保守计分：今天 90、未来 1–2 天 80，不虚构具体小时。已过去的普通截止时间不再持续拉高分数，只有明确的 `OVERDUE_ACTION` 可计入逾期紧急度。采购意向按一般咨询 20、产品/演示 40、数量/预算/采购时间 60、正式报价/决策人 75、合同/付款 90、批准/确认采购 100。金额与同币种历史平均成交额之比按 `<0.5 / [0.5,1) / [1,2) / [2,5] / >5` 映射 `20/40/60/80/100`。客户匹配按行业 25、规模 15、地区 10、产品 35、可比历史赢单 15 加权。
 
@@ -678,11 +676,11 @@ compute_score(analysis, analysis_input, clock=clock, priority_context=context) -
 }
 ```
 
-`deal` 沿用正式文档的商机字段名，但此处已按产品约定归并到公司级；只对 `status=ACTIVE` 且金额大于零的公司级商机评分。Agent 从现有公司邮件快照中选最近 20 封已完成抽取的业务通信，构造 `communications`，以 `dedupe_key` 作为 `message_id`；因此后端不需要再传一份邮件正文。具备计算所需业务资料时，L4 内部调用 `l4-priority-signals` 抽取带 `source_id`、原文证据和置信度的信号，再由 Python 规则计算分数；测试或已结构化的来源也可直接提供 `signals` 数组，省去本次模型调用。`seller.time_zone` 使用 IANA 时区来解释只有日期的时间信号；缺失时沿用评分时钟的时区。没有可支持的采购意向、活跃商机金额或匹配资料，或金额与平均值币种不同，返回 `score=null` 和 `insufficient_data`，不补造缺失值。各贡献整数之和严格等于分数。`rank_company_scores()` 按公司分数降序、紧急度贡献、公司 ID 排序，空分排最后；实际网页列表排序仍需后端执行。
+`deal` 沿用正式文档的商机字段名，但此处已按产品约定归并到公司级；只对 `status=ACTIVE` 且金额大于零的公司级商机评分。L2 从最近 20 封已完成抽取的邮件读取客户采购阶段，选择有原文支持的最高阶段；`dedupe_key` 是来源 ID。L4 只做来源校验、规则评分和解释，不再重复调用模型。没有明确跟进截止时间时紧急度按基础档 10 分；现有 `delivery_time` 原文不自动等同于销售跟进截止时间，因此当前仅靠新阶段字段的公司通常使用基础档。缺失商机或匹配资料时不虚构金额：若两项都缺，按紧急度与采购阶段的 35:35 折算；只有其中一项可算时，用该项作为暂定商机分，仍按 35/35/30 折算。各贡献整数之和严格等于分数。`rank_company_scores()` 按公司分数降序、紧急度贡献、公司 ID 排序，空分排最后；后端公司列表也按此口径排序。
 
-`compute_priority_result()` 在同一次 L4 计算中返回后端现有的 `score` 载荷，以及 `score_details`：原始三项分数和贡献、按影响排序的前三原因、可跳回邮件的证据、建议下一步动作。`analyze_company()` 将 `score` 保存到后端，并在返回值中附带 `score_details`；当前后端尚未持久化或展示后者。现有 `Score.score` 字段就是文档中的 `priority_score`，不再增加第二个分数字段。
+`compute_priority_result()` 在同一次 L4 计算中返回后端现有的 `score` 载荷，以及 `score_details`：原始三项分数和贡献、按影响排序的前三原因、可跳回邮件的证据、建议下一步动作。`analyze_company()` 保存 `score`；完整分项可计算时一并提交 `score_details`，资料不全的暂定分保留在 `score_reasons`，省略尚无法完整计算的 `score_details`。后端保存完整解释并通过公司详情返回；现有 `Score.score` 字段就是文档中的 `priority_score`，不再增加第二个分数字段。
 
-**后端待对接**：在现有公司上下文响应中补充上述 `priority_context`，包括公司级当前活跃商机金额/币种/产品、客户行业/人数/地区、全公司平均成交额及币种、目标客户条件、可比赢单结论；同一公司多条活跃商机须先明确汇总口径，不能把不同币种直接相加。金额使用十进制字符串，同类行业、地区和产品使用可直接比较的规范名称，邮件继续使用现有 `emails`。这些来源变化应更新 `external_snapshot_version` 并触发原公司分析任务。现有 `save_score` 仍以旧 L3 `signal/score_features` 是否齐全决定能否保存非空分数，需要改为按正式 L4 规则校验；若部署启用了后端独立的 `rules` 评分，也需停用旧占位算法或对齐此标准。若网页要显示前三原因、独立证据链接和建议动作，后端还需持久化、查询 `score_details`，前端再展示和按 `score` 排序。当前代码未改后端和前端。
+后端已在 `CompanyContext.priority_context` 返回公司级活跃商机、客户与销售方资料，商机金额只汇总同币种记录；相关业务资料变化会更新版本并排入分析任务。`score-v2` 保存接口接受暂定分，不再依赖旧 L3 特征，完整解释可随分数保存并在公司详情读取。前端目前只展示总分和 `score_reasons`；如需展示前三原因、独立证据链接和建议动作，还需改前端页面。独立的 `rules` 模式仍是联调用旧占位算法，应在正式评价场景使用 Agent 模式。
 
 离线验证：`python -m unittest agent.tests.test_lead_score`。此测试使用固定时钟和假信号，不连接百炼或真实后端。
 
@@ -745,7 +743,7 @@ report_mailbox_sync(report)
 - 通过现有 `sync-state` 端点读取和保存 Gmail `historyId`，后续同步在 L1 之前跳过未变化的历史邮件。
 - 通过现有单封邮件兼容查询识别同版本完成记录，首次建立游标时也不会用新的模型结果覆盖已有事实。
 
-适配器不会改变 `extract-v6` 多值事实和 L2、L3、L4 字段层级。当前 Django 后端已经按这些结构完成对齐。
+适配器保持 17 字段的多值事实结构，`extract-v7` 调整 `intent_hint` 的枚举含义。Django 邮件提交、人工补交和 L2 只接受新契约；无采购阶段的入站邮件进入人工复核。部署此版本前需清理旧邮件及持久同步游标，重新同步后才会由 L1 生成 `extract-v7` 事实。
 
 ## 9. 运行
 
@@ -860,7 +858,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 - 当前后端只能逐封查询已有邮件；首次扫描和游标回退最多增加 20 次轻量 HTTP 查询。后续若增加批量邮件状态接口，可把这些查询合并成一次，但不影响当前正确性。
 - L1 固定最多四路并发，避免一次产生二十个百炼请求；若账号限流，应在 Agent 侧把并发数改小。L2–L4 按公司 Job 独立处理，同一公司的多封更新由后端合并为一项最新任务。
 - 软件独立 `crm_worker` 消费持久批次和画像任务；CLI 保留一次性调试，Web 不启动 Agent 线程。
-- Agent 会提交 `skipped_non_business`，也会在 LLM 结果中保留 `intent_hint=non_sales` 与 `has_substantive_update=false`。软件已提供非业务默认隐藏和人工复核；前端只展示后端分类，不猜测业务类别。
+- Agent 仍会提交规则识别的 `skipped_non_business`；完成抽取但没有可证实采购阶段的入站邮件使用 `intent_hint=null`，后端送人工复核；前端继续展示后端分类。
 - Web 重启不删除数据库任务；Worker 执行发生 HTTP 错误时显式失败，进度页可明确重试失败邮件。
 - L3 不使用外部行业资讯或知识库。
 - L4 权重尚未使用真实销售样本校准。

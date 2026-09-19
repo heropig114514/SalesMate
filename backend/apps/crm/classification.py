@@ -1,5 +1,5 @@
 """职责：维护邮件业务分类及人工复核的有效判断。
-实现：所有 non_sales 进入复核，人工结果优先；分类变化沿血缘失效并自动修正。
+实现：无采购阶段的入站邮件进入复核，人工结果优先；分类变化沿血缘失效并自动修正。
 关联：ingestion 更新机器分类，processing_views 按邮箱展示带来源的原文与复核；selectors 只投影业务邮件。
 目录：
 - automatic_classification：把抽取状态映射为业务分类。
@@ -24,13 +24,14 @@ logger = logging.getLogger("salesmate.classification")
 # 功能：按需求文档计算机器分类。
 # 输入：`status` 为抽取状态，`facts` 为事实或 None，`payload` 为原始邮件载荷。
 # 输出：分类、来源、理由三元组。
-# 逻辑：规则跳过隐藏；所有完成抽取的 non_sales 送复核，不再以有无实质更新区分。
-# 约束：尚未约定的 unknown/failed 不额外隐藏，待后续规则补齐；不调用模型。
+# 逻辑：规则跳过隐藏；无采购阶段的入站邮件送复核，不再以有无实质更新区分。
+# 约束：外发无阶段及 failed 不额外隐藏；不调用模型。
 def automatic_classification(status, facts, payload):
     if status == "skipped_non_business":
         return "non_business", "rule", payload.get("non_business_reason") or "规则判定为非业务邮件。"
-    if status == "completed" and facts and facts.get("intent_hint") == "non_sales":
-        return "needs_review", "llm", "模型判断为非销售沟通，等待员工复核。"
+    if status == "completed" and facts:
+        if facts.get("intent_hint") is None and payload.get("direction") == "inbound":
+            return "needs_review", "llm", "未识别到采购阶段，等待员工判断是否属于业务邮件。"
     return "business", "llm" if status == "completed" else "rule", "保留业务往来；是否重算由实质更新字段决定。"
 
 

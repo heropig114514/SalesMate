@@ -171,6 +171,8 @@ def _completed_submission():
     source["from"] = "buyer@example.com"
     source["to"] = ["sales@example.com"]
     source["mailbox_address"] = "sales@example.com"
+    source["extract_prompt_version"] = "extract-v7"
+    source["facts"]["intent_hint"] = "L2 Interested"
     return source
 
 
@@ -515,13 +517,12 @@ class AnalysisAndScoreTests(unittest.TestCase):
         class WithPriorityContext(FakeBackend):
             def get_company_context(self, company_id):
                 context = super().get_company_context(company_id)
-                source = next(item["dedupe_key"] for item in context["emails"]
-                              if item["direction"] == "inbound")
+                inbound = next(item for item in context["emails"]
+                               if item["direction"] == "inbound")
+                inbound["extract_prompt_version"] = "extract-v7"
+                inbound["facts"]["intent_hint"] = "L4 Evaluating"
+                inbound["facts"]["intent_evidences"] = ["Industrial sensor quotation"]
                 context["priority_context"] = {
-                    "signals": [
-                        {"type": "FORMAL_QUOTATION_REQUEST", "value": None,
-                         "confidence": 0.9, "evidence": "Industrial sensor quotation", "source_id": source},
-                    ],
                     "customer": {"industry": "Manufacturing", "company_size": 100,
                                  "country": "Singapore"},
                     "deal": {"deal_value": "250000", "currency": "SGD",
@@ -537,14 +538,17 @@ class AnalysisAndScoreTests(unittest.TestCase):
                 }
                 return context
 
+        backend = WithPriorityContext(seed="mvp")
         result = analyze_company(
-            "company-demo", backend=WithPriorityContext(seed="mvp"),
+            "company-demo", backend=backend,
             analysis_provider=_provider, clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["score"]["score_version"], "score-v2")
         self.assertEqual(result["score"]["company_id"], "company-demo")
         self.assertEqual(result["score_details"]["score_breakdown"]["buying_intent"], 75)
+        saved_score = next(iter(backend._scores.values()))
+        self.assertEqual(saved_score["score_details"], result["score_details"])
 
     def test_analysis_cache_avoids_second_model_call(self):
         calls = []

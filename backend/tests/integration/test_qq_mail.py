@@ -95,6 +95,8 @@ class QQMailTests(TransactionTestCase):
     # 约束：仅测试使用规则，不增加运行时模型回退。
     def raw(self, value):
         document = rules.extract_email(self.mailbox, "buyer@customer.example", "设备询价", "需求：设备\n数量：2 台", value)
+        document["extract_prompt_version"] = "extract-v7"
+        document["facts"]["intent_hint"] = "L1 Exploring"
         document["eligible_body_text"] = document["body_text"]
         document["headers"] = {}
         return document

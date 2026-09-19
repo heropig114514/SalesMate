@@ -2,20 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from time import perf_counter
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agent.llm.bailian import generate_json
-from agent.skills import load_skill
-
-
-_SIGNAL_SKILL = load_skill("l4-priority-signals")
 logger = logging.getLogger("salesmate.agent.lead_score")
 SCORE_VERSION = "score-v2"
 PRIORITY_WEIGHTS = {
@@ -24,6 +17,12 @@ PRIORITY_WEIGHTS = {
     "opportunity_value": Decimal("0.30"),
 }
 INTENT_POINTS = {
+    "L1 Exploring": 20,
+    "L2 Interested": 40,
+    "L3 Qualified": 60,
+    "L4 Evaluating": 75,
+    "L5 Negotiating": 90,
+    "L6 Purchase Ready": 100,
     "GENERAL_INQUIRY": 20,
     "PRODUCT_CONFIRMED": 40,
     "DEMO_REQUEST": 40,
@@ -47,69 +46,16 @@ FIT_WEIGHTS = {
 TIME_SIGNALS = frozenset({"DEADLINE", "UPCOMING_MEETING", "PROMISED_ACTION", "OVERDUE_ACTION"})
 
 
-def bailian_priority_signal_provider(context: Mapping[str, Any]) -> str:
-    """L4 内部抽取一步；模型只给信号，规则引擎负责评分。"""
-    payload = {"communications": context["communications"]}
-    return generate_json(
-        _SIGNAL_SKILL.instructions,
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        max_tokens=_SIGNAL_SKILL.max_tokens,
-    )
-
-
-def extract_priority_signals(
-    context: Mapping[str, Any],
-    analysis_input: Mapping[str, Any],
-    *,
-    provider: Callable[[Mapping[str, Any]], str] = bailian_priority_signal_provider,
-) -> list[dict[str, Any]]:
-    """抽取并核对每条信号的邮件来源与原文证据。"""
-    messages = _priority_messages(context.get("communications"), analysis_input)
-    company_id = analysis_input.get("company_id")
-    started = perf_counter()
-    logger.info("l4_signals_started company_id=%s messages=%s", company_id, len(messages))
-    try:
-        raw = provider(context)
-    except Exception as error:
-        logger.warning(
-            "l4_signals_failed company_id=%s stage=provider error_type=%s duration_ms=%s",
-            company_id, type(error).__name__, round((perf_counter() - started) * 1000),
-        )
-        raise
-    if not isinstance(raw, str):
-        raise ValueError("L4 信号模型必须返回 JSON 文本。")
-    try:
-        candidate = json.loads(raw)
-    except (TypeError, ValueError):
-        raise ValueError("L4 信号模型返回无效 JSON。") from None
-    if not isinstance(candidate, dict) or set(candidate) != {"signals"}:
-        raise ValueError("L4 信号输出只能包含 signals 数组。")
-    if not isinstance(candidate["signals"], list):
-        raise ValueError("L4 signals 必须是数组。")
-    try:
-        signals = _priority_signals(candidate["signals"], analysis_input, messages)
-    except ValueError as error:
-        logger.warning("l4_signals_failed company_id=%s stage=validation reason=%s", company_id, error)
-        raise
-    logger.info(
-        "l4_signals_completed company_id=%s count=%s duration_ms=%s",
-        company_id, len(signals), round((perf_counter() - started) * 1000),
-    )
-    return signals
-
-
 def compute_score(
     analysis: object,
     analysis_input: object,
     *,
     clock: Callable[[], datetime],
     priority_context: Mapping[str, Any] | None = None,
-    signal_provider: Callable[[Mapping[str, Any]], str] = bailian_priority_signal_provider,
 ) -> dict[str, Any]:
     """按正式规则返回公司级 0–100 跟进优先级；依据不足时返回空分。"""
     return compute_priority_result(
         analysis, analysis_input, clock=clock, priority_context=priority_context,
-        signal_provider=signal_provider,
     )["score"]
 
 
@@ -119,7 +65,6 @@ def compute_priority_result(
     *,
     clock: Callable[[], datetime],
     priority_context: Mapping[str, Any] | None = None,
-    signal_provider: Callable[[Mapping[str, Any]], str] = bailian_priority_signal_provider,
 ) -> dict[str, Any]:
     """同一次 L4 计算中生成后端 Score 和可展示的解释信息。"""
     analysis_doc = _document(analysis)
@@ -128,14 +73,6 @@ def compute_priority_result(
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("clock 必须返回带时区的 datetime。")
     priority_doc = dict(priority_context) if priority_context is not None else {}
-    if (analysis_doc.get("status") == "completed" and "signals" not in priority_doc
-            and priority_doc.get("communications")
-            and _deal_points(priority_doc.get("deal"), priority_doc.get("seller")) is not None
-            and _fit_points(priority_doc.get("customer"), priority_doc.get("deal"),
-                            priority_doc.get("seller")) is not None):
-        priority_doc["signals"] = extract_priority_signals(
-            priority_doc, input_doc, provider=signal_provider
-        )
     score = _compute_priority(analysis_doc, input_doc, priority_doc, now)
     logger.info(
         "l4_score_computed company_id=%s score=%s reason_features=%s",
@@ -151,7 +88,7 @@ def _compute_priority(
     context: Mapping[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    """LLM 提供信号，规则引擎按 35/35/30 计算公司级分数。"""
+    """使用 L1 阶段和现有业务资料，按 35/35/30 计算公司级分数。"""
     result = {
         "company_id": str(analysis_input.get("company_id", "")),
         "input_version": str(analysis_input.get("input_version", "")),
@@ -180,11 +117,22 @@ def _compute_priority(
     buying_intent = INTENT_POINTS[intent_source["type"]]
     deal = _deal_points(context.get("deal"), context.get("seller"))
     fit = _fit_points(context.get("customer"), context.get("deal"), context.get("seller"))
-    if deal is None or fit is None:
-        return result
-    opportunity_value = _round(Decimal(deal) * Decimal("0.60") + Decimal(fit) * Decimal("0.40"))
-    points = {"urgency": urgency, "buying_intent": buying_intent, "opportunity_value": opportunity_value}
-    raw = {name: Decimal(value) * PRIORITY_WEIGHTS[name] for name, value in points.items()}
+    missing = []
+    if deal is None:
+        missing.append("活跃商机金额及同币种销售均值")
+    if fit is None:
+        missing.append("完整客户匹配资料")
+    if deal is not None and fit is not None:
+        opportunity_value = _round(Decimal(deal) * Decimal("0.60") + Decimal(fit) * Decimal("0.40"))
+    elif deal is not None:
+        opportunity_value = deal
+    else:
+        opportunity_value = fit
+    points = {"urgency": urgency, "buying_intent": buying_intent}
+    if opportunity_value is not None:
+        points["opportunity_value"] = opportunity_value
+    used_weight = sum((PRIORITY_WEIGHTS[name] for name in points), Decimal(0))
+    raw = {name: Decimal(value) * PRIORITY_WEIGHTS[name] / used_weight for name, value in points.items()}
     score = _round(sum(raw.values()))
     contributions = {name: int(value) for name, value in raw.items()}
     remainder = score - sum(contributions.values())
@@ -195,12 +143,23 @@ def _compute_priority(
         if urgency_source else "无明确紧急时间，按基础档位 10 分"
     )
     result["score"] = score
+    provisional_note = f"暂定分；缺少{'、'.join(missing)}；按已有维度折算。" if missing else ""
+    if missing:
+        logger.info("l4_score_provisional company_id=%s missing=%s", result["company_id"], ",".join(missing))
+    if deal is not None and fit is not None:
+        opportunity_note = f"公司级商机价值 {opportunity_value}/100；金额档位 {deal}/100，客户匹配 {fit}/100"
+    elif deal is not None:
+        opportunity_note = f"暂用金额档位 {deal}/100。{provisional_note}"
+    elif fit is not None:
+        opportunity_note = f"暂用客户匹配 {fit}/100。{provisional_note}"
+    else:
+        opportunity_note = provisional_note
     result["score_reasons"] = [
         {"feature": "urgency", "contribution": contributions["urgency"], "note": urgency_note},
         {"feature": "buying_intent", "contribution": contributions["buying_intent"],
          "note": f"{intent_source['type']}：{intent_source['evidence']} [{intent_source['source_id']}]"},
-        {"feature": "opportunity_value", "contribution": contributions["opportunity_value"],
-         "note": f"公司级商机价值 {opportunity_value}/100；金额档位 {deal}/100，客户匹配 {fit}/100"},
+        {"feature": "opportunity_value", "contribution": contributions.get("opportunity_value", 0),
+         "note": opportunity_note},
     ]
     return result
 
@@ -218,6 +177,9 @@ def _priority_details(
         "recommended_next_action": None,
     }
     if score["score"] is None:
+        return empty
+    if (_deal_points(context.get("deal"), context.get("seller")) is None
+            or _fit_points(context.get("customer"), context.get("deal"), context.get("seller")) is None):
         return empty
     messages = (
         _priority_messages(context["communications"], analysis_input)
@@ -543,6 +505,5 @@ def _timestamp(value: object) -> datetime | None:
 
 __all__ = [
     "SCORE_VERSION", "PRIORITY_WEIGHTS", "INTENT_POINTS", "FIT_WEIGHTS", "compute_score",
-    "compute_priority_result", "rank_company_scores", "extract_priority_signals",
-    "bailian_priority_signal_provider",
+    "compute_priority_result", "rank_company_scores",
 ]

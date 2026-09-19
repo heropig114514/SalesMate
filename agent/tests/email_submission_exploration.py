@@ -78,11 +78,11 @@ def fact_group(value, *evidences):
 
 
 def canonical_complete_facts():
-    """Return the exact extract-v6 completed-facts oracle."""
+    """Return the extract-v7 completed-facts oracle."""
     facts = {
         "has_substantive_update": True,
         "message_summary": "客户询问 50 台检测设备的报价、预算和交期",
-        "intent_hint": "purchase_inquiry",
+        "intent_hint": "L4 Evaluating",
         "intent_evidences": ["请提供 50 台检测设备报价"],
     }
     facts.update({field: [] for field in MULTI_VALUE_FACT_FIELDS})
@@ -97,7 +97,7 @@ def empty_content_facts():
     facts = {
         "has_substantive_update": False,
         "message_summary": "当前邮件没有可提取的正文",
-        "intent_hint": "unknown",
+        "intent_hint": None,
         "intent_evidences": [],
     }
     facts.update({field: [] for field in MULTI_VALUE_FACT_FIELDS})
@@ -108,7 +108,7 @@ def old_four_field_facts():
     return {
         "has_substantive_update": True,
         "message_summary": "客户请求报价",
-        "intent_hint": "purchase_inquiry",
+        "intent_hint": "L4 Evaluating",
         "intent_evidence": "请提供 50 台检测设备报价",
     }
 
@@ -269,7 +269,7 @@ class EmailSubmissionBugConditionExplorationTests(
             result["dedupe_key"],
             f"{CANONICAL_MAILBOX.casefold()}:{CANONICAL_GMAIL_ID}",
         )
-        self.assertEqual(result["extract_prompt_version"], "extract-v6")
+        self.assertEqual(result["extract_prompt_version"], "extract-v7")
         self.assertEqual(result["extract_status"], "completed")
         self.assert_exact_completed_facts(result["facts"])
         self.assertEqual(provider.calls, [(CANONICAL_SUBJECT, CANONICAL_BODY)])
