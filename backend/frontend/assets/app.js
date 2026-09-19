@@ -16,7 +16,7 @@ import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260914-mail
 import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js';
 import { request, escapeHtml as e } from './api.js?v=20260914-signup';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
-import { AssistantPanel } from './assistant.js?v=20260919-general';
+import { AssistantPanel } from './assistant.js?v=20260919-message-order';
 import { AssistantEntry } from './assistant-entry.js?v=20260919-general';
 import { Notice } from './notice.js';
 

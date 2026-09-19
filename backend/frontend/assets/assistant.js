@@ -1,6 +1,6 @@
 /**
  * 职责：提供通用及客户专属聊天、来源引用、持久化会话和可编辑草稿。
- * 实现：显式提问入队，有界轮询读取真实回答；模式/客户/会话切换取消旧观察，窄屏保持模态焦点。
+ * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；模式/客户/会话切换取消旧观察，窄屏保持模态焦点。
  * 关联：app.js 与 assistant-entry.js 传入可空客户上下文；sales-api.js 通信；index.html 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.setContext、AssistantPanel.open、
  * AssistantPanel.mount、AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
@@ -252,7 +252,7 @@ export class AssistantPanel {
   }
 
   /** 功能：加载指定或最近的当前模式会话。输入：selected 可选会话标识。
-   * 输出：无。逻辑：完整分页读取会话、消息、草稿及回答状态；旧 epoch 响应不更新视图。
+   * 输出：无。逻辑：完整分页读取会话与草稿；先取回答状态再取消息，确保已完成状态对应的消息可见；旧 epoch 响应不更新视图。
    * 约束：当前页未保存文本优先展示，并明确标记未保存。 */
   async load(selected) {
     this.stopPolling();
@@ -279,14 +279,16 @@ export class AssistantPanel {
     let messages = [],
       draft = null;
     if (this.conversation) {
-      const [history, drafts, answers] = await Promise.all([
-        allRows(`records/messages/?conversation=${this.conversation.id}`),
-        allRows(`records/drafts/?conversation=${this.conversation.id}`),
-        allRows(`chat/requests/?conversation=${this.conversation.id}`),
+      const conversationId = this.conversation.id;
+      const [drafts, answers] = await Promise.all([
+        allRows(`records/drafts/?conversation=${conversationId}`),
+        allRows(`chat/requests/?conversation=${conversationId}`),
       ]);
       if (epoch !== this.epoch) return;
+      // completed 与助手消息同事务提交；随后读取消息，避免终态停止轮询却漏掉答案。
+      messages = await allRows(`records/messages/?conversation=${conversationId}`);
+      if (epoch !== this.epoch) return;
       this.answers = answers;
-      messages = history;
       draft =
         drafts
           .filter((d) => d.kind === "chat")
@@ -438,7 +440,7 @@ export class AssistantPanel {
   }
 
   /** 功能：刷新答案而保留用户正在编辑的文本。输入：当前客户、会话及 epoch。
-   * 输出：无。逻辑：只读取消息和请求，检查绑定和观察代次；任一读取失败显示明确恢复入口。
+   * 输出：无。逻辑：先读取请求状态再读取消息，避免终态与旧消息快照混用；检查绑定和观察代次；任一读取失败显示明确恢复入口。
    * 约束：不重新加载草稿、不抢焦点；保留历史区阅读位置，不静默吞掉刷新错误。 */
   async refreshAnswers() {
     this.stopPolling();
@@ -446,10 +448,9 @@ export class AssistantPanel {
     if (!conversation) return;
     let messages, answers;
     try {
-      [messages, answers] = await Promise.all([
-        allRows(`records/messages/?conversation=${conversation}`),
-        allRows(`chat/requests/?conversation=${conversation}`),
-      ]);
+      answers = await allRows(`chat/requests/?conversation=${conversation}`);
+      if (epoch !== this.epoch || observation !== this.pollEpoch || !this.isOpen) return;
+      messages = await allRows(`records/messages/?conversation=${conversation}`);
     } catch (error) {
       if (epoch === this.epoch && observation === this.pollEpoch && this.isOpen)
         this.pausePolling(error.message);
