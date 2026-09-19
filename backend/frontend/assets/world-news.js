@@ -1,15 +1,15 @@
 /**
  * 职责：协调世界消息筛选、地图气泡、摘要侧栏和详情页。
  * 实现：显式 demo 数据源；URL 保存筛选和选择，History API 支持详情刷新/返回，统一消息事件更新列表与地图。
- * 关联：world.html/world-news.css 展示；NewsFeed 校验消息；WorldMap 聚合标记；workspace.js 统一导航。
+ * 关联：world.html/world-news.css 展示；NewsFeed 校验消息；WorldMap 聚合标记；workspace.js 统一导航；地图、行业色和外壳按相同静态资源版本加载。
  * 目录：date、mapHref、detailHref、tag、card、visibleNews、showError、renderPanel、renderDetail、renderOverview、selectNews、selectGroup、closePanel、navigate、renderRoute、receiveWorldNews、start。
  * 变量索引：$ 为 DOM 查询，feed 为演示快照；mapView 地图，industry 筛选，selectedId 选择，groupIds 聚合列表，highlightId 最新到达消息，originButton 返回焦点目标。
  */
 import { escapeHtml as e } from './api.js';
-import { mountWorkspace } from './workspace.js';
-import { INDUSTRIES, NewsFeed } from './world-feed.js';
+import { mountWorkspace } from './workspace.js?v=20260919-nocturne';
+import { INDUSTRIES, NewsFeed } from './world-feed.js?v=20260919-nocturne';
 import { DEMO_NEWS, DEMO_PUSH } from './world-demo.js';
-import { WorldMap } from './world-map.js';
+import { WorldMap } from './world-map.js?v=20260919-nocturne';
 
 const $ = id => document.getElementById(id);
 const feed = new NewsFeed('demo', DEMO_NEWS);

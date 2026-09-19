@@ -14,6 +14,7 @@
 - PriorityTests.test_opportunity_mutations_refresh_current_company：验证商机创建、编辑、状态与归档触发。
 - PriorityTests.test_order_and_product_changes_refresh_other_companies：验证共享统计和目录变更传播。
 - PriorityTests.test_formal_score_persists_without_legacy_features：验证新分数及解释不依赖旧 L3 特征。
+- PriorityTests.test_provisional_score_with_empty_details_persists：验证真实暂定分及空解释能保存和读取。
 - PriorityTests.test_invalid_explanations_and_sources_are_rejected：验证错误贡献和越界原文证据拒绝。
 - PriorityTests.test_null_score_and_stale_lease_contract：验证空分语义和旧版本写入拒绝。
 - PriorityTests.test_formal_sorting_and_legacy_score_visibility：验证正式版本展示与同分排序。
@@ -254,6 +255,32 @@ class PriorityTests(TestCase):
         self.assertEqual(detail["score_detail"]["score_details"], score["score_details"])
         self.assertEqual(detail["score_version"], "score-v2")
         self.assertIn(score["score_details"]["evidence"][0]["source_id"], detail["grouping"]["member_dedupe_keys"])
+
+    # 功能：验证 Agent 在缺少业务资料时生成的暂定分可以原样入库。
+    # 输入：prepare_score 的成功分析及固定采购信号，显式移除全部业务上下文。
+    # 输出：非空分数与完整空解释保存成功；半空解释仍返回 400。
+    # 逻辑：调用真实 Agent 规则函数，通过持有租约的 HTTP 接口保存并读取详情。
+    # 约束：只构造隔离样本，不调用模型，不改变权重或生产评分。
+    def test_provisional_score_with_empty_details_persists(self):
+        _, headers, analysis = self.prepare_score()
+        email = self.company.emails.first()
+        output = compute_priority_result(analysis.payload, analysis.snapshot.payload, clock=timezone.now,
+            priority_context={"signals": [{"type": "L2 Interested", "value": None, "confidence": 1.0,
+                                           "evidence": "设备询价", "source_id": email.pk}]})
+        score = {**output["score"], "score_details": output["details"]}
+        self.assertIsNotNone(score["score"])
+        self.assertIsNone(score["score_details"]["score_breakdown"])
+        response = self.agent.post("/api/v1/agent/scores/", score, format="json", **headers)
+        self.assertEqual(response.status_code, 200, response.data)
+        stored = Score.objects.get(analysis=analysis).payload
+        # DRF 规范化日期时区表示；评分数值、原因和解释内容必须保持原样。
+        self.assertEqual({key: value for key, value in stored.items() if key != "scored_at"},
+                         {key: value for key, value in score.items() if key != "scored_at"})
+        detail = self.browser.get(f"/api/v1/companies/{self.company.pk}/")
+        self.assertEqual(detail.data["score_detail"]["score_details"], output["details"])
+        broken = deepcopy(score)
+        broken["score_details"]["recommended_next_action"] = "伪造完整建议"
+        self.assertEqual(self.agent.post("/api/v1/agent/scores/", broken, format="json", **headers).status_code, 400)
 
     # 功能：验证错误贡献和越界原文证据拒绝。
     # 输入：非整数贡献、重复特征、解释对账错误、跨公司引用和伪造原文。

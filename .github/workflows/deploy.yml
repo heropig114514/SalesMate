@@ -5,6 +5,7 @@
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
 # DEPLOY_KEY/DEPLOY_HOST_KEY 为 GitHub 加密 secrets，前者只允许受限触发，后者固定服务器身份。
 # CELERY_BROKER_URL/CELERY_RESULT_BACKEND 为 CI Redis 地址；celery_pid 为临时消费者 PID。
+# backend_test_modules/agent_test_modules 为排除已禁用 QQ 集成的测试模块列表。
 # SALESMATE_PLAYWRIGHT_MODULE/SALESMATE_BROWSER_PATH 指向 RUNNER_TEMP 中的隔离浏览器运行时。
 # RUNNER_TEMP/salesmate-tools-sdk 为工具 SDK 隔离环境，不改变 Web/Worker 依赖。
 name: Verify and deploy
@@ -108,7 +109,9 @@ jobs:
         run: |
           export SALESMATE_PLAYWRIGHT_MODULE="$RUNNER_TEMP/salesmate-browser/node_modules/playwright"
           export SALESMATE_BROWSER_PATH="$(node -e 'console.log(require(process.env.SALESMATE_PLAYWRIGHT_MODULE).chromium.executablePath())')"
-          # QQ browser checks are disabled; browser_chat.cjs awaits a selector fix.
+          # QQ 专用浏览器检查保持禁用；聊天和邮件处理使用模拟接口验证当前页面契约。
+          node backend/tools/browser_chat.cjs
+          node backend/tools/browser_processing.cjs
           node backend/tools/browser_workspace.cjs
           node backend/tools/browser_world_news.cjs
           python backend/manage.py test tools.chat_browser_e2e --noinput

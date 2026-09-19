@@ -1,7 +1,7 @@
 /**
  * 职责：验证世界消息的真实页面交互，并提供不连接业务系统的本地预览。
  * 实现：同源静态 HTTP 服务承载地图和详情；Playwright 使用本地浏览器，禁止外部网络。
- * 关联：world-news.js/world-map.js/world-feed.js；不依赖 Django 数据库，不调用真实 Agent。
+ * 关联：world-news.js/world-map.js/world-feed.js；页面模块按实际 script 地址导入，避免资源版本变化时重复初始化；不依赖 Django 数据库，不调用真实 Agent。
  * 目录：servePage、createPreviewServer、main；main 中的浏览器回调仅操作隔离页面和演示夹具。
  * 变量索引：FRONTEND 为资源根；OUTPUT 为忽略的截图目录；MIME 为允许资源的内容类型；--serve 仅启动预览，默认执行验证后关闭。
  */
@@ -39,7 +39,7 @@ async function createPreviewServer() {
 }
 /** 功能：执行页面与消息边界回归。输入：Playwright/浏览器环境变量及可选 --serve。
  * 输出：检查结果、截图或持续预览地址；失败非零退出。
- * 逻辑：验证聚合、两次点击、深链接、筛选、幂等、非法数据、窄屏和资源错误。
+ * 逻辑：复用页面实际加载的入口模块，验证聚合、两次点击、深链接、筛选、幂等、非法数据、窄屏和资源错误。
  * 约束：数据全部虚构；静态预览不代替真实 Django 部署、鉴权或推送服务验证。 */
 async function main() {
   const server = await createPreviewServer(), base = `http://127.0.0.1:${server.address().port}`;
@@ -93,7 +93,8 @@ async function main() {
     const checks = await page.evaluate(async () => {
       const { NewsFeed } = await import('/static/world-feed.js');
       const { DEMO_NEWS, DEMO_PUSH } = await import('/static/world-demo.js');
-      const { receiveWorldNews } = await import('/static/world-news.js?v=20260919');
+      const entry = document.querySelector('script[type="module"][src*="/world-news.js"]').src;
+      const { receiveWorldNews } = await import(entry);
       const feed = new NewsFeed('demo', DEMO_NEWS);
       const duplicate = receiveWorldNews({ type: 'news.upsert', item: DEMO_PUSH });
       const changed = { ...DEMO_NEWS[0], version: 2, title: '新版演示标题' };

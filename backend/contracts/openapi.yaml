@@ -1,3 +1,8 @@
+# 职责：保存后端公开 OpenAPI 的版本化契约。
+# 实现：由 drf-spectacular 生成路径、参数及载荷结构，包含客户事实升级 GET/POST。
+# 关联：views/serializers 定义接口；tests/contracts/test_schema.py 比较生成结构。
+# 目录：无函数或类；paths 为 HTTP 操作，components 为共用 Schema 和认证声明。
+# 变量索引：openapi 为规范版本，info 为服务信息；无运行时变量。
 openapi: 3.0.3
 info:
   title: SalesMate Backend API
@@ -888,6 +893,59 @@ paths:
     post:
       operationId: v1_companies_analyze_create
       parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 company 的 UUID 字符串。
+        required: true
+      tags:
+      - companies
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/companies/{id}/extraction-upgrade/:
+    get:
+      operationId: v1_companies_extraction_upgrade_retrieve
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: string
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: 标识此 company 的 UUID 字符串。
+        required: true
+      tags:
+      - companies
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: v1_companies_extraction_upgrade_create
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: string
       - in: path
         name: id
         schema:

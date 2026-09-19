@@ -1,11 +1,11 @@
 /**
  * 职责：将世界消息坐标绘制为可访问的 Leaflet 气泡。
- * 实现：本地 GeoJSON 底图、经纬线和按当前屏幕距离聚合的 HTML 标记；缩放后重新分组。
+ * 实现：共享主题控制的本地 GeoJSON 底图、经纬线和按当前屏幕距离聚合的 HTML 标记；缩放后重新分组。
  * 关联：world-news.js 提供筛选后快照与点击回调；不读取业务 API、不请求在线瓦片。
  * 目录：clusterNews、WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.reset、WorldMap.setItems、WorldMap.draw、WorldMap.focusGroup。
  * 变量索引：WorldMap.map 为 Leaflet 实例，layer 为标记层，items 为快照，selectedId/highlightId 为视觉状态，onSelect 为页面回调。
  */
-import { INDUSTRIES } from './world-feed.js';
+import { INDUSTRIES } from './world-feed.js?v=20260919-nocturne';
 
 /** 功能：按当前屏幕空间聚合邻近消息。输入：items 快照、map 地图。
  * 输出：数组，每组保留消息列表与代表坐标。逻辑：稳定输入顺序，112×56 像素邻域避免文字相互覆盖。
@@ -46,16 +46,16 @@ export class WorldMap {
     this.reset();
   }
   /** 功能：读取并绘制地图资源。输入：固定同源资源。
-   * 输出：Promise；HTTP、解析或超时失败抛 Error。逻辑：先加载国界，再绘制经纬网。
+   * 输出：Promise；HTTP、解析或超时失败抛 Error。逻辑：先加载国界，再绘制经纬网，颜色读取共享 CSS 变量。
    * 约束：无在线瓦片、无重试；底图不代表业务消息覆盖范围。 */
   async load() {
     const response = await fetch('/static/world-countries.geojson', { signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`地图资源加载失败（HTTP ${response.status}）。`);
     const data = await response.json();
     if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error('地图资源格式无效。');
-    L.geoJSON(data, { interactive: false, style: { color: '#f6f8ef', weight: 0.7, fillColor: '#cbd5be', fillOpacity: 1 } }).addTo(this.map);
-    for (let lat = -60; lat <= 60; lat += 30) L.polyline([[lat, -180], [lat, 180]], { interactive: false, color: '#769083', opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
-    for (let lng = -180; lng <= 180; lng += 30) L.polyline([[-80, lng], [80, lng]], { interactive: false, color: '#769083', opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
+    L.geoJSON(data, { interactive: false, style: { color: getComputedStyle(document.documentElement).getPropertyValue('--map-border').trim(), weight: 0.7, fillColor: getComputedStyle(document.documentElement).getPropertyValue('--map-land').trim(), fillOpacity: 1 } }).addTo(this.map);
+    for (let lat = -60; lat <= 60; lat += 30) L.polyline([[lat, -180], [lat, 180]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
+    for (let lng = -180; lng <= 180; lng += 30) L.polyline([[-80, lng], [80, lng]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
     console.info('world_map_ready', { features: data.features.length });
   }
   /** 功能：恢复全球视角。输入：当前容器尺寸。输出：无。

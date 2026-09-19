@@ -1,10 +1,11 @@
 /**
  * 职责：为邮件、业务及世界消息页面提供共享导航、客户上下文和真实待办概览。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
- * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 提供统一外壳；复核及交易沿用原接口。
+ * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
  * 变量索引：groups 为导航目录；globalResources 为不传递客户的全局资源；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
+import './product-header.js';
 import { request, escapeHtml as e } from './api.js';
 
 const groups = [

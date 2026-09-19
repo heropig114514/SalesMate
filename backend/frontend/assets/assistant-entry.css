@@ -3,18 +3,66 @@
  * 实现：覆盖共享客户侧栏的固定定位；消息区独立滚动，移动端输入和导航仍可用。
  * 关联：assistant-entry.js 挂载面板，app.css 提供基础会话样式。
  * 目录：无函数或类。
- * 变量索引：无新增变量；沿用 --line 和 --muted。
+ * 变量索引：无新增变量；沿用 --line、--muted 和 --danger。
  */
-#assistant-entry-host { max-width: 1000px; margin: 0 auto; }
-#assistant-entry-host .assistant-panel { position: static; z-index: auto; width: 100%; height: calc(100dvh - 200px); min-height: 600px; border: 1px solid var(--line); border-radius: 16px; box-shadow: none; overflow: hidden; }
-#assistant-entry-host .assistant-welcome { padding-top: 10px; }
-#assistant-entry-host .assistant-welcome h3 { font-size: 28px; }
-#assistant-entry-host .assistant-shortcuts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-#assistant-entry-host .assistant-send-row button:not(:disabled) { cursor: pointer; }
-#assistant-entry-error { color: #a15242; font-size: 13px; padding: 24px; }
+#assistant-entry-host {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+#assistant-entry-host .assistant-panel {
+  position: static;
+  z-index: auto;
+  width: 100%;
+  height: calc(100dvh - 200px);
+  min-height: 600px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+#assistant-entry-host .assistant-welcome {
+  padding-top: 10px;
+}
+
+#assistant-entry-host .assistant-welcome h3 {
+  font-size: 28px;
+}
+
+#assistant-entry-host .assistant-shortcuts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#assistant-entry-host .assistant-send-row button:not(:disabled) {
+  cursor: pointer;
+}
+
+#assistant-entry-error {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 24px;
+}
+
 @media (max-width: 760px) {
-  #assistant-entry-host .assistant-panel { height: calc(100dvh - 110px); min-height: 570px; border-radius: 10px; }
-  #assistant-entry-host .assistant-shortcuts { grid-template-columns: 1fr; }
-  #assistant-entry-host .assistant-header, #assistant-entry-host .assistant-body, #assistant-entry-host .assistant-composer { padding-left: 16px; padding-right: 16px; }
-  #assistant-entry-host .assistant-context { margin-left: 16px; margin-right: 16px; }
+  #assistant-entry-host .assistant-panel {
+    height: calc(100dvh - 110px);
+    min-height: 570px;
+    border-radius: 10px;
+  }
+
+  #assistant-entry-host .assistant-shortcuts {
+    grid-template-columns: 1fr;
+  }
+
+  #assistant-entry-host .assistant-header, #assistant-entry-host .assistant-body, #assistant-entry-host .assistant-composer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  #assistant-entry-host .assistant-context {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
 }

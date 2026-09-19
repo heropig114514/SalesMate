@@ -1,5 +1,5 @@
 /**
- * 职责：验证助手提问、快速完成竞态、轮询、引用、重试和上下文切换。
+ * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
  * 实现：加载真实页面和 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
  * 关联：assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
  * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
@@ -105,11 +105,18 @@ async function main() {
     assert.equal(await page.locator('#assistant-submit').isDisabled(), true);
     await page.locator('#assistant-input').fill('正在编辑的下一条问题');
     await page.clock.fastForward(2100);
-    await page.locator('#assistant-history details').waitFor();
+    const sources = page.locator('#assistant-history .assistant-sources');
+    await sources.waitFor();
+    assert.equal(await sources.getAttribute('open'), null);
     assert.equal(await page.locator('#assistant-input').inputValue(), '正在编辑的下一条问题');
     assert.equal(await page.locator('#assistant-history script, #assistant-history img').count(), 0);
-    await page.locator('#assistant-history summary').click();
-    assert.match(await page.locator('#assistant-history').textContent(), /客户需要设备/);
+    await sources.locator(':scope > summary').click();
+    const source = sources.locator('details.assistant-source');
+    assert.equal(await source.getAttribute('open'), null);
+    await source.locator(':scope > summary').click();
+    assert.equal(await source.locator('.assistant-source-content').isVisible(), true);
+    assert.match(await source.locator('.assistant-source-content').textContent(), /客户需要设备/);
+    assert.notEqual(await source.evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
     mode = 'failed';
     await page.locator('#assistant-submit').click();
     await page.waitForFunction(() => !window.chatTest.busy && window.chatTest.answers.length === 2);

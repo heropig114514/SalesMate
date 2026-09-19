@@ -526,3 +526,7 @@ ANALYSIS_PROVIDER=rules
 ## 持久同步与人工复核
 
 已接入同步批次、逐封进度、独立 Worker、公司互斥、非业务默认隐藏和人工复核。启动、升级、API 与后续规则见 [邮件处理适配](docs/processing-integration.md)。历史分类先运行 `python backend/manage.py classify_emails` 预览，再用 `--apply` 应用；原始邮件不删除。
+
+## extract-v7 后端适配
+
+历史事实的预览/显式升级接口、持久修复状态、方向校验和 L4 暂定分保存契约见 [后端 v7 适配说明](docs/backend-v7-adaptation.md)。升级不会自动执行，也不会重新拉取邮箱。

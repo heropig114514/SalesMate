@@ -141,7 +141,7 @@ def submit_emails(owner, payloads):
 # 功能：将失败事实补交为已完成，并保留邮件本体。
 # 输入：`owner` 为认证用户；`payload` 为 FactsResubmission。
 # 输出：公司 ID 与新 revision。
-# 逻辑：锁公司和抽取记录，校验证据后执行 failed → completed，取消过时修复并沿血缘重算受影响公司。
+# 逻辑：锁公司和抽取记录，核验原文及持久方向后执行 failed → completed，取消过时修复并沿血缘重算。
 # 约束：重复成功补交返回 conflict，不自动重读 Gmail。
 @transaction.atomic
 def resubmit_facts(owner, payload):
@@ -158,7 +158,7 @@ def resubmit_facts(owner, payload):
         raise NotFound("抽取版本不存在。")
     if record.status != "failed":
         raise Conflict("仅允许失败事实补交一次。")
-    validate_extraction(data, email.payload["subject"], email.payload["body_text"])
+    validate_extraction(data, email.payload["subject"], email.payload["body_text"], direction=email.direction)
     record.status, record.facts, record.error = "completed", data["facts"], None
     record.save(update_fields=["status", "facts", "error"])
     apply_classification(email, record)

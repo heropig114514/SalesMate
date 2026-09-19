@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；会话与 Agent 身份隔离。
+实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离。
 关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -16,7 +16,8 @@
 - CompanyViewSet：提供公司列表、详情、建档和显式重分析。
 - CompanyViewSet.list：查询公司列表及统计。
 - CompanyViewSet.retrieve：返回客户工作区全部展示数据。
-- CompanyViewSet.analyze：显式请求公司分析。
+- CompanyViewSet.analyze：显式请求公司分析并拒绝不兼容历史事实。
+- CompanyViewSet.extraction_upgrade：预览或显式排队客户历史事实升级。
 - CompanyViewSet.register：为公司建立 CRM 档案并保存带来源的基础资料。
 - MailboxViewSet：管理登录用户的业务邮箱。
 - MailboxViewSet.list：列出当前用户邮箱。
@@ -224,7 +225,7 @@ def process_if_rules(owner, company_id):
 
 
 # 功能：提供公司列表、详情、建档和显式重分析。
-# 逻辑：所有对象先按 Session 用户归属筛选。
+# 逻辑：所有对象先按 Session 用户归属筛选；旧事实通过独立版本升级入口处理。
 # 约束：不开放未验证的发送和 Gmail 同步能力。
 class CompanyViewSet(ViewSet):
     queryset = Company.objects.none()
@@ -254,7 +255,7 @@ class CompanyViewSet(ViewSet):
     # 功能：显式请求公司分析。
     # 输入：`request` 为已登录用户；`pk` 为公司 UUID。
     # 输出：任务 ID、provider 和当前任务状态。
-    # 逻辑：拒绝无业务邮件公司，在事务中合并任务；agent 模式由独立 Worker 消费。
+    # 逻辑：拒绝无业务邮件或 agent 模式不兼容事实，在事务中合并任务；不自动重抽取。
     # 约束：失败不会返回伪成功；agent 模式只入队。
     @extend_schema(request=None, responses=OBJECT, tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -263,10 +264,31 @@ class CompanyViewSet(ViewSet):
             company = company_for(request.user, pk, lock=True)
             if not company.emails.filter(business_classification="business").exists():
                 raise InvalidState("没有已确认业务邮件，不能生成客户画像。")
+            from .extraction_upgrades import upgrade_summary
+            if settings.ANALYSIS_PROVIDER == "agent" and upgrade_summary(company)["incompatible_emails"]:
+                raise InvalidState("客户含旧版邮件事实，请先通过 extraction-upgrade 接口显式升级后再分析。")
             job = jobs.enqueue(company, "customer_detail_opened")
         process_if_rules(request.user, company.pk)
         job.refresh_from_db()
         return Response({"job_id": str(job.pk), "status": job.status, "provider": settings.ANALYSIS_PROVIDER})
+
+    # 功能：预览或显式排队当前客户的历史 L1 升级。
+    # 输入：`request` 为 Session 请求，POST 需空正文及 If-Match；`pk` 为客户 UUID。
+    # 输出：版本分布及修复进度；POST 返回 202 和新的 ETag。
+    # 逻辑：GET 只读；POST 委托原子服务排队，Worker 从持久正文重抽取。
+    # 约束：不修改旧事实、不重拉邮箱；越权返回 404，过期版本返回 409。
+    @extend_schema(request=None, responses=OBJECT, tags=["companies"], parameters=[OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER)])
+    @action(detail=True, methods=["get", "post"], url_path="extraction-upgrade")
+    @transaction.atomic
+    def extraction_upgrade(self, request, pk=None):
+        from .extraction_upgrades import queue_upgrades, upgrade_summary
+        if request.method == "POST":
+            if request.data:
+                raise ValidationError("升级请求不接受事实或模型参数，请使用空正文。")
+            data = queue_upgrades(request.user, pk, expected(request))
+            return Response(data, status=202, headers={"ETag": f'"{data["revision"]}"'})
+        company = company_for(request.user, pk, lock=True)
+        return versioned(upgrade_summary(company), company.revision)
 
     # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
     # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。

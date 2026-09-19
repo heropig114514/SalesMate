@@ -3,13 +3,13 @@
  * 实现：严格校验必要字段、来源链接和版本；同 ID 更新不增加计数，过期版本不覆盖新内容。
  * 关联：world-news.js 订阅 change；未来传输适配器调用 receive，不在本模块打开网络连接。
  * 目录：validateNews、validateNews.text（有界文本校验）、NewsFeed、NewsFeed.constructor、NewsFeed.list、NewsFeed.get、NewsFeed.receive。
- * 变量索引：INDUSTRIES 为行业标签与颜色；NewsFeed.mode 固定数据模式；NewsFeed.items 保存已校验快照。
+ * 变量索引：INDUSTRIES 为行业标签与共享主题颜色引用；NewsFeed.mode 固定数据模式；NewsFeed.items 保存已校验快照。
  */
 export const INDUSTRIES = Object.freeze({
-  semiconductor: { label: '半导体', color: '#3d795d' },
-  metrology: { label: '精密量测', color: '#a4773d' },
-  optics: { label: '光学检测', color: '#677daf' },
-  industrial: { label: '工业检测', color: '#aa6657' },
+  semiconductor: { label: '半导体', color: 'var(--industry-semiconductor)' },
+  metrology: { label: '精密量测', color: 'var(--industry-metrology)' },
+  optics: { label: '光学检测', color: 'var(--industry-optics)' },
+  industrial: { label: '工业检测', color: 'var(--industry-industrial)' },
 });
 
 /** 功能：校验并复制消息快照。输入：item 为不可信对象，mode 为 demo/live。

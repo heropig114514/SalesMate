@@ -1,6 +1,6 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接打开通用会话，QQ 能力控制入口和同步，启用后每次询问范围，旧响应隔离并保留独立草稿。
+ * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；聊天一级入口直接打开通用会话，QQ 能力控制入口和同步，启用后每次询问范围，旧响应隔离并保留独立草稿。
  * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
@@ -13,10 +13,10 @@
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260914-mail-source';
 import { mailSourceLabel } from './mail-source.js';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260914-mail-source';
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260919-nocturne';
 import { request, escapeHtml as e } from './api.js?v=20260914-signup';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
-import { AssistantPanel } from './assistant.js?v=20260919-message-order';
+import { AssistantPanel } from './assistant.js?v=20260920-citations';
 import { AssistantEntry } from './assistant-entry.js?v=20260919-general';
 import { Notice } from './notice.js';
 
@@ -86,11 +86,22 @@ function renderStats(stats) {
   $('stats').innerHTML = [['邮件客户', stats.companies, '已保存业务邮件的客户', '▦'], ['待建档客户', stats.unregistered, '补齐档案，积累客户上下文', '♧'], ['今日新邮件', stats.new_emails_today, `统计时区 ${state.runtime.timezone}`, '✉']].map(([label, value, note, icon]) => `<article class="stat-card"><div><span class="stat-label">${e(label)}</span><strong>${e(value)}</strong><p>${e(note)}</p></div><span class="stat-icon">${icon}</span></article>`).join('');
 }
 
-/** 功能：构造单个公司列表行。输入：row。输出：可键盘访问的链接 HTML。
- * 逻辑：摘要、信号、未知分和来源同时展示。约束：公司 ID 与文本经转义，不输出内联脚本。 */
+/** 功能：生成公司邮件组卡片。输入：row 为后端的公司、评分与邮件来源投影。输出：转义后的链接 HTML。
+ * 逻辑：首行集中展示信号、行业与规模，次行展示已有域名和联系人，右侧保留日期与优先级。
+ * 约束：不计算或修改评分；未知信息仍明确标注，演示来源与失败状态保持可见。 */
 function renderRow(row) {
   const name = companyName(row);
-  return `<a class="company-row" href="#company/${encodeURIComponent(row.company_id)}"><div class="company-main"><div class="avatar">${e(name.slice(0, 1))}</div><div><div class="row-title"><h3>${e(name)}</h3>${row.crm_status === 'registered' ? pill('已建档', 'subtle') : ''}</div><p class="identity">${e(row.contacts[0]?.contact_email || '联系人待确认')} <span>·</span> ${row.email_count} 封往来</p><p class="summary">${e(row.headline_summary)}</p><div class="row-tags">${(row.email_sources || []).map(source => pill(mailSourceLabel(source), source === "synthetic_sample" ? "warning" : "subtle")).join('')}${pill(row.industry === 'unknown' ? '行业未知' : row.industry, 'subtle')}${pill(sizes[row.size_band], 'subtle')}${row.stale ? pill('分析待更新', 'warning') : ''}${row.job_status === 'failed' ? pill('处理失败', 'warning') : ''}</div></div></div><div class="row-signal">${pill(signals[row.signal], row.signal === 'unknown' ? 'subtle' : 'green')}<small>${row.provider === 'rules' ? '规则占位' : row.provider === 'agent' ? 'Agent 分析' : '等待分析'}</small></div><div class="row-score">${row.score === null ? '<span class="unscored">—</span><small>资料不足 · 未评分</small>' : `<strong>${row.score}<small> / 100</small></strong><div class="score-track"><span style="width:${Number(row.score)}%"></span></div><small>跟进优先级${row.provider === 'rules' ? ' · 占位' : ''}</small>`}</div><div class="row-date">${e(date(row.last_message_at))}<span>查看客户 →</span></div></a>`;
+  const initials = /^[A-Za-z]/.test(name) ? name.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase() : name.slice(0, 1);
+  return `<a class="company-row" href="#company/${encodeURIComponent(row.company_id)}">
+    <div class="company-main"><div class="avatar" aria-hidden="true">${e(initials)}</div><div>
+      <div class="row-title"><h3>${e(name)}</h3><span class="row-signal">${pill(signals[row.signal], row.signal === 'unknown' ? 'subtle' : 'green')}</span>${pill(row.industry === 'unknown' ? '行业未知' : row.industry, 'subtle')}${pill(sizes[row.size_band], 'subtle')}</div>
+      <p class="identity">${row.domains?.length ? e('@' + row.domains[0]) + ' <span>·</span> ' : ''}${e(row.contacts[0]?.contact_email || '联系人待确认')} <span>·</span> ${row.email_count} 封往来</p>
+      <p class="summary">${e(row.headline_summary)}</p>
+      <div class="row-tags">${(row.email_sources || []).map(source => pill(mailSourceLabel(source), source === 'synthetic_sample' ? 'warning' : 'subtle')).join('')}${row.stale ? pill('分析待更新', 'warning') : ''}${row.job_status === 'failed' ? pill('处理失败', 'warning') : ''}${pill(row.provider === 'rules' ? '规则占位' : row.provider === 'agent' ? 'Agent 分析' : '等待分析', row.provider === 'rules' ? 'warning' : 'subtle')}</div>
+    </div></div>
+    <div class="row-date">${e(date(row.last_message_at))}<span>${row.crm_status === 'registered' ? '已建档' : '未建档'}</span></div>
+    <div class="row-score">${row.score === null ? '<span class="unscored">—</span><small>资料不足 · 未评分</small>' : `<strong>${row.score}<small> / 100</small></strong><div class="score-track"><span style="width:${Number(row.score)}%"></span></div><small>跟进优先级${row.provider === 'rules' ? ' · 占位' : ''}</small>`}</div>
+  </a>`;
 }
 
 /** 功能：加载列表及分页状态。输入：表单、state.page 和是否显示加载占位。输出：列表响应。

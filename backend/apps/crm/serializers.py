@@ -234,13 +234,13 @@ class EmailSubmissionSerializer(StrictSerializer):
     # 功能：核对邮件天然键、抽取状态和逐字证据。
     # 输入：`attrs` 为标准化字段，包括正文与 facts。
     # 输出：原 attrs；契约不符时抛 ValidationError。
-    # 逻辑：键由邮箱与消息 ID 拼接；已完成事实逐项校验。
+    # 逻辑：键由邮箱与消息 ID 拼接；已完成事实逐项校验，采购阶段只接受 inbound 来源。
     # 约束：不调用模型、不更改事实或补齐未知值。
     def validate(self, attrs):
         expected_key = f"{attrs['mailbox_address'].casefold()}:{attrs['gmail_message_id']}"
         if attrs["dedupe_key"] != expected_key:
             raise s.ValidationError("dedupe_key 必须为 mailbox_address:gmail_message_id。")
-        validate_extraction(attrs, attrs["subject"], attrs["body_text"])
+        validate_extraction(attrs, attrs["subject"], attrs["body_text"], direction=attrs["direction"])
         if attrs["extract_status"] == "skipped_non_business" and not attrs["non_business_hint"]:
             raise s.ValidationError("跳过非业务邮件必须附 non_business_hint。")
         return attrs
@@ -279,11 +279,11 @@ def evidence_is_locatable(evidence, subject, body_text):
 
 
 # 功能：校验抽取事实的完整字段及可定位证据。
-# 输入：`data` 包含 extract_status、facts、extract_error；`subject` 和 `body_text` 为当前邮件原文。
+# 输入：`data` 包含版本、状态、facts、错误；`subject`、`body_text` 为原文；`direction` 为必须提供的邮件方向。
 # 输出：无返回值；不符合契约抛 ValidationError。
-# 逻辑：完成状态要求全部事实字段；证据按 Agent 允许的空白和不可见格式差异定位。
+# 逻辑：完成状态要求完整字段；仅 inbound 可标采购阶段；证据按允许的空白及不可见格式差异定位。
 # 约束：仅验证可定位性，不声称证明模型语义正确。
-def validate_extraction(data, subject, body_text):
+def validate_extraction(data, subject, body_text, *, direction):
     if data["extract_prompt_version"] != "extract-v7":
         raise s.ValidationError("仅接受 extract-v7 邮件事实结构。")
     facts = data["facts"]
@@ -301,6 +301,8 @@ def validate_extraction(data, subject, body_text):
         raise s.ValidationError("intent_hint 无效。")
     if intent_hint is not None and intent_hint not in PURCHASE_STAGES:
         raise s.ValidationError("intent_hint 无效。")
+    if intent_hint is not None and direction != "inbound":
+        raise s.ValidationError("只有 inbound 客户邮件可以声明采购阶段。")
     intent_evidences = facts["intent_evidences"]
     if not isinstance(intent_evidences, list):
         raise s.ValidationError("intent_evidences 必须是数组。")

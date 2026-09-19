@@ -2,19 +2,8 @@
  * 实现：业务统计、表格和模态表单保留单一焦点流程；共享导航及客户外壳由 workspace.css 统一。
  * 关联：business.html 的语义节点及 business.js 生成的业务控件。
  * 目录：无函数或类；CSS 类仅定义展示。
- * 变量索引：--ink 正文色、--muted 次要文字、--accent 交互主色、--line 边界色。 */
-:root {
-  --ink: #1e293b;
-  --muted: #64748b;
-  --accent: #286c55;
-  --line: #e2e8e5;
-  font:
-    14px/1.5 "Segoe UI",
-    "Microsoft YaHei",
-    sans-serif;
-  color: var(--ink);
-  background: #f5f7f6;
-}
+ * 变量索引：消费 design-system.css 的正文、边界、强调及语义色，无本地变量。 */
+
 * {
   box-sizing: border-box;
 }
@@ -35,31 +24,31 @@ textarea {
   outline-offset: 3px;
 }
 button {
-  border: 1px solid #cfdad4;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   padding: 9px 14px;
   cursor: pointer;
   color: var(--ink);
 }
 button:hover {
-  background: #eff5f1;
+  background: var(--soft);
 }
 button:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 .primary {
-  background: var(--accent);
+  background: var(--soft);
   border-color: var(--accent);
-  color: white;
+  color: var(--accent);
 }
 .primary:hover {
-  background: #20563f;
+  background: var(--soft);
 }
 .danger {
-  color: #b42318;
-  border-color: #f1c7c2;
+  color: var(--danger);
+  border-color: var(--danger);
 }
 a {
   color: var(--accent);
@@ -90,19 +79,6 @@ small,
   color: var(--muted);
 }
 
-.brand {
-  display: flex;
-  gap: 12px;
-  font-size: 23px;
-  font-weight: 700;
-  align-items: center;
-}
-.brand small {
-  display: block;
-  font-size: 11px;
-  font-weight: 400;
-}
-
 nav p {
   font-size: 11px;
   color: var(--muted);
@@ -115,7 +91,7 @@ nav a {
   color: var(--ink);
 }
 nav a[aria-current="page"] {
-  background: #e8f1eb;
+  background: var(--bg);
   color: var(--accent);
   font-weight: 600;
 }
@@ -138,7 +114,7 @@ header,
   gap: 20px;
 }
 .eyebrow {
-  font-size: 10px;
+  font-size:11px;
   letter-spacing: 2px;
   color: var(--accent);
   margin-bottom: 7px;
@@ -150,7 +126,7 @@ header,
   margin: 26px 0;
 }
 .stat {
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 20px;
@@ -165,7 +141,7 @@ header,
   font-size: 12px;
 }
 .surface {
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 13px;
   overflow: hidden;
@@ -189,11 +165,12 @@ header,
   display: flex;
   align-items: center;
   gap: 20px;
-  background: #fafcfb;
+  background: var(--bg);
 }
 .filters label {
   display: flex;
   align-items: center;
+  white-space: nowrap;
   gap: 9px;
   font-size: 12px;
 }
@@ -211,10 +188,10 @@ header,
 input,
 select,
 textarea {
-  border: 1px solid #cad6ce;
+  border: 1px solid var(--line);
   border-radius: 7px;
   padding: 10px;
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   width: 100%;
   min-width: 0;
@@ -234,7 +211,7 @@ th {
   font-size: 11px;
   font-weight: 500;
   padding: 12px 24px;
-  background: #fafcfb;
+  background: var(--bg);
 }
 td {
   padding: 17px 24px;
@@ -255,7 +232,7 @@ td button {
   display: inline-block;
   border-radius: 5px;
   padding: 3px 8px;
-  background: #edf3ef;
+  background: var(--bg);
   color: var(--accent);
   font-size: 11px;
 }
@@ -342,9 +319,7 @@ dialog {
   padding: 26px;
   color: var(--ink);
 }
-dialog::backdrop {
-  background: #152d245e;
-}
+
 .dialog-top {
   margin-bottom: 20px;
 }
@@ -355,25 +330,25 @@ dialog::backdrop {
 }
 .preview {
   padding: 18px;
-  background: #f4f8f5;
+  background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .warning {
-  background: #fff6e7;
-  color: #83520b;
-  border: 1px solid #efdbb6;
+  background: var(--warning-soft);
+  color: var(--warning);
+  border: 1px solid var(--warning);
   padding: 12px;
   border-radius: 8px;
   margin: 15px 0;
   font-size: 12px;
 }
 [role="alert"] {
-  background: #fff0ee;
-  border: 1px solid #f2c6be;
-  color: #97261b;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger);
   border-radius: 8px;
   padding: 14px;
   margin-bottom: 20px;
@@ -412,10 +387,6 @@ dialog::backdrop {
   }
 }
 @media (max-width: 700px) {
-
-  .brand {
-    font-size: 20px;
-  }
 
   nav {
     display: flex;

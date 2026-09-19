@@ -1,31 +1,33 @@
 <!doctype html>
 <!-- 职责：提供世界行业消息地图、摘要侧栏和独立详情地址的页面骨架。
 实现：Leaflet 绘制本地地图，world-news.js 管理筛选、选择与浏览历史；演示状态始终明确展示。
-关联：world-feed.js 校验消息；world-map.js 绘制气泡；Django 的 /world/ 与 /world/news/<id>/ 共用模板。
+关联：product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；world-feed.js 校验消息；world-map.js 绘制气泡；Django 的 /world/ 与 /world/news/<id>/ 共用模板。
 目录：无函数或类；world-map 地图、news-panel 摘要、news-detail 详情、world-status 无障碍状态、world-error 错误提示。
 变量索引：无脚本变量；行业筛选与统计 DOM 由页面模块维护。 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light"><title>世界消息 · SalesMate</title>
-  <link rel="stylesheet" href="/static/app.css?v=20260914-qq">
-  <link rel="stylesheet" href="/static/workspace.css?v=20260913-unified">
+  <meta name="color-scheme" content="dark"><title>世界消息 · SalesMate</title>
+  <link rel="stylesheet" href="/static/design-system.css?v=20260919-nocturne">
+  <link rel="stylesheet" href="/static/app.css?v=20260920-citations">
+  <link rel="stylesheet" href="/static/workspace.css?v=20260919-nocturne">
   <link rel="stylesheet" href="/static/vendor/leaflet-1.9.4/leaflet.css">
-  <link rel="stylesheet" href="/static/world-news.css?v=20260919">
+  <link rel="stylesheet" href="/static/world-news.css?v=20260919-nocturne">
   <script defer src="/static/vendor/leaflet-1.9.4/leaflet.js"></script>
-  <script type="module" src="/static/world-news.js?v=20260919"></script>
+  <script type="module" src="/static/world-news.js?v=20260919-nocturne"></script>
 </head>
 <body class="world-workspace">
   <a class="world-skip" href="#world-content">跳到世界消息</a>
+  <salesmate-header></salesmate-header>
   <aside class="workspace-shell">
-    <a href="/#home" class="brand"><span class="brand-mark">S</span><span>SalesMate<small>销售工作空间</small></span></a>
+    <div class="workspace-brand-label">WORKSPACE<span>我的工作空间</span></div>
     <nav id="workspace-nav" aria-label="主导航"></nav>
     <div class="world-sidebar-note"><span class="world-orbit" aria-hidden="true">◎</span><strong>让每条消息，有业务坐标。</strong><p>从全球变化中，发现下一次对话的起点。</p></div>
   </aside>
   <main id="world-content">
     <header class="world-topbar"><div>工作空间 <span>/</span> 世界消息</div><a href="/#home">返回工作台 <span aria-hidden="true">↗</span></a></header>
     <div class="world-page">
-      <div class="world-heading"><div><p class="eyebrow">GLOBAL INDUSTRY SIGNALS</p><h1>世界正在发生什么？</h1><p class="world-subtitle">把行业变化放到地图上，找到与你相关的下一条消息。</p></div><div class="world-feed-state"><span></span>演示模式 · 实时推送尚未接入</div></div>
+      <div class="world-heading"><div><p class="eyebrow">GLOBAL INDUSTRY SIGNALS</p><h1>全球行业洞察</h1><p class="world-subtitle">把行业变化放到地图上，找到与你相关的下一条消息。</p></div><div class="world-feed-state"><span></span>演示模式 · 实时推送尚未接入</div></div>
       <p id="world-error" class="world-error" role="alert" hidden></p>
       <p id="world-status" class="sr-only" role="status" aria-live="polite"></p>
       <section id="world-explorer" aria-label="行业消息探索">

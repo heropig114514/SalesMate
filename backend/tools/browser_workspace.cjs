@@ -1,7 +1,7 @@
 /**
- * 职责：验证统一导航、直接聊天入口、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证产品顶栏、统一导航、直接聊天入口、真实总数展示、跨页客户上下文和表单预填。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
- * 关联：workspace.js、app.js、assistant-entry.js、business.js；需显式 Playwright 模块和 Chrome 路径。
+ * 关联：product-header.js、workspace.js、app.js、assistant-entry.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
  */
@@ -14,7 +14,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
- * 逻辑：通用聊天直达、刷新和移动端导航不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户与失败。
+ * 逻辑：产品分区切换、通用聊天直达、刷新和移动端导航不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户与失败。
  * 约束：所有业务请求均拦截；除原有客户分析入口的模拟 POST 外，禁止任何写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -70,6 +70,17 @@ async function main() {
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
     assert.equal(navLabels[1], '聊天助手');
+    const productNav = page.getByRole('navigation', { name: '产品分区' });
+    assert.equal(await productNav.getByRole('link').count(), 3);
+    await productNav.getByRole('link', { name: '社媒情报', exact: true }).click();
+    await page.locator('#list-page .page-heading').waitFor();
+    assert.equal(new URL(page.url()).hash, '#inbox');
+    assert.equal(await productNav.locator('[aria-current=page]').textContent(), '社媒情报');
+    await page.screenshot({ path: path.join(OUTPUT, 'workspace-inbox-desktop.png'), fullPage: true });
+    await page.locator('#workspace-nav').getByRole('link', { name: '工作台', exact: true }).click();
+    await page.locator('#workspace-overview').waitFor();
+    assert.equal(await productNav.locator('[aria-current=page]').count(), 0, 'Home must not impersonate a product section');
+    assert.deepEqual(writes, [], 'Switching product sections must not submit business operations');
     await page.screenshot({ path: path.join(OUTPUT, 'workspace-home-desktop.png'), fullPage: true });
     await page.locator('#workspace-nav').getByRole('link', { name: '聊天助手', exact: true }).click();
     await page.locator('#assistant-input:not(:disabled)').waitFor();

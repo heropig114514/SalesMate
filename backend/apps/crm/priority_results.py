@@ -1,5 +1,5 @@
 """职责：验证正式 L4 结果及解释的结构、对账关系和邮件证据。
-实现：仅检查 Agent 输出契约，不重算权重；保存前在当前公司和输入快照内定位来源。
+实现：仅检查 Agent 输出契约，不重算权重；接收暂定分的明确空解释；保存前在当前公司和输入快照内定位来源。
 关联：serializers 调用结构校验，results 在版本及租约验证后调用来源校验。
 目录：
 - validate_priority_score：检查 score-v2 的贡献及可选解释。
@@ -8,6 +8,7 @@
 变量索引：
 - FEATURES：正式评分贡献字段的固定集合。
 - BREAKDOWN_FIELDS：解释分项必须包含的字段集合。
+- EMPTY_DETAILS：明确未提供分项依据的完整空解释结构。
 - DETAIL_FIELDS：可选解释对象的完整字段集合。
 """
 
@@ -17,6 +18,7 @@ from rest_framework.exceptions import ValidationError
 
 FEATURES = frozenset({"urgency", "buying_intent", "opportunity_value"})
 BREAKDOWN_FIELDS = FEATURES | {"deal_value", "customer_fit", "contributions"}
+EMPTY_DETAILS = {"score_breakdown": None, "top_reasons": [], "evidence": [], "recommended_next_action": None}
 DETAIL_FIELDS = frozenset({"score_breakdown", "top_reasons", "evidence", "recommended_next_action"})
 
 
@@ -45,15 +47,15 @@ def validate_priority_score(data):
 # 功能：检查解释分项、前三原因和证据列表。
 # 输入：`details` 为解释字典，`score` 为对应的完整评分载荷。
 # 输出：无；结构、范围或贡献关系错误时抛 ValidationError。
-# 逻辑：空分仅接受空解释；非空分检查分项、排序、证据形状及贡献与主结果一致。
+# 逻辑：空分必须使用空解释；暂定分也可显式无解释；其余非空解释完整检查分项、排序、证据及贡献。
 # 约束：不验证模型推理真实性，不执行评分算法；来源归属由保存事务另行检查。
 def validate_details(details, score):
     if not isinstance(details, dict) or set(details) != DETAIL_FIELDS:
         raise ValidationError("score_details 必须包含分项、原因、证据和建议动作四个字段。")
-    if score["score"] is None:
-        if details != {"score_breakdown": None, "top_reasons": [], "evidence": [], "recommended_next_action": None}:
-            raise ValidationError("空分不得附带确定性的评分解释。")
+    if details == EMPTY_DETAILS:
         return
+    if score["score"] is None:
+        raise ValidationError("空分不得附带确定性的评分解释。")
     breakdown = details["score_breakdown"]
     if not isinstance(breakdown, dict) or set(breakdown) != BREAKDOWN_FIELDS:
         raise ValidationError("评分分项字段不完整。")

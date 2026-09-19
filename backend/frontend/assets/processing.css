@@ -2,13 +2,55 @@
 实现：沿用工作台字体、按钮和色彩，长邮件换行且不横向溢出。
 关联：processing.js 渲染内容，index.html 声明容器。
 目录：无函数或类；sync-progress、sync-run、review-card、review-actions 为布局选择器。
-变量索引：无。 */
-#sync-progress { margin: 16px 0; display: grid; gap: 12px; }
-#sync-progress[hidden] { display: none; }
-.sync-run, .review-card { padding: 18px; border: 1px solid #dde4df; border-radius: 12px; background: #fff; }
-.sync-run p, .review-card p { margin: 8px 0; overflow-wrap: anywhere; }
-#review-dialog { width: min(800px, 94vw); max-height: 88vh; }
-#review-items { display: grid; gap: 12px; margin-top: 16px; }
-.review-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 320px; overflow-y: auto; }
-.review-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
-#processing-error, #review-error { color: #a12d25; }
+变量索引：消费 design-system.css 的语义色与边界变量，无本地变量。 */
+#sync-progress {
+  margin: 16px 0;
+  display: grid;
+  gap: 12px;
+}
+
+#sync-progress[hidden] {
+  display: none;
+}
+
+.sync-run, .review-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.sync-run p, .review-card p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+#review-dialog {
+  width: min(800px, 94vw);
+  max-height: 88vh;
+}
+
+#review-items {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.review-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+#processing-error, #review-error {
+  color: var(--danger);
+}
