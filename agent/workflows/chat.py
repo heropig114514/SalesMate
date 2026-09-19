@@ -22,15 +22,15 @@
 - _failed_external_context：构造外部检索失败的严格上下文与安全缺口。
 - _add_missing_failure_gap：只在缺少对应 scope 缺口时追加检索失败描述。
 - _is_direct_tool_action：按中英文动作模式识别直接执行请求，排除教程式问法。
+- _is_simple_greeting：识别没有业务问题的纯问候。
 - _needs_matter_clarification：结合问题代词、剩余词段及历史判断是否需要澄清事项。
 - _history_has_specific_matter：通过移除泛化词后的词元判断历史是否提及具体事项。
 - _lexical_units：提取英文词及中文片段并移除既定停用词。
 - _support_units：将词元与既定概念同义词映射成证据比较单元。
 - _validate_answer_policy：串联客户回答的动作、证据、判断和冲突措辞约束。
 - _is_insufficiency_only：识别短文本中不含引用和数字的明确资料不足声明。
-- _validate_factual_sentence_markers：规范句末引用位置后逐句要求事实性文字带编号。
-- _is_nonfactual_gap_sentence：识别不含引用的资料缺口或未确认措辞。
-- _validate_deterministic_citation_support：逐句核对引用证据覆盖数值且存在共同词元或概念。
+- _is_nonfactual_social_sentence：识别不涉及客户事实的礼貌问候或助手自我介绍。
+- _validate_numeric_support：核对回答数字是否可在已引用证据中找到；词面关联弱时只记诊断日志。
 - _number_tokens：提取数值和百分号并归一化整数及小数尾零。
 - _validate_judgment_wording：要求包含推测建议线索的文字明确标注判断或可能。
 - _validate_conflict_wording：要求冲突声明引用至少两个来源且标注待确认。
@@ -691,6 +691,13 @@ def answer_conversation_request(
             "该操作未执行，当前仅支持问答，不会执行邮件、日历、CRM、文件或其他业务写操作。",
             [],
         )
+    if _is_simple_greeting(parsed_request["question"]):
+        logger.info("chat_request_short_circuit request_id=%s reason=greeting", request_id)
+        return _completed_result(
+            request_id,
+            "你好！想了解这位客户的什么信息？",
+            [],
+        )
     if _needs_matter_clarification(
         parsed_request["question"], parsed_request["recent_history"]
     ):
@@ -858,6 +865,7 @@ def answer_conversation_request(
         _validate_answer_policy(
             candidate,
             relevant_context=usable,
+            request_id=request_id,
         )
     except ChatValidationError as error:
         logger.warning(
@@ -986,6 +994,19 @@ def _is_direct_tool_action(question: str) -> bool:
             r"\b(?:send|schedule|create|update|delete|write|upload)\b.{0,30}"
             r"\b(?:email|message|calendar|meeting|crm|file|record)\b",
             english,
+        )
+    )
+
+
+# 功能：只识别完整的纯问候，带客户问题的句子继续走证据问答。
+# 输入：`question` 当前问题。
+# 输出：bool。
+def _is_simple_greeting(question: str) -> bool:
+    return bool(
+        re.fullmatch(
+            r"(?:你好|您好|嗨|哈喽|早上好|中午好|下午好|晚上好|hi|hello|hey)[\s!！?？。.]*",
+            question.strip(),
+            flags=re.IGNORECASE,
         )
     )
 
@@ -1130,20 +1151,27 @@ def _validate_answer_policy(
     candidate: Mapping[str, Any],
     *,
     relevant_context: Mapping[str, list[dict[str, str]]],
+    request_id: str,
 ) -> None:
     text = candidate["assistant_text"]
     citations = candidate["citations"]
     if not citations:
-        if not _is_insufficiency_only(text):
-            raise ChatValidationError("有可用证据时，无引用回答只能是资料不足说明。")
+        if not (_is_insufficiency_only(text) or _is_nonfactual_social_answer(text)):
+            raise ChatValidationError("无引用回答只能是资料不足说明或不含客户事实的礼貌回应。")
         return
     if _is_insufficiency_only(text):
         raise ChatValidationError("资料不足回答不得附带 citation。")
 
-    _validate_factual_sentence_markers(text)
-    _validate_deterministic_citation_support(text, citations, relevant_context)
-    _validate_judgment_wording(text)
-    _validate_conflict_wording(text, citations, relevant_context)
+    # Demo 阶段不再靠逐句关键词、标题白名单或特定措辞拒绝整条回答。
+    _validate_numeric_support(text, citations, relevant_context, request_id=request_id)
+    for check in (
+        lambda: _validate_judgment_wording(text),
+        lambda: _validate_conflict_wording(text, citations, relevant_context),
+    ):
+        try:
+            check()
+        except ChatValidationError as error:
+            logger.warning("chat_answer_style_warning request_id=%s reason=%s", request_id, error)
 
 
 # 功能：识别短文本中不含引用和数字的明确资料不足声明。
@@ -1170,70 +1198,45 @@ def _is_insufficiency_only(text: str) -> bool:
     return gap_cue and uncertainty_cue and not _number_tokens(compact)
 
 
-# 功能：规范句末引用位置后逐句要求事实性文字带编号。
-# 输入：`text` 待检查文本。
-# 输出：None。
-# 逻辑：规范句末引用位置后逐句要求事实性文字带编号，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_factual_sentence_markers(text: str) -> None:
-    normalized = re.sub(
-        r"([。！？!?])[ \t]*((?:\[\d+\][ \t]*)+)",
-        lambda match: match.group(2) + match.group(1),
-        text,
-    )
+def _is_nonfactual_social_answer(text: str) -> bool:
+    """无引用时只允许短且全部由礼貌句组成的回答。"""
+    if len(text) > 200:
+        return False
     sentences = [
         sentence.strip()
-        for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", normalized)
+        for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", text)
         if sentence.strip()
     ]
-    for index, sentence in enumerate(sentences, start=1):
-        if _is_nonfactual_gap_sentence(sentence) or _is_nonfactual_heading(sentence):
-            continue
-        if not _CITATION_MARKER.search(sentence):
-            raise ChatValidationError(
-                "每个事实性句子都必须含 Citation marker。"
-                f" sentence_index={index}/{len(sentences)} excerpt={_diagnostic_excerpt(sentence)!r}"
-            )
+    return bool(sentences) and len(sentences) <= 4 and all(
+        _is_nonfactual_social_sentence(sentence) for sentence in sentences
+    )
 
 
-# 只有纯结构标题可不带引用；包含预算、时间等客户事实的标题仍须引用。
-def _is_nonfactual_heading(sentence: str) -> bool:
-    label = re.sub(r"^#{1,6}\s*", "", sentence.strip()).strip("*_ ").rstrip("：:")
-    return label in {
-        "需求总结",
-        "客户需求",
-        "待确认信息",
-        "需要进一步确认的信息",
-        "需要确认的信息",
-        "待确认事项",
-    }
-
-
-# 功能：识别不含引用的资料缺口或未确认措辞。
-# 输入：`sentence` 当前语句。
-# 输出：bool。
-# 逻辑：识别不含引用的资料缺口或未确认措辞，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _is_nonfactual_gap_sentence(sentence: str) -> bool:
-    compact = re.sub(r"\s+", "", sentence)
-    return bool(
-        re.search(
-            r"(?:无法确认|不能确认|尚未确认|待确认|资料不足|证据不足|信息不足|"
-            r"暂时不可用|未获取|检索失败|缺少|缺失|存在冲突|信息冲突|相互矛盾)",
-            compact,
+def _is_nonfactual_social_sentence(sentence: str) -> bool:
+    """仅允许完整匹配的寒暄句，不把客户事实当成礼貌用语。"""
+    value = sentence.strip()
+    return any(
+        re.fullmatch(pattern, value, flags=re.IGNORECASE)
+        for pattern in (
+            r"(?:您好|你好|嗨|哈喽|hi|hello|hey)[！!。.?？]*",
+            r"(?:您好|你好)[，,]\s*我是\s*SalesMate(?:\s*销售聊天助手|\s*助手)?[。.!！]*",
+            r"(?:请问)?(?:您|你)?(?:想了解这位客户的什么信息|有什么可以帮(?:您|你)|有什么我可以帮(?:您|你))(?:吗)?[？?。.!！]*",
+            r"很高兴为(?:您|你)服务[。.!！]*",
         )
-    ) and not _CITATION_MARKER.search(compact)
+    )
 
 
-# 功能：逐句核对引用证据覆盖数值且存在共同词元或概念。
+# 功能：检查回答数字能否在本次引用来源中找到，并提示词面关联弱的句子。
 # 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
 # 输出：None。
-# 逻辑：逐句核对引用证据覆盖数值且存在共同词元或概念，保持现有字段规则与处理顺序。
+# 逻辑：有 marker 的句子核对其来源；无 marker 的句子核对本次所有已引用来源。词面不重合仅记录警告。
 # 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_deterministic_citation_support(
+def _validate_numeric_support(
     text: str,
     citations: list[dict[str, str]],
     relevant_context: Mapping[str, list[dict[str, str]]],
+    *,
+    request_id: str,
 ) -> None:
     item_lookup: dict[tuple[str, str, str], list[dict[str, str]]] = {}
     for item in _flatten_context(relevant_context):
@@ -1247,13 +1250,14 @@ def _validate_deterministic_citation_support(
     sentences = [
         sentence.strip()
         for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", normalized)
-        if sentence.strip() and _CITATION_MARKER.search(sentence)
+        if sentence.strip()
     ]
     for index, sentence in enumerate(sentences, start=1):
         marker_indexes = {int(value) for value in _CITATION_MARKER.findall(sentence)}
+        source_indexes = marker_indexes or set(range(1, len(citations) + 1))
         cited_items = [
             item
-            for marker in marker_indexes
+            for marker in source_indexes
             for item in item_lookup.get(_citation_key(citations[marker - 1]), [])
         ]
         evidence_text = "\n".join(
@@ -1271,15 +1275,14 @@ def _validate_deterministic_citation_support(
         if claim_numbers - evidence_numbers:
             raise ChatValidationError(
                 "回答中的数值未被所引用来源支持。"
-                f" cited_sentence_index={index} unsupported_numbers={sorted(claim_numbers - evidence_numbers)}"
+                f" sentence_index={index} unsupported_numbers={sorted(claim_numbers - evidence_numbers)}"
                 f" excerpt={_diagnostic_excerpt(sentence)!r}"
             )
 
-        if not (_support_units(claim) & _support_units(evidence_text)):
-            raise ChatValidationError(
-                "事实性句子与所引用来源缺少可验证的语义关联。"
-                f" cited_sentence_index={index} markers={sorted(marker_indexes)}"
-                f" excerpt={_diagnostic_excerpt(sentence)!r}"
+        if marker_indexes and not (_support_units(claim) & _support_units(evidence_text)):
+            logger.warning(
+                "chat_weak_evidence_match request_id=%s sentence_index=%s markers=%s excerpt=%r",
+                request_id, index, sorted(marker_indexes), _diagnostic_excerpt(sentence),
             )
 
 

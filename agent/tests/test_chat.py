@@ -482,6 +482,36 @@ class ChatMessageAndTrimmingTests(unittest.TestCase):
 
 
 class ChatLocalBehaviorTests(unittest.TestCase):
+    def test_pure_greeting_succeeds_without_evidence_or_model(self):
+        backend = InMemoryChatBackend(internal=RuntimeError("context must not be requested"))
+        provider = FakeChatProvider("must not be used")
+        for question in ("你好", "您好！", "Hi"):
+            with self.subTest(question=question):
+                result = answer_conversation_request(
+                    conversation_request(question=question),
+                    backend=backend,
+                    chat_provider=provider,
+                )
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(result["citations"], [])
+                self.assertIn("你好", result["assistant_text"])
+        self.assertEqual(backend.context_calls, [])
+        self.assertEqual(provider.calls, [])
+
+    def test_greeting_with_customer_question_still_requires_evidence(self):
+        item = context_item(content="客户预算为 28 万元。")
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(model_json("客户预算为 28 万元。[1]", item))
+        result = answer_conversation_request(
+            conversation_request(question="你好，客户预算是多少？"),
+            backend=backend,
+            chat_provider=provider,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(item)])
+        self.assertEqual(backend.context_calls, [("request-1", "internal")])
+        self.assertEqual(len(provider.calls), 1)
+
     def test_direct_tool_action_is_refused_locally_without_model_or_mutation(self):
         request = conversation_request(question="请帮我发送一封邮件给客户。")
         backend = InMemoryChatBackend(
@@ -570,6 +600,46 @@ class ChatLocalBehaviorTests(unittest.TestCase):
 
 
 class ChatAnswerModeTests(unittest.TestCase):
+    def test_model_courtesy_needs_no_customer_citation(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(
+            model_json(
+                "您好！您好，我是 SalesMate 销售聊天助手。请问您想了解这位客户的什么信息？"
+            )
+        )
+        result = answer_conversation_request(
+            conversation_request(question="可以先介绍一下你自己吗？"),
+            backend=backend,
+            chat_provider=provider,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [])
+
+    def test_courtesy_before_cited_customer_fact_is_valid(self):
+        item = context_item(content="客户预算为 28 万元。")
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(model_json("您好！客户预算为 28 万元。[1]", item))
+        result = answer_conversation_request(
+            conversation_request(question="客户预算是多少？"),
+            backend=backend,
+            chat_provider=provider,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(item)])
+
+    def test_courtesy_does_not_exempt_uncited_customer_fact(self):
+        item = context_item(content="客户预算为 28 万元。")
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(model_json("您好！客户预算为 28 万元。"))
+        result = answer_conversation_request(
+            conversation_request(question="客户预算是多少？"),
+            backend=backend,
+            chat_provider=provider,
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"]["code"], "invalid_model_output")
+
     def test_fully_supported_answer_keeps_exact_citation_and_one_model_call(self):
         item = context_item()
         provider = FakeChatProvider(model_json("客户需要 50 台检测设备。[1]", item))
@@ -656,28 +726,29 @@ class ChatAnswerModeTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertNotIn("暂时不可用", result["assistant_text"])
 
-    def test_supported_citation_must_be_semantically_related_to_claim(self):
-        unrelated = context_item(
-            source_id="kb:travel",
+    def test_weak_word_overlap_is_diagnostic_in_demo_mode(self):
+        paraphrased = context_item(
+            source_id="email:agreement",
             source_type="internal_knowledge",
-            title_or_label="差旅报销",
-            content="员工差旅报销需要提交发票。",
+            title_or_label="内部记录",
+            content="双方已完成盖章。",
         )
         backend = InMemoryChatBackend(
-            internal=answer_context(context_items=[unrelated])
+            internal=answer_context(context_items=[paraphrased])
         )
         provider = FakeChatProvider(
-            model_json("客户已经签署采购合同。[1]", unrelated)
+            model_json("协议已经签署。[1]", paraphrased)
         )
 
-        result = answer_conversation_request(
-            conversation_request(question="客户是否已经签约？"),
-            backend=backend,
-            chat_provider=provider,
-        )
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(question="客户是否已经签约？"),
+                backend=backend,
+                chat_provider=provider,
+            )
 
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"]["code"], "invalid_model_output")
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("chat_weak_evidence_match", "\n".join(logs.output))
 
     def test_invalid_model_logs_stage_and_rule_without_candidate_text(self):
         item = context_item()
@@ -693,7 +764,7 @@ class ChatAnswerModeTests(unittest.TestCase):
             (
                 "policy",
                 model_json("预算为 28 万元：\n客户需要 50 台检测设备。[1]", item),
-                "每个事实性句子都必须含 Citation marker",
+                "回答中的数值未被所引用来源支持",
             ),
         )
         for stage, response, reason in cases:
@@ -709,7 +780,7 @@ class ChatAnswerModeTests(unittest.TestCase):
                 self.assertIn(f"stage={stage}", output)
                 self.assertIn(reason, output)
                 if stage == "policy":
-                    self.assertIn("sentence_index=1/2", output)
+                    self.assertIn("sentence_index=1", output)
                     self.assertIn("excerpt='预算为 28 万元：'", output)
                 self.assertNotIn("private-candidate-marker", output)
                 self.assertNotIn("客户需要 50 台检测设备", output)
@@ -734,19 +805,59 @@ class ChatAnswerModeTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["citations"], [citation(item)])
 
-    def test_factual_heading_still_requires_citation(self):
+    def test_markdown_customer_summary_headings_are_structural(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(
+            model_json(
+                "**客户需求总结：**\n1. 客户需要 50 台检测设备。[1]\n"
+                "**需要进一步确认的事项：**\n交付日期尚未确认。",
+                item,
+            )
+        )
+        result = answer_conversation_request(
+            conversation_request(question="总结客户需求并列出待确认事项"),
+            backend=backend,
+            chat_provider=provider,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(item)])
+
+    def test_free_form_summary_heading_and_uncited_advice_do_not_fail_demo(self):
+        item = context_item()
+        backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
+        provider = FakeChatProvider(
+            model_json(
+                "您好！\n**项目概况与建议：**\n- 客户需要 50 台检测设备。[1]\n"
+                "建议与客户确认后续安排。",
+                item,
+            )
+        )
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(question="总结客户需求并给出建议"),
+                backend=backend,
+                chat_provider=provider,
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("**项目概况与建议：**", result["assistant_text"])
+        self.assertIn("chat_answer_style_warning", "\n".join(logs.output))
+
+    def test_unsupported_number_in_heading_is_rejected(self):
         item = context_item()
         backend = InMemoryChatBackend(
             internal=answer_context(customer_context=[item])
         )
-        result = answer_conversation_request(
-            conversation_request(),
-            backend=backend,
-            chat_provider=FakeChatProvider(
-                model_json("预算为 28 万元：\n客户需要 50 台检测设备。[1]", item)
-            ),
-        )
-        self.assertEqual(result["error"]["code"], "invalid_model_output")
+        for heading in ("预算为 28 万元：", "**预算为 28 万元：**"):
+            with self.subTest(heading=heading):
+                result = answer_conversation_request(
+                    conversation_request(),
+                    backend=backend,
+                    chat_provider=FakeChatProvider(
+                        model_json(f"{heading}\n客户需要 50 台检测设备。[1]", item)
+                    ),
+                )
+                self.assertEqual(result["error"]["code"], "invalid_model_output")
 
     def test_external_knowledge_failure_preserves_customer_evidence_and_gap(self):
         item = context_item()
