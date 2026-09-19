@@ -75,6 +75,7 @@ class AnalysisInput:
     unparsed_message_count: int
     facts: dict[str, list[dict[str, Any]]]
     metrics: Metrics
+    priority_context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +153,29 @@ def build_analysis_input(
     except Exception as error:
         return ValidationError("analysis_input_failed", f"L2 构建失败：{error}")
 
+    priority_context = context.get("priority_context")
+    if priority_context is not None and "communications" not in priority_context:
+        recent_emails = sorted(
+            (
+                email for email in emails
+                if email["extract_status"] == "completed"
+                and email["facts"]["intent_hint"] != "non_sales"
+                and email["direction"] in {"inbound", "outbound"}
+            ),
+            key=_email_time_key,
+        )[-20:]
+        priority_context["communications"] = [
+            {
+                "message_id": email["dedupe_key"],
+                "sender": "customer" if email["direction"] == "inbound" else "employee",
+                "timestamp": email["sent_at"],
+                "content": "\n".join(part for part in (email["subject"], email.get("body_text"))
+                                     if isinstance(part, str) and part.strip()),
+            }
+            for email in recent_emails
+            if email["subject"] or email.get("body_text")
+        ]
+
     return AnalysisInput(
         company_id=company_id,
         input_version=input_version,
@@ -177,6 +201,7 @@ def build_analysis_input(
         ),
         facts=facts,
         metrics=metrics,
+        priority_context=priority_context,
     )
 
 
@@ -327,6 +352,9 @@ def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any
     tickets = _list(context.get("tickets"), "CompanyContext.tickets")
     quotes = _list(context.get("quotes"), "CompanyContext.quotes")
     orders = _list(context.get("orders"), "CompanyContext.orders")
+    priority_context = context.get("priority_context")
+    if priority_context is not None and not isinstance(priority_context, Mapping):
+        raise ValueError("CompanyContext.priority_context 必须是对象。")
     employee_count = customer.get("employee_count")
     if employee_count is not None and (type(employee_count) is not int or employee_count < 0):
         raise ValueError("CompanyContext.customer.employee_count 无效。")
@@ -342,6 +370,8 @@ def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any
         "tickets": copy.deepcopy(tickets),
         "quotes": copy.deepcopy(quotes),
         "orders": copy.deepcopy(orders),
+        "priority_context": copy.deepcopy(dict(priority_context))
+        if priority_context is not None else None,
     }
 
 

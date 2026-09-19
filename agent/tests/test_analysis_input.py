@@ -66,6 +66,22 @@ class AnalysisInputTests(unittest.TestCase):
         self.assertIsNone(result.latest_message_summary)
         self.assertEqual(result.metrics.inbound_count, 0)
 
+    def test_optional_l4_context_is_local_and_not_submitted_as_l2(self):
+        class WithPriorityContext(FakeBackend):
+            def get_company_context(self, company_id):
+                context = super().get_company_context(company_id)
+                context["priority_context"] = {"signals": []}
+                return context
+
+        result = build_analysis_input(
+            "company-demo", backend=WithPriorityContext(seed="l2"), clock=lambda: NOW
+        )
+        self.assertIsInstance(result, AnalysisInput)
+        self.assertEqual(result.priority_context["signals"], [])
+        self.assertTrue(result.priority_context["communications"])
+        self.assertIn("message_id", result.priority_context["communications"][0])
+        self.assertNotIn("priority_context", result.to_dict())
+
     def test_backend_retrieval_and_scope_errors_are_returned(self):
         failed = build_analysis_input(
             "company-demo",

@@ -494,24 +494,57 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("真实外发报价", result["error"]["message"])
 
-    def test_l4_score_is_explainable_and_missing_feature_returns_null(self):
+    def test_l4_requires_formal_priority_context_without_legacy_fallback(self):
         analysis = generate_analysis(
             self.input,
             analysis_provider=_provider,
             clock=lambda: NOW,
         )
         score = compute_score(analysis, self.input, clock=lambda: NOW)
-        self.assertTrue(0 <= score["score"] <= 100)
-        self.assertEqual(
-            score["score"],
-            sum(item["contribution"] for item in score["score_reasons"]),
-        )
+        self.assertIsNone(score["score"])
+        self.assertEqual(score["score_version"], "score-v2")
+        self.assertEqual(score["score_reasons"][0]["feature"], "insufficient_data")
 
         incomplete = copy.deepcopy(analysis)
         incomplete["list_view"]["score_features"]["urgency"]["value"] = None
         score = compute_score(incomplete, self.input, clock=lambda: NOW)
         self.assertIsNone(score["score"])
         self.assertEqual(score["score_reasons"][0]["feature"], "insufficient_data")
+
+    def test_company_analysis_uses_priority_l4_when_context_is_available(self):
+        class WithPriorityContext(FakeBackend):
+            def get_company_context(self, company_id):
+                context = super().get_company_context(company_id)
+                source = next(item["dedupe_key"] for item in context["emails"]
+                              if item["direction"] == "inbound")
+                context["priority_context"] = {
+                    "signals": [
+                        {"type": "FORMAL_QUOTATION_REQUEST", "value": None,
+                         "confidence": 0.9, "evidence": "Industrial sensor quotation", "source_id": source},
+                    ],
+                    "customer": {"industry": "Manufacturing", "company_size": 100,
+                                 "country": "Singapore"},
+                    "deal": {"deal_value": "250000", "currency": "SGD",
+                             "product": ["WMS"], "status": "ACTIVE"},
+                    "seller": {
+                        "average_deal_value": "30000", "average_deal_currency": "SGD",
+                        "time_zone": "Asia/Singapore",
+                        "target_industries": ["Manufacturing"],
+                        "target_company_size": {"min": 20, "max": 500},
+                        "service_regions": ["Singapore"], "products": ["WMS"],
+                        "similar_won_deals": True,
+                    },
+                }
+                return context
+
+        result = analyze_company(
+            "company-demo", backend=WithPriorityContext(seed="mvp"),
+            analysis_provider=_provider, clock=lambda: NOW,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["score"]["score_version"], "score-v2")
+        self.assertEqual(result["score"]["company_id"], "company-demo")
+        self.assertEqual(result["score_details"]["score_breakdown"]["buying_intent"], 75)
 
     def test_analysis_cache_avoids_second_model_call(self):
         calls = []

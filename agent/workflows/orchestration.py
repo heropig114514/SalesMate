@@ -13,7 +13,7 @@ from agent.workflows.customer_analysis import (
     bailian_analysis_provider,
     generate_analysis,
 )
-from agent.workflows.lead_score import compute_score
+from agent.workflows.lead_score import compute_priority_result
 from agent.clients.backend_api import BackendClient
 
 
@@ -53,6 +53,7 @@ def analyze_company(
             "analysis_input": None,
             "analysis": None,
             "score": None,
+            "score_details": None,
             "cache_hit": False,
             "error": analysis_input.to_dict()["error"],
         }
@@ -85,7 +86,17 @@ def analyze_company(
 
     completed = analysis.get("status") == "completed"
     l4_started = perf_counter()
-    score = compute_score(analysis, input_document, clock=clock) if completed else None
+    priority_result = (
+        compute_priority_result(
+            analysis,
+            input_document,
+            clock=clock,
+            priority_context=analysis_input.priority_context,
+        )
+        if completed else None
+    )
+    score = priority_result["score"] if priority_result else None
+    score_details = priority_result["details"] if priority_result else None
     l4_ms = round((perf_counter() - l4_started) * 1000)
     if score is not None:
         backend_started = perf_counter()
@@ -108,6 +119,7 @@ def analyze_company(
         "analysis_input": input_document,
         "analysis": analysis,
         "score": score,
+        "score_details": score_details,
         "cache_hit": cache_hit,
         "error": None if completed else analysis.get("error"),
     }

@@ -1,8 +1,8 @@
 # SalesMate Agent MVP
 
-更新日期：2026-09-12<br>
-版本：v2.3<br>
-状态：员工网页 Gmail 授权、一次性同步请求、L1–L4、Django HTTP 适配器和前端结果展示已经完成联调。
+更新日期：2026-09-19<br>
+版本：v2.4<br>
+状态：员工网页 Gmail 授权、一次性同步请求及原有 L1–L4 链路已完成联调；正式 L4 评分规则已在 Agent 侧实现，新的评分上下文与解释结果仍待后端和前端对接。
 
 ## 1. 当前范围
 
@@ -104,6 +104,8 @@ agent/
 │   │   └── SKILL.md                # L1 抽取指令、版本和输出上限
 │   ├── customer-analysis/
 │   │   └── SKILL.md                # L3 画像指令、版本和输出上限
+│   ├── l4-priority-signals/
+│   │   └── SKILL.md                # 公司级 L4 邮件信号抽取
 │   └── sales-chat/
 │       └── SKILL.md                # chat-v2 只读问答、grounding 与安全规则
 ├── workflows/
@@ -124,17 +126,19 @@ agent/
     ├── test_integration.py         # Gmail 只读读取、History 与百炼客户端集成测试
     ├── test_analysis_input.py      # L2 AnalysisInput 行为测试
     ├── test_http_backend.py        # Django HTTP 传输与聊天 mocked contract 测试
-    └── test_mvp_pipeline.py        # Gmail 同步及 L2–L4 主链测试
+    ├── test_mvp_pipeline.py        # Gmail 同步及 L2–L4 主链测试
+    └── test_lead_score.py          # 公司级 L4 规则与排序测试
 ```
 
 没有单独的 `schemas` 或 `prompts` 层。模型能力以 `agent/skills/<skill-name>/SKILL.md` 组织，frontmatter 提供路由名称、用途描述、版本和输出 token 上限，正文保存模型指令。workflow 按名称加载 Skill，只负责拼装本次输入、调用百炼和校验结果。数据结构继续使用普通字典和少量就地 dataclass。
 
-当前提供三个 Skill：
+当前提供四个 Skill：
 
 | Skill | 调用阶段 | 输入边界 | 产出 |
 |---|---|---|---|
 | `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
 | `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
+| `l4-priority-signals` | L4 内部 | 一家公司的相关邮件通信 | 有原文证据的紧急度与采购意向信号，不直接生成分数 |
 | `sales-chat` (`chat-v2`) | 只读聊天 | 当前问题、最近历史和本次授权上下文 | 经校验的自然语言回答与简单 Citation |
 
 `agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他 Tool Action 必须经过独立规格、权限和确认设计；当前 `sales-chat` 不提供或预留可调用执行器。
@@ -194,7 +198,7 @@ flowchart TB
 
     ORCH -->|"company_id"| L2
     DATA -->|"公司归组<br/>company_name / crm_status / domains / contacts / member_dedupe_keys"| L2
-    DATA -->|"业务上下文<br/>emails / customer / tickets / quotes / orders / snapshot_version"| L2
+    DATA -->|"业务上下文<br/>emails / customer / tickets / quotes / orders / snapshot_version<br/>正式 L4 所需 priority_context 待后端提供"| L2
     L2 -->|"AnalysisInput<br/>归并 facts / metrics / business_context / input_version"| RESULT
     L2 -->|"AnalysisInput"| ORCH
 
@@ -204,7 +208,8 @@ flowchart TB
     L3 -->|"公司事实与业务上下文"| BAILIAN
     BAILIAN -->|"画像、信号、分析、评分特征 JSON"| L3
     L3 -->|"Analysis<br/>list_view / detail_view / status / error"| ORCH
-    ORCH -->|"Analysis + metrics"| L4
+    ORCH -->|"Analysis + metrics + 正式评分所需 priority_context"| L4
+    SKILLS -->|"有新上下文时 l4-priority-signals"| L4
     L4 -->|"Score<br/>score / score_reasons / score_version"| ORCH
 
     ORCH -->|"保存 Analysis / Score / JobReport"| RESULT
@@ -222,12 +227,12 @@ flowchart TB
 | 5. 保存与归组 | Agent → 后端 | 已完成的单封 EmailSubmission | 单封保存结果、company_id、公司成员邮件、必要的待处理任务 | 不等待最慢邮件，任一 L1 完成后立即逐封提交；独立事务避免一个冲突回滚整批邮件 |
 | 6. 同步结果 | Agent → Django → 浏览器 | 后端保存结果 | fetched_count、l1_processed_count、created_count、duplicate_count、failed_extraction_count、failed_submission_count、email_errors、同步状态 | 邮箱阶段完成后立即回报；失败邮件保留到下一轮重试 |
 | 7. 任务进入分析 | 后端 → 编排 | job_id、trigger、company_id | 本批次待分析公司列表 | 把邮件变化或业务数据变化转换为公司分析任务 |
-| 8. 公司数据准备 | 后端 → L2 | 公司归组、邮件、客户、联系人、工单、报价、订单、快照版本 | 完整公司数据集合 | 为公司级事实归并提供统一上下文 |
+| 8. 公司数据准备 | 后端 → L2 | 公司归组、邮件、客户、联系人、工单、报价、订单、快照版本、评分所需公司背景 | 完整公司数据集合 | 为公司级事实归并和 L4 提供统一上下文 |
 | 9. 公司级事实归并 | L2 → 编排和后端 | 公司数据集合 | AnalysisInput：company、business_context、facts、metrics、input_version、unparsed_message_count | 形成 L3 唯一可信的分析输入 |
 | 10. 分析缓存判断 | 后端 → 编排 | company_id、input_version | 已存在的 Analysis 或空值 | 相同数据版本不重复调用模型 |
-| 11. 客户画像与分析 | Skill → L3 ↔ 百炼 | `customer-analysis` 指令、精简后的 AnalysisInput 推理视图 | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析、评分特征 | 完整 L2 继续用于校验和存储；百炼只接收分析所需字段，首次模型结果未通过业务规则时携带原因修正一次 |
-| 12. 跟进优先级 | 编排 → L4 | Analysis、邮件指标 | Score：score、各特征贡献、说明和评分版本 | 计算 0–100 处理优先级；信息不足时返回 null |
-| 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | 供真实后端以后持久化和提供给前端 |
+| 11. 客户画像与分析 | Skill → L3 ↔ 百炼 | `customer-analysis` 指令、精简后的 AnalysisInput 推理视图 | Analysis：公司信号、工单信号、行业、规模、摘要、三维画像、四维分析；旧评分特征暂留供后端校验 | 完整 L2 继续用于校验和存储；L4 不再使用旧评分特征计算分数 |
+| 12. 跟进优先级 | 编排 → L4 | 公司邮件及评分上下文 | 公司级 Score、分项、前三原因、证据与下一步建议 | Skill 仅抽取信号，规则引擎计算正式优先级；信息不足时 `score=null` |
+| 13. 保存分析结果 | 编排 → 后端 | AnalysisInput、Analysis、Score、JobReport | 当前公司的最新分析状态 | `score_details` 目前只随 Agent 分析结果返回，待后端增补持久化契约 |
 | 14. 返回调用方 | 编排 → 后端 → 浏览器 | 完整分析结果 | AnalysisBundle、JobReport 与公司页面投影 | CLI 输出处理报告；前端通过后端读取结果 |
 
 当前没有“前端上传 JSON 文件”或“后端返回磁盘文件”的过程。Agent workflow 内部交换普通字典，`DjangoBackendClient` 将这些字典转换成 HTTP JSON 请求和响应。前端页面查询、筛选、排序和分页继续调用 Django 的浏览器接口。
@@ -642,45 +647,37 @@ L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交�
 入口：
 
 ```python
-compute_score(analysis, analysis_input, clock=clock) -> dict
+compute_score(analysis, analysis_input, clock=clock, priority_context=context) -> dict
 ```
 
-分数表示销售处理优先级，不是成交概率。
+`score` 表示当前销售处理优先级，不表示成交概率。每家公司仍只生成一份分数，流程仍为 L2→L3→L4。旧版六项权重已移除，L4 只按正式规则计算；当前后端资料不足时返回 `score=null`，不会回退到旧权重。
 
-| 特征 | 权重 |
-|---|---:|
-| signal | 0.30 |
-| demand_clarity | 0.20 |
-| urgency | 0.20 |
-| decision_visibility | 0.10 |
-| recency | 0.15 |
-| substantive_inbound_count | 0.05 |
+公式为 `35% × urgency + 35% × buying_intent + 30% × opportunity_value`，其中 `opportunity_value = 60% × deal_value + 40% × customer_fit`。紧急度按 4 小时内 100、24 小时内 90、2 天内 80、7 天内 65、14 天内 45、更晚 25、无明确时间节点 10；只有客户催促但无截止时间也按 10。邮件只给日期时按评分时钟的日历日保守计分：今天 90、未来 1–2 天 80，不虚构具体小时。已过去的普通截止时间不再持续拉高分数，只有明确的 `OVERDUE_ACTION` 可计入逾期紧急度。采购意向按一般咨询 20、产品/演示 40、数量/预算/采购时间 60、正式报价/决策人 75、合同/付款 90、批准/确认采购 100。金额与同币种历史平均成交额之比按 `<0.5 / [0.5,1) / [1,2) / [2,5] / >5` 映射 `20/40/60/80/100`。客户匹配按行业 25、规模 15、地区 10、产品 35、可比历史赢单 15 加权。
 
-信号归一值：`repeat_purchase=1.00`、`quoted_not_closed=0.80`、`inquiry_intent=0.65`、`new_lead_no_profile=0.35`。
-
-三个模型特征除以 3；最近入站按 30 天线性衰减；有效入站数量按最多 5 封归一化。各项贡献四舍五入为整数，最终分数等于贡献之和。
-
-信号为 `unknown`、任一模型特征为 `null`，或没有最近入站时间时，`score=null`，原因只有 `insufficient_data`。
-
-成功的 `Score` 示例：
+`priority_context` 是供 L4 使用、不会混入已保存的 L2 `AnalysisInput` 的公司级上下文：
 
 ```json
 {
-  "company_id": "company:example.com",
-  "input_version": "sha256:...",
-  "score": 88,
-  "score_reasons": [
-    {"feature": "signal", "contribution": 30, "note": "历史订单客户再次采购"},
-    {"feature": "demand_clarity", "contribution": 20, "note": "产品、数量和报价要求明确"},
-    {"feature": "urgency", "contribution": 20, "note": "存在明确回复截止日"},
-    {"feature": "decision_visibility", "contribution": 7, "note": "已知项目负责人和内部汇报安排"},
-    {"feature": "recency", "contribution": 10, "note": "最近有效来信距今 10.0 天"},
-    {"feature": "substantive_inbound_count", "contribution": 1, "note": "有效入站邮件 1 封"}
-  ],
-  "score_version": "score-v1",
-  "scored_at": "2026-09-12T10:02:00+08:00"
+  "customer": {"customer_id": "C001", "company_name": "Example Manufacturing", "industry": "Manufacturing", "company_size": 100, "country": "Singapore"},
+  "deal": {"deal_value": "250000", "currency": "SGD", "stage": "Proposal", "product": ["WMS", "OHT"], "quantity": 20, "status": "ACTIVE"},
+  "seller": {
+    "average_deal_value": "30000", "average_deal_currency": "SGD",
+    "time_zone": "Asia/Singapore",
+    "target_industries": ["Manufacturing"],
+    "target_company_size": {"min": 20, "max": 500},
+    "service_regions": ["Singapore"], "products": ["WMS"],
+    "similar_won_deals": true
+  }
 }
 ```
+
+`deal` 沿用正式文档的商机字段名，但此处已按产品约定归并到公司级；只对 `status=ACTIVE` 且金额大于零的公司级商机评分。Agent 从现有公司邮件快照中选最近 20 封已完成抽取的业务通信，构造 `communications`，以 `dedupe_key` 作为 `message_id`；因此后端不需要再传一份邮件正文。具备计算所需业务资料时，L4 内部调用 `l4-priority-signals` 抽取带 `source_id`、原文证据和置信度的信号，再由 Python 规则计算分数；测试或已结构化的来源也可直接提供 `signals` 数组，省去本次模型调用。`seller.time_zone` 使用 IANA 时区来解释只有日期的时间信号；缺失时沿用评分时钟的时区。没有可支持的采购意向、活跃商机金额或匹配资料，或金额与平均值币种不同，返回 `score=null` 和 `insufficient_data`，不补造缺失值。各贡献整数之和严格等于分数。`rank_company_scores()` 按公司分数降序、紧急度贡献、公司 ID 排序，空分排最后；实际网页列表排序仍需后端执行。
+
+`compute_priority_result()` 在同一次 L4 计算中返回后端现有的 `score` 载荷，以及 `score_details`：原始三项分数和贡献、按影响排序的前三原因、可跳回邮件的证据、建议下一步动作。`analyze_company()` 将 `score` 保存到后端，并在返回值中附带 `score_details`；当前后端尚未持久化或展示后者。现有 `Score.score` 字段就是文档中的 `priority_score`，不再增加第二个分数字段。
+
+**后端待对接**：在现有公司上下文响应中补充上述 `priority_context`，包括公司级当前活跃商机金额/币种/产品、客户行业/人数/地区、全公司平均成交额及币种、目标客户条件、可比赢单结论；同一公司多条活跃商机须先明确汇总口径，不能把不同币种直接相加。金额使用十进制字符串，同类行业、地区和产品使用可直接比较的规范名称，邮件继续使用现有 `emails`。这些来源变化应更新 `external_snapshot_version` 并触发原公司分析任务。现有 `save_score` 仍以旧 L3 `signal/score_features` 是否齐全决定能否保存非空分数，需要改为按正式 L4 规则校验；若部署启用了后端独立的 `rules` 评分，也需停用旧占位算法或对齐此标准。若网页要显示前三原因、独立证据链接和建议动作，后端还需持久化、查询 `score_details`，前端再展示和按 `score` 排序。当前代码未改后端和前端。
+
+离线验证：`python -m unittest agent.tests.test_lead_score`。此测试使用固定时钟和假信号，不连接百炼或真实后端。
 
 ## 8. 编排和后端接口
 
@@ -814,7 +811,7 @@ python -m unittest discover -s agent/tests -p "test_*.py"
 python -m unittest agent.tests.test_mvp_pipeline
 ```
 
-自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。本次聊天文档一致性验证中，目标命令通过 139 项测试，完整离线发现命令通过 186 项测试。
+自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。当前完整离线发现命令通过 204 项测试。
 
 测试文件分工：
 
@@ -826,6 +823,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 | `agent/tests/test_integration.py` | 覆盖 Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
 | `agent/tests/test_analysis_input.py` | 覆盖 L2 事实归并、业务上下文、版本和错误边界 |
 | `agent/tests/test_mvp_pipeline.py` | 覆盖 Gmail 同步、L1 并发与失败隔离、L2–L4、缓存和既有端到端流程 |
+| `agent/tests/test_lead_score.py` | 覆盖公司级正式公式、信号证据、截止时间档位、资料不足和排序 |
 | `agent/tests/test_http_backend.py` | 覆盖 Django 服务认证、邮箱/游标/ETag/任务租约、响应归一化及聊天三接口 mocked contract |
 | `agent/tests/test_qq_mail.py` | 覆盖 QQ IMAP 只读适配边界 |
 
