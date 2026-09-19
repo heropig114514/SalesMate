@@ -1,10 +1,13 @@
 /**
  * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
- * 实现：fetch 发送 JSON，写请求附 CSRF；支持调用方取消只读观察，保留失败状态并展开表单错误。
+ * 实现：fetch 发送 JSON 与当前语言头，写请求附 CSRF；支持调用方取消只读观察，保留失败状态并展开表单错误。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
  * 目录：csrfToken（读取 cookie）；errorMessage（提取错误文本）；request（执行请求）；escapeHtml（转义文本）。
  * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
  */
+import { t, language } from './i18n.js?v=20260920-i18n';
+
 const BASE = '/api/v1/';
 
 /** 功能：读取 Django CSRF cookie。输入：隐式 document.cookie。输出：令牌或空字符串。
@@ -24,10 +27,10 @@ function errorMessage(detail) {
 }
 
 /** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data、version、signal。
- * 输出：成功 JSON 或 null；失败抛 Error。逻辑：保持 HTTP 失败语义，展开字段错误并附 request_id。
+ * 输出：成功 JSON 或 null；失败抛 Error。逻辑：附当前界面 Accept-Language；保持 HTTP 失败语义，展开字段错误并附 request_id。
  * 约束：取消保留 AbortError 交给观察者处理；无重试、无降级，不将秘密放入 URL。 */
 export async function request(path, { method = 'GET', data, version, signal } = {}) {
-  const headers = { 'Accept': 'application/json' };
+  const headers = { 'Accept': 'application/json', 'Accept-Language': language };
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') headers['X-CSRFToken'] = csrfToken();
   if (version !== undefined) headers['If-Match'] = String(version);
@@ -36,15 +39,15 @@ export async function request(path, { method = 'GET', data, version, signal } = 
     response = await fetch(BASE + path, { method, headers, signal, credentials: 'same-origin', body: data === undefined ? undefined : JSON.stringify(data) });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
-    throw new Error('无法连接后端，请检查服务是否启动。');
+    throw new Error(t('无法连接后端，请检查服务是否启动。'));
   }
   if (response.status === 204) return null;
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await response.json() : null;
   if (!response.ok) {
     const detail = body?.error?.detail;
-    const message = errorMessage(detail) || `请求失败（HTTP ${response.status}），请检查服务日志。`;
-    const error = new Error(message + (body?.request_id ? ` 请求编号：${body.request_id}` : ''));
+    const message = errorMessage(detail) || t`请求失败（HTTP ${response.status}），请检查服务日志。`;
+    const error = new Error(message + (body?.request_id ? t` 请求编号：${body.request_id}` : ''));
     error.status = response.status;
     throw error;
   }

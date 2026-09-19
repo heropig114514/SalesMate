@@ -1,5 +1,6 @@
 /**
  * 职责：验证 QQ 发信连接表单、服务筛选及发送前预览。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：先验证 QQ 关闭时入口、动作及连接筛选均隐藏，再启用原场景；真实业务页面运行于隔离静态服务，全部 API 被模拟，任何非预期写入失败。
  * 关联：business.js 与 sales-api.js；使用显式 Playwright 模块和浏览器路径。
  * 目录：main 执行连接和待确认邮件场景。
@@ -27,7 +28,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     const errors = [], writes = [];
     let qqEnabled = false;
     page.on('pageerror', error => errors.push(error.message));

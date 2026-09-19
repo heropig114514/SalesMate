@@ -1,23 +1,26 @@
 /**
  * 职责：协调世界消息筛选、地图气泡、摘要侧栏和详情页。
  * 实现：显式 demo 数据源；URL 保存筛选和选择，History API 支持详情刷新/返回，统一消息事件更新列表与地图。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：world.html/world-news.css 展示；NewsFeed 校验消息；WorldMap 聚合标记；workspace.js 统一导航；地图、行业色和外壳按相同静态资源版本加载。
  * 目录：date、mapHref、detailHref、tag、card、visibleNews、showError、renderPanel、renderDetail、renderOverview、selectNews、selectGroup、closePanel、navigate、renderRoute、receiveWorldNews、start。
  * 变量索引：$ 为 DOM 查询，feed 为演示快照；mapView 地图，industry 筛选，selectedId 选择，groupIds 聚合列表，highlightId 最新到达消息，originButton 返回焦点目标。
  */
+import { t, h, locale } from './i18n.js?v=20260920-i18n';
+
 import { escapeHtml as e } from './api.js';
-import { mountWorkspace } from './workspace.js?v=20260919-nocturne';
-import { INDUSTRIES, NewsFeed } from './world-feed.js?v=20260919-nocturne';
+import { mountWorkspace } from './workspace.js?v=20260920-i18n';
+import { INDUSTRIES, NewsFeed } from './world-feed.js?v=20260920-i18n';
 import { DEMO_NEWS, DEMO_PUSH } from './world-demo.js';
-import { WorldMap } from './world-map.js?v=20260919-nocturne';
+import { WorldMap } from './world-map.js?v=20260920-i18n';
 
 const $ = id => document.getElementById(id);
 const feed = new NewsFeed('demo', DEMO_NEWS);
 let mapView = null, industry = 'all', selectedId = null, groupIds = null, highlightId = null, originButton = null;
 
-/** 功能：显示明确时间。输入：value ISO 时间。输出：上海时区的月日时分。
+/** 功能：显示明确时间。输入：value ISO 时间。输出：按当前界面语言显示的上海时区月日时分。
  * 逻辑：保留消息时间，不伪装刚刚抓取。约束：仅接收已校验值。 */
-function date(value) { return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)); }
+function date(value) { return new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)); }
 /** 功能：生成可分享的地图状态。输入：id 可空消息标识，隐式 industry。输出：相对 URL。
  * 逻辑：查询参数编码选择。约束：不传递员工、凭证或客户信息。 */
 function mapHref(id = null) { const query = new URLSearchParams(); if (industry !== 'all') query.set('industry', industry); if (id) query.set('news', id); return '/world/' + (query.size ? '?' + query : ''); }
@@ -35,7 +38,7 @@ function card(item) { return `<button type="button" class="news-card ${item.id =
 function visibleNews() { return feed.list().filter(item => industry === 'all' || item.industry === industry); }
 /** 功能：显示可操作的失败。输入：error 与 stage。输出：可见错误及安全日志。
  * 逻辑：保留页面已有状态。约束：不记录消息正文、凭证或自动重试。 */
-function showError(error, stage) { console.error('world_news_failed', { stage, errorType: error.name }); $('world-error').textContent = `世界消息：${error.message}`; $('world-error').hidden = false; }
+function showError(error, stage) { console.error('world_news_failed', { stage, errorType: error.name }); $('world-error').textContent = t`世界消息：${error.message}`; $('world-error').hidden = false; }
 /** 功能：渲染侧栏。输入：selectedId/groupIds 与当前可见数据。输出：无。
  * 逻辑：单条摘要、聚合列表、全量速览三态；空筛选明确展示。
  * 约束：正文与摘要不使用模型 HTML；移动端选择后成为非模态底部面板。 */
@@ -43,10 +46,10 @@ function renderPanel() {
   const item = selectedId ? feed.get(selectedId) : null;
   const panel = $('news-panel'); panel.classList.toggle('is-open', Boolean(item || groupIds));
   if (item) {
-    panel.innerHTML = `<div class="panel-top"><span class="eyebrow">消息摘要</span><button type="button" data-close aria-label="关闭消息摘要">×</button></div><div class="summary-body">${tag(item)}<p class="summary-place">⊕ ${e(item.location.name)}</p><h2 id="summary-title" tabindex="-1">${e(item.title)}</h2><div class="summary-time">${e(date(item.published_at))} · UTC+8 <span class="demo-label">演示消息</span></div><div class="summary-divider"></div><p class="summary-text">${e(item.summary)}</p><div class="summary-source"><span>来源状态</span><strong>${item.sources.length ? `${item.sources.length} 个来源` : '虚构示例 · 无真实报道'}</strong></div><a class="detail-button" data-navigate href="${detailHref(item.id)}">阅读完整消息 <span aria-hidden="true">↗</span></a><p class="summary-hint">也可以再次点击该消息的地图气泡进入详情。</p></div>`;
+    panel.innerHTML = h`<div class="panel-top"><span class="eyebrow">消息摘要</span><button type="button" data-close aria-label="关闭消息摘要">×</button></div><div class="summary-body">${tag(item)}<p class="summary-place">⊕ ${e(item.location.name)}</p><h2 id="summary-title" tabindex="-1">${e(item.title)}</h2><div class="summary-time">${e(date(item.published_at))} · UTC+8 <span class="demo-label">演示消息</span></div><div class="summary-divider"></div><p class="summary-text">${e(item.summary)}</p><div class="summary-source"><span>来源状态</span><strong>${item.sources.length ? t`${item.sources.length} 个来源` : t('虚构示例 · 无真实报道')}</strong></div><a class="detail-button" data-navigate href="${detailHref(item.id)}">阅读完整消息 <span aria-hidden="true">↗</span></a><p class="summary-hint">也可以再次点击该消息的地图气泡进入详情。</p></div>`;
   } else {
     const items = visibleNews().filter(value => !groupIds || groupIds.includes(value.id));
-    panel.innerHTML = `<div class="panel-top"><div><span class="eyebrow">${groupIds ? '此区域的消息' : 'NEWS BRIEFING'}</span><h2>${groupIds ? '附近动态' : '消息速览'} <span>${items.length}</span></h2></div>${groupIds ? '<button type="button" data-close aria-label="关闭区域摘要">×</button>' : '<span class="panel-star" aria-hidden="true">✳</span>'}</div><p class="panel-intro">${groupIds ? '选择一条消息，查看摘要与完整内容。' : '点击地图气泡或下方消息，展开摘要。'}</p>${groupIds ? '<button class="group-zoom" data-zoom-group type="button">放大此区域 ↗</button>' : ''}<div class="news-card-list">${items.length ? items.map(card).join('') : '<div class="world-empty"><span aria-hidden="true">◎</span><h3>这个行业暂时没有消息</h3><p>切换其他行业，或等待新的消息到达。</p></div>'}</div>`;
+    panel.innerHTML = `<div class="panel-top"><div><span class="eyebrow">${groupIds ? t('此区域的消息') : 'NEWS BRIEFING'}</span><h2>${groupIds ? t('附近动态') : t('消息速览')} <span>${items.length}</span></h2></div>${groupIds ? h('<button type="button" data-close aria-label="关闭区域摘要">×</button>') : '<span class="panel-star" aria-hidden="true">✳</span>'}</div><p class="panel-intro">${groupIds ? t('选择一条消息，查看摘要与完整内容。') : t('点击地图气泡或下方消息，展开摘要。')}</p>${groupIds ? h('<button class="group-zoom" data-zoom-group type="button">放大此区域 ↗</button>') : ''}<div class="news-card-list">${items.length ? items.map(card).join('') : h('<div class="world-empty"><span aria-hidden="true">◎</span><h3>这个行业暂时没有消息</h3><p>切换其他行业，或等待新的消息到达。</p></div>')}</div>`;
   }
 }
 /** 功能：渲染独立消息详情。输入：id。输出：完整正文或缺失状态。
@@ -54,8 +57,8 @@ function renderPanel() {
  * 约束：演示明确标记；不声称实时来源已接通，不将未知 ID 映射到其他消息。 */
 function renderDetail(id) {
   const item = feed.get(id);
-  document.title = item ? `${item.title} · 世界消息` : '消息未找到 · SalesMate';
-  $('news-detail').innerHTML = item ? `<a class="detail-back" data-navigate href="${mapHref(id)}">← 返回地图与摘要</a><article class="news-article"><div class="article-meta">${tag(item)}<span class="demo-label">演示消息</span></div><h1 tabindex="-1">${e(item.title)}</h1><div class="article-byline"><span>⊕ ${e(item.location.name)}</span><time datetime="${e(item.published_at)}">${e(date(item.published_at))} · UTC+8</time></div><p class="article-lead">${e(item.summary)}</p><div class="article-content">${item.body.map(paragraph => `<p>${e(paragraph)}</p>`).join('')}</div><section class="article-sources"><h2>来源与核对</h2>${item.sources.length ? item.sources.map(source => `<a href="${e(source.url)}" target="_blank" rel="noopener noreferrer">${e(source.label)} ↗</a>`).join('') : '<p>本消息为虚构演示，没有对应的真实报道，请勿据此作业务判断。</p>'}</section><footer class="article-footer">消息编号 ${e(item.id)} · 版本 ${item.version}</footer></article>` : '<a class="detail-back" data-navigate href="/world/">← 返回世界地图</a><div class="world-empty"><h1 tabindex="-1">消息未找到</h1><p>该消息未在当前数据源中，可能尚未接入或仅存在于另一页面会话。</p></div>';
+  document.title = item ? t`${item.title} · 世界消息` : t('消息未找到 · SalesMate');
+  $('news-detail').innerHTML = item ? h`<a class="detail-back" data-navigate href="${mapHref(id)}">← 返回地图与摘要</a><article class="news-article"><div class="article-meta">${tag(item)}<span class="demo-label">演示消息</span></div><h1 tabindex="-1">${e(item.title)}</h1><div class="article-byline"><span>⊕ ${e(item.location.name)}</span><time datetime="${e(item.published_at)}">${e(date(item.published_at))} · UTC+8</time></div><p class="article-lead">${e(item.summary)}</p><div class="article-content">${item.body.map(paragraph => `<p>${e(paragraph)}</p>`).join('')}</div><section class="article-sources"><h2>来源与核对</h2>${item.sources.length ? item.sources.map(source => `<a href="${e(source.url)}" target="_blank" rel="noopener noreferrer">${e(source.label)} ↗</a>`).join('') : h('<p>本消息为虚构演示，没有对应的真实报道，请勿据此作业务判断。</p>')}</section><footer class="article-footer">消息编号 ${e(item.id)} · 版本 ${item.version}</footer></article>` : h('<a class="detail-back" data-navigate href="/world/">← 返回世界地图</a><div class="world-empty"><h1 tabindex="-1">消息未找到</h1><p>该消息未在当前数据源中，可能尚未接入或仅存在于另一页面会话。</p></div>');
 }
 /** 功能：刷新列表、统计和地图。输入：当前 feed、筛选与选择。输出：无。
  * 逻辑：统计反映当前筛选，推送不改变地图视角；详情打开时同步当前版本。
@@ -65,8 +68,8 @@ function renderOverview() {
   $('news-total').textContent = items.length;
   $('location-total').textContent = new Set(items.map(item => item.location.name)).size;
   $('industry-total').textContent = new Set(items.map(item => item.industry)).size;
-  $('map-count').textContent = `${items.length} 条消息 · ${new Set(items.map(item => item.location.name)).size} 个地点`;
-  $('industry-filters').innerHTML = [['all', { label: '全部行业' }], ...Object.entries(INDUSTRIES)].map(([key, kind]) => `<button type="button" data-industry="${key}" aria-pressed="${industry === key}">${kind.color ? `<i style="background:${kind.color}"></i>` : '<span aria-hidden="true">⊞</span>'}${kind.label}</button>`).join('');
+  $('map-count').textContent = t`${items.length} 条消息 · ${new Set(items.map(item => item.location.name)).size} 个地点`;
+  $('industry-filters').innerHTML = [['all', { label: t('全部行业') }], ...Object.entries(INDUSTRIES)].map(([key, kind]) => `<button type="button" data-industry="${key}" aria-pressed="${industry === key}">${kind.color ? `<i style="background:${kind.color}"></i>` : '<span aria-hidden="true">⊞</span>'}${kind.label}</button>`).join('');
   renderPanel();
   mapView?.setItems(items, selectedId, highlightId);
 }
@@ -106,7 +109,7 @@ function renderRoute() {
   industry = Object.hasOwn(INDUSTRIES, requested) ? requested : 'all';
   selectedId = query.get('news'); groupIds = null;
   if (selectedId && !visibleNews().some(item => item.id === selectedId)) selectedId = null;
-  document.title = '世界消息 · SalesMate'; renderOverview(); mapView?.map.invalidateSize();
+  document.title = t('世界消息 · SalesMate'); renderOverview(); mapView?.map.invalidateSize();
 }
 /** 功能：预留后续推送的页面入口。输入：event 标准 news.upsert 事件。
  * 输出：数据源的布尔结果；失败展示错误并抛回调用者。逻辑：全部更新经同一校验与幂等路径。
@@ -119,7 +122,7 @@ async function start() {
   mountWorkspace('world');
   feed.addEventListener('change', event => {
     highlightId = event.detail.id;
-    $('world-status').textContent = `${event.detail.inserted ? '收到一条演示消息' : '消息已更新'}：${feed.get(highlightId).title}。当前行业筛选保持不变。`;
+    $('world-status').textContent = t`${event.detail.inserted ? t('收到一条演示消息') : t('消息已更新')}：${feed.get(highlightId).title}。当前行业筛选保持不变。`;
     renderOverview(); const match = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/); if (match) renderDetail(match[1]);
   });
   document.addEventListener('click', event => {
@@ -133,12 +136,12 @@ async function start() {
   });
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('world-explorer').hidden && (selectedId || groupIds)) closePanel(); });
   window.addEventListener('popstate', renderRoute);
-  $('demo-push').onclick = () => { receiveWorldNews({ type: 'news.upsert', item: DEMO_PUSH }); $('demo-push').disabled = true; $('demo-push').textContent = '演示消息已到达 ✓'; };
+  $('demo-push').onclick = () => { receiveWorldNews({ type: 'news.upsert', item: DEMO_PUSH }); $('demo-push').disabled = true; $('demo-push').textContent = t('演示消息已到达 ✓'); };
   $('reset-map').onclick = () => mapView?.reset();
   renderOverview();
   // 先在可见容器建立全球视角，再应用详情路由；直接打开详情后返回不会留下零尺寸地图。
   try { mapView = new WorldMap($('world-map'), selectGroup); renderRoute(); await mapView.load(); renderOverview(); console.info('world_news_initialized', { mode: feed.mode, count: feed.list().length }); }
-  catch (error) { renderRoute(); showError(error, 'map'); $('map-count').textContent = '地图加载失败'; }
+  catch (error) { renderRoute(); showError(error, 'map'); $('map-count').textContent = t('地图加载失败'); }
   finally { $('map-loading').hidden = true; }
 }
 start().catch(error => showError(error, 'initialize'));

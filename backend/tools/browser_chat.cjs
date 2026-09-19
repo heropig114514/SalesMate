@@ -1,5 +1,6 @@
 /**
  * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：加载真实页面和 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
  * 关联：assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
  * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
@@ -30,7 +31,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     await page.clock.install();
     const errors = [], writes = [], messages = [], answers = [];
     let mode = 'completed', pollReads = 0, failPoll = false, completeOnRead = null;

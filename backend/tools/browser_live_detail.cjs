@@ -1,5 +1,6 @@
 /**
  * 职责：验证 LLM 分阶段结果在当前详情及时可见，且不会破坏阅读和未保存内容。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：真实浏览器加载静态前端，模拟邮件、画像、评分的独立完成和慢响应/读取失败。
  * 关联：app.js、live-detail.js、assistant.js；使用显式 Playwright 和 Chrome 路径。
  * 目录：main 执行浏览器验收。
@@ -27,7 +28,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1680, height: 1000 } });
     const errors = [], writes = [], reads = { a: 0, b: 0 };
     page.on('pageerror', error => errors.push(error.message));
     let phase = 0, batchCompleted = false, failRead = false, holdRead = false, releaseRead, arrived;

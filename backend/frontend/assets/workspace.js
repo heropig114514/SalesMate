@@ -1,17 +1,20 @@
 /**
  * 职责：为邮件、业务及世界消息页面提供共享导航、客户上下文和真实待办概览。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
  * 变量索引：groups 为导航目录；globalResources 为不传递客户的全局资源；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
+import { t, h } from './i18n.js?v=20260920-i18n';
+
 import './product-header.js';
 import { request, escapeHtml as e } from './api.js';
 
 const groups = [
-  ['销售业务', [['opportunities', '商机'], ['quotes', '报价'], ['orders', '订单'], ['tickets', '工单'], ['products', '产品']]],
-  ['沟通与资料', [['actions', '待确认动作'], ['conversations', '会话'], ['messages', '消息'], ['drafts', '草稿'], ['files', '附件']]],
-  ['设置与协作', [['connections', '外部连接'], ['contact-profiles', '联系人资料'], ['aliases', '归组规则'], ['teams', '团队'], ['memberships', '团队成员'], ['grants', '客户授权'], ['audit', '操作审计']]],
+  [t('销售业务'), [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')], ['products', t('产品')]]],
+  [t('沟通与资料'), [['actions', t('待确认动作')], ['conversations', t('会话')], ['messages', t('消息')], ['drafts', t('草稿')], ['files', t('附件')]]],
+  [t('设置与协作'), [['connections', t('外部连接')], ['contact-profiles', t('联系人资料')], ['aliases', t('归组规则')], ['teams', t('团队')], ['memberships', t('团队成员')], ['grants', t('客户授权')], ['audit', t('操作审计')]]],
 ];
 const globalResources = new Set(['products', 'messages', 'connections', 'contact-profiles', 'teams', 'memberships', 'grants']);
 let context = null, activePage = 'home', refreshSequence = 0;
@@ -30,7 +33,7 @@ function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const open = new Set([...nav.querySelectorAll('details[open]')].map(node => node.dataset.group));
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''} ${key === 'assistant' ? 'data-assistant-entry' : ''}>${e(title)}</a>`;
-  nav.innerHTML = `<p class="workspace-nav-label">我的工作空间</p>${link('home', '工作台', '/#home')}${link('assistant', '聊天助手', '/#assistant')}${link('directory', '客户', businessHref('directory'))}${link('inbox', '邮件与分析', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', '世界消息', '/world/')}${link('follow-ups', '跟进', businessHref('follow-ups'))}${link('notifications', '通知', businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('assistant', t('聊天助手'), '/#assistant')}${link('directory', t('客户'), businessHref('directory'))}${link('inbox', t('邮件与分析'), context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', t('世界消息'), '/world/')}${link('follow-ups', t('跟进'), businessHref('follow-ups'))}${link('notifications', t('通知'), businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。
@@ -62,7 +65,7 @@ export function setWorkspaceContext(company, active = activePage) {
   const panel = document.getElementById('workspace-context');
   panel.hidden = !company;
   if (!company) { panel.innerHTML = ''; return; }
-  panel.innerHTML = `<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a><a href="/#company/${encodeURIComponent(company.id)}">邮件与分析</a><a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
+  panel.innerHTML = h`<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a><a href="/#company/${encodeURIComponent(company.id)}">邮件与分析</a><a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
 }
 
 /** 功能：更新跨页待办和首页摘要。输入：无，读取当前登录身份。输出：无。
@@ -80,17 +83,17 @@ export async function refreshWorkspace() {
   const failed = mailboxes?.filter(box => ['failed', 'partial'].includes(box.sync_state?.status)).length;
   const processing = mailboxes?.filter(box => ['sync_requested', 'sync_running', 'queued', 'running'].includes(box.sync_state?.status)).length;
   const cards = [
-    ['待复核邮件', reviews?.pending_count, '/#reviews', '检查原文，确认是否进入客户流程'],
-    ['待跟进', overview?.open_follow_ups, businessHref('follow-ups', null, { status: 'open' }), '查看待办并记录下一次沟通'],
-    ['待确认动作', actions?.count, businessHref('actions', null, { status: 'pending_confirmation' }), '审阅邮件或会议计划，再确认执行'],
-    ['同步异常邮箱', failed, '/#processing', '查看最近批次进度并明确重试'],
+    [t('待复核邮件'), reviews?.pending_count, '/#reviews', t('检查原文，确认是否进入客户流程')],
+    [t('待跟进'), overview?.open_follow_ups, businessHref('follow-ups', null, { status: 'open' }), t('查看待办并记录下一次沟通')],
+    [t('待确认动作'), actions?.count, businessHref('actions', null, { status: 'pending_confirmation' }), t('审阅邮件或会议计划，再确认执行')],
+    [t('同步异常邮箱'), failed, '/#processing', t('查看最近批次进度并明确重试')],
   ];
   const status = document.getElementById('workspace-status');
-  status.innerHTML = cards.map(([title, count, href]) => `<a href="${e(href)}">${e(title)} <strong>${count ?? '—'}</strong></a>`).join('') + `<a href="/#processing">同步排队 / 处理中 <strong>${processing ?? '—'}</strong></a><button type="button" id="workspace-status-refresh" aria-label="刷新待办概览">↻</button>`;
+  status.innerHTML = cards.map(([title, count, href]) => `<a href="${e(href)}">${e(title)} <strong>${count ?? '—'}</strong></a>`).join('') + h`<a href="/#processing">同步排队 / 处理中 <strong>${processing ?? '—'}</strong></a><button type="button" id="workspace-status-refresh" aria-label="刷新待办概览">↻</button>`;
   document.getElementById('workspace-status-refresh').onclick = refreshWorkspace;
   const dashboard = document.getElementById('workspace-tasks');
-  if (dashboard) dashboard.innerHTML = cards.map(([title, count, href, note]) => `<a class="workspace-task" href="${e(href)}"><span>${e(title)} <span aria-hidden="true">↗</span></span><strong>${count ?? '暂不可用'}</strong><p>${e(note)}</p></a>`).join('');
+  if (dashboard) dashboard.innerHTML = cards.map(([title, count, href, note]) => `<a class="workspace-task" href="${e(href)}"><span>${e(title)} <span aria-hidden="true">↗</span></span><strong>${count ?? t('暂不可用')}</strong><p>${e(note)}</p></a>`).join('');
   const error = document.getElementById('workspace-load-error');
   error.hidden = sources.every(result => result.status === 'fulfilled');
-  error.textContent = sources.flatMap((result, index) => result.status === 'rejected' ? [`${['复核', '业务概览', '动作', '邮箱'][index]}读取失败：${result.reason.message}`] : []).join('；');
+  error.textContent = sources.flatMap((result, index) => result.status === 'rejected' ? [t`${[t('复核'), t('业务概览'), t('动作'), t('邮箱')][index]}读取失败：${result.reason.message}`] : []).join('；');
 }

@@ -40,7 +40,7 @@
 - record_response：生成记录及 ETag。
 变量索引：
 - logger：脱敏接口异常日志。
-- LABELS：资源对应中文业务名称。
+- LABELS：资源对应中文源文案；响应时按请求语言翻译，不改变资源键。
 - SalesView.permission_classes：必须登录。
 - FileView.parser_classes：附件 multipart 及表单解析器。
 """
@@ -48,6 +48,7 @@
 import logging
 from decimal import Decimal
 
+from django.utils.translation import gettext
 from django.contrib.auth import get_user_model
 from django.core.exceptions import (
     ObjectDoesNotExist,
@@ -178,7 +179,7 @@ class ResourceView(SalesView):
 
     # 功能：读取单条或分页列表。
     # 输入：`request`、`resource`、可选 `record_id`。
-    # 输出：单条记录或含 results 的分页响应。
+    # 输出：单条记录或含 results 的分页响应；不支持的字段筛选按请求语言报错，保留原字段名。
     # 逻辑：支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
     # 约束：关联过滤仍经过 scope；不支持 arbitrary ORM 查询表达式。
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_records_read")
@@ -191,7 +192,7 @@ class ResourceView(SalesView):
         for name in ("company", "conversation", "quote", "order", "team", "status"):
             if name in request.query_params:
                 if name not in names:
-                    raise ValidationError(f"当前资源不支持 {name} 筛选。")
+                    raise ValidationError(gettext("当前资源不支持 %(name)s 筛选。") % {"name": name})
                 query = query.filter(**{name: request.query_params[name]})
         if "q" in request.query_params:
             search_fields = names.intersection(
@@ -528,12 +529,12 @@ class AuditView(SalesView):
 
 
 # 功能：为管理页提供同源字段契约。
-# 逻辑：从实际 DRF 字段生成名称、类型、关系和状态边。
+# 逻辑：从实际 DRF 字段生成名称、类型、关系和状态边；仅显示标签使用请求语言。
 # 约束：只发布白名单字段，不把凭证或内部存储参数暴露为表单。
 class CatalogView(SalesView):
     # 功能：生成资源表单元数据。
     # 输入：`request` 提供当前用户以限制关系字段。
-    # 输出：资源、业务名称、字段说明与状态转换。
+    # 输出：资源、按请求语言翻译的业务名称、字段说明与状态转换；资源键及选项值不变。
     # 逻辑：区分文本、数值、布尔、关系、JSON 和时间；必填和只读与实际校验一致。
     # 约束：关系选项从授权接口单独读取；业务规则继续由事务执行。
     @extend_schema(responses=OpenApiTypes.OBJECT)
@@ -581,7 +582,7 @@ class CatalogView(SalesView):
             resources.append(
                 {
                     "key": key,
-                    "label": LABELS[key],
+                    "label": gettext(LABELS[key]),
                     "model": serializer.Meta.model._meta.model_name,
                     "fields": definitions,
                     "transitions": services.TRANSITIONS.get(serializer.Meta.model, {}),

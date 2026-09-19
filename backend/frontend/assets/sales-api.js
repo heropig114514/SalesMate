@@ -1,10 +1,13 @@
 /**
  * 职责：封装销售业务 JSON、分页和私有附件上传。
  * 实现：复用现有会话/CSRF 客户端，分页逐页读取；上传保持 multipart 边界。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：business.js 和 assistant.js 共用，API 位于 /api/v1/sales/。
  * 目录：salesRequest、allRows、uploadFile。
  * 变量索引：无模块状态；分页参数为各请求局部变量。
  */
+import { t, language } from './i18n.js?v=20260920-i18n';
+
 import { request } from "./api.js";
 
 /** 功能：调用销售 JSON API。输入：path 相对路径、options 请求设置。
@@ -33,7 +36,7 @@ export async function allRows(path) {
 }
 
 /** 功能：上传私有附件。输入：company 客户标识、file 浏览器 File。
- * 输出：已保存附件元数据。逻辑：FormData 上传并附 CSRF，错误交给调用页。
+ * 输出：已保存附件元数据。逻辑：FormData 上传并附 CSRF 与界面语言头，错误交给调用页。
  * 约束：不打印或持久化令牌，不自行设置 multipart Content-Type，不重试。 */
 export async function uploadFile(company, file) {
   const data = new FormData();
@@ -47,7 +50,7 @@ export async function uploadFile(company, file) {
   const response = await fetch("/api/v1/sales/files/", {
     method: "POST",
     credentials: "same-origin",
-    headers: { "X-CSRFToken": token },
+    headers: { "X-CSRFToken": token, "Accept-Language": language },
     body: data,
   });
   const body = response.headers
@@ -59,7 +62,7 @@ export async function uploadFile(company, file) {
     throw new Error(
       typeof body?.error?.detail === "string"
         ? body.error.detail
-        : `附件上传失败（HTTP ${response.status}）。`,
+        : t`附件上传失败（HTTP ${response.status}）。`,
     );
   return body;
 }

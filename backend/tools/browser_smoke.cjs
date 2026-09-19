@@ -1,5 +1,6 @@
 /**
  * 职责：在独立无头浏览器中验证本地前后端主流程与响应式布局。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：按会话配置直接进入工作台或读取私有账号登录，再导入、筛选、建档和模拟来信。
  * 关联：需要运行中的 Django、PostgreSQL，以及显式配置的 Playwright 模块和浏览器路径。
  * 目录：main（运行浏览器场景）。
@@ -21,7 +22,7 @@ async function main() {
   if (!process.env.SALESMATE_BROWSER_PATH) throw new Error('Set SALESMATE_BROWSER_PATH to the test browser executable.');
   fs.mkdirSync(OUTPUT, { recursive: true });
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
+  const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1050 } });
   const failures = [];
   page.on('pageerror', error => failures.push(error.message));
   try {

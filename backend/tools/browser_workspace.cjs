@@ -1,5 +1,6 @@
 /**
  * 职责：验证产品顶栏、统一导航、直接聊天入口、真实总数展示、跨页客户上下文和表单预填。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
  * 关联：product-header.js、workspace.js、app.js、assistant-entry.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
@@ -27,7 +28,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     const errors = [], writes = [], queries = [];
     page.on('pageerror', error => errors.push(error.message));
     let failActions = false;

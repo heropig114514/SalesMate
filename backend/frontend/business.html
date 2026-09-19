@@ -1,73 +1,66 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <!-- 职责：销售业务管理页的语义骨架。
 实现：workspace.js 提供共享导航与客户上下文；business.js 渲染带 URL 筛选的列表、受服务端开关控制的 QQ 发信连接及动作确认表单。
 关联：product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；复用现有会话登录及销售 API；business.css 提供独立响应式布局。
 目录：无函数或类；workspace-nav 为共享导航，workspace-context 为当前客户，status-filter 为状态筛选；editor 是编辑及动作确认对话框。
+国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
 变量索引：无脚本变量；DOM id 供业务模块定位。 -->
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>SalesMate · 业务管理</title>
-    <link rel="stylesheet" href="/static/design-system.css?v=20260919-nocturne">
-  <link rel="stylesheet" href="/static/business.css?v=20260919-nocturne" />
-  <link rel="stylesheet" href="/static/workspace.css?v=20260919-nocturne" />
-  </head>
-  <body class="business-workspace">
-    <salesmate-header></salesmate-header>
-  <aside class="workspace-shell"><div class="workspace-brand-label">WORKSPACE<span>我的工作空间</span></div><nav id="workspace-nav" aria-label="主导航"></nav><div class="account" id="account">正在读取会话…</div></aside>
-    <main>
-      <header class="workspace-topbar">
-        <div>
-          <p class="eyebrow">工作空间 / 销售业务</p>
-          <h1 id="page-title">业务概览</h1>
-        </div>
-        <a href="/#home">返回工作台</a>
-      </header><div id="workspace-status" class="workspace-status" aria-label="全局待办">正在读取待办…</div><p id="workspace-load-error" class="workspace-load-error" role="alert" hidden></p><section id="workspace-context" class="workspace-context" aria-label="当前客户" hidden></section>
-      <div id="business-notice" role="alert" hidden></div>
-      <p class="workspace-page-intro">工作空间概览 · 以下统计覆盖全部可见客户</p>
-      <section
-        id="business-stats"
-        class="stats"
-        aria-label="业务概览"
-      ></section>
-      <section class="surface">
-        <div class="toolbar">
-          <div>
-            <h2 id="list-title">客户目录</h2>
-            <p id="list-description">管理客户关系、交易与下一次跟进。</p>
-          </div>
-          <div class="actions">
-            <button id="refresh-business" type="button">刷新</button
-            ><button id="create-business" class="primary" type="button">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<title data-i18n="SalesMate · 业务管理">SalesMate · 业务管理</title>
+<link href="/static/design-system.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/business.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/workspace.css?v=20260920-i18n" rel="stylesheet"/>
+<script type="module" src="/static/i18n.js?v=20260920-i18n"></script></head>
+<body class="business-workspace"><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
+<salesmate-header></salesmate-header>
+<aside class="workspace-shell"><div class="workspace-brand-label">WORKSPACE<span><span data-i18n="我的工作空间">我的工作空间</span></span></div><nav aria-label="主导航" data-i18n-aria-label="主导航" id="workspace-nav"></nav><div class="account" id="account"><span data-i18n="正在读取会话…">正在读取会话…</span></div></aside>
+<main>
+<header class="workspace-topbar">
+<div>
+<p class="eyebrow"><span data-i18n="工作空间 / 销售业务">工作空间 / 销售业务</span></p>
+<h1 id="page-title"><span data-i18n="业务概览">业务概览</span></h1>
+</div>
+<a href="/#home"><span data-i18n="返回工作台">返回工作台</span></a>
+</header><div aria-label="全局待办" class="workspace-status" data-i18n-aria-label="全局待办" id="workspace-status"><span data-i18n="正在读取待办…">正在读取待办…</span></div><p class="workspace-load-error" hidden="" id="workspace-load-error" role="alert"></p><section aria-label="当前客户" class="workspace-context" data-i18n-aria-label="当前客户" hidden="" id="workspace-context"></section>
+<div hidden="" id="business-notice" role="alert"></div>
+<p class="workspace-page-intro"><span data-i18n="工作空间概览 · 以下统计覆盖全部可见客户">工作空间概览 · 以下统计覆盖全部可见客户</span></p>
+<section aria-label="业务概览" class="stats" data-i18n-aria-label="业务概览" id="business-stats"></section>
+<section class="surface">
+<div class="toolbar">
+<div>
+<h2 id="list-title"><span data-i18n="客户目录">客户目录</span></h2>
+<p id="list-description"><span data-i18n="管理客户关系、交易与下一次跟进。">管理客户关系、交易与下一次跟进。</span></p>
+</div>
+<div class="actions">
+<button id="refresh-business" type="button"><span data-i18n="刷新">刷新</span></button><button class="primary" id="create-business" type="button"><span data-i18n="新建">
               新建
-            </button>
-          </div>
-        </div>
-        <div class="filters">
-          <label
-            >当前客户<select id="company-filter">
-              <option value="">全部客户</option>
-            </select></label
-          ><label id="status-filter-label" hidden>状态<select id="status-filter" class="workspace-filter-status"><option value="">全部状态</option></select></label><label class="check"
-            ><input id="include-archived" type="checkbox" />包含已归档</label
-          ><span id="record-count"></span>
-        </div>
-        <div id="business-content" aria-live="polite">正在加载…</div>
-        <div id="business-pagination" class="pagination"></div>
-      </section>
-      <p class="footnote">
+            </span></button>
+</div>
+</div>
+<div class="filters">
+<label><span data-i18n="当前客户">当前客户</span><select id="company-filter">
+<option data-i18n="全部客户" value="">全部客户</option>
+</select></label><label hidden="" id="status-filter-label"><span data-i18n="状态">状态</span><select class="workspace-filter-status" id="status-filter"><option data-i18n="全部状态" value="">全部状态</option></select></label><label class="check"><input id="include-archived" type="checkbox"/><span data-i18n="包含已归档">包含已归档</span></label><span id="record-count"></span>
+</div>
+<div aria-live="polite" id="business-content"><span data-i18n="正在加载…">正在加载…</span></div>
+<div class="pagination" id="business-pagination"></div>
+</section>
+<p class="footnote"><span data-i18n="确认订单净额按币种分别统计。外部发送须先准备内容、人工确认，再由销售任务进程执行。">
         确认订单净额按币种分别统计。外部发送须先准备内容、人工确认，再由销售任务进程执行。
-      </p>
-    </main>
-    <dialog id="editor" aria-labelledby="editor-title">
-      <div class="dialog-top">
-        <h2 id="editor-title">编辑记录</h2>
-        <button id="close-editor" type="button" aria-label="关闭编辑">×</button>
-      </div>
-      <div id="editor-error" role="alert" hidden></div>
-      <div id="editor-body"></div>
-    </dialog>
-    <script type="module" src="/static/business.js?v=20260919-nocturne"></script>
-  </body>
+      </span></p>
+</main>
+<dialog aria-labelledby="editor-title" id="editor">
+<div class="dialog-top">
+<h2 id="editor-title"><span data-i18n="编辑记录">编辑记录</span></h2>
+<button aria-label="关闭编辑" data-i18n-aria-label="关闭编辑" id="close-editor" type="button">×</button>
+</div>
+<div hidden="" id="editor-error" role="alert"></div>
+<div id="editor-body"></div>
+</dialog>
+<script type="module" src="/static/business.js?v=20260920-i18n"></script>
+</body>
 </html>

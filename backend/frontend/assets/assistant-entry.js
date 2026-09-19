@@ -1,10 +1,13 @@
 /**
  * 职责：将一级聊天入口直接挂载为通用会话页面。
  * 实现：默认不读取客户；旧的显式客户链接仍授权读取后打开相应会话。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js 提供路由，AssistantPanel 复用会话、草稿和状态观察。
  * 目录：AssistantEntry、AssistantEntry.constructor、AssistantEntry.show、AssistantEntry.hide。
  * 变量索引：无模块变量；panel 为助手；nodes 为页面节点；generation/active 隔离路由；controller 取消客户读取。
  */
+import { t } from './i18n.js?v=20260920-i18n';
+
 import { request } from './api.js';
 
 /** 功能：管理直接聊天入口。逻辑：复用面板并在离开时恢复原挂载位置。
@@ -28,7 +31,7 @@ export class AssistantEntry {
       this.controller = new AbortController();
       try {
         const company = await request(`companies/${encodeURIComponent(preferredId)}/`, { signal: this.controller.signal });
-        context = { id: company.company_id, name: company.company_name || company.domains[0] || '待确认客户' };
+        context = { id: company.company_id, name: company.company_name || company.domains[0] || t('待确认客户') };
       } catch (error) {
         if (error.name !== 'AbortError' && this.active && generation === this.generation) {
           this.nodes.error.textContent = error.message; this.nodes.error.hidden = false;

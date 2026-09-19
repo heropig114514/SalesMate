@@ -1,5 +1,5 @@
 /* 职责：世界消息地图、气泡、摘要侧栏和文章的响应式视觉样式。
- * 实现：使用共享 Nocturne 深色变量，地图与侧栏并列；窄屏摘要转为底部面板，减少动态偏好时关闭动效。
+ * 实现：使用共享 Nocturne 深色变量，地图与侧栏并列；语言文本允许自然换行，装饰圆点与文本样式分离；窄屏摘要转为底部面板，减少动态偏好时关闭动效。
  * 关联：world.html、world-news.js、world-map.js；Leaflet 基础样式在前加载。
  * 目录：无函数或类；区域依次为页面外壳、筛选、地图、标记、消息面板、详情及移动布局。
  * 变量索引：--pin-color 标记行业色；--tag-color 标签行业色；其余沿用共享样式变量。 */
@@ -101,12 +101,15 @@
   white-space: nowrap;
 }
 
-.world-feed-state>span {
+.world-feed-state>span:not([data-i18n]) {
   width: 6px;
   height: 6px;
   background: var(--bg);
   border-radius: 50%;
 }
+
+/* 翻译文本不是装饰圆点，英文模式下允许其在可用空间内换行。 */
+.world-feed-state>[data-i18n] { min-width: 0; white-space: normal; }
 
 .world-sidebar-note {
   margin-top: auto;

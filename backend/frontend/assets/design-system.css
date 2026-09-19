@@ -1,11 +1,11 @@
 /* 职责：集中定义产品 Nocturne 深色主题及跨页面基础控件。
  * 实现：参考 frontend_example 的蓝灰底、紫色强调、细边框；语义色区分失败、警告和成功。
  * 关联：所有 HTML 在页面布局样式之前加载；页面模块只消费变量，不再维护独立色板。
- * 目录：无函数或类；区域为设计变量、交互基线、顶栏组件与响应式布局。
+ * 目录：无函数或类；区域为设计变量、交互基线、顶栏组件、语言选择及响应式布局。
  * 变量索引：--bg 页面底色，--surface 卡片，--surface-raised 浮层，--surface-hover 悬停，
  * --ink 正文，--muted 辅文，--line/--line-strong 边界，--accent 主色，--accent-hover 悬停主色，
  * --soft 强调底色，--success/--warning/--danger 语义前景及对应 -soft 底色，--shadow 浮层阴影，--shadow-color 阴影色，
- * --header-height 顶栏高度，--sidebar-width 导航宽度，--map-land/--map-border 底图颜色；
+ * --header-height 顶栏与语言栏总高度，--language-height 语言栏高度，--sidebar-width 导航宽度，--map-land/--map-border 底图颜色；
  * --green 为现有交互类使用的强调色别名；--industry-* 为四种行业的可读标签色。 */
 :root {
   color-scheme: dark;
@@ -29,7 +29,8 @@
   --danger-soft: #402b33;
   --shadow-color: #00000030;
   --shadow: 0 16px 48px #00000045;
-  --header-height: 64px;
+  --header-height: 108px;
+  --language-height: 44px;
   --sidebar-width: 212px;
   --map-land: #202230;
   --map-border: #323547;
@@ -47,9 +48,9 @@ input, select, textarea { accent-color: var(--accent); }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 dialog { background: var(--surface); }
 dialog::backdrop { background: #080a14b3; backdrop-filter: blur(4px); }
-salesmate-header { display: block; height: var(--header-height); }
+salesmate-header { display: block; height: calc(var(--header-height) - var(--language-height)); }
 .product-header {
-  position: fixed; inset: 0 0 auto; z-index: 1500; height: var(--header-height);
+  position: fixed; inset: var(--language-height) 0 auto; z-index: 1500; height: calc(var(--header-height) - var(--language-height));
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--bg);
 }
@@ -69,3 +70,11 @@ salesmate-header { display: block; height: var(--header-height); }
   .product-context { display: none; }
 }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto!important; animation: none!important; transition: none!important; } }
+
+/* 语言选择在三个页面及登录前均可访问；占据文档流并固定在产品顶栏上方；总高度共享给侧栏和助手，避免覆盖工具按钮。 */
+.language-bar { position: sticky; top: 0; z-index: 1501; height: var(--language-height); display: flex; align-items: center; justify-content: flex-end; gap: .75rem; padding: .4rem 1.25rem; min-height: 44px; background: var(--bg); color: var(--muted); border-bottom: 1px solid var(--line); font-size: .8rem; }
+.language-bar select { width: auto; min-width: 140px; padding: .35rem .65rem; }
+/* 英文标题允许自然换行；保留原有密度，避免长状态挤出卡片。 */
+html[lang=en] .product-tabs a { white-space: normal; text-align: center; }
+html[lang=en] .workspace-task span, html[lang=en] .stat-card { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .language-bar { padding-inline: .75rem; } html[lang=en] .product-context { display: none; } }

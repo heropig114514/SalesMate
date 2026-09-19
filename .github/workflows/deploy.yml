@@ -1,5 +1,5 @@
 # 职责：主分支提交通过隔离测试后，通知 Lightsail 自动拉取并部署该提交。
-# 实现：PR 验证后端、聊天、业务 MCP/CLI 与浏览器流程；工具 SDK 在独立虚拟环境测试；main 推送或手动运行才部署。
+# 实现：PR 验证后端、翻译目录、聊天、业务 MCP/CLI 与中英文浏览器流程；工具 SDK 在独立虚拟环境测试；main 推送或手动运行才部署。
 # 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
 # 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
@@ -64,6 +64,12 @@ jobs:
             agent/requirements.txt
       - name: Install isolated test dependencies
         run: python -m pip install -r backend/requirements/base.txt -r agent/requirements.txt
+      - name: Verify compiled interface translations
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext
+          msgfmt --check -o "$RUNNER_TEMP/django.mo" backend/locale/en/LC_MESSAGES/django.po
+          cmp "$RUNNER_TEMP/django.mo" backend/locale/en/LC_MESSAGES/django.mo
       - name: Check source documentation and deployment scripts
         run: |
           python backend/tools/check_docs.py
@@ -114,6 +120,7 @@ jobs:
           node backend/tools/browser_processing.cjs
           node backend/tools/browser_workspace.cjs
           node backend/tools/browser_world_news.cjs
+          node backend/tools/browser_i18n.cjs
           python backend/manage.py test tools.chat_browser_e2e --noinput
 
   deploy:

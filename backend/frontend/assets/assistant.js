@@ -1,6 +1,7 @@
 /**
  * 职责：提供通用及客户专属聊天、来源引用、持久化会话和可编辑草稿。
  * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；模式/客户/会话切换取消旧观察，窄屏保持模态焦点。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js 与 assistant-entry.js 传入可空客户上下文；sales-api.js 通信；index.html 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.setContext、AssistantPanel.open、
  * AssistantPanel.mount、AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
@@ -11,6 +12,8 @@
  * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
  * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
  */
+import { t, h, locale } from './i18n.js?v=20260920-i18n';
+
 import { escapeHtml as esc } from "./api.js";
 import { salesRequest, allRows } from "./sales-api.js";
 
@@ -64,7 +67,7 @@ export class AssistantPanel {
         this.nodes.input.value,
       );
       this.messageKey = crypto.randomUUID();
-      this.nodes["draft-note"].textContent = "有未保存修改，请点击保存草稿。";
+      this.nodes["draft-note"].textContent = t("有未保存修改，请点击保存草稿。");
     });
     this.nodes.clear.addEventListener("click", () => {
       this.nodes.input.value = "";
@@ -123,27 +126,27 @@ export class AssistantPanel {
       this.answers = [];
       this.nodes.input.value = this.drafts.get(`${this.companyId}:new`) || "";
       this.nodes.history.textContent = "";
-      this.nodes.sessions.innerHTML = '<option value="">尚未选择会话</option>';
+      this.nodes.sessions.innerHTML = h('<option value="">尚未选择会话</option>');
     }
-    this.nodes.company.textContent = company?.name || "通用聊天";
+    this.nodes.company.textContent = company?.name || t("通用聊天");
     const customer = Boolean(company);
-    this.nodes.panel.querySelector('.assistant-development').textContent = customer ? '客户问答' : '通用助手';
-    document.getElementById('assistant-context-label').textContent = customer ? '当前客户' : '当前会话';
-    document.getElementById('assistant-welcome-title').textContent = customer ? '围绕这位客户，一起想清楚下一步。' : '有什么想聊的？';
-    document.getElementById('assistant-welcome-copy').textContent = customer ? '基于当前客户资料提问，查看回答与来源依据。' : '讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。';
-    document.getElementById('assistant-unavailable').textContent = customer ? '基于当前客户资料回答' : '通用问答 · 写作 · 计划';
-    document.getElementById('assistant-availability-copy').textContent = customer ? '回答标注可用来源，资料不足时会明确说明。' : '可协助讨论与起草；当前聊天不会自动发送邮件或修改业务记录。';
-    this.nodes.input.placeholder = customer ? '想为这位客户做些什么？' : '输入问题，或告诉我你想完成什么…';
+    this.nodes.panel.querySelector('.assistant-development').textContent = customer ? t('客户问答') : t('通用助手');
+    document.getElementById('assistant-context-label').textContent = customer ? t('当前客户') : t('当前会话');
+    document.getElementById('assistant-welcome-title').textContent = customer ? t('围绕这位客户，一起想清楚下一步。') : t('有什么想聊的？');
+    document.getElementById('assistant-welcome-copy').textContent = customer ? t('基于当前客户资料提问，查看回答与来源依据。') : t('讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。');
+    document.getElementById('assistant-unavailable').textContent = customer ? t('基于当前客户资料回答') : t('通用问答 · 写作 · 计划');
+    document.getElementById('assistant-availability-copy').textContent = customer ? t('回答标注可用来源，资料不足时会明确说明。') : t('可协助讨论与起草；当前聊天不会自动发送邮件或修改业务记录。');
+    this.nodes.input.placeholder = customer ? t('想为这位客户做些什么？') : t('输入问题，或告诉我你想完成什么…');
     const prompts = customer ? [
-      ['总结客户需求', '请总结这位客户的需求，并列出需要进一步确认的信息。'],
-      ['起草回复', '请结合这位客户的邮件，起草一封供我审核的回复。'],
-      ['建议下一步', '请分析这位客户的跟进风险，并建议下一步行动。'],
+      [t('总结客户需求'), t('请总结这位客户的需求，并列出需要进一步确认的信息。')],
+      [t('起草回复'), t('请结合这位客户的邮件，起草一封供我审核的回复。')],
+      [t('建议下一步'), t('请分析这位客户的跟进风险，并建议下一步行动。')],
     ] : [
-      ['起草一封邮件', '帮我起草一封专业的商务邮件，请先问我需要哪些信息。'],
-      ['梳理工作计划', '帮我梳理今天的工作计划，请先了解我的目标和待办。'],
-      ['解释一个概念', '我想了解一个新概念，请用容易理解的方式与我讨论。'],
+      [t('起草一封邮件'), t('帮我起草一封专业的商务邮件，请先问我需要哪些信息。')],
+      [t('梳理工作计划'), t('帮我梳理今天的工作计划，请先了解我的目标和待办。')],
+      [t('解释一个概念'), t('我想了解一个新概念，请用容易理解的方式与我讨论。')],
     ];
-    this.nodes.shortcuts.innerHTML = prompts.map(([title, prompt]) => `<button type="button" data-assistant-prompt="${esc(prompt)}"><span class="assistant-task-icon" aria-hidden="true">✧</span><span><strong>${esc(title)}</strong><small>点击填入草稿</small></span><span aria-hidden="true">↗</span></button>`).join('');
+    this.nodes.shortcuts.innerHTML = prompts.map(([title, prompt]) => h`<button type="button" data-assistant-prompt="${esc(prompt)}"><span class="assistant-task-icon" aria-hidden="true">✧</span><span><strong>${esc(title)}</strong><small>点击填入草稿</small></span><span aria-hidden="true">↗</span></button>`).join('');
     document
       .getElementById("assistant-toggle")
       ?.setAttribute("aria-expanded", String(this.isOpen));
@@ -272,10 +275,10 @@ export class AssistantPanel {
       ? conversations
           .map(
             (c) =>
-              `<option value="${esc(c.id)}" ${c.id === this.conversation.id ? "selected" : ""}>${esc(c.title)} · ${esc(new Date(c.created_at).toLocaleString())}</option>`,
+              `<option value="${esc(c.id)}" ${c.id === this.conversation.id ? "selected" : ""}>${esc(c.title)} · ${esc(new Date(c.created_at).toLocaleString(locale))}</option>`,
           )
           .join("")
-      : '<option value="">尚未建立会话</option>';
+      : h('<option value="">尚未建立会话</option>');
     let messages = [],
       draft = null;
     if (this.conversation) {
@@ -305,8 +308,8 @@ export class AssistantPanel {
     if (this.nodes.input.value !== previousContent)
       this.messageKey = crypto.randomUUID();
     this.nodes["draft-note"].textContent = this.drafts.has(key)
-      ? "有本页未保存修改。"
-      : "已读取服务器会话与草稿；修改后请手动保存。";
+      ? t("有本页未保存修改。")
+      : t("已读取服务器会话与草稿；修改后请手动保存。");
     this.draw(messages);
     this.watch();
   }
@@ -320,10 +323,10 @@ export class AssistantPanel {
       epoch = this.epoch;
     const conversation = await salesRequest("records/conversations/", {
       method: "POST",
-      data: { company, title: company ? "客户工作会话" : "通用会话" },
+      data: { company, title: company ? t("客户工作会话") : t("通用会话") },
     });
     if (epoch !== this.epoch || company !== this.companyId)
-      throw new Error("会话上下文已切换；原会话已保存，可重新打开查看。");
+      throw new Error(t("会话上下文已切换；原会话已保存，可重新打开查看。"));
     this.conversation = conversation;
     return conversation;
   }
@@ -333,7 +336,7 @@ export class AssistantPanel {
    * 约束：只有成功提交后才更换幂等键，网络失败保留输入和键供用户明确重传。 */
   async save(asMessage) {
     const content = this.nodes.input.value;
-    if (asMessage && !content.trim()) throw new Error("请先输入消息内容。");
+    if (asMessage && !content.trim()) throw new Error(t("请先输入消息内容。"));
     const company = this.companyId;
     const conversation = await this.ensureConversation();
     const epoch = this.epoch;
@@ -368,7 +371,7 @@ export class AssistantPanel {
       this.messageKey = crypto.randomUUID();
     }
     await this.load(conversation.id);
-    if (!asMessage) this.nodes["draft-note"].textContent = "草稿已保存到服务器，刷新页面后可以恢复。";
+    if (!asMessage) this.nodes["draft-note"].textContent = t("草稿已保存到服务器，刷新页面后可以恢复。");
   }
 
   /** 功能：显示真实持久化的历史消息。输入：messages 数组。
@@ -377,7 +380,7 @@ export class AssistantPanel {
   draw(messages) {
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
     const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
-    const labels = { pending: "等待回答", processing: "正在生成回答", completed: "回答完成", failed: "回答失败" };
+    const labels = { pending: t("等待回答"), processing: t("正在生成回答"), completed: t("回答完成"), failed: t("回答失败") };
     this.nodes.panel.querySelector(".assistant-welcome").hidden = messages.length > 0;
     this.nodes.history.innerHTML = messages.length
       ? messages
@@ -385,15 +388,15 @@ export class AssistantPanel {
             const answer = byMessage.get(message.id), question = byQuestion.get(message.id);
             const sources = answer?.citations || [];
             const citations = sources.length
-              ? `<details class="assistant-sources"><summary>查看依据（${sources.length}）</summary><div class="assistant-source-list">${sources.map((citation) => citation.source_type === "customer_analysis"
-                ? `<div class="assistant-source"><strong>[${esc(citation.position)}] ${esc(citation.title_or_label)}</strong><p class="assistant-source-note">依据来自客户画像与分析，可在客户页面按维度查看。</p>${this.companyId ? `<a href="/#company/${encodeURIComponent(this.companyId)}">查看当前客户画像 →</a>` : ""}</div>`
+              ? h`<details class="assistant-sources"><summary>查看依据（${sources.length}）</summary><div class="assistant-source-list">${sources.map((citation) => citation.source_type === "customer_analysis"
+                ? h`<div class="assistant-source"><strong>[${esc(citation.position)}] ${esc(citation.title_or_label)}</strong><p class="assistant-source-note">依据来自客户画像与分析，可在客户页面按维度查看。</p>${this.companyId ? h`<a href="/#company/${encodeURIComponent(this.companyId)}">查看当前客户画像 →</a>` : ""}</div>`
                 : `<details class="assistant-source"><summary>[${esc(citation.position)}] ${esc(citation.title_or_label)}</summary><div class="assistant-source-content">${esc(citation.content)}</div></details>`).join("")}</div></details>`
               : "";
-            const state = question ? `<p class="fine">${labels[question.status] || "状态未知"}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? `<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
-            return `<article class="assistant-message"><small>${message.role === "user" ? "我" : "助手"} · ${esc(new Date(message.created_at).toLocaleString())}</small><p>${esc(message.content)}</p>${citations}${state}</article>`;
+            const state = question ? `<p class="fine">${labels[question.status] || t("状态未知")}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? h`<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
+            return `<article class="assistant-message"><small>${message.role === "user" ? t("我") : t("助手")} · ${esc(new Date(message.created_at).toLocaleString(locale))}</small><p>${esc(message.content)}</p>${citations}${state}</article>`;
           })
           .join("")
-      : '<p class="fine">尚无消息。可以先保存草稿，或直接发送问题。</p>';
+      : h('<p class="fine">尚无消息。可以先保存草稿，或直接发送问题。</p>');
   }
 
   /** 功能：取消当前状态观察。输入：实例定时器、控制器及观察代次。
@@ -415,7 +418,7 @@ export class AssistantPanel {
     this.nodes.submit.disabled = this.busy || Boolean(active);
     if (!active || !this.isOpen) return;
     this.pollCount = 0;
-    this.nodes["draft-note"].textContent = active.status === "pending" ? "问题已提交，等待回答。" : "正在生成回答。";
+    this.nodes["draft-note"].textContent = active.status === "pending" ? t("问题已提交，等待回答。") : t("正在生成回答。");
     const epoch = this.pollEpoch;
     this.pollTimer = setTimeout(() => this.poll(active.request_id, epoch), 2000);
   }
@@ -434,9 +437,9 @@ export class AssistantPanel {
         await this.refreshAnswers();
         return;
       }
-      this.nodes["draft-note"].textContent = result.status === "pending" ? "等待回答。" : "正在生成回答。";
+      this.nodes["draft-note"].textContent = result.status === "pending" ? t("等待回答。") : t("正在生成回答。");
       this.pollCount += 1;
-      if (this.pollCount >= 120) throw new Error("等待时间较长，自动查询已暂停。");
+      if (this.pollCount >= 120) throw new Error(t("等待时间较长，自动查询已暂停。"));
       this.pollTimer = setTimeout(() => this.poll(requestId, epoch), 2000);
     } catch (error) {
       if (epoch !== this.pollEpoch || error.name === "AbortError") return;
@@ -466,7 +469,7 @@ export class AssistantPanel {
     const scrollContainer = this.nodes.history.parentElement, position = scrollContainer.scrollTop;
     this.draw(messages);
     scrollContainer.scrollTop = position;
-    this.nodes["draft-note"].textContent = "回答状态已更新；输入中的未保存内容已保留。";
+    this.nodes["draft-note"].textContent = t("回答状态已更新；输入中的未保存内容已保留。");
     this.watch();
   }
 
@@ -475,7 +478,7 @@ export class AssistantPanel {
    * 约束：不会因网络错误自动重新提交问题或恢复查询。 */
   pausePolling(message) {
     this.stopPolling();
-    this.nodes["draft-note"].innerHTML = `${esc(message)} <button type="button" class="text-btn" data-chat-resume>继续查询</button>`;
+    this.nodes["draft-note"].innerHTML = h`${esc(message)} <button type="button" class="text-btn" data-chat-resume>继续查询</button>`;
     console.warn("assistant_poll_paused");
   }
 

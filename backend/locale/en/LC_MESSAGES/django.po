@@ -1,0 +1,893 @@
+# SalesMate HTTP interface messages (business content is excluded).
+# Source-language keys are reviewed at the HTTP error boundary, not runtime-translated data.
+msgid ""
+msgstr ""
+"Project-Id-Version: SalesMate\n"
+"Language: en\n"
+"PO-Revision-Date: 2026-09-20 01:00+0800\n"
+"Last-Translator: SalesMate maintainers\n"
+"Language-Team: English\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+
+#: common/exceptions.py
+#, python-format
+msgid "%(name)s 不得为负数。"
+msgstr "%(name)s must not be negative."
+
+#: common/exceptions.py
+#, python-format
+msgid "%(relation)s 归属不可通过编辑转移。"
+msgstr "%(relation)s ownership cannot be transferred by editing."
+
+#: apps/crm/views.py:223 apps/sales/services.py:95
+msgid "ANALYSIS_PROVIDER 只能为 rules 或 agent。"
+msgstr "ANALYSIS_PROVIDER must be rules or agent."
+
+#: apps/crm/access.py:74
+msgid "Agent 服务凭证无效。"
+msgstr "Invalid agent service credentials."
+
+#: apps/crm/gmail_oauth.py:117
+msgid "Google OAuth PKCE 校验信息已失效，请重新发起授权。"
+msgstr "Google OAuth PKCE data has expired. Start authorization again."
+
+#: apps/crm/gmail_oauth.py:113
+msgid "Google OAuth state 已失效，请重新发起授权。"
+msgstr "Google OAuth state has expired. Start authorization again."
+
+#: apps/crm/gmail_oauth.py:51
+msgid "Google OAuth 尚未配置，请先填写根目录 .env。"
+msgstr "Google OAuth is not configured. Complete the root .env settings first."
+
+#: apps/crm/gmail_oauth.py:115
+msgid "Google 未返回授权码，请重新发起授权。"
+msgstr "Google did not return an authorization code. Start authorization again."
+
+#: apps/crm/gmail_oauth.py:137
+msgid "Google 账号未返回有效 Gmail 地址。"
+msgstr "Google did not return a valid Gmail address."
+
+#: apps/sales/actions.py:87
+msgid "QQ 发信收件地址不能重复。"
+msgstr "QQ recipient addresses must be unique."
+
+#: apps/sales/actions.py:85
+msgid "QQ 发信收件地址须为普通 ASCII 邮箱地址。"
+msgstr "QQ recipients must use plain ASCII email addresses."
+
+#: apps/crm/qq_connection.py:75
+msgid "QQ 授权码无法解密，请检查 SALESMATE_VAULT_KEY 或重新连接邮箱。"
+msgstr "Cannot decrypt the QQ authorization code. Check SALESMATE_VAULT_KEY or reconnect the mailbox."
+
+#: apps/crm/gmail_oauth.py:193
+msgid "QQ 邮箱请使用 QQ 连接移除接口。"
+msgstr "Use the QQ connection removal endpoint for QQ mailboxes."
+
+#: apps/crm/qq_connection.py:48
+msgid "QQ 邮箱连接检查失败，请确认 IMAP 已开启及网络可用。"
+msgstr "QQ connection check failed. Check that IMAP is enabled and the network is available."
+
+#: apps/sales/views.py:215
+msgid "archived 应为 true/false/all。"
+msgstr "archived must be true, false or all."
+
+#: apps/sales/services.py:393
+msgid "archived 必须为布尔值。"
+msgstr "archived must be a boolean."
+
+#: apps/sales/actions.py:159
+msgid "attendees 必须是不重复的邮箱数组。"
+msgstr "attendees must be an array of unique email addresses."
+
+#: apps/crm/access.py:104
+msgid "company_id 必须为有效 UUID。"
+msgstr "company_id must be a valid UUID."
+
+#: apps/sales/views.py:210
+msgid "conversation_scope 仅支持会话的 general/customer。"
+msgstr "conversation_scope supports only general or customer conversations."
+
+#: apps/sales/services.py:216
+msgid "currency 必须使用大写三字母币种代码。"
+msgstr "currency must be an uppercase three-letter currency code."
+
+#: apps/crm/views.py:591
+msgid "input_version 必填。"
+msgstr "input_version is required."
+
+#: apps/crm/access.py:123
+msgid "mailbox_id 必须为有效 UUID。"
+msgstr "mailbox_id must be a valid UUID."
+
+#: apps/crm/selectors.py:154
+msgid "page ≥ 1，page_size 必须在 1–100。"
+msgstr "page must be at least 1 and page_size must be between 1 and 100."
+
+#: apps/chat/views.py:75
+msgid "page 和 page_size 必须为整数。"
+msgstr "page and page_size must be integers."
+
+#: apps/crm/processing_views.py:97 apps/crm/processing_views.py:95
+msgid "page 必须为正整数。"
+msgstr "page must be a positive integer."
+
+#: apps/sales/views.py:114
+msgid "page 须大于零，page_size 须为 1–100。"
+msgstr "page must be positive and page_size must be between 1 and 100."
+
+#: apps/sales/actions.py:50
+msgid "parameters 必须是对象。"
+msgstr "parameters must be an object."
+
+#: apps/sales/services.py:275
+msgid "recipients 必须为邮箱字符串数组。"
+msgstr "recipients must be an array of email address strings."
+
+#: apps/crm/classification.py:81
+msgid "review_status 必须为 confirmed_business 或 confirmed_non_business。"
+msgstr "review_status must be confirmed_business or confirmed_non_business."
+
+#: apps/chat/services.py:264
+msgid "scope 必须为 internal 或 external。"
+msgstr "scope must be internal or external."
+
+#: apps/crm/processing_views.py:91
+msgid "status 必须是 pending、non_business、all 或 saved。"
+msgstr "status must be pending, non_business, all or saved."
+
+#: apps/sales/views.py:441
+msgid "上传只接受 company 和 file。"
+msgstr "Uploads accept only company and file."
+
+#: apps/sales/grouping.py:208
+msgid "不能合并同一公司。"
+msgstr "A company cannot be merged with itself."
+
+#: apps/sales/views.py:176
+msgid "业务资源不存在。"
+msgstr "Business resource not found."
+
+#: apps/sales/grouping.py:252
+msgid "两份客户备注存在差异，请先人工处理。"
+msgstr "The customer notes differ. Resolve them manually first."
+
+#: apps/sales/grouping.py:259
+msgid "两份客户的主要联系人不同，请先明确合并后的主要联系人。"
+msgstr "The primary contacts differ. Choose the primary contact for the merged customer first."
+
+#: apps/sales/services.py:208
+msgid "主要联系人必须属于当前公司。"
+msgstr "The primary contact must belong to this company."
+
+#: apps/sales/actions.py:507
+msgid "事件不存在或已取消，结果仍须人工核对。"
+msgstr "The event does not exist or was cancelled. Manual verification is still required."
+
+#: common/exceptions.py
+msgid "产品"
+msgstr "Products"
+
+#: apps/sales/services.py:257
+msgid "产品必须属于单据所有者，使用相同币种且未归档。"
+msgstr "The product must belong to the document owner, use the same currency and be unarchived."
+
+#: common/exceptions.py
+msgid "人工归组"
+msgstr "Manual grouping"
+
+#: apps/crm/ingestion.py:94
+msgid "人工归组的目标公司已归档，请先恢复客户或调整归组。"
+msgstr "The manual grouping target is archived. Restore it or change the grouping first."
+
+#: apps/crm/views.py:303
+msgid "人数非空时必须填写来源。"
+msgstr "Provide a source when the employee count is specified."
+
+#: apps/sales/services.py:405
+msgid "仅团队所有者可以归档或恢复管理者。"
+msgstr "Only the team owner can archive or restore managers."
+
+#: apps/sales/actions.py:430
+msgid "仅执行中且已确认中断的动作可标记为未知结果。"
+msgstr "Only running actions with a verified process interruption can be marked as uncertain."
+
+#: apps/sales/views.py:478
+msgid "仅接受 provider。"
+msgstr "Only provider is accepted."
+
+#: apps/sales/services.py:425
+msgid "仅草稿、已取消订单或被拒绝报价可归档；有效交易历史保留。"
+msgstr "Only drafts, cancelled orders or rejected quotes can be archived. Active transaction history is retained."
+
+#: apps/sales/permissions.py:171
+msgid "仅记录所有者可修改。"
+msgstr "Only the record owner can modify it."
+
+#: apps/crm/jobs.py:137
+msgid "任务不存在。"
+msgstr "Task not found."
+
+#: apps/crm/jobs.py:122
+msgid "任务已过期或领取凭证无效。"
+msgstr "The task has expired or its lease credentials are invalid."
+
+#: apps/sales/actions.py:152
+msgid "会议标题和 calendar_id 不得为空。"
+msgstr "Meeting title and calendar_id cannot be empty."
+
+#: apps/sales/actions.py:150
+msgid "会议起止时间必须带时区且结束晚于开始。"
+msgstr "Meeting times must include a time zone, and the end must be after the start."
+
+#: apps/sales/services.py:182
+msgid "会话不可写。"
+msgstr "This conversation is not writable."
+
+#: apps/chat/services.py:64
+msgid "会话不存在或当前不可访问。"
+msgstr "The conversation does not exist or is not accessible."
+
+#: apps/chat/services.py:178
+msgid "会话已有后续问题，请重新提交需要回答的问题。"
+msgstr "This conversation has a later question. Submit the question again to request an answer."
+
+#: apps/sales/actions.py:196
+msgid "会话必须属于当前员工和客户。"
+msgstr "The conversation must belong to the current employee and customer."
+
+#: common/exceptions.py
+msgid "会话消息"
+msgstr "Conversation messages"
+
+#: apps/sales/grouping.py:219
+msgid "先撤销源公司的共享授权，再执行合并。"
+msgstr "Revoke the source company's shared access before merging."
+
+#: apps/crm/jobs.py:124
+msgid "公司上下文已变化，旧任务不得覆盖新结果。"
+msgstr "The company context has changed. An older task cannot overwrite newer results."
+
+#: apps/crm/access.py:111
+msgid "公司不存在。"
+msgstr "Company not found."
+
+#: apps/sales/permissions.py:77
+msgid "公司不存在或未授权。"
+msgstr "The company does not exist or access is not authorized."
+
+#: apps/sales/grouping.py:64
+msgid "公司名称须为 1–240 字符。"
+msgstr "Company names must contain 1–240 characters."
+
+#: apps/sales/grouping.py:227
+msgid "公司存在已批准或待核对的外部动作，不能合并。"
+msgstr "A company with approved external actions or results awaiting verification cannot be merged."
+
+#: apps/agent_tools/services.py:223
+msgid "决定须为 approve/cancel。"
+msgstr "The decision must be approve or cancel."
+
+#: apps/sales/services.py:419
+msgid "冻结单据的明细不可归档或恢复。"
+msgstr "Line items of frozen documents cannot be archived or restored."
+
+#: apps/crm/selectors.py:152
+msgid "分页必须使用整数。"
+msgstr "Pagination values must be integers."
+
+#: apps/sales/views.py:241
+msgid "创建请求必须使用集合地址。"
+msgstr "Create requests must use the collection URL."
+
+#: apps/sales/actions.py:184
+msgid "动作字段无效。"
+msgstr "Invalid action fields."
+
+#: common/exceptions.py
+msgid "助手会话"
+msgstr "Assistant conversations"
+
+#: apps/crm/views.py:287
+msgid "升级请求不接受事实或模型参数，请使用空正文。"
+msgstr "Upgrade requests do not accept facts or model parameters. Use an empty body."
+
+#: apps/sales/services.py:226
+msgid "单据已冻结；仅草稿可编辑内容。"
+msgstr "This document is frozen. Only draft content can be edited."
+
+#: apps/sales/grouping.py:336
+msgid "历史业务记录 ID 冲突，无法自动合并。"
+msgstr "Historical business record IDs conflict. Automatic merging is not possible."
+
+#: apps/sales/actions.py:65
+msgid "发信只接受 connection_id、draft_id、quote_id。"
+msgstr "Sending accepts only connection_id, draft_id and quote_id."
+
+#: apps/sales/services.py:190
+msgid "只有团队所有者可以授予管理角色。"
+msgstr "Only the team owner can grant the manager role."
+
+#: apps/crm/processing.py:210
+msgid "只有失败或部分完成批次可重试。"
+msgstr "Only failed or partially completed runs can be retried."
+
+#: apps/chat/services.py:165
+msgid "只有失败请求可以重新回答。"
+msgstr "Only failed requests can be retried."
+
+#: apps/sales/services.py:245
+msgid "只有未归档的草稿单据可编辑明细。"
+msgstr "Line items can only be edited on unarchived draft documents."
+
+#: apps/sales/actions.py:453
+msgid "只有未知结果动作需要外部核对。"
+msgstr "Only actions with uncertain results need external verification."
+
+#: apps/sales/services.py:202
+msgid "只能向自己管理的团队授予公司权限。"
+msgstr "You can grant company access only to teams you manage."
+
+#: apps/chat/services.py:413
+msgid "只能终止处理中的请求。"
+msgstr "Only processing requests can be stopped."
+
+#: apps/chat/services.py:268
+msgid "只能读取处理中的请求上下文。"
+msgstr "Only processing requests expose their context."
+
+#: apps/agent_tools/services.py:116
+msgid "只读工具不接受幂等键。"
+msgstr "Read-only tools do not accept idempotency keys."
+
+#: apps/sales/actions.py:207
+msgid "同一幂等键不能用于不同动作。"
+msgstr "The same idempotency key cannot be used for different actions."
+
+#: apps/agent_tools/services.py:144
+msgid "同一幂等键不能用于不同工具或内容。"
+msgstr "The same idempotency key cannot be used for different tools or content."
+
+#: apps/chat/services.py:126 apps/sales/services.py:347
+msgid "同一消息幂等键对应不同内容。"
+msgstr "The same message idempotency key refers to different content."
+
+#: apps/crm/processing.py:104
+msgid "同步批次已结束或租约过期，请刷新进度。"
+msgstr "The sync run has finished or its lease expired. Refresh the progress."
+
+#: apps/sales/views.py:310
+msgid "命令只接受 command 和 value。"
+msgstr "Commands accept only command and value."
+
+#: common/exceptions.py
+msgid "商机"
+msgstr "Opportunities"
+
+#: apps/chat/services.py:300
+msgid "回答版本与会话类型不一致。"
+msgstr "The answer version does not match the conversation type."
+
+#: apps/chat/services.py:85 apps/chat/services.py:411
+msgid "回答请求不存在。"
+msgstr "Answer request not found."
+
+#: apps/chat/services.py:100
+msgid "回答请求绑定不可访问。"
+msgstr "The answer request's context is not accessible."
+
+#: common/exceptions.py
+msgid "团队"
+msgstr "Teams"
+
+#: common/exceptions.py
+msgid "团队成员"
+msgstr "Team members"
+
+#: apps/sales/services.py:188
+msgid "团队所有者具有固有管理权，不创建重复成员记录。"
+msgstr "The team owner already has management rights. Do not create a duplicate membership."
+
+#: common/exceptions.py
+msgid "外部动作"
+msgstr "External actions"
+
+#: apps/sales/actions.py:188
+msgid "外部动作只允许客户所有者创建。"
+msgstr "Only the customer owner can create external actions."
+
+#: apps/sales/actions.py:518
+msgid "外部查询未能确认结果，请检查授权和外部记录；不会重新执行。"
+msgstr "The external query could not confirm the result. Check authorization and external records. The action will not be executed again."
+
+#: common/exceptions.py
+msgid "外部连接"
+msgstr "External connections"
+
+#: apps/sales/actions.py:61
+msgid "外部连接不存在或未授权。"
+msgstr "The external connection does not exist or is not authorized."
+
+#: apps/sales/actions.py:458
+msgid "外部连接身份已变化，无法核对原动作。"
+msgstr "The external connection identity has changed. The original action cannot be verified."
+
+#: apps/crm/qq_scope.py:60
+msgid "天数超出支持的日期范围。"
+msgstr "The day count exceeds the supported date range."
+
+#: common/exceptions.py
+msgid "客户共享"
+msgstr "Customer sharing"
+
+#: apps/crm/views.py:269
+msgid "客户含旧版邮件事实，请先通过 extraction-upgrade 接口显式升级后再分析。"
+msgstr "This customer has older email facts. Explicitly upgrade them through extraction-upgrade before analyzing."
+
+#: apps/sales/services.py:413
+msgid "客户存在已确认或待核对的外部动作，暂不可归档。"
+msgstr "This customer has confirmed external actions or results awaiting verification and cannot be archived yet."
+
+#: apps/sales/actions.py:210 apps/sales/actions.py:362 apps/sales/files.py:37
+msgid "客户已归档。"
+msgstr "This customer is archived."
+
+#: apps/sales/services.py:160
+msgid "客户已归档，请先恢复。"
+msgstr "This customer is archived. Restore it first."
+
+#: apps/crm/views.py:310
+msgid "客户已归档，请先恢复后编辑。"
+msgstr "This customer is archived. Restore it before editing."
+
+#: apps/sales/services.py:178
+msgid "客户归组、生命周期和共享授权仅由所有者维护。"
+msgstr "Only the owner can maintain customer grouping, lifecycle and shared access."
+
+#: common/exceptions.py
+msgid "客户设置"
+msgstr "Customer settings"
+
+#: apps/agent_tools/services.py:104
+msgid "工具不存在。"
+msgstr "Tool not found."
+
+#: apps/agent_tools/services.py:249
+msgid "工具定义已经变化，请重新准备提案。"
+msgstr "The tool definition has changed. Prepare the proposal again."
+
+#: apps/agent_tools/authentication.py:35
+msgid "工具授权已失效，请由用户重新授权。"
+msgstr "Tool authorization has expired. Ask the user to authorize it again."
+
+#: apps/agent_tools/services.py:72
+msgid "工具授权归属不一致。"
+msgstr "Tool authorization ownership does not match."
+
+#: apps/agent_tools/authentication.py:60
+msgid "工具授权无效。"
+msgstr "Invalid tool authorization."
+
+#: common/exceptions.py
+msgid "工单"
+msgstr "Tickets"
+
+#: apps/sales/services.py:238
+msgid "已有明细时不能直接改变币种；请先明确重新定价并重建明细。"
+msgstr "Currency cannot change while line items exist. Explicitly reprice and recreate the line items first."
+
+#: apps/crm/durable_sync.py:120
+msgid "已缓存邮件原文不可修改。"
+msgstr "Cached original emails cannot be modified."
+
+#: apps/chat/services.py:322
+msgid "引用不属于本请求实际提供的证据。"
+msgstr "The citation is not part of the evidence provided for this request."
+
+#: apps/sales/grouping.py:223
+msgid "归档公司须先恢复才能合并。"
+msgstr "Restore archived companies before merging."
+
+#: apps/sales/views.py:420
+msgid "归组操作或参数不完整。"
+msgstr "The grouping operation or its parameters are incomplete."
+
+#: apps/sales/services.py:212
+msgid "归组键必须是 domain:完整域名 或 contact:邮箱。"
+msgstr "Grouping keys must use domain:full-domain or contact:email."
+
+#: apps/crm/views.py:578
+msgid "当前上下文尚未归并。"
+msgstr "The current context has not been merged yet."
+
+#: apps/crm/views.py:441 apps/crm/views.py:457
+msgid "当前为 Agent 模式，模拟入口已关闭。"
+msgstr "Simulation is disabled in agent mode."
+
+#: apps/chat/services.py:169
+msgid "当前会话已有未完成回答。"
+msgstr "This conversation already has an unfinished answer."
+
+#: apps/chat/services.py:134
+msgid "当前会话已有未完成回答，请等待完成。"
+msgstr "This conversation already has an unfinished answer. Wait for it to complete."
+
+#: apps/sales/actions.py:249
+msgid "当前动作不可批准或取消。"
+msgstr "This action cannot currently be approved or cancelled."
+
+#: apps/chat/services.py:270
+msgid "当前未启用外部知识。"
+msgstr "External knowledge is not currently enabled."
+
+#: apps/sales/services.py:459
+msgid "当前记录不允许该状态转换。"
+msgstr "This status transition is not allowed for the current record."
+
+#: common/exceptions.py
+#, python-format
+msgid "当前资源不支持 %(name)s 筛选。"
+msgstr "The current resource does not support the %(name)s filter."
+
+#: apps/sales/views.py:201
+msgid "当前资源不支持文本搜索。"
+msgstr "The current resource does not support text search."
+
+#: apps/crm/serializers.py:195
+msgid "必须为对象，且不得包含未声明字段。"
+msgstr "Provide an object containing only declared fields."
+
+#: apps/crm/access.py:140
+msgid "必须使用 If-Match 传入读取时的非负版本。"
+msgstr "Provide the non-negative version you read in the If-Match header."
+
+#: apps/crm/jobs.py:116
+msgid "必须提供 X-Job-ID 与 X-Lease-Token。"
+msgstr "X-Job-ID and X-Lease-Token are required."
+
+#: apps/sales/grouping.py:143
+msgid "必须提供不重复的邮件去重键数组。"
+msgstr "Provide an array of unique email deduplication keys."
+
+#: apps/sales/priority_views.py:77
+msgid "必须提供有效 IANA 时区。"
+msgstr "Provide a valid IANA time zone."
+
+#: apps/sales/actions.py:163
+msgid "必须明确选择 none/all/externalOnly 的通知方式。"
+msgstr "Explicitly choose none, all or externalOnly for notifications."
+
+#: apps/crm/processing.py:208 apps/crm/processing_views.py:53
+msgid "批次不存在。"
+msgstr "Sync run not found."
+
+#: common/exceptions.py
+msgid "报价"
+msgstr "Quotes"
+
+#: apps/sales/services.py:469
+msgid "报价存在已确认或待核对的外发动作，暂不可改变状态。"
+msgstr "This quote has confirmed sending actions or results awaiting verification; its status cannot change yet."
+
+#: apps/sales/actions.py:374
+msgid "报价已变化，请取消旧动作并重新准备。"
+msgstr "The quote has changed. Cancel the old action and prepare a new one."
+
+#: apps/sales/actions.py:269
+msgid "报价已有已确认或待核对的发送动作。"
+msgstr "This quote already has a confirmed sending action or one awaiting verification."
+
+#: apps/sales/actions.py:259
+msgid "报价已经变化，请重新准备动作。"
+msgstr "The quote has changed. Prepare the action again."
+
+#: apps/sales/actions.py:109
+msgid "报价必须是当前客户已审核且尚未发送的报价。"
+msgstr "The quote must belong to this customer, be approved and not yet sent."
+
+#: common/exceptions.py
+msgid "报价明细"
+msgstr "Quote line items"
+
+#: apps/agent_tools/views.py:221
+msgid "授权不存在。"
+msgstr "Authorization not found."
+
+#: apps/agent_tools/services.py:230
+msgid "提案不存在。"
+msgstr "Proposal not found."
+
+#: apps/agent_tools/services.py:235
+msgid "提案已经处理，不能改变决定。"
+msgstr "This proposal has already been processed; the decision cannot be changed."
+
+#: apps/agent_tools/services.py:238
+msgid "提案已过期，请重新准备。"
+msgstr "The proposal has expired. Prepare it again."
+
+#: common/exceptions.py
+msgid "提醒"
+msgstr "Reminders"
+
+#: apps/sales/services.py:282
+msgid "收件人不可重复。"
+msgstr "Recipient addresses must be unique."
+
+#: apps/sales/services.py:251
+msgid "数量须大于零，整行折扣不得超过数量乘单价。"
+msgstr "Quantity must be positive, and the line discount must not exceed quantity multiplied by unit price."
+
+#: apps/sales/files.py:42
+msgid "文件名须为 1–240 字符。"
+msgstr "File names must contain 1–240 characters."
+
+#: apps/sales/files.py:52
+msgid "文件超过 20 MiB。"
+msgstr "The file exceeds 20 MiB."
+
+#: apps/sales/views.py:378
+msgid "新建客户只接受 name。"
+msgstr "New customer requests accept only name."
+
+#: apps/sales/actions.py:134
+msgid "日历参数必须明确指定 calendar_id、title、description、start、end、attendees、send_updates 和 connection_id。"
+msgstr "Calendar parameters must specify calendar_id, title, description, start, end, attendees, send_updates and connection_id."
+
+#: apps/crm/processing.py:58
+msgid "旧批次没有同步范围，请重新选择范围后同步。"
+msgstr "The old sync run has no range. Choose a range and sync again."
+
+#: apps/sales/actions.py:480
+msgid "未找到唯一已发送邮件，结果仍未知；请核对 Google 账号和已发送目录。"
+msgstr "No unique sent message found. The result remains uncertain; check the Google account and sent folder."
+
+#: apps/sales/actions.py:324 apps/sales/actions.py:53
+msgid "未注册的外部工具。"
+msgstr "External tool not registered."
+
+#: apps/crm/processing.py:126
+msgid "未知邮件处理阶段。"
+msgstr "Unknown email processing stage."
+
+#: apps/crm/views.py:151
+msgid "本地调试账号不可用，请检查 LOCAL_DEBUG_USER 并创建启用的普通账号。"
+msgstr "The local debug account is unavailable. Check LOCAL_DEBUG_USER and create an active regular account."
+
+#: apps/sales/services.py:263
+msgid "来源报价必须属于同一客户和币种。"
+msgstr "The source quote must use the same customer and currency."
+
+#: apps/crm/views.py:266
+msgid "没有已确认业务邮件，不能生成客户画像。"
+msgstr "A customer profile requires confirmed business emails."
+
+#: apps/accounts/registration.py:53
+msgid "注册只接受用户名和密码。"
+msgstr "Registration accepts only a username and password."
+
+#: apps/sales/services.py:288
+msgid "消息不可编辑，浏览器只能记录用户消息。"
+msgstr "Messages cannot be edited. The browser can only record user messages."
+
+#: apps/sales/grouping.py:136
+msgid "源公司和目标公司必须不同。"
+msgstr "Source and target companies must be different."
+
+#: apps/sales/grouping.py:321
+msgid "源归组键已映射到其他公司。"
+msgstr "The source grouping key is mapped to another company."
+
+#: apps/accounts/registration.py:68 apps/accounts/registration.py:110
+msgid "用户名已被使用，请换一个。"
+msgstr "This username is already taken. Choose another."
+
+#: apps/crm/views.py:169
+msgid "用户名或密码不正确。"
+msgstr "Incorrect username or password."
+
+#: apps/agent_tools/services.py:39 apps/agent_tools/services.py:69
+msgid "用户已停用。"
+msgstr "This user is inactive."
+
+#: apps/sales/grouping.py:154
+msgid "目标公司已归档。"
+msgstr "The target company is archived."
+
+#: apps/sales/priority_views.py:54
+msgid "目标规模下界不得大于上界。"
+msgstr "The target size lower bound must not exceed the upper bound."
+
+#: common/exceptions.py
+msgid "私有附件"
+msgstr "Private attachments"
+
+#: apps/sales/services.py:198
+msgid "管理者的角色只能由团队所有者修改。"
+msgstr "Only the team owner can change a manager's role."
+
+#: apps/sales/services.py:284
+msgid "聊天草稿不应包含邮件收件人或主题。"
+msgstr "Chat drafts must not include email recipients or a subject."
+
+#: apps/sales/grouping.py:91
+msgid "联系人仅接受 id、email、name。"
+msgstr "Contacts accept only id, email and name."
+
+#: apps/sales/grouping.py:98
+msgid "联系人姓名格式无效。"
+msgstr "Invalid contact name format."
+
+#: apps/sales/grouping.py:278
+msgid "联系人补充资料冲突，请先人工处理。"
+msgstr "Contact profile data conflicts. Resolve it manually first."
+
+#: common/exceptions.py
+msgid "联系人资料"
+msgstr "Contact profiles"
+
+#: apps/sales/services.py:475
+msgid "至少需要一个有效明细才能审核或确认。"
+msgstr "At least one valid line item is required for approval or confirmation."
+
+#: common/exceptions.py
+msgid "草稿"
+msgstr "Drafts"
+
+#: apps/sales/services.py:280
+msgid "草稿含无效收件人邮箱。"
+msgstr "The draft contains an invalid recipient address."
+
+#: common/exceptions.py
+msgid "订单"
+msgstr "Orders"
+
+#: common/exceptions.py
+msgid "订单明细"
+msgstr "Order line items"
+
+#: apps/sales/services.py:332
+msgid "记录已归档，请先恢复。"
+msgstr "This record is archived. Restore it first."
+
+#: apps/agent_tools/authentication.py:37
+msgid "该授权不包含此工具。"
+msgstr "This authorization does not include the requested tool."
+
+#: apps/sales/permissions.py:146
+msgid "该模型未开放业务访问。"
+msgstr "This model is not exposed for business access."
+
+#: apps/sales/grouping.py:104
+msgid "该联系人已有往来邮件；请新建邮箱身份，不修改历史身份。"
+msgstr "This contact has email history. Create a new email identity instead of changing the historical identity."
+
+#: apps/crm/processing.py:55
+msgid "该范围设置仅适用于 QQ 邮箱。"
+msgstr "This range setting applies only to QQ mailboxes."
+
+#: apps/sales/permissions.py:180
+msgid "该记录不可编辑。"
+msgstr "This record cannot be edited."
+
+#: apps/sales/services.py:399
+msgid "该记录不支持通用归档。"
+msgstr "This record does not support generic archiving."
+
+#: apps/sales/services.py:305
+msgid "该记录必须通过专门业务入口创建或修改。"
+msgstr "Use the dedicated business endpoint to create or modify this record."
+
+#: apps/sales/views.py:336
+msgid "该资源不支持所请求的命令。"
+msgstr "This resource does not support the requested command."
+
+#: apps/crm/processing.py:52
+msgid "该邮箱仍有同步批次，请完成后再确认重新抽取或重试。"
+msgstr "This mailbox still has an active sync run. Wait before confirming re-extraction or retrying."
+
+#: apps/crm/processing.py:48
+msgid "该邮箱尚未完成 Gmail 授权或 QQ 连接。"
+msgstr "This mailbox has not completed Gmail authorization or QQ connection."
+
+#: apps/crm/qq_connection.py:53
+msgid "该邮箱已有 Gmail 授权，不能覆盖为 QQ 连接。"
+msgstr "This mailbox already has Gmail authorization and cannot be replaced with a QQ connection."
+
+#: apps/crm/gmail_oauth.py:145
+msgid "该邮箱已有 QQ 连接，不能覆盖为 Gmail 授权。"
+msgstr "This mailbox already has a QQ connection and cannot be replaced with Gmail authorization."
+
+#: apps/crm/processing.py:152
+msgid "该邮箱授权已被移除。"
+msgstr "Authorization for this mailbox has been removed."
+
+#: apps/crm/qq_connection.py:87
+msgid "该邮箱没有 QQ 连接。"
+msgstr "This mailbox has no QQ connection."
+
+#: apps/chat/services.py:129
+msgid "该键已用于历史消息，请用新的提交键提问。"
+msgstr "This key was used for a historical message. Submit the question with a new key."
+
+#: apps/agent_tools/authentication.py:54
+msgid "请使用独立的 Tool 授权。"
+msgstr "Use a separate Tool authorization."
+
+#: common/exceptions.py
+msgid "请先退出当前账号，再注册新账号。"
+msgstr "Sign out before creating a new account."
+
+#: apps/crm/qq_scope.py:36
+msgid "请填写最近 N 天或最多 N 封，至少一项。"
+msgstr "Enter a recent-day limit or maximum email count, or both."
+
+#: apps/chat/services.py:304
+msgid "请求已结束或尚未领取，不能保存其他结果。"
+msgstr "This request is finished or has not been claimed; another result cannot be saved."
+
+#: apps/sales/files.py:39
+msgid "请选择不超过 20 MiB 的文件。"
+msgstr "Choose a file no larger than 20 MiB."
+
+#: apps/sales/services.py:266
+msgid "负责人账号已停用。"
+msgstr "The assignee account is inactive."
+
+#: apps/sales/actions.py:358
+msgid "账号已停用或外部连接身份已变化。"
+msgstr "The account is inactive or the external connection identity has changed."
+
+#: common/exceptions.py
+msgid "跟进"
+msgstr "Follow-ups"
+
+#: apps/crm/classification.py:84 apps/crm/ingestion.py:154 apps/crm/views.py:538
+msgid "邮件不存在。"
+msgstr "Email not found."
+
+#: apps/sales/actions.py:82
+msgid "邮件主题不能包含换行。"
+msgstr "Email subjects cannot contain line breaks."
+
+#: apps/sales/actions.py:497
+msgid "邮件标识或发送状态无法确认，结果仍未知。"
+msgstr "The message ID or sending status cannot be confirmed. The result remains uncertain."
+
+#: apps/crm/access.py:130
+msgid "邮箱不存在。"
+msgstr "Mailbox not found."
+
+#: apps/crm/qq_connection.py:89
+msgid "邮箱正在同步，请等待批次结束后移除连接。"
+msgstr "This mailbox is syncing. Wait for the run to finish before removing the connection."
+
+#: apps/crm/qq_connection.py:55
+msgid "邮箱正在同步，请等待批次结束后重新连接。"
+msgstr "This mailbox is syncing. Wait for the run to finish before reconnecting."
+
+#: apps/sales/grouping.py:161
+msgid "部分邮件不属于源公司。"
+msgstr "Some emails do not belong to the source company."
+
+#: apps/sales/files.py:82
+msgid "附件不存在。"
+msgstr "Attachment not found."
+
+#: apps/sales/files.py:87
+msgid "附件文件不可用，请检查存储卷和备份。"
+msgstr "The attachment file is unavailable. Check the storage volume and backups."
+
+#: apps/crm/access.py:69
+msgid "需要 Agent 服务凭证。"
+msgstr "Agent service credentials are required."
+
+#: apps/sales/actions.py:80
+msgid "需要同客户、含主题正文和收件人的有效邮件草稿。"
+msgstr "A valid email draft for the same customer must include a subject, body and recipients."
+
+#: apps/sales/services.py:185
+msgid "需要团队管理权限。"
+msgstr "Team management permission is required."

@@ -1,11 +1,14 @@
 /**
  * 职责：将世界消息坐标绘制为可访问的 Leaflet 气泡。
  * 实现：共享主题控制的本地 GeoJSON 底图、经纬线和按当前屏幕距离聚合的 HTML 标记；缩放后重新分组。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：world-news.js 提供筛选后快照与点击回调；不读取业务 API、不请求在线瓦片。
  * 目录：clusterNews、WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.reset、WorldMap.setItems、WorldMap.draw、WorldMap.focusGroup。
  * 变量索引：WorldMap.map 为 Leaflet 实例，layer 为标记层，items 为快照，selectedId/highlightId 为视觉状态，onSelect 为页面回调。
  */
-import { INDUSTRIES } from './world-feed.js?v=20260919-nocturne';
+import { t } from './i18n.js?v=20260920-i18n';
+
+import { INDUSTRIES } from './world-feed.js?v=20260920-i18n';
 
 /** 功能：按当前屏幕空间聚合邻近消息。输入：items 快照、map 地图。
  * 输出：数组，每组保留消息列表与代表坐标。逻辑：稳定输入顺序，112×56 像素邻域避免文字相互覆盖。
@@ -30,7 +33,7 @@ export class WorldMap {
    * 输出：实例。逻辑：使用经纬度投影和有界拖动，小屏可缩小至全世界。
    * 约束：不启用自动定位；点击回调不会发起业务写操作。 */
   constructor(element, onSelect) {
-    if (!window.L) throw new Error('地图组件未能加载，请刷新页面。');
+    if (!window.L) throw new Error(t('地图组件未能加载，请刷新页面。'));
     this.onSelect = onSelect;
     this.items = [];
     this.selectedId = null;
@@ -50,9 +53,9 @@ export class WorldMap {
    * 约束：无在线瓦片、无重试；底图不代表业务消息覆盖范围。 */
   async load() {
     const response = await fetch('/static/world-countries.geojson', { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(`地图资源加载失败（HTTP ${response.status}）。`);
+    if (!response.ok) throw new Error(t`地图资源加载失败（HTTP ${response.status}）。`);
     const data = await response.json();
-    if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error('地图资源格式无效。');
+    if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error(t('地图资源格式无效。'));
     L.geoJSON(data, { interactive: false, style: { color: getComputedStyle(document.documentElement).getPropertyValue('--map-border').trim(), weight: 0.7, fillColor: getComputedStyle(document.documentElement).getPropertyValue('--map-land').trim(), fillOpacity: 1 } }).addTo(this.map);
     for (let lat = -60; lat <= 60; lat += 30) L.polyline([[lat, -180], [lat, 180]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
     for (let lng = -180; lng <= 180; lng += 30) L.polyline([[-80, lng], [80, lng]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
@@ -79,9 +82,9 @@ export class WorldMap {
       button.classList.toggle('selected', group.items.some(item => item.id === this.selectedId));
       button.classList.toggle('incoming', group.items.some(item => item.id === this.highlightId));
       button.dataset.newsIds = group.items.map(item => item.id).join(' ');
-      button.setAttribute('aria-label', `${[...places].join('、')}，${group.items.length} 条消息，查看摘要`);
+      button.setAttribute('aria-label', t`${[...places].join('、')}，${group.items.length} 条消息，查看摘要`);
       const dot = document.createElement('span'); dot.className = 'pin-dot'; dot.setAttribute('aria-hidden', 'true');
-      const label = document.createElement('span'); label.textContent = places.size > 1 ? `${places.size} 地动态` : first.location.name.split(' · ')[0];
+      const label = document.createElement('span'); label.textContent = places.size > 1 ? t`${places.size} 地动态` : first.location.name.split(' · ')[0];
       const count = document.createElement('b'); count.textContent = group.items.length;
       button.append(dot, label, count);
       const marker = L.marker(group.latlng, { keyboard: false, icon: L.divIcon({ html: button, className: 'news-marker', iconSize: [130, 40], iconAnchor: [65, 48] }) });

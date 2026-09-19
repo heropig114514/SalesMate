@@ -1,5 +1,6 @@
 /**
  * 职责：验证世界消息的真实页面交互，并提供不连接业务系统的本地预览。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：同源静态 HTTP 服务承载地图和详情；Playwright 使用本地浏览器，禁止外部网络。
  * 关联：world-news.js/world-map.js/world-feed.js；页面模块按实际 script 地址导入，避免资源版本变化时重复初始化；不依赖 Django 数据库，不调用真实 Agent。
  * 目录：servePage、createPreviewServer、main；main 中的浏览器回调仅操作隔离页面和演示夹具。
@@ -49,7 +50,7 @@ async function main() {
     const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
     browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
     fs.mkdirSync(OUTPUT, { recursive: true });
-    const page = await browser.newPage({ viewport: { width: 1512, height: 982 }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1512, height: 982 }, deviceScaleFactor: 1 });
     const errors = [], externalRequests = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => { if (new URL(route.request().url()).origin !== base) { externalRequests.push(route.request().url()); return route.abort(); } return route.continue(); });

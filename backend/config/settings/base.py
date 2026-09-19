@@ -22,6 +22,8 @@
 - DATABASES：由必填 DATABASE_URL 生成的数据库连接；缺失或非法配置直接失败，不自动切换数据库。
 - AUTH_USER_MODEL：项目用户模型 accounts.User。
 - AUTH_PASSWORD_VALIDATORS：Django 密码校验器集合。
+- LANGUAGES：界面支持简体中文和英文；LocaleMiddleware 优先使用语言 cookie，再匹配请求头。
+- LOCALE_PATHS：项目 gettext 目录位置。
 - LANGUAGE_CODE：默认界面语言 zh-hans。
 - TIME_ZONE：DJANGO_TIME_ZONE 指定的时区，缺省 UTC。
 - USE_I18N：启用国际化。
@@ -87,6 +89,7 @@ MIDDLEWARE = [
     "common.middleware.RequestLoggingMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -123,6 +126,8 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 LANGUAGE_CODE = "zh-hans"
+LANGUAGES = [("zh-hans", "简体中文"), ("en", "English")]
+LOCALE_PATHS = [BASE_DIR / "locale"]
 TIME_ZONE = env.str("DJANGO_TIME_ZONE", default="UTC")
 USE_I18N = True
 USE_TZ = True

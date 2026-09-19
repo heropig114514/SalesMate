@@ -1,5 +1,6 @@
 /**
  * 职责：隔离验证 QQ/Gmail 共存、来源标识、原文入口、同步进度、人工复核及移动端布局。
+ * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
  * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
  * 目录：main 运行浏览器场景；静态服务及路由回调属于 main 的测试夹具。
@@ -29,7 +30,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let qqEnabled = false;

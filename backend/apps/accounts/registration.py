@@ -1,5 +1,5 @@
 """职责：提供无需邮箱或手机验证的普通账号注册接口。
-实现：验证用户名与既有密码规则，事务创建账号后建立 Session；数据库唯一约束处理并发重名。
+实现：错误响应按请求语言展示；验证用户名与既有密码规则，事务创建账号后建立 Session；数据库唯一约束处理并发重名。
 关联：accounts.urls 注册路由；前端复用 session/ 获取 CSRF；新用户数据由既有 owner 权限隔离。
 目录：
 - RegistrationSerializer：限制注册可写字段并校验账号信息。
@@ -22,6 +22,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.middleware.csrf import get_token
+from django.utils.translation import gettext
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 from drf_spectacular.types import OpenApiTypes
@@ -90,13 +91,13 @@ class RegistrationView(APIView):
 
     # 功能：提交账号注册并返回已认证会话。
     # 输入：`request` 含 username/password JSON 及有效 CSRF Cookie/请求头。
-    # 输出：成功返回 201 和身份、轮换后的 CSRF；已登录返回 409，输入错误返回 400。
+    # 输出：成功返回 201 和身份、轮换后的 CSRF；已登录返回按请求语言显示的 409，输入错误返回 400。
     # 逻辑：事务创建经哈希存储密码的普通用户，提交后登录；仅将已确认的重名冲突转换为输入错误。
     # 约束：非重名的 IntegrityError 记录错误类型并继续抛出；不泄露秘密、不重试、不生成虚构邮箱。
     @extend_schema(request=RegistrationSerializer, responses={201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT}, tags=["accounts"])
     def post(self, request):
         if request.user.is_authenticated:
-            return Response({"error": {"code": "already_authenticated", "detail": "请先退出当前账号，再注册新账号。"}, "request_id": getattr(request, "request_id", None)}, status=409)
+            return Response({"error": {"code": "already_authenticated", "detail": gettext("请先退出当前账号，再注册新账号。")}, "request_id": getattr(request, "request_id", None)}, status=409)
         serializer = RegistrationSerializer(data=request.data)
         if not serializer.is_valid():
             logger.info("registration_rejected reason=validation")

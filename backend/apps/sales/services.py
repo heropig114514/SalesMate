@@ -1,5 +1,6 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
 实现：按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交。
+国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
 - audit：追加不含正文或凭证的操作事件。
@@ -21,6 +22,7 @@
 import logging
 import re
 
+from django.utils.translation import gettext
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.db import transaction
@@ -140,7 +142,7 @@ def company_of(instance):
 
 # 功能：验证跨实体关系、金额、草稿和负责人约束。
 # 输入：`instance` 为待保存的模型，`actor` 为用户，`changed` 为本次字段集合，`creating` 为是否新增。
-# 输出：无；业务约束不满足抛 ValidationError/PermissionDenied。
+# 输出：无；业务约束不满足抛 ValidationError/PermissionDenied，参数化金额错误使用当前语言。
 # 逻辑：验证公司共享编辑权、个人会话归属、冻结单据、同币种及折扣边界。
 # 约束：仅在授权事务内调用；不自动改价、换汇或推断交易事实。
 def validate_record(instance, actor, changed, creating):
@@ -217,7 +219,7 @@ def validate_record(instance, actor, changed, creating):
     for name in ("amount", "unit_price", "stock_quantity"):
         value = getattr(instance, name, None)
         if value is not None and value < 0:
-            raise ValidationError(f"{name} 不得为负数。")
+            raise ValidationError(gettext("%(name)s 不得为负数。") % {"name": name})
     if (
         isinstance(instance, (models.Quote, models.SalesOrder))
         and not creating
@@ -290,7 +292,7 @@ def validate_record(instance, actor, changed, creating):
 
 # 功能：创建或版本化修改销售记录。
 # 输入：`serializer` 为已校验序列化器，`actor` 为用户，`expected` 为旧 revision 或 None。
-# 输出：已保存模型。
+# 输出：已保存模型；归属转移拒绝文案按当前语言插入原字段名。
 # 逻辑：锁 owner 后检查关系及版本，保存商机产品与业务记录；当前客户同步后传播订单、产品的共享评分依赖。
 # 约束：动作、附件与提醒使用专门入口；写入错误整体回滚，无自动重试。
 @transaction.atomic
@@ -334,7 +336,7 @@ def save_record(serializer, actor, expected=None):
             if relation in data and getattr(
                 candidate, relation + "_id", None
             ) != getattr(data[relation], "pk", None):
-                raise ValidationError(f"{relation} 归属不可通过编辑转移。")
+                raise ValidationError(gettext("%(relation)s 归属不可通过编辑转移。") % {"relation": relation})
         for key, value in data.items():
             setattr(candidate, key, value)
     validate_record(candidate, actor, set(data), existing is None)

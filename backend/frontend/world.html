@@ -1,51 +1,53 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <!-- 职责：提供世界行业消息地图、摘要侧栏和独立详情地址的页面骨架。
 实现：Leaflet 绘制本地地图，world-news.js 管理筛选、选择与浏览历史；演示状态始终明确展示。
 关联：product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；world-feed.js 校验消息；world-map.js 绘制气泡；Django 的 /world/ 与 /world/news/<id>/ 共用模板。
 目录：无函数或类；world-map 地图、news-panel 摘要、news-detail 详情、world-status 无障碍状态、world-error 错误提示。
+国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
 变量索引：无脚本变量；行业筛选与统计 DOM 由页面模块维护。 -->
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark"><title>世界消息 · SalesMate</title>
-  <link rel="stylesheet" href="/static/design-system.css?v=20260919-nocturne">
-  <link rel="stylesheet" href="/static/app.css?v=20260920-citations">
-  <link rel="stylesheet" href="/static/workspace.css?v=20260919-nocturne">
-  <link rel="stylesheet" href="/static/vendor/leaflet-1.9.4/leaflet.css">
-  <link rel="stylesheet" href="/static/world-news.css?v=20260919-nocturne">
-  <script defer src="/static/vendor/leaflet-1.9.4/leaflet.js"></script>
-  <script type="module" src="/static/world-news.js?v=20260919-nocturne"></script>
-</head>
-<body class="world-workspace">
-  <a class="world-skip" href="#world-content">跳到世界消息</a>
-  <salesmate-header></salesmate-header>
-  <aside class="workspace-shell">
-    <div class="workspace-brand-label">WORKSPACE<span>我的工作空间</span></div>
-    <nav id="workspace-nav" aria-label="主导航"></nav>
-    <div class="world-sidebar-note"><span class="world-orbit" aria-hidden="true">◎</span><strong>让每条消息，有业务坐标。</strong><p>从全球变化中，发现下一次对话的起点。</p></div>
-  </aside>
-  <main id="world-content">
-    <header class="world-topbar"><div>工作空间 <span>/</span> 世界消息</div><a href="/#home">返回工作台 <span aria-hidden="true">↗</span></a></header>
-    <div class="world-page">
-      <div class="world-heading"><div><p class="eyebrow">GLOBAL INDUSTRY SIGNALS</p><h1>全球行业洞察</h1><p class="world-subtitle">把行业变化放到地图上，找到与你相关的下一条消息。</p></div><div class="world-feed-state"><span></span>演示模式 · 实时推送尚未接入</div></div>
-      <p id="world-error" class="world-error" role="alert" hidden></p>
-      <p id="world-status" class="sr-only" role="status" aria-live="polite"></p>
-      <section id="world-explorer" aria-label="行业消息探索">
-        <div class="world-toolbar"><div id="industry-filters" class="industry-filters" role="group" aria-label="按行业筛选"></div><button id="demo-push" class="secondary" type="button"><span aria-hidden="true">＋</span>模拟一条推送</button></div>
-        <div class="world-layout">
-          <section class="world-map-card" aria-label="消息地图">
-            <div class="map-caption"><div><span class="map-cross" aria-hidden="true">⊕</span><strong>全球视野</strong><span id="map-count">加载地图中…</span></div><button id="reset-map" type="button" aria-label="重置到全球地图">全球视图 ↗</button></div>
-            <div id="world-map" aria-label="可缩放的世界消息地图"></div>
-            <div id="map-loading" class="map-loading" role="status">正在载入世界地图…</div>
-            <div class="map-bottom"><span><i class="legend-dot"></i>点击气泡查看摘要 · 再次点击进入详情</span><span>滚轮缩放 / 拖动浏览</span></div>
-          </section>
-          <aside id="news-panel" class="news-panel" aria-label="消息摘要与列表"></aside>
-        </div>
-        <div class="world-footer"><div class="world-metrics"><span><strong id="news-total">—</strong> 条消息</span><span><strong id="location-total">—</strong> 个地点</span><span><strong id="industry-total">—</strong> 个行业</span></div><p>当前内容均为虚构演示，用于预览交互，不代表真实新闻。</p></div>
-      </section>
-      <section id="news-detail" class="news-detail" aria-label="消息详情" hidden></section>
-      <noscript><p class="world-error">请启用 JavaScript 后查看地图和消息。</p></noscript>
-    </div>
-  </main>
+<meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/>
+<meta content="dark" name="color-scheme"/><title data-i18n="世界消息 · SalesMate">世界消息 · SalesMate</title>
+<link href="/static/design-system.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/app.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/workspace.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/vendor/leaflet-1.9.4/leaflet.css" rel="stylesheet"/>
+<link href="/static/world-news.css?v=20260920-i18n" rel="stylesheet"/>
+<script defer="" src="/static/vendor/leaflet-1.9.4/leaflet.js"></script>
+<script type="module" src="/static/world-news.js?v=20260920-i18n"></script>
+<script type="module" src="/static/i18n.js?v=20260920-i18n"></script></head>
+<body class="world-workspace"><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
+<a class="world-skip" href="#world-content"><span data-i18n="跳到世界消息">跳到世界消息</span></a>
+<salesmate-header></salesmate-header>
+<aside class="workspace-shell">
+<div class="workspace-brand-label">WORKSPACE<span><span data-i18n="我的工作空间">我的工作空间</span></span></div>
+<nav aria-label="主导航" data-i18n-aria-label="主导航" id="workspace-nav"></nav>
+<div class="world-sidebar-note"><span aria-hidden="true" class="world-orbit">◎</span><strong><span data-i18n="让每条消息，有业务坐标。">让每条消息，有业务坐标。</span></strong><p><span data-i18n="从全球变化中，发现下一次对话的起点。">从全球变化中，发现下一次对话的起点。</span></p></div>
+</aside>
+<main id="world-content">
+<header class="world-topbar"><div><span data-i18n="工作空间">工作空间 </span><span>/</span><span data-i18n="世界消息"> 世界消息</span></div><a href="/#home"><span data-i18n="返回工作台">返回工作台 </span><span aria-hidden="true">↗</span></a></header>
+<div class="world-page">
+<div class="world-heading"><div><p class="eyebrow">GLOBAL INDUSTRY SIGNALS</p><h1><span data-i18n="全球行业洞察">全球行业洞察</span></h1><p class="world-subtitle"><span data-i18n="把行业变化放到地图上，找到与你相关的下一条消息。">把行业变化放到地图上，找到与你相关的下一条消息。</span></p></div><div class="world-feed-state"><span></span><span data-i18n="演示模式 · 实时推送尚未接入">演示模式 · 实时推送尚未接入</span></div></div>
+<p class="world-error" hidden="" id="world-error" role="alert"></p>
+<p aria-live="polite" class="sr-only" id="world-status" role="status"></p>
+<section aria-label="行业消息探索" data-i18n-aria-label="行业消息探索" id="world-explorer">
+<div class="world-toolbar"><div aria-label="按行业筛选" class="industry-filters" data-i18n-aria-label="按行业筛选" id="industry-filters" role="group"></div><button class="secondary" id="demo-push" type="button"><span aria-hidden="true">＋</span><span data-i18n="模拟一条推送">模拟一条推送</span></button></div>
+<div class="world-layout">
+<section aria-label="消息地图" class="world-map-card" data-i18n-aria-label="消息地图">
+<div class="map-caption"><div><span aria-hidden="true" class="map-cross">⊕</span><strong><span data-i18n="全球视野">全球视野</span></strong><span id="map-count"><span data-i18n="加载地图中…">加载地图中…</span></span></div><button aria-label="重置到全球地图" data-i18n-aria-label="重置到全球地图" id="reset-map" type="button"><span data-i18n="全球视图 ↗">全球视图 ↗</span></button></div>
+<div aria-label="可缩放的世界消息地图" data-i18n-aria-label="可缩放的世界消息地图" id="world-map"></div>
+<div class="map-loading" id="map-loading" role="status"><span data-i18n="正在载入世界地图…">正在载入世界地图…</span></div>
+<div class="map-bottom"><span><i class="legend-dot"></i><span data-i18n="点击气泡查看摘要 · 再次点击进入详情">点击气泡查看摘要 · 再次点击进入详情</span></span><span><span data-i18n="滚轮缩放 / 拖动浏览">滚轮缩放 / 拖动浏览</span></span></div>
+</section>
+<aside aria-label="消息摘要与列表" class="news-panel" data-i18n-aria-label="消息摘要与列表" id="news-panel"></aside>
+</div>
+<div class="world-footer"><div class="world-metrics"><span><strong id="news-total">—</strong><span data-i18n="条消息"> 条消息</span></span><span><strong id="location-total">—</strong><span data-i18n="个地点"> 个地点</span></span><span><strong id="industry-total">—</strong><span data-i18n="个行业"> 个行业</span></span></div><p><span data-i18n="当前内容均为虚构演示，用于预览交互，不代表真实新闻。">当前内容均为虚构演示，用于预览交互，不代表真实新闻。</span></p></div>
+</section>
+<section aria-label="消息详情" class="news-detail" data-i18n-aria-label="消息详情" hidden="" id="news-detail"></section>
+<noscript><p class="world-error"><span data-i18n="请启用 JavaScript 后查看地图和消息。">请启用 JavaScript 后查看地图和消息。</span></p></noscript>
+</div>
+</main>
 </body>
 </html>

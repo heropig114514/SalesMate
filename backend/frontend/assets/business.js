@@ -1,126 +1,129 @@
 /**
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
  * 实现：读取后端字段契约渲染表单，写请求携带版本；外部动作先展示冻结内容再单独确认。
+ * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：workspace.js 使用 Nocturne 版本共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
  * syncBusinessContext、loadPage、renderRows、renderStats、boot。
- * 变量索引：$ 为 DOM 查询；labels 为字段中文名；states 为状态中文名；
+ * 变量索引：$ 为 DOM 查询；labels 为字段界面名；states 为状态界面名；
  * metadata 为资源契约，companies 为授权目录，user 为当前身份，current 为路由，page 为页码，
  * qqEnabled 为服务端 QQ 能力开关，generation 为异步加载代次，relations 为当前已读关系名称缓存。
  */
+import { t, h, locale } from './i18n.js?v=20260920-i18n';
+
 import { request, escapeHtml as esc } from "./api.js";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260919-nocturne";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260920-i18n";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js";
 
 const $ = (id) => document.getElementById(id);
 const labels = {
-  company: "客户",
-  contact: "联系人",
-  primary_contact: "主要联系人",
-  title: "标题",
-  name: "名称",
-  description: "说明",
-  notes: "备注",
-  currency: "币种",
-  amount: "预计金额",
-  unit_price: "单价",
-  quantity: "数量",
-  discount: "整行折扣金额",
-  stock_quantity: "人工库存数量",
-  sku: "产品编号",
-  number: "单据编号",
-  product: "产品",
-  quote: "来源报价",
-  order: "所属订单",
-  due_at: "到期时间",
-  expected_close: "预计成交日期",
-  valid_until: "报价有效期",
-  assigned_to: "负责人",
-  team: "团队",
-  user: "成员账号",
-  role: "角色",
-  group_key: "归组规则",
-  phone: "电话",
-  conversation: "会话",
-  kind: "草稿类型",
-  subject: "邮件主题",
-  content: "内容",
-  recipients: "收件人",
-  client_key: "消息标识",
-  status: "状态",
-  archived: "已归档",
-  total: "净额",
-  created_at: "创建时间",
-  updated_at: "更新时间",
-  sent_at: "发送时间",
-  confirmed_at: "订单确认时间",
-  priority: "优先级",
-  provider: "服务",
-  account: "连接账号",
-  read_at: "已读时间",
-  follow_up: "关联跟进",
-  size: "文件字节数",
-  content_type: "文件类型",
-  sha256: "文件校验摘要",
-  approved_at: "确认时间",
-  started_at: "开始时间",
-  finished_at: "完成时间",
-  tool: "工具",
-  external_message_id: "外部邮件标识",
-  source_revision: "提醒来源版本",
-  event: "操作",
-  actor_id: "操作者",
-  object_type: "对象类型",
-  object_id: "对象标识",
-  company_id: "客户",
-  email: "邮箱",
-  username: "用户名",
+  company: t("客户"),
+  contact: t("联系人"),
+  primary_contact: t("主要联系人"),
+  title: t("标题"),
+  name: t("名称"),
+  description: t("说明"),
+  notes: t("备注"),
+  currency: t("币种"),
+  amount: t("预计金额"),
+  unit_price: t("单价"),
+  quantity: t("数量"),
+  discount: t("整行折扣金额"),
+  stock_quantity: t("人工库存数量"),
+  sku: t("产品编号"),
+  number: t("单据编号"),
+  product: t("产品"),
+  quote: t("来源报价"),
+  order: t("所属订单"),
+  due_at: t("到期时间"),
+  expected_close: t("预计成交日期"),
+  valid_until: t("报价有效期"),
+  assigned_to: t("负责人"),
+  team: t("团队"),
+  user: t("成员账号"),
+  role: t("角色"),
+  group_key: t("归组规则"),
+  phone: t("电话"),
+  conversation: t("会话"),
+  kind: t("草稿类型"),
+  subject: t("邮件主题"),
+  content: t("内容"),
+  recipients: t("收件人"),
+  client_key: t("消息标识"),
+  status: t("状态"),
+  archived: t("已归档"),
+  total: t("净额"),
+  created_at: t("创建时间"),
+  updated_at: t("更新时间"),
+  sent_at: t("发送时间"),
+  confirmed_at: t("订单确认时间"),
+  priority: t("优先级"),
+  provider: t("服务"),
+  account: t("连接账号"),
+  read_at: t("已读时间"),
+  follow_up: t("关联跟进"),
+  size: t("文件字节数"),
+  content_type: t("文件类型"),
+  sha256: t("文件校验摘要"),
+  approved_at: t("确认时间"),
+  started_at: t("开始时间"),
+  finished_at: t("完成时间"),
+  tool: t("工具"),
+  external_message_id: t("外部邮件标识"),
+  source_revision: t("提醒来源版本"),
+  event: t("操作"),
+  actor_id: t("操作者"),
+  object_type: t("对象类型"),
+  object_id: t("对象标识"),
+  company_id: t("客户"),
+  email: t("邮箱"),
+  username: t("用户名"),
 };
 const states = {
-  draft: "草稿",
-  approved: "已审核 / 已确认",
-  sent: "已发送",
-  accepted: "客户已接受",
-  rejected: "客户已拒绝",
-  confirmed: "已确认",
-  fulfilled: "已履约",
-  cancelled: "已取消",
-  open: "待处理",
-  in_progress: "处理中",
-  resolved: "已解决",
-  closed: "已关闭",
-  new: "新商机",
-  qualified: "已确认需求",
-  proposal: "方案沟通",
-  won: "已赢单",
-  lost: "已丢单",
-  completed: "已完成",
-  pending_confirmation: "待人工确认",
-  running: "执行中",
-  succeeded: "执行成功",
-  failed: "执行失败",
-  uncertain: "结果待核对",
-  viewer: "只读",
-  editor: "可编辑",
-  manager: "管理员",
-  low: "低",
-  normal: "普通",
-  high: "高",
-  chat: "聊天草稿",
-  email: "邮件草稿",
-  user: "用户",
-  assistant: "助手",
-  gmail: "Gmail 发信",
-  qq: "QQ 发信",
-  calendar: "Google 日历",
-  "gmail.send": "Gmail 发送邮件",
-  "qq.send": "QQ 发送邮件",
-  "calendar.create": "创建会议",
-  none: "不发送日历通知",
-  all: "通知全部参会人",
-  externalOnly: "仅通知外部参会人",
+  draft: t("草稿"),
+  approved: t("已审核 / 已确认"),
+  sent: t("已发送"),
+  accepted: t("客户已接受"),
+  rejected: t("客户已拒绝"),
+  confirmed: t("已确认"),
+  fulfilled: t("已履约"),
+  cancelled: t("已取消"),
+  open: t("待处理"),
+  in_progress: t("处理中"),
+  resolved: t("已解决"),
+  closed: t("已关闭"),
+  new: t("新商机"),
+  qualified: t("已确认需求"),
+  proposal: t("方案沟通"),
+  won: t("已赢单"),
+  lost: t("已丢单"),
+  completed: t("已完成"),
+  pending_confirmation: t("待人工确认"),
+  running: t("执行中"),
+  succeeded: t("执行成功"),
+  failed: t("执行失败"),
+  uncertain: t("结果待核对"),
+  viewer: t("只读"),
+  editor: t("可编辑"),
+  manager: t("管理员"),
+  low: t("低"),
+  normal: t("普通"),
+  high: t("高"),
+  chat: t("聊天草稿"),
+  email: t("邮件草稿"),
+  user: t("用户"),
+  assistant: t("助手"),
+  gmail: t("Gmail 发信"),
+  qq: t("QQ 发信"),
+  calendar: t("Google 日历"),
+  "gmail.send": t("Gmail 发送邮件"),
+  "qq.send": t("QQ 发送邮件"),
+  "calendar.create": t("创建会议"),
+  none: t("不发送日历通知"),
+  all: t("通知全部参会人"),
+  externalOnly: t("仅通知外部参会人"),
 };
 let metadata = {},
   companies = [],
@@ -141,7 +144,7 @@ function nameOf(row) {
       row.domains?.[0] ||
       row.contacts[0]?.name ||
       row.contacts[0]?.email ||
-      "未命名客户"
+      t("未命名客户")
     );
   return (
     row.name ||
@@ -153,24 +156,24 @@ function nameOf(row) {
     row.account ||
     (row.content
       ? row.content.slice(0, 40)
-      : `记录 ${String(row.id).slice(0, 8)}`)
+      : t`记录 ${String(row.id).slice(0, 8)}`)
   );
 }
 
-/** 功能：返回业务字段名称。输入：name。输出：中文名称或原字段名。
+/** 功能：返回业务字段名称。输入：name。输出：当前界面语言名称或原字段名。
  * 逻辑：固定词表转换。约束：未知契约字段保留实际名称，避免错误解释。 */
 function label(name) {
   return labels[name] || name;
 }
 
 /** 功能：将值转换为可读文本。输入：value、可选 key。
- * 输出：纯文本。逻辑：状态、关系、数组及时间按明确类型展示。
+ * 输出：纯文本。逻辑：状态、行业枚举、关系、数组及时间按明确类型展示，业务正文原样保留。
  * 约束：返回值插入 HTML 时仍须转义；不渲染可执行 HTML。 */
 function display(value, key = "") {
-  if (value === null || value === undefined || value === "") return "未填写";
-  if (typeof value === "boolean") return value ? "是" : "否";
+  if (value === null || value === undefined || value === "") return t("未填写");
+  if (typeof value === "boolean") return value ? t("是") : t("否");
   if (Array.isArray(value))
-    return value.map((item) => display(item)).join("、") || "无";
+    return value.map((item) => display(item)).join("、") || t("无");
   if (typeof value === "object")
     return Object.entries(value)
       .map(([name, item]) => `${label(name)}：${display(item, name)}`)
@@ -182,7 +185,8 @@ function display(value, key = "") {
   if (relations.has(String(value))) return relations.get(String(value));
   if (["status", "role", "priority", "kind", "provider", "tool"].includes(key))
     return states[value] || value;
-  if (key.endsWith("_at")) return new Date(value).toLocaleString();
+  if (key === "industry_from_crm") return t(value);
+  if (key.endsWith("_at")) return new Date(value).toLocaleString(locale);
   return String(value);
 }
 
@@ -226,7 +230,7 @@ function showDialog(title, body) {
  * 约束：不根据名称推断业务归属。 */
 function optionRows(rows, selected = "") {
   return (
-    `<option value="">请选择</option>` +
+    h`<option value="">请选择</option>` +
     rows
       .map(
         (row) =>
@@ -247,7 +251,7 @@ async function relationOptions(field) {
     rows = companies.flatMap((company) =>
       company.contacts.map((contact) => ({
         ...contact,
-        name: `${company.name || "未命名客户"} · ${contact.name || contact.email}`,
+        name: `${company.name || t("未命名客户")} · ${contact.name || contact.email}`,
       })),
     );
   else if (field.relation === "user")
@@ -273,11 +277,11 @@ function fieldControl(field, value, options = []) {
   if (field.type === "relation")
     control = `<select name="${esc(name)}" ${required}>${optionRows(options, v)}</select>`;
   else if (field.type === "choice")
-    control = `<select name="${esc(name)}" ${required}><option value="">请选择</option>${field.choices.map((choice) => `<option value="${esc(choice)}" ${choice === v ? "selected" : ""}>${esc(states[choice] || choice)}</option>`).join("")}</select>`;
+    control = h`<select name="${esc(name)}" ${required}><option value="">请选择</option>${field.choices.map((choice) => `<option value="${esc(choice)}" ${choice === v ? "selected" : ""}>${esc(states[choice] || choice)}</option>`).join("")}</select>`;
   else if (field.type === "boolean")
-    control = `<select name="${esc(name)}"><option value="false">否</option><option value="true" ${v === true ? "selected" : ""}>是</option></select>`;
+    control = h`<select name="${esc(name)}"><option value="false">否</option><option value="true" ${v === true ? "selected" : ""}>是</option></select>`;
   else if (["description", "notes", "content", "recipients"].includes(name))
-    control = `<textarea name="${esc(name)}" ${required} rows="${name === "content" ? 7 : 3}" placeholder="${name === "recipients" ? "多个邮箱以逗号或换行分隔" : ""}">${esc(Array.isArray(v) ? v.join("\n") : v)}</textarea>`;
+    control = `<textarea name="${esc(name)}" ${required} rows="${name === "content" ? 7 : 3}" placeholder="${name === "recipients" ? t("多个邮箱以逗号或换行分隔") : ""}">${esc(Array.isArray(v) ? v.join("\n") : v)}</textarea>`;
   else {
     const type =
       field.type === "date"
@@ -295,9 +299,9 @@ function fieldControl(field, value, options = []) {
             .toISOString()
             .slice(0, 16)
         : v;
-    control = `<input name="${esc(name)}" type="${type}" value="${esc(shown)}" ${required} ${type === "number" ? 'step="any"' : ""} ${name === "currency" ? 'maxlength="3" placeholder="例如 USD / SGD / CNY"' : ""}>`;
+    control = `<input name="${esc(name)}" type="${type}" value="${esc(shown)}" ${required} ${type === "number" ? 'step="any"' : ""} ${name === "currency" ? h('maxlength="3" placeholder="例如 USD / SGD / CNY"') : ""}>`;
   }
-  return `<label class="${["description", "notes", "content", "recipients"].includes(name) ? "wide" : ""}">${esc(name === "title" && field.profileTitle ? "职位" : label(name))}${field.required ? " *" : ""}${control}${name === "group_key" ? "<small>域名填 domain:example.com；指定联系人填 contact:name@example.com。</small>" : ""}</label>`;
+  return `<label class="${["description", "notes", "content", "recipients"].includes(name) ? "wide" : ""}">${esc(name === "title" && field.profileTitle ? t("职位") : label(name))}${field.required ? " *" : ""}${control}${name === "group_key" ? h("<small>域名填 domain:example.com；指定联系人填 contact:name@example.com。</small>") : ""}</label>`;
 }
 
 /** 功能：打开创建或编辑业务记录表单。输入：resource、可选 record 和 preset。
@@ -319,8 +323,8 @@ async function editRecord(resource, record = null, preset = {}) {
     values.company = $("company-filter").value;
   const key = crypto.randomUUID();
   showDialog(
-    `${record ? "编辑" : "新建"}${definition.label}`,
-    `<form id="record-form"><div class="form-grid">${editable.map((field) => fieldControl(field, values[field.name], options.get(field.name))).join("")}</div>${resource === "memberships" ? '<div class="section"><label>按完整用户名查找成员<input id="member-username" placeholder="输入已有账号的用户名"></label><button id="find-member" type="button">查找账号</button></div>' : ""}<p class="form-note">${["quote-lines", "order-lines"].includes(resource) ? "单价与描述作为本次单据快照保存。选择产品后请明确填写本次价格，不会自动覆盖历史价格。" : "留空的非必填项保持未知或使用该字段已声明的初始值。"}${editable.some((f) => f.type === "datetime") ? " 时间按当前设备时区输入。" : ""}</p><div class="actions"><button class="primary" type="submit">保存${definition.label}</button></div></form>`,
+    `${record ? t("编辑") : t("新建")} ${t(definition.label)}`,
+    h`<form id="record-form"><div class="form-grid">${editable.map((field) => fieldControl(field, values[field.name], options.get(field.name))).join("")}</div>${resource === "memberships" ? h('<div class="section"><label>按完整用户名查找成员<input id="member-username" placeholder="输入已有账号的用户名"></label><button id="find-member" type="button">查找账号</button></div>') : ""}<p class="form-note">${["quote-lines", "order-lines"].includes(resource) ? t("单价与描述作为本次单据快照保存。选择产品后请明确填写本次价格，不会自动覆盖历史价格。") : t("留空的非必填项保持未知或使用该字段已声明的初始值。")}${editable.some((f) => f.type === "datetime") ? t(" 时间按当前设备时区输入。") : ""}</p><div class="actions"><button class="primary" type="submit">保存 ${t(definition.label)}</button></div></form>`,
   );
   if ($("find-member"))
     $("find-member").onclick = (event) =>
@@ -330,11 +334,11 @@ async function editRecord(resource, record = null, preset = {}) {
             `people/?username=${encodeURIComponent($("member-username").value)}`,
           )
         ).results;
-        if (!found.length) throw new Error("未找到该有效账号。");
+        if (!found.length) throw new Error(t("未找到该有效账号。"));
         const select = $("record-form").elements.namedItem("user");
         select.insertAdjacentHTML(
           "beforeend",
-          optionRows(found).replace('<option value="">请选择</option>', ""),
+          optionRows(found).replace(h('<option value="">请选择</option>'), ""),
         );
         select.value = found[0].id;
       }, event.currentTarget);
@@ -393,8 +397,8 @@ async function detailRecord(resource, id) {
     !record.archived;
   const transitions = definition.transitions[record.status] || [];
   showDialog(
-    definition.label,
-    `<dl class="details">${rows.map(([key, value]) => `<dt>${esc(label(key))}</dt><dd>${esc(display(value, key))}</dd>`).join("")}</dl>${record.lines ? `<div class="section"><h3>单据明细 · ${esc(record.currency)} ${esc(record.total)}</h3>${record.lines.map((line) => `<p>${esc(line.description)} · ${esc(line.quantity)} × ${esc(line.unit_price)} − ${esc(line.discount)} <button type="button" data-line="${esc(line.id)}">查看明细</button></p>`).join("") || '<p class="muted">尚无明细。</p>'}${record.status === "draft" && !record.archived ? '<button id="add-line" type="button">＋ 添加明细</button>' : ""}</div>` : ""}<div class="section actions">${editable ? '<button id="edit-record" type="button">编辑内容</button>' : ""}${transitions.map((state) => `<button data-state="${esc(state)}" type="button">${esc(states[state] || state)}</button>`).join("")}${!["messages", "notifications"].includes(resource) ? `<button id="archive-record" type="button">${record.archived ? "恢复记录" : resource === "connections" ? "停用连接" : "归档"}</button>` : ""}${resource === "notifications" && !record.read_at ? '<button id="mark-read" type="button">标记已读</button>' : ""}${resource === "files" && !record.archived ? `<a href="/api/v1/sales/files/${esc(record.id)}/download/">下载附件</a>` : ""}</div>`,
+    t(definition.label),
+    `<dl class="details">${rows.map(([key, value]) => `<dt>${esc(label(key))}</dt><dd>${esc(display(value, key))}</dd>`).join("")}</dl>${record.lines ? h`<div class="section"><h3>单据明细 · ${esc(record.currency)} ${esc(record.total)}</h3>${record.lines.map((line) => h`<p>${esc(line.description)} · ${esc(line.quantity)} × ${esc(line.unit_price)} − ${esc(line.discount)} <button type="button" data-line="${esc(line.id)}">查看明细</button></p>`).join("") || h('<p class="muted">尚无明细。</p>')}${record.status === "draft" && !record.archived ? h('<button id="add-line" type="button">＋ 添加明细</button>') : ""}</div>` : ""}<div class="section actions">${editable ? h('<button id="edit-record" type="button">编辑内容</button>') : ""}${transitions.map((state) => `<button data-state="${esc(state)}" type="button">${esc(states[state] || state)}</button>`).join("")}${!["messages", "notifications"].includes(resource) ? `<button id="archive-record" type="button">${record.archived ? t("恢复记录") : resource === "connections" ? t("停用连接") : t("归档")}</button>` : ""}${resource === "notifications" && !record.read_at ? h('<button id="mark-read" type="button">标记已读</button>') : ""}${resource === "files" && !record.archived ? h`<a href="/api/v1/sales/files/${esc(record.id)}/download/">下载附件</a>` : ""}</div>`,
   );
   if ($("edit-record"))
     $("edit-record").onclick = () =>
@@ -447,22 +451,22 @@ async function runCommand(resource, record, command, value = null) {
 async function customerDetail(id) {
   await refreshDirectory();
   const company = companies.find((item) => item.id === id);
-  if (!company) throw new Error("客户已不可见，请刷新。");
+  if (!company) throw new Error(t("客户已不可见，请刷新。"));
   $("company-filter").value = company.id;
   syncBusinessContext();
   showDialog(
-    company.name || "未命名客户",
-    `<p class="muted">${esc(company.domains.join(" · ") || "尚未指定公司域名")}</p><dl class="details">${Object.entries(
+    company.name || t("未命名客户"),
+    h`<p class="muted">${esc(company.domains.join(" · ") || t("尚未指定公司域名"))}</p><dl class="details">${Object.entries(
       company.customer,
     )
       .filter(([key]) => key !== "customer_id")
       .map(
         ([key, value]) =>
-          `<dt>${esc({ industry_from_crm: "行业", employee_count: "员工人数", employee_count_source: "人数来源", first_deal_at: "首次成交时间" }[key] || label(key))}</dt><dd>${esc(display(value, key))}</dd>`,
+          `<dt>${esc({ industry_from_crm: t("行业"), employee_count: t("员工人数"), employee_count_source: t("人数来源"), first_deal_at: t("首次成交时间") }[key] || label(key))}</dt><dd>${esc(display(value, key))}</dd>`,
       )
       .join(
         "",
-      )}</dl><div class="actions"><button id="customer-edit">编辑档案</button><button id="customer-settings">主要联系人 / 备注 / 归档</button><a href="/#company/${esc(company.id)}">邮件与分析 ↗</a><a href="${esc(businessHref("quotes", company.id, { create: "1" }))}">创建报价</a><a href="${esc(businessHref("follow-ups", company.id, { create: "1" }))}">安排跟进</a></div><div class="section"><h3>联系人</h3>${company.contacts.map((c) => `<p>${esc(c.name || "姓名未知")} · ${esc(c.email)} <button data-contact="${esc(c.id)}">编辑身份</button><button data-profile="${esc(c.id)}">职位 / 电话 / 备注</button></p>`).join("") || '<p class="muted">暂无联系人</p>'}<button id="contact-add">＋ 新增联系人</button></div><div class="section"><h3>人工归组</h3><p class="muted">搬移已选择的邮件，或将另一家公司合入此客户。未来邮件可单独配置域名 / 联系人规则。</p><div class="actions"><button id="group-move">搬移邮件</button><button id="group-merge">合并客户</button><button id="group-alias">新增归组规则</button></div></div>`,
+      )}</dl><div class="actions"><button id="customer-edit">编辑档案</button><button id="customer-settings">主要联系人 / 备注 / 归档</button><a href="/#company/${esc(company.id)}">邮件与分析 ↗</a><a href="${esc(businessHref("quotes", company.id, { create: "1" }))}">创建报价</a><a href="${esc(businessHref("follow-ups", company.id, { create: "1" }))}">安排跟进</a></div><div class="section"><h3>联系人</h3>${company.contacts.map((c) => h`<p>${esc(c.name || t("姓名未知"))} · ${esc(c.email)} <button data-contact="${esc(c.id)}">编辑身份</button><button data-profile="${esc(c.id)}">职位 / 电话 / 备注</button></p>`).join("") || h('<p class="muted">暂无联系人</p>')}<button id="contact-add">＋ 新增联系人</button></div><div class="section"><h3>人工归组</h3><p class="muted">搬移已选择的邮件，或将另一家公司合入此客户。未来邮件可单独配置域名 / 联系人规则。</p><div class="actions"><button id="group-move">搬移邮件</button><button id="group-merge">合并客户</button><button id="group-alias">新增归组规则</button></div></div>`,
   );
   $("customer-edit").onclick = () => editCustomer(company);
   $("customer-settings").onclick = () =>
@@ -501,8 +505,8 @@ async function customerDetail(id) {
  * 约束：保存后按原项目配置触发分析，不更改模型、权重或时区。 */
 function editCustomer(company) {
   showDialog(
-    "编辑客户档案",
-    `<form id="customer-form"><div class="form-grid"><label class="wide">公司名称<input name="company_name" value="${esc(company.name)}" required></label><label>行业<select name="industry_from_crm">${["unknown", "半导体检测", "精密量测", "光学检测", "工业检测"].map((value) => `<option value="${value}" ${company.customer.industry_from_crm === value ? "selected" : ""}>${value === "unknown" ? "未知" : value}</option>`).join("")}</select></label><label>员工人数<input name="employee_count" type="number" min="0" value="${esc(company.customer.employee_count)}"></label><label class="wide">人数来源<input name="employee_count_source" value="${esc(company.customer.employee_count_source)}"></label></div><div class="actions"><button class="primary">保存客户档案</button></div></form>`,
+    t("编辑客户档案"),
+    h`<form id="customer-form"><div class="form-grid"><label class="wide">公司名称<input name="company_name" value="${esc(company.name)}" required></label><label>行业<select name="industry_from_crm">${["unknown", "半导体检测", "精密量测", "光学检测", "工业检测"].map((value) => `<option value="${value}" ${company.customer.industry_from_crm === value ? "selected" : ""}>${value === "unknown" ? t("未知") : t(value)}</option>`).join("")}</select></label><label>员工人数<input name="employee_count" type="number" min="0" value="${esc(company.customer.employee_count)}"></label><label class="wide">人数来源<input name="employee_count_source" value="${esc(company.customer.employee_count_source)}"></label></div><div class="actions"><button class="primary">保存客户档案</button></div></form>`,
   );
   $("customer-form").onsubmit = (event) => {
     event.preventDefault();
@@ -528,8 +532,8 @@ function editCustomer(company) {
  * 约束：电话职位另存补充资料，不覆盖原邮件事实。 */
 function editContact(company, contact = null) {
   showDialog(
-    contact ? "编辑联系人" : "新增联系人",
-    `<form id="contact-form"><div class="form-grid"><label>姓名<input name="name" value="${esc(contact?.name)}"></label><label>邮箱<input name="email" type="email" value="${esc(contact?.email)}" required></label></div><div class="actions"><button class="primary">保存联系人</button></div></form>`,
+    contact ? t("编辑联系人") : t("新增联系人"),
+    h`<form id="contact-form"><div class="form-grid"><label>姓名<input name="name" value="${esc(contact?.name)}"></label><label>邮箱<input name="email" type="email" value="${esc(contact?.email)}" required></label></div><div class="actions"><button class="primary">保存联系人</button></div></form>`,
   );
   $("contact-form").onsubmit = (event) => {
     event.preventDefault();
@@ -552,14 +556,14 @@ function editContact(company, contact = null) {
  * 约束：没有默认全选；合并冲突由后端事务拒绝，不自动扩大共享权限。 */
 function groupingForm(target, operation) {
   showDialog(
-    operation === "move" ? "搬移邮件到当前客户" : "合并客户",
-    `<form id="group-form"><p>目标客户：<strong>${esc(target.name)}</strong></p><label>来源客户<select name="source" required>${optionRows(companies.filter((c) => c.id !== target.id && !c.archived))}</select></label>${operation === "move" ? '<button id="load-mails" type="button">读取来源邮件</button><div id="mail-choices" class="section"></div>' : '<p class="warning">合并会转移来源邮件和业务记录，并归档来源客户。历史分析仍保留在来源；存在冲突会整次拒绝。</p>'}<div class="actions"><button class="primary">审阅归组计划</button></div></form>`,
+    operation === "move" ? t("搬移邮件到当前客户") : t("合并客户"),
+    h`<form id="group-form"><p>目标客户：<strong>${esc(target.name)}</strong></p><label>来源客户<select name="source" required>${optionRows(companies.filter((c) => c.id !== target.id && !c.archived))}</select></label>${operation === "move" ? h('<button id="load-mails" type="button">读取来源邮件</button><div id="mail-choices" class="section"></div>') : h('<p class="warning">合并会转移来源邮件和业务记录，并归档来源客户。历史分析仍保留在来源；存在冲突会整次拒绝。</p>')}<div class="actions"><button class="primary">审阅归组计划</button></div></form>`,
   );
   if ($("load-mails"))
     $("load-mails").onclick = (event) =>
       perform(async () => {
         const source = $("group-form").elements.source.value;
-        if (!source) throw new Error("请先选择来源客户。");
+        if (!source) throw new Error(t("请先选择来源客户。"));
         const data = await request(`companies/${source}/`);
         const emails = data.emails || data.context?.emails || [];
         $("mail-choices").innerHTML =
@@ -568,7 +572,7 @@ function groupingForm(target, operation) {
               (mail) =>
                 `<label class="check"><input type="checkbox" name="mail" value="${esc(mail.dedupe_key)}">${esc(mail.subject)} · ${esc(mail.sent_at || "")}</label>`,
             )
-            .join("") || "<p>来源没有可搬移邮件。</p>";
+            .join("") || h("<p>来源没有可搬移邮件。</p>");
         $("mail-choices").dataset.source = source;
       }, event.currentTarget);
   $("group-form").onsubmit = (event) => {
@@ -577,7 +581,7 @@ function groupingForm(target, operation) {
       const source = companies.find(
         (c) => c.id === event.currentTarget.elements.source.value,
       );
-      if (!source) throw new Error("请选择来源客户。");
+      if (!source) throw new Error(t("请选择来源客户。"));
       const data = {
         source_id: source.id,
         target_id: target.id,
@@ -586,15 +590,15 @@ function groupingForm(target, operation) {
       };
       if (operation === "move") {
         if ($("mail-choices").dataset.source !== source.id)
-          throw new Error("请重新读取所选来源的邮件。");
+          throw new Error(t("请重新读取所选来源的邮件。"));
         data.keys = [...$("mail-choices").querySelectorAll(":checked")].map(
           (node) => node.value,
         );
-        if (!data.keys.length) throw new Error("至少选择一封邮件。");
+        if (!data.keys.length) throw new Error(t("至少选择一封邮件。"));
       }
       showDialog(
-        "确认人工归组",
-        `<p>来源：${esc(source.name)}</p><p>目标：${esc(target.name)}</p><p>${operation === "move" ? `搬移 ${data.keys.length} 封已选择邮件。` : "转移邮件和业务关系，并归档来源公司。"}</p><button id="confirm-group" class="primary">确认${operation === "move" ? "搬移" : "合并"}</button>`,
+        t("确认人工归组"),
+        h`<p>来源：${esc(source.name)}</p><p>目标：${esc(target.name)}</p><p>${operation === "move" ? t`搬移 ${data.keys.length} 封已选择邮件。` : t("转移邮件和业务关系，并归档来源公司。")}</p><button id="confirm-group" class="primary">确认${operation === "move" ? t("搬移") : t("合并")}</button>`,
       );
       $("confirm-group").onclick = (e) =>
         perform(async () => {
@@ -615,8 +619,8 @@ function groupingForm(target, operation) {
  * 约束：限制 20 MiB，不把附件公开托管。 */
 function attachmentForm() {
   showDialog(
-    "上传私有附件",
-    `<form id="upload-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>文件（最多 20 MiB）<input name="file" type="file" required></label></div><p class="form-note">只有当前员工可以下载本附件。</p><div class="actions"><button class="primary">上传并保存</button></div></form>`,
+    t("上传私有附件"),
+    h`<form id="upload-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>文件（最多 20 MiB）<input name="file" type="file" required></label></div><p class="form-note">只有当前员工可以下载本附件。</p><div class="actions"><button class="primary">上传并保存</button></div></form>`,
   );
   $("upload-form").onsubmit = (event) => {
     event.preventDefault();
@@ -640,11 +644,11 @@ async function actionForm() {
     drafts = await allRows("records/drafts/"),
     quotes = await allRows("records/quotes/");
   if (!connections.length)
-    throw new Error("请先在“外部连接”中连接发信邮箱或日历，再准备动作。");
+    throw new Error(t("请先在“外部连接”中连接发信邮箱或日历，再准备动作。"));
   const key = crypto.randomUUID();
   showDialog(
-    "准备外部动作",
-    `<form id="action-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>动作类型<select name="tool" required><option value="gmail.send">Gmail 发送邮件</option>${qqEnabled ? '<option value="qq.send">QQ 发送邮件</option>' : ""}<option value="calendar.create">创建会议</option></select></label><label class="wide">外部连接<select name="connection_id" required>${optionRows(connections.map((c) => ({ ...c, name: `${states[c.provider]} · ${c.account}` })))}</select></label><div id="email-fields" class="wide form-grid"><label>邮件草稿<select name="draft_id">${optionRows(drafts.filter((d) => d.kind === "email"))}</select></label><label>附带已审核报价（可选）<select name="quote_id">${optionRows(quotes.filter((q) => q.status === "approved"))}</select></label></div><div id="calendar-fields" class="wide form-grid" hidden><label>日历标识<input name="calendar_id" placeholder="例如 primary"></label><label>会议标题<input name="title"></label><label>开始时间<input name="start" type="datetime-local"></label><label>结束时间<input name="end" type="datetime-local"></label><label class="wide">说明<textarea name="description"></textarea></label><label class="wide">参会人邮箱<textarea name="attendees" placeholder="逗号或换行分隔，可留空"></textarea></label><label>日历通知方式<select name="send_updates"><option value="">请明确选择</option>${["none", "all", "externalOnly"].map((value) => `<option value="${value}">${states[value]}</option>`).join("")}</select></label></div></div><p class="form-note">准备后将展示完整收件人、正文或会议内容。只有你再次确认，任务才会进入执行队列。</p><div class="actions"><button class="primary">生成待确认计划</button></div></form>`,
+    t("准备外部动作"),
+    h`<form id="action-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>动作类型<select name="tool" required><option value="gmail.send">Gmail 发送邮件</option>${qqEnabled ? h('<option value="qq.send">QQ 发送邮件</option>') : ""}<option value="calendar.create">创建会议</option></select></label><label class="wide">外部连接<select name="connection_id" required>${optionRows(connections.map((c) => ({ ...c, name: `${states[c.provider]} · ${c.account}` })))}</select></label><div id="email-fields" class="wide form-grid"><label>邮件草稿<select name="draft_id">${optionRows(drafts.filter((d) => d.kind === "email"))}</select></label><label>附带已审核报价（可选）<select name="quote_id">${optionRows(quotes.filter((q) => q.status === "approved"))}</select></label></div><div id="calendar-fields" class="wide form-grid" hidden><label>日历标识<input name="calendar_id" placeholder="例如 primary"></label><label>会议标题<input name="title"></label><label>开始时间<input name="start" type="datetime-local"></label><label>结束时间<input name="end" type="datetime-local"></label><label class="wide">说明<textarea name="description"></textarea></label><label class="wide">参会人邮箱<textarea name="attendees" placeholder="逗号或换行分隔，可留空"></textarea></label><label>日历通知方式<select name="send_updates"><option value="">请明确选择</option>${["none", "all", "externalOnly"].map((value) => `<option value="${value}">${states[value]}</option>`).join("")}</select></label></div></div><p class="form-note">准备后将展示完整收件人、正文或会议内容。只有你再次确认，任务才会进入执行队列。</p><div class="actions"><button class="primary">生成待确认计划</button></div></form>`,
   );
   const form = $("action-form");
   form.elements.tool.onchange = () => {
@@ -664,7 +668,7 @@ async function actionForm() {
         if (fields.quote_id) parameters.quote_id = fields.quote_id;
       } else {
         if (!fields.start || !fields.end)
-          throw new Error("请填写会议起止时间。");
+          throw new Error(t("请填写会议起止时间。"));
         Object.assign(parameters, {
           calendar_id: fields.calendar_id,
           title: fields.title,
@@ -701,20 +705,20 @@ function renderActions(record) {
   const p = record.parameters,
     email = ["gmail.send", "qq.send"].includes(record.tool);
   const preview = email
-    ? `<p>发件账号：${esc(p.account)}</p><p>收件人：${esc(p.to.join("、"))}</p><h3>${esc(p.subject)}</h3><div class="preview">${esc(p.body)}</div>`
-    : `<p>账号：${esc(p.account)} · 日历：${esc(p.calendar_id)}</p><h3>${esc(p.title)}</h3><p>${esc(new Date(p.start).toLocaleString())} → ${esc(new Date(p.end).toLocaleString())}</p><p>参会人：${esc(p.attendees.join("、") || "无")}</p><p>通知：${esc(states[p.send_updates])}</p><div class="preview">${esc(p.description)}</div>`;
+    ? h`<p>发件账号：${esc(p.account)}</p><p>收件人：${esc(p.to.join("、"))}</p><h3>${esc(p.subject)}</h3><div class="preview">${esc(p.body)}</div>`
+    : h`<p>账号：${esc(p.account)} · 日历：${esc(p.calendar_id)}</p><h3>${esc(p.title)}</h3><p>${esc(new Date(p.start).toLocaleString(locale))} → ${esc(new Date(p.end).toLocaleString(locale))}</p><p>参会人：${esc(p.attendees.join("、") || t("无"))}</p><p>通知：${esc(states[p.send_updates])}</p><div class="preview">${esc(p.description)}</div>`;
   showDialog(
     `${states[record.tool]} · ${states[record.status]}`,
-    `<p>客户：${esc(display(record.company, "company"))}</p>${preview}${record.error ? `<p class="warning">${esc(record.error.message)}</p>` : ""}${
+    h`<p>客户：${esc(display(record.company, "company"))}</p>${preview}${record.error ? `<p class="warning">${esc(record.error.message)}</p>` : ""}${
       record.result
         ? `<dl class="details">${Object.entries(record.result)
             .map(
               ([key, value]) =>
-                `<dt>${esc({ message_id: "邮件标识", thread_id: "邮件会话标识", event_id: "日历事件标识", url: "外部事件链接", submission_status: "提交状态", sent_copy_id: "发送副本标识" }[key] || key)}</dt><dd>${esc({ smtp_accepted: "QQ 服务器已接受（不代表最终送达）", confirmed_in_sent: "已核对发送副本" }[value] || value)}</dd>`,
+                `<dt>${esc({ message_id: t("邮件标识"), thread_id: t("邮件会话标识"), event_id: t("日历事件标识"), url: t("外部事件链接"), submission_status: t("提交状态"), sent_copy_id: t("发送副本标识") }[key] || key)}</dt><dd>${esc({ smtp_accepted: t("QQ 服务器已接受（不代表最终送达）"), confirmed_in_sent: t("已核对发送副本") }[value] || value)}</dd>`,
             )
             .join("")}</dl>`
         : ""
-    }<p class="form-note">确认后由销售任务进程执行。取消仅适用于尚未开始的动作。</p><div class="actions">${record.status === "pending_confirmation" ? '<button id="approve-action" class="primary">确认并加入执行队列</button>' : ""}${["pending_confirmation", "approved"].includes(record.status) ? '<button id="cancel-action">取消动作</button>' : ""}${record.status === "running" ? '<button id="interrupt-action">已核实进程中断，标记待核对</button>' : ""}${record.status === "uncertain" ? '<button id="verify-action">到外部服务核对结果</button>' : ""}</div>`,
+    }<p class="form-note">确认后由销售任务进程执行。取消仅适用于尚未开始的动作。</p><div class="actions">${record.status === "pending_confirmation" ? h('<button id="approve-action" class="primary">确认并加入执行队列</button>') : ""}${["pending_confirmation", "approved"].includes(record.status) ? h('<button id="cancel-action">取消动作</button>') : ""}${record.status === "running" ? h('<button id="interrupt-action">已核实进程中断，标记待核对</button>') : ""}${record.status === "uncertain" ? h('<button id="verify-action">到外部服务核对结果</button>') : ""}</div>`,
   );
   for (const [id, command, value] of [
     ["approve-action", "decide", "approved"],
@@ -735,8 +739,8 @@ function renderActions(record) {
  * 约束：不会扩展既有只读 Gmail 连接；配置不足显示明确错误。 */
 function connectionForm() {
   showDialog(
-    "连接外部服务",
-    '<p>Gmail 连接申请发送与核对已发送邮件权限；日历连接申请事件管理与读取权限。原邮件同步连接保持独立。</p><div class="actions"><button id="connect-qq-send">连接 QQ 发信</button><button data-provider="gmail">连接 Gmail 发信</button><button data-provider="calendar">连接 Google 日历</button></div>',
+    t("连接外部服务"),
+    h('<p>Gmail 连接申请发送与核对已发送邮件权限；日历连接申请事件管理与读取权限。原邮件同步连接保持独立。</p><div class="actions"><button id="connect-qq-send">连接 QQ 发信</button><button data-provider="gmail">连接 Gmail 发信</button><button data-provider="calendar">连接 Google 日历</button></div>'),
   );
   $("connect-qq-send").hidden = !qqEnabled;
   $("connect-qq-send").onclick = qqConnectionForm;
@@ -755,8 +759,8 @@ function connectionForm() {
  * 输出：无。逻辑：QQ 关闭时拒绝打开；启用后提交固定连接入口并清空授权码。
  * 约束：仅验证登录，不发送邮件；不保存到浏览器缓存，不复用收信授权。 */
 function qqConnectionForm() {
-  if (!qqEnabled) throw new Error("QQ 邮箱功能暂时停用。");
-  showDialog("连接 QQ 发信", '<form id="qq-send-form"><div class="form-grid"><label class="wide">QQ 或 foxmail 邮箱<input name="address" type="email" autocomplete="off" required></label><label class="wide">客户端授权码<input name="authorization_code" type="password" autocomplete="new-password" minlength="16" maxlength="16" required></label></div><p class="form-note">与 QQ 收信连接独立。此操作仅验证连接；发送前仍需预览并确认。请在 QQ 邮箱中开启 SMTP；核对发送结果还需开启 IMAP 并保留发送副本。</p><div class="actions"><button class="primary">验证并连接发信</button></div></form>');
+  if (!qqEnabled) throw new Error(t("QQ 邮箱功能暂时停用。"));
+  showDialog(t("连接 QQ 发信"), h('<form id="qq-send-form"><div class="form-grid"><label class="wide">QQ 或 foxmail 邮箱<input name="address" type="email" autocomplete="off" required></label><label class="wide">客户端授权码<input name="authorization_code" type="password" autocomplete="new-password" minlength="16" maxlength="16" required></label></div><p class="form-note">与 QQ 收信连接独立。此操作仅验证连接；发送前仍需预览并确认。请在 QQ 邮箱中开启 SMTP；核对发送结果还需开启 IMAP 并保留发送副本。</p><div class="actions"><button class="primary">验证并连接发信</button></div></form>'));
   const form = $("qq-send-form");
   $("editor").addEventListener("close", () => { form.elements.authorization_code.value = ""; }, { once: true });
   form.onsubmit = (event) => {
@@ -782,11 +786,11 @@ async function refreshDirectory() {
   const selected = $("company-filter").value;
   companies = await allRows("directory/?archived=all");
   $("company-filter").innerHTML =
-    '<option value="">全部客户</option>' +
+    h('<option value="">全部客户</option>') +
     companies
       .map(
         (c) =>
-          `<option value="${esc(c.id)}">${esc(nameOf(c))}${c.archived ? "（已归档）" : ""}</option>`,
+          `<option value="${esc(c.id)}">${esc(nameOf(c))}${c.archived ? t("（已归档）") : ""}</option>`,
       )
       .join("");
   $("company-filter").value = selected;
@@ -814,11 +818,11 @@ async function loadPage() {
   $("business-notice").hidden = true;
   const title =
     resource === "directory"
-      ? "客户目录"
+      ? t("客户目录")
       : resource === "audit"
-        ? "操作审计"
-        : metadata[resource]?.label;
-  if (!title) throw new Error("该业务页面不存在。");
+        ? t("操作审计")
+        : t(metadata[resource]?.label || "");
+  if (!title) throw new Error(t("该业务页面不存在。"));
   $("page-title").textContent = title;
   $("list-title").textContent = title;
   const supportsCompany = resource === "directory" || resource === "audit" || metadata[resource]?.fields.some(field => field.name === "company");
@@ -829,12 +833,12 @@ async function loadPage() {
   $("create-business").hidden = !creatable;
   $("create-business").textContent =
     resource === "connections"
-      ? "连接服务"
+      ? t("连接服务")
       : resource === "files"
-        ? "上传附件"
+        ? t("上传附件")
         : resource === "actions"
-          ? "准备动作"
-          : `＋ 新建${title.replace("目录", "")}`;
+          ? t("准备动作")
+          : t`＋ 新建${title.replace(t("目录"), "")}`;
   const query = new URLSearchParams({
     page: String(page),
     page_size: "20",
@@ -843,8 +847,8 @@ async function loadPage() {
   const statusField = metadata[resource]?.fields.find(field => field.name === "status" && field.type === "choice");
   const status = new URLSearchParams(location.search).get("status") || "";
   $("status-filter-label").hidden = !statusField;
-  $("status-filter").innerHTML = '<option value="">全部状态</option>' + (statusField?.choices || []).map(value => `<option value="${esc(value)}">${esc(states[value] || value)}</option>`).join('');
-  if (status && !statusField?.choices.includes(status)) throw new Error("该页面不支持此状态筛选，请从导航重新进入。");
+  $("status-filter").innerHTML = h('<option value="">全部状态</option>') + (statusField?.choices || []).map(value => `<option value="${esc(value)}">${esc(states[value] || value)}</option>`).join('');
+  if (status && !statusField?.choices.includes(status)) throw new Error(t("该页面不支持此状态筛选，请从导航重新进入。"));
   $("status-filter").value = status;
   if (status) query.set("status", status);
   const company = $("company-filter").value;
@@ -861,7 +865,7 @@ async function loadPage() {
       : resource === "audit"
         ? "audit/"
         : `records/${resource}/`;
-  $("business-content").innerHTML = '<div class="empty">正在读取…</div>';
+  $("business-content").innerHTML = h('<div class="empty">正在读取…</div>');
   const [result, overview] = await Promise.all([
     salesRequest(`${path}?${query}`),
     salesRequest("overview/"),
@@ -869,10 +873,10 @@ async function loadPage() {
   if (turn !== generation) return;
   renderRows(resource, result.results);
   renderStats(overview);
-  $("record-count").textContent = `共 ${result.count} 条`;
+  $("record-count").textContent = t`共 ${result.count} 条`;
   const pages = Math.max(1, Math.ceil(result.count / 20));
   $("business-pagination").innerHTML =
-    `<button id="business-prev" ${page === 1 ? "disabled" : ""}>上一页</button><span>${page} / ${pages}</span><button id="business-next" ${page >= pages ? "disabled" : ""}>下一页</button>`;
+    h`<button id="business-prev" ${page === 1 ? "disabled" : ""}>上一页</button><span>${page} / ${pages}</span><button id="business-next" ${page >= pages ? "disabled" : ""}>下一页</button>`;
   $("business-prev").onclick = () => {
     page -= 1;
     perform(loadPage);
@@ -883,12 +887,12 @@ async function loadPage() {
   };
   $("list-description").textContent =
     resource === "actions"
-      ? "先审阅完整内容，再明确确认。失败或结果未知不会自动重试。"
+      ? t("先审阅完整内容，再明确确认。失败或结果未知不会自动重试。")
       : resource === "products"
-        ? "产品价格和人工库存独立维护，单据保留自己的价格快照。"
+        ? t("产品价格和人工库存独立维护，单据保留自己的价格快照。")
         : resource === "messages"
-          ? "已持久化的用户消息；聊天模型回复尚未接入。"
-          : "记录按当前账号及公司授权范围展示。";
+          ? t("已持久化的会话消息；回复以实际保存记录为准。")
+          : t("记录按当前账号及公司授权范围展示。");
 }
 
 /** 功能：渲染业务表格和详情入口。输入：resource、rows。
@@ -897,14 +901,14 @@ async function loadPage() {
 function renderRows(resource, rows) {
   if (!rows.length) {
     $("business-content").innerHTML =
-      '<div class="empty"><strong>这里还没有记录</strong>新建第一条业务记录，或调整客户与归档筛选。</div>';
+      h('<div class="empty"><strong>这里还没有记录</strong>新建第一条业务记录，或调整客户与归档筛选。</div>');
     return;
   }
   $("business-content").innerHTML =
-    `<table><thead><tr><th>${resource === "audit" ? "操作事件" : "名称 / 内容"}</th><th>客户 / 关联</th><th>状态</th><th>记录时间</th><th>操作</th></tr></thead><tbody>${rows
+    h`<table><thead><tr><th>${resource === "audit" ? t("操作事件") : t("名称 / 内容")}</th><th>客户 / 关联</th><th>状态</th><th>记录时间</th><th>操作</th></tr></thead><tbody>${rows
       .map(
         (row) =>
-          `<tr><td><strong>${esc(resource === "directory" ? nameOf(row) : row.name || row.title || row.number || row.subject || row.group_key || row.account || row.event || (row.content ? row.content.slice(0, 65) : metadata[resource]?.label))}</strong>${row.currency ? `<small>${esc(row.currency)} ${esc(row.total ?? row.amount ?? row.unit_price ?? "")}</small>` : ""}${
+          `<tr><td><strong>${esc(resource === "directory" ? nameOf(row) : row.name || row.title || row.number || row.subject || row.group_key || row.account || row.event || (row.content ? row.content.slice(0, 65) : t(metadata[resource]?.label || "")))}</strong>${row.currency ? `<small>${esc(row.currency)} ${esc(row.total ?? row.amount ?? row.unit_price ?? "")}</small>` : ""}${
             resource === "directory"
               ? `<small>${esc(
                   row.contacts
@@ -913,7 +917,7 @@ function renderRows(resource, rows) {
                     .join(" · "),
                 )}</small>`
               : ""
-          }</td><td>${esc(display(row.company || row.company_id || row.conversation || row.team || row.contact || (resource === "directory" ? row.domains.join(" · ") : ""), row.company || row.company_id ? "company" : ""))}</td><td><span class="badge">${esc(row.archived ? "已归档" : states[row.status] || states[row.role] || (row.read_at ? "已读" : resource === "notifications" ? "未读" : resource === "directory" ? (row.crm_status === "registered" ? "已建档" : "待建档") : "有效"))}</span></td><td>${esc(display(row.updated_at || row.created_at || "", "updated_at"))}</td><td><button data-record="${esc(row.id)}">${resource === "audit" ? "查看事件" : "查看详情"}</button></td></tr>`,
+          }</td><td>${esc(display(row.company || row.company_id || row.conversation || row.team || row.contact || (resource === "directory" ? row.domains.join(" · ") : ""), row.company || row.company_id ? "company" : ""))}</td><td><span class="badge">${esc(row.archived ? t("已归档") : states[row.status] || states[row.role] || (row.read_at ? t("已读") : resource === "notifications" ? t("未读") : resource === "directory" ? (row.crm_status === "registered" ? t("已建档") : t("待建档")) : t("有效")))}</span></td><td>${esc(display(row.updated_at || row.created_at || "", "updated_at"))}</td><td><button data-record="${esc(row.id)}">${resource === "audit" ? t("查看事件") : t("查看详情")}</button></td></tr>`,
       )
       .join("")}</tbody></table>`;
   for (const button of $("business-content").querySelectorAll("[data-record]"))
@@ -924,7 +928,7 @@ function renderRows(resource, rows) {
         else if (resource === "audit") {
           const row = rows.find((r) => r.id === button.dataset.record);
           showDialog(
-            "操作审计",
+            t("操作审计"),
             `<dl class="details">${Object.entries(row)
               .filter(([key]) => key !== "id")
               .map(
@@ -942,24 +946,24 @@ function renderRows(resource, rows) {
  * 约束：不把不同币种相加，不将确认订单净额标记为实际收入。 */
 function renderStats(overview) {
   $("business-stats").innerHTML = [
-    ["全部可见客户", overview.customers],
-    ["待处理工单", overview.open_tickets],
-    ["待跟进", overview.open_follow_ups],
-    ["未读提醒", overview.unread_notifications],
+    [t("全部可见客户"), overview.customers],
+    [t("待处理工单"), overview.open_tickets],
+    [t("待跟进"), overview.open_follow_ups],
+    [t("未读提醒"), overview.unread_notifications],
   ]
     .map(
       ([name, value]) =>
         `<div class="stat"><span>${name}</span><strong>${value}</strong></div>`,
     )
     .join("");
-  document.querySelector(".footnote").textContent = `已确认订单净额：${
+  document.querySelector(".footnote").textContent = t`已确认订单净额：${
     Object.entries(overview.confirmed_order_net)
       .map(([c, v]) => `${c} ${v}`)
-      .join(" / ") || "暂无"
+      .join(" / ") || t("暂无")
   }；开放商机预计金额：${
     Object.entries(overview.open_opportunity_amount)
       .map(([c, v]) => `${c} ${v}`)
-      .join(" / ") || "暂无"
+      .join(" / ") || t("暂无")
   }。各币种分别统计；库存由人工维护。`;
 }
 
@@ -974,14 +978,14 @@ async function boot() {
   }
   user = await request("accounts/me/");
   qqEnabled = (await request("demo/runtime/")).qq_enabled === true;
-  $("account").textContent = `当前员工：${user.username}`;
+  $("account").textContent = t`当前员工：${user.username}`;
   metadata = Object.fromEntries(
     (await salesRequest("catalog/")).resources.map((item) => [item.key, item]),
   );
   mountWorkspace(current);
   await refreshDirectory();
   const initialCompany = new URLSearchParams(location.search).get("company");
-  if (initialCompany && !companies.some(company => company.id === initialCompany)) throw new Error("链接中的客户不存在或当前账号无权访问。请从客户导航重新选择。");
+  if (initialCompany && !companies.some(company => company.id === initialCompany)) throw new Error(t("链接中的客户不存在或当前账号无权访问。请从客户导航重新选择。"));
   $("company-filter").value = initialCompany || "";
   $("close-editor").onclick = () => $("editor").close();
   $("refresh-business").onclick = (event) =>
@@ -1012,8 +1016,8 @@ async function boot() {
     perform(async () => {
       if (current === "directory") {
         showDialog(
-          "新建客户",
-          '<form id="new-company"><label>公司名称<input name="name" required maxlength="240"></label><div class="actions"><button class="primary">建立客户</button></div></form>',
+          t("新建客户"),
+          h('<form id="new-company"><label>公司名称<input name="name" required maxlength="240"></label><div class="actions"><button class="primary">建立客户</button></div></form>'),
         );
         $("new-company").onsubmit = (e) => {
           e.preventDefault();
