@@ -1,6 +1,6 @@
 """职责：集中声明工作台、业务、世界消息、管理、健康检查和 API 文档路由。
 实现：按 urlpatterns 分派请求；世界消息地图与详情共用展示模板，业务鉴权由被分派的视图执行。
-关联：组合 common.views、apps.accounts、apps.crm、apps.sales、apps.chat 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
+关联：组合 common.views、apps.accounts、apps.crm、apps.sales、apps.chat、apps.agent_tools 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
 
 目录：
 - 无
@@ -28,6 +28,7 @@ urlpatterns = [
     path("api/v1/health/ready/", ReadinessView.as_view(), name="health-ready"),
     path("api/v1/accounts/", include("apps.accounts.urls")),
     path("api/v1/sales/", include("apps.sales.urls")),
+    path("api/v1/agent-tools/", include("apps.agent_tools.urls")),
     path("api/v1/", include("apps.chat.urls")),
     path("api/v1/", include("apps.crm.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

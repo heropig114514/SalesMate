@@ -76,6 +76,185 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/agent-tools/call/:
+    post:
+      operationId: agent_tools_call
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - businessToolCredential: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent-tools/catalog/:
+    get:
+      operationId: agent_tools_catalog
+      tags:
+      - v1
+      security:
+      - businessToolCredential: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent-tools/credentials/:
+    get:
+      operationId: agent_tools_credentials_list
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: agent_tools_credentials_create
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent-tools/credentials/{credential_id}/:
+    delete:
+      operationId: agent_tools_credentials_revoke
+      parameters:
+      - in: path
+        name: credential_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/agent-tools/proposals/:
+    get:
+      operationId: agent_tools_proposals_read
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent-tools/proposals/{proposal_id}/:
+    get:
+      operationId: agent_tools_proposal_detail
+      parameters:
+      - in: path
+        name: proposal_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/agent-tools/proposals/{proposal_id}/decision/:
+    post:
+      operationId: agent_tools_proposal_decide
+      parameters:
+      - in: path
+        name: proposal_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/agent/analyses/:
     post:
       operationId: v1_agent_analyses_create
@@ -2957,6 +3136,11 @@ components:
       in: header
       name: Authorization
       description: Agent <service-token>; never a Gmail token.
+    businessToolCredential:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Tool <user-scoped-token>
     cookieAuth:
       type: apiKey
       in: cookie

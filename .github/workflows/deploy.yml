@@ -1,11 +1,12 @@
 # 职责：主分支提交通过隔离测试后，通知 Lightsail 自动拉取并部署该提交。
-# 实现：PR 验证后端、聊天与世界消息浏览器流程；main 推送或手动运行才用部署密钥，部署串行不取消。
+# 实现：PR 验证后端、聊天、业务 MCP/CLI 与浏览器流程；工具 SDK 在独立虚拟环境测试；main 推送或手动运行才部署。
 # 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
 # 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
 # DEPLOY_KEY/DEPLOY_HOST_KEY 为 GitHub 加密 secrets，前者只允许受限触发，后者固定服务器身份。
 # CELERY_BROKER_URL/CELERY_RESULT_BACKEND 为 CI Redis 地址；celery_pid 为临时消费者 PID。
 # SALESMATE_PLAYWRIGHT_MODULE/SALESMATE_BROWSER_PATH 指向 RUNNER_TEMP 中的隔离浏览器运行时。
+# RUNNER_TEMP/salesmate-tools-sdk 为工具 SDK 隔离环境，不改变 Web/Worker 依赖。
 name: Verify and deploy
 on:
   push:
@@ -65,6 +66,7 @@ jobs:
       - name: Check source documentation and deployment scripts
         run: |
           python backend/tools/check_docs.py
+          python backend/tools/check_docs.py integrations
           python backend/tools/test_check_docs.py
           python backend/tools/test_check_doc_changes.py
           bash -n backend/deploy/lightsail/deploy-from-git.sh
@@ -76,6 +78,11 @@ jobs:
           python -m unittest discover -s agent/tests
           python -m unittest discover -s test_tools/tests
           python backend/manage.py makemigrations --check --dry-run
+      - name: Verify standalone business CLI and MCP protocol
+        run: |
+          python -m venv "$RUNNER_TEMP/salesmate-tools-sdk"
+          "$RUNNER_TEMP/salesmate-tools-sdk/bin/python" -m pip install -r integrations/salesmate_tools/requirements.txt
+          "$RUNNER_TEMP/salesmate-tools-sdk/bin/python" -m unittest discover -s integrations/salesmate_tools/tests -v
       - name: Verify actual Redis and Celery roundtrip
         run: |
           export TASK_EXECUTION_MODE=celery

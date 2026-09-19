@@ -7,6 +7,7 @@ SalesMate/
 ├── README.md                         # 仓库概览与两方职责入口
 ├── .gitignore                        # 仓库级凭证及运行产物排除
 ├── agent/                            # Gmail History、L1–L4、可路由 Skill、CLI 和 Agent 测试
+├── integrations/salesmate_tools/      # 业务工具 HTTP SDK、CLI、stdio MCP 及协议测试
 ├── test_tools/                       # 独立 Gmail 测试邮件注入器和使用说明
 ├── .env.example                      # 共享配置模板
 ├── requirements.txt                  # 双方依赖入口
@@ -33,6 +34,7 @@ SalesMate/
     │   └── management/commands/       # 本地账号初始化
     ├── apps/sales/                    # 销售关系模型、权限、事务、外部动作和 sales_worker
     ├── apps/chat/                     # 只读聊天任务、证据、引用、知识版本和 chat_worker
+    ├── apps/agent_tools/              # 业务工具注册、独立用户委托、幂等与人工确认
     ├── common/                       # 日志、错误和健康检查
     ├── tests/                        # 框架、契约、业务与权限测试
     ├── frontend/

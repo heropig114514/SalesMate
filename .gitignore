@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 .venv/
+.tools-venv/
 venv/
 .conda/
 # Python and test output

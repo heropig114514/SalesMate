@@ -1,5 +1,7 @@
 # SalesMate 软件与 Agent 联调
 
+面向用户协作的 123 个后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
+
 页面现已统一为销售工作空间：共享导航、首页待办、客户跨页上下文和业务表单预填。入口与验证记录见 [统一工作空间](docs/unified-workspace.md)。
 
 客户详情和手动分析已接入持续只读更新，逐步显示已保存的邮件、画像与评分；阅读位置和未保存内容保留，失败时明确暂停。行为和验收见 [结果逐步展示](docs/live-results.md)。

@@ -1,4 +1,4 @@
-# 职责：每次 PR 或主分支更新时验证 backend Python 注释结构并列出变更复核项。
+# 职责：每次 PR 或主分支更新时验证 backend 与 integrations Python 注释结构并列出变更复核项。
 # 实现：完整 Git 历史、标准库检查器和隔离测试；不安装业务依赖或启动外部服务。
 # 关联：backend/tools/check_docs.py、check_doc_changes.py 及各自测试。
 # 目录：backend-docs 检查任务；无函数或类。
@@ -30,6 +30,8 @@ jobs:
         run: |
           python tools/test_check_docs.py
           python tools/test_check_doc_changes.py
+      - name: Check integration client documentation
+        run: python backend/tools/check_docs.py integrations
       - name: Report code and documentation changes
         env:
           DOC_BASE: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}

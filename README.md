@@ -17,6 +17,7 @@ SalesMate/
 │   ├── requirements/ # Python 依赖
 │   └── manage.py     # Django 管理入口
 ├── agent/            # Gmail History、L1–L4、可路由 Skill、后端 HTTP 客户端和测试
+├── integrations/     # 面向用户协作的业务工具 HTTP SDK、CLI 与 MCP 客户端
 ├── test_tools/       # 开发和测试人员可独立使用的全流程测试数据工具
 ├── .env.example      # 软件与 Agent 共用的配置模板
 ├── requirements.txt  # 两侧依赖的安装入口
@@ -42,6 +43,7 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 - [代码注释规范](backend/docs/coding-agent-guidelines.md)
 - [API 契约](backend/docs/api-contract.md)
 - [Agent 联调说明](backend/docs/agent-integration.md)
+- [Agent 业务工具接入](backend/docs/agent-business-tools.md)：123 个工具、独立用户委托、版本/幂等保护及人工确认，供 Agent 开发侧接入。
 - [世界消息地图与后续推送契约](backend/docs/world-news.md)：`/world/` 提供行业消息地图、摘要侧栏和详情页；当前使用明确标注的虚构演示数据。
 
 在仓库根目录启动本地工作台：
