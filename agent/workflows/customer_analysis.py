@@ -122,6 +122,11 @@ def generate_analysis(
         document = _as_document(analysis_input)
         generated_at = _clock_text(clock)
     except Exception as error:
+        logger.warning(
+            "l3_analysis_failed stage=input error_type=%s reason=%s",
+            type(error).__name__,
+            error if isinstance(error, AnalysisValidationError) else "invalid_input",
+        )
         return {
             "company_id": "",
             "input_version": "",
@@ -145,6 +150,11 @@ def generate_analysis(
         "generated_at": generated_at,
         "analysis_base_time": document.get("built_at"),
     }
+    started = perf_counter()
+    logger.info(
+        "l3_analysis_started company_id=%s input_version=%s prompt_version=%s",
+        company_id, input_version, ANALYSIS_PROMPT_VERSION,
+    )
 
     try:
         raw_text = analysis_provider(document)
@@ -154,6 +164,11 @@ def generate_analysis(
         validated = validate_analysis_payload(candidate, document)
     except Exception as first_error:
         final_error = first_error
+        logger.warning(
+            "l3_analysis_attempt_failed company_id=%s error_type=%s reason=%s",
+            company_id, type(first_error).__name__,
+            first_error if isinstance(first_error, (json.JSONDecodeError, AnalysisValidationError)) else "provider_unavailable",
+        )
         # 默认百炼输出若只是 JSON 或业务契约不合格，携带具体原因修正一次。
         # 网络、配置和自定义 provider 错误保持原行为，交由显式任务重试。
         if analysis_provider is bailian_analysis_provider and isinstance(
@@ -171,7 +186,18 @@ def generate_analysis(
                 validated = validate_analysis_payload(candidate, document)
             except Exception as retry_error:
                 final_error = retry_error
+                logger.warning(
+                    "l3_analysis_retry_failed company_id=%s error_type=%s reason=%s duration_ms=%s",
+                    company_id, type(retry_error).__name__,
+                    retry_error if isinstance(retry_error, (json.JSONDecodeError, AnalysisValidationError)) else "provider_unavailable",
+                    round((perf_counter() - started) * 1000),
+                )
             else:
+                logger.info(
+                    "l3_analysis_completed company_id=%s retry=True duration_ms=%s signal=%s",
+                    company_id, round((perf_counter() - started) * 1000),
+                    validated["list_view"].get("signal"),
+                )
                 return {
                     **base,
                     "status": "completed",
@@ -180,6 +206,10 @@ def generate_analysis(
                     "error": None,
                 }
 
+        logger.warning(
+            "l3_analysis_failed company_id=%s error_type=%s duration_ms=%s",
+            company_id, type(final_error).__name__, round((perf_counter() - started) * 1000),
+        )
         return {
             **base,
             "status": "failed",
@@ -191,6 +221,11 @@ def generate_analysis(
             },
         }
 
+    logger.info(
+        "l3_analysis_completed company_id=%s retry=False duration_ms=%s signal=%s",
+        company_id, round((perf_counter() - started) * 1000),
+        validated["list_view"].get("signal"),
+    )
     return {
         **base,
         "status": "completed",

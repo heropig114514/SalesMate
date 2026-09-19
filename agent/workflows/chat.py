@@ -92,6 +92,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from time import perf_counter
 from typing import Any, Mapping
 
 from agent.skills import load_skill
@@ -153,6 +154,14 @@ _FAILURE_MESSAGES = {
 }
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 logger = logging.getLogger("salesmate.chat")
+
+
+def _diagnostic_excerpt(value: str, limit: int = 160) -> str:
+    """只在校验失败日志中保留短片段，并遮盖常见联系方式。"""
+    excerpt = re.sub(r"\s+", " ", value).strip()
+    excerpt = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email]", excerpt)
+    excerpt = re.sub(r"(?<!\d)1[3-9]\d{9}(?!\d)", "[phone]", excerpt)
+    return excerpt[:limit] + ("…" if len(excerpt) > limit else "")
 
 
 # 功能：聊天边界数据不符合当前 Demo 的严格契约。
@@ -658,13 +667,25 @@ def answer_conversation_request(
     recognizable_request_id = _recognizable_request_id(request)
     try:
         parsed_request = parse_conversation_request(request)
-    except ChatValidationError:
+    except ChatValidationError as error:
+        logger.warning(
+            "chat_request_invalid request_id=%s reason=%s",
+            recognizable_request_id,
+            error,
+        )
         if recognizable_request_id is None:
             raise
         return stable_failure_result(recognizable_request_id, "invalid_request")
 
     request_id = parsed_request["request_id"]
+    logger.info(
+        "chat_request_started request_id=%s company_id=%s history_count=%s",
+        request_id,
+        parsed_request["company_id"],
+        len(parsed_request["recent_history"]),
+    )
     if _is_direct_tool_action(parsed_request["question"]):
+        logger.info("chat_request_short_circuit request_id=%s reason=direct_action", request_id)
         return _completed_result(
             request_id,
             "该操作未执行，当前仅支持问答，不会执行邮件、日历、CRM、文件或其他业务写操作。",
@@ -673,6 +694,7 @@ def answer_conversation_request(
     if _needs_matter_clarification(
         parsed_request["question"], parsed_request["recent_history"]
     ):
+        logger.info("chat_request_short_circuit request_id=%s reason=clarification", request_id)
         return _completed_result(
             request_id,
             "请问您指的是该客户的哪一项具体事项？",
@@ -685,11 +707,23 @@ def answer_conversation_request(
             expected_request_id=request_id,
             expected_scope="internal",
         )
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "chat_context_failed request_id=%s scope=internal error_type=%s reason=%s",
+            request_id,
+            type(error).__name__,
+            error if isinstance(error, ChatValidationError) else "unavailable",
+        )
         return stable_failure_result(request_id, "context_unavailable")
 
     if internal["customer_context_status"] == "failed":
+        logger.warning("chat_context_failed request_id=%s scope=customer status=failed", request_id)
         return stable_failure_result(request_id, "context_unavailable")
+    logger.info(
+        "chat_context_loaded request_id=%s scope=internal customer_items=%s knowledge_items=%s knowledge_status=%s gaps=%s external_available=%s",
+        request_id, len(internal["customer_context"]), len(internal["context_items"]),
+        internal["knowledge_status"], len(internal["retrieval_gaps"]), internal["external_available"],
+    )
     _add_missing_failure_gap(
         internal,
         scope="internal_knowledge",
@@ -704,9 +738,20 @@ def answer_conversation_request(
                 expected_request_id=request_id,
                 expected_scope="external",
             )
-        except Exception:
+        except Exception as error:
+            logger.warning(
+                "chat_context_failed request_id=%s scope=external error_type=%s reason=%s",
+                request_id,
+                type(error).__name__,
+                error if isinstance(error, ChatValidationError) else "unavailable",
+            )
             external = _failed_external_context(request_id)
         else:
+            logger.info(
+                "chat_context_loaded request_id=%s scope=external items=%s knowledge_status=%s gaps=%s",
+                request_id, len(external["context_items"]), external["knowledge_status"],
+                len(external["retrieval_gaps"]),
+            )
             _add_missing_failure_gap(
                 external,
                 scope="external_knowledge",
@@ -719,7 +764,8 @@ def answer_conversation_request(
             internal["context_items"],
             external["context_items"] if external is not None else [],
         )
-    except ChatValidationError:
+    except ChatValidationError as error:
+        logger.warning("chat_context_invalid request_id=%s stage=trim reason=%s", request_id, error)
         return stable_failure_result(request_id, "context_unavailable")
     usable = {
         group: [item for item in items if item["content"].strip()]
@@ -733,9 +779,16 @@ def answer_conversation_request(
     knowledge_failed = internal["knowledge_status"] == "failed" or (
         external is not None and external["knowledge_status"] == "failed"
     )
+    logger.info(
+        "chat_context_ready request_id=%s customer_items=%s internal_items=%s external_items=%s knowledge_failed=%s",
+        request_id, len(usable["customer_context"]), len(usable["internal_knowledge"]),
+        len(usable["external_knowledge"]), knowledge_failed,
+    )
     if not allowed_items:
         if knowledge_failed:
+            logger.warning("chat_request_failed request_id=%s reason=knowledge_unavailable", request_id)
             return stable_failure_result(request_id, "knowledge_unavailable")
+        logger.info("chat_request_completed request_id=%s reason=no_evidence", request_id)
         return _completed_result(
             request_id,
             "现有资料不足，无法回答该问题。",
@@ -760,15 +813,26 @@ def answer_conversation_request(
         external_context=model_external,
     )
 
+    model_started = perf_counter()
+    logger.info(
+        "chat_model_started request_id=%s prompt_version=%s messages=%s context_items=%s",
+        request_id, CHAT_PROMPT_VERSION, len(messages), len(allowed_items),
+    )
     try:
         raw_candidate = chat_provider(messages, max_tokens=CHAT_MAX_TOKENS)
     except Exception as error:
         logger.warning(
-            "chat_model_failed request_id=%s stage=provider error_type=%s",
+            "chat_model_failed request_id=%s stage=provider error_type=%s duration_ms=%s",
             request_id,
             type(error).__name__,
+            round((perf_counter() - model_started) * 1000),
         )
         return stable_failure_result(request_id, "model_unavailable")
+    logger.info(
+        "chat_model_completed request_id=%s duration_ms=%s output_chars=%s",
+        request_id, round((perf_counter() - model_started) * 1000),
+        len(raw_candidate) if isinstance(raw_candidate, str) else None,
+    )
     if not isinstance(raw_candidate, str):
         logger.warning(
             "chat_model_invalid request_id=%s stage=response_type actual_type=%s",
@@ -803,6 +867,10 @@ def answer_conversation_request(
         )
         return stable_failure_result(request_id, "invalid_model_output")
 
+    logger.info(
+        "chat_request_completed request_id=%s answer_chars=%s citations=%s",
+        request_id, len(candidate["assistant_text"]), len(candidate["citations"]),
+    )
     return _completed_result(
         request_id,
         candidate["assistant_text"],
@@ -1118,11 +1186,14 @@ def _validate_factual_sentence_markers(text: str) -> None:
         for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", normalized)
         if sentence.strip()
     ]
-    for sentence in sentences:
+    for index, sentence in enumerate(sentences, start=1):
         if _is_nonfactual_gap_sentence(sentence) or _is_nonfactual_heading(sentence):
             continue
         if not _CITATION_MARKER.search(sentence):
-            raise ChatValidationError("每个事实性句子都必须含 Citation marker。")
+            raise ChatValidationError(
+                "每个事实性句子都必须含 Citation marker。"
+                f" sentence_index={index}/{len(sentences)} excerpt={_diagnostic_excerpt(sentence)!r}"
+            )
 
 
 # 只有纯结构标题可不带引用；包含预算、时间等客户事实的标题仍须引用。
@@ -1178,7 +1249,7 @@ def _validate_deterministic_citation_support(
         for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", normalized)
         if sentence.strip() and _CITATION_MARKER.search(sentence)
     ]
-    for sentence in sentences:
+    for index, sentence in enumerate(sentences, start=1):
         marker_indexes = {int(value) for value in _CITATION_MARKER.findall(sentence)}
         cited_items = [
             item
@@ -1198,10 +1269,18 @@ def _validate_deterministic_citation_support(
         claim_numbers = _number_tokens(claim)
         evidence_numbers = _number_tokens(evidence_text)
         if claim_numbers - evidence_numbers:
-            raise ChatValidationError("回答中的数值未被所引用来源支持。")
+            raise ChatValidationError(
+                "回答中的数值未被所引用来源支持。"
+                f" cited_sentence_index={index} unsupported_numbers={sorted(claim_numbers - evidence_numbers)}"
+                f" excerpt={_diagnostic_excerpt(sentence)!r}"
+            )
 
         if not (_support_units(claim) & _support_units(evidence_text)):
-            raise ChatValidationError("事实性句子与所引用来源缺少可验证的语义关联。")
+            raise ChatValidationError(
+                "事实性句子与所引用来源缺少可验证的语义关联。"
+                f" cited_sentence_index={index} markers={sorted(marker_indexes)}"
+                f" excerpt={_diagnostic_excerpt(sentence)!r}"
+            )
 
 
 # 功能：提取数值和百分号并归一化整数及小数尾零。
@@ -1601,6 +1680,11 @@ def process_chat_once(
         return None
 
     request_id = _recognizable_request_id(claimed_request)
+    logger.info(
+        "chat_request_claimed request_id=%s mode=%s",
+        request_id,
+        "general" if isinstance(claimed_request, Mapping) and claimed_request.get("company_id", "missing") is None else "customer",
+    )
     if request_id is None:
         # 无安全可识别的 request_id 时无法回报；严格请求解析会在此失败，
         # 而不会调用上下文、模型或 report 接口。
@@ -1620,12 +1704,20 @@ def process_chat_once(
         )
     try:
         backend.report_answer(result)
-    except Exception:
+    except Exception as error:
+        logger.error(
+            "chat_report_failed request_id=%s result_status=%s error_type=%s",
+            request_id, result["status"], type(error).__name__,
+        )
         # Report Answer 失败只形成本地结果。Demo 不自动重试，也不伪装已保存。
         return {
             **stable_failure_result(request_id, "report_failed"),
             "chat_prompt_version": result["chat_prompt_version"],
         }
+    logger.info(
+        "chat_report_completed request_id=%s status=%s code=%s",
+        request_id, result["status"], (result["error"] or {}).get("code"),
+    )
     return result
 
 

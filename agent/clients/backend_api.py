@@ -71,8 +71,10 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Mapping, Protocol
 from urllib.parse import urlencode
 
@@ -82,6 +84,7 @@ from agent.skills import load_skill
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
+logger = logging.getLogger("salesmate.agent.backend_api")
 
 
 # 功能：L1–L4 与只读聊天 workflow 使用的最小真实后端接口。
@@ -923,6 +926,7 @@ class DjangoBackendClient:
         url = self.base_url + path.lstrip("/")
         if query:
             url += "?" + urlencode(query)
+        started = perf_counter()
         try:
             response = self._session.request(
                 method,
@@ -932,6 +936,10 @@ class DjangoBackendClient:
                 timeout=self.timeout,
             )
         except requests.RequestException as error:
+            logger.warning(
+                "backend_request_failed method=%s path=%s stage=network error_type=%s duration_ms=%s",
+                method, path, type(error).__name__, round((perf_counter() - started) * 1000),
+            )
             raise BackendRequestError(
                 0, "network_error", type(error).__name__
             ) from None
@@ -940,12 +948,25 @@ class DjangoBackendClient:
             return None, response.headers
         if not 200 <= response.status_code < 300:
             code, detail = self._error(response)
+            logger.warning(
+                "backend_request_failed method=%s path=%s status=%s code=%s request_id=%s duration_ms=%s",
+                method, path, response.status_code, code,
+                response.headers.get("X-Request-ID"), round((perf_counter() - started) * 1000),
+            )
             raise BackendRequestError(response.status_code, code, detail)
+        logger.debug(
+            "backend_request_completed method=%s path=%s status=%s duration_ms=%s",
+            method, path, response.status_code, round((perf_counter() - started) * 1000),
+        )
         if response.status_code == 204 or not response.content:
             return None, response.headers
         try:
             return response.json(), response.headers
         except ValueError:
+            logger.warning(
+                "backend_request_failed method=%s path=%s stage=response_json status=%s",
+                method, path, response.status_code,
+            )
             raise BackendContractError("后端成功响应不是有效 JSON。") from None
 
     # 功能：验证并提取公司 ID。

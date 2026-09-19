@@ -10,10 +10,12 @@
 
 import json
 import logging
+from time import perf_counter
 
 from . import chat
 
 PROMPT_VERSION = "general-chat-v1"
+logger = logging.getLogger("salesmate.general_chat")
 PROMPT = """你是 SalesMate 的通用聊天助手。用户无需选择客户即可与你讨论问题、解释概念、翻译、写作、起草邮件或制定计划。
 可以使用一般知识与推理回答，不要求普通交流必须存在客户资料。不要捏造用户、客户、公司或系统中的事实。涉及具体客户但当前输入没有资料时，请用户补充资料或从客户页面打开客户问答。
 当前没有浏览网页或执行系统操作的工具，不能声称已查询实时新闻、读取其他客户、发送邮件、安排会议或修改记录。用户要求动作时说明尚未执行，并可协助起草文本。
@@ -29,6 +31,7 @@ PROMPT = """你是 SalesMate 的通用聊天助手。用户无需选择客户即
 def answer(request, *, backend, chat_provider):
     request_id = chat._recognizable_request_id(request)
     code = "invalid_request"
+    logger.info("general_chat_started request_id=%s", request_id)
     try:
         chat._keys(request, chat._REQUEST_FIELDS, "request")
         if request["company_id"] is not None:
@@ -48,9 +51,11 @@ def answer(request, *, backend, chat_provider):
             or context["knowledge_status"] != "completed"
         ):
             raise chat.ChatValidationError("通用上下文不可用或包含客户数据。")
-        knowledge = chat.trim_context_items([], context["context_items"], [])[
-            "internal_knowledge"
-        ]
+        knowledge = chat.trim_context_items([], context["context_items"], [])["internal_knowledge"]
+        logger.info(
+            "general_chat_context_ready request_id=%s history_count=%s knowledge_items=%s gaps=%s",
+            request_id, len(history), len(knowledge), len(context["retrieval_gaps"]),
+        )
         messages = [
             {"role": "system", "content": PROMPT},
             *history,
@@ -66,11 +71,22 @@ def answer(request, *, backend, chat_provider):
             },
         ]
         code = "model_unavailable"
+        model_started = perf_counter()
+        logger.info("general_chat_model_started request_id=%s messages=%s", request_id, len(messages))
         raw = chat_provider(messages, max_tokens=chat.CHAT_MAX_TOKENS)
+        logger.info(
+            "general_chat_model_completed request_id=%s duration_ms=%s output_chars=%s",
+            request_id, round((perf_counter() - model_started) * 1000),
+            len(raw) if isinstance(raw, str) else None,
+        )
         code = "invalid_model_output"
         if not isinstance(raw, str):
             raise chat.ChatValidationError("模型结果必须为 JSON 文本。")
         candidate = chat.parse_model_candidate(raw, allowed_context_items=knowledge)
+        logger.info(
+            "general_chat_completed request_id=%s answer_chars=%s citations=%s",
+            request_id, len(candidate["assistant_text"]), len(candidate["citations"]),
+        )
         return {
             "request_id": request_id,
             "chat_prompt_version": PROMPT_VERSION,
@@ -79,7 +95,7 @@ def answer(request, *, backend, chat_provider):
             "error": None,
         }
     except Exception as error:
-        logging.getLogger("salesmate.general_chat").warning(
+        logger.warning(
             "general_chat_failed request_id=%s stage=%s error_type=%s reason=%s",
             request_id,
             code,

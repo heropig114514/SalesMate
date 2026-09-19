@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from time import perf_counter
 from typing import Any, Callable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +16,7 @@ from agent.skills import load_skill
 
 
 _SIGNAL_SKILL = load_skill("l4-priority-signals")
+logger = logging.getLogger("salesmate.agent.lead_score")
 SCORE_VERSION = "score-v2"
 PRIORITY_WEIGHTS = {
     "urgency": Decimal("0.35"),
@@ -62,7 +65,17 @@ def extract_priority_signals(
 ) -> list[dict[str, Any]]:
     """抽取并核对每条信号的邮件来源与原文证据。"""
     messages = _priority_messages(context.get("communications"), analysis_input)
-    raw = provider(context)
+    company_id = analysis_input.get("company_id")
+    started = perf_counter()
+    logger.info("l4_signals_started company_id=%s messages=%s", company_id, len(messages))
+    try:
+        raw = provider(context)
+    except Exception as error:
+        logger.warning(
+            "l4_signals_failed company_id=%s stage=provider error_type=%s duration_ms=%s",
+            company_id, type(error).__name__, round((perf_counter() - started) * 1000),
+        )
+        raise
     if not isinstance(raw, str):
         raise ValueError("L4 信号模型必须返回 JSON 文本。")
     try:
@@ -73,7 +86,16 @@ def extract_priority_signals(
         raise ValueError("L4 信号输出只能包含 signals 数组。")
     if not isinstance(candidate["signals"], list):
         raise ValueError("L4 signals 必须是数组。")
-    return _priority_signals(candidate["signals"], analysis_input, messages)
+    try:
+        signals = _priority_signals(candidate["signals"], analysis_input, messages)
+    except ValueError as error:
+        logger.warning("l4_signals_failed company_id=%s stage=validation reason=%s", company_id, error)
+        raise
+    logger.info(
+        "l4_signals_completed company_id=%s count=%s duration_ms=%s",
+        company_id, len(signals), round((perf_counter() - started) * 1000),
+    )
+    return signals
 
 
 def compute_score(
@@ -115,6 +137,11 @@ def compute_priority_result(
             priority_doc, input_doc, provider=signal_provider
         )
     score = _compute_priority(analysis_doc, input_doc, priority_doc, now)
+    logger.info(
+        "l4_score_computed company_id=%s score=%s reason_features=%s",
+        input_doc.get("company_id"), score.get("score"),
+        [reason.get("feature") for reason in score.get("score_reasons", [])],
+    )
     return {"score": score, "details": _priority_details(score, priority_doc, input_doc, now)}
 
 

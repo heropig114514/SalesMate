@@ -1,15 +1,17 @@
 """Gmail 单封邮件的 L1 事实理解工作流。"""
 
 import json
-import sys
+import logging
 import unicodedata
 from email.utils import getaddresses
+from time import perf_counter
 
 from agent.llm.bailian import generate_json
 from agent.skills import load_skill
 
 
 _EXTRACTION_SKILL = load_skill("email-fact-extraction")
+logger = logging.getLogger("salesmate.agent.l1_email")
 EXTRACT_PROMPT_VERSION = _EXTRACTION_SKILL.version
 L1_EXTRACTION_PROMPT = _EXTRACTION_SKILL.instructions
 
@@ -66,8 +68,6 @@ LIST_UNSUBSCRIBE_REASON = "命中 List-Unsubscribe 规则。"
 AUTO_SUBMITTED_REASON = "命中 Auto-Submitted 自动邮件规则。"
 NO_REPLY_REASON = "命中 no-reply 发件地址规则。"
 SAFE_EXTRACTION_ERROR = "事实抽取失败。"
-# 开发阶段开启详细错误；部署生产环境前改为 False。
-DEBUG_EXTRACTION_ERRORS = True
 NON_BUSINESS_REASONS = frozenset(
     {
         LIST_UNSUBSCRIBE_REASON,
@@ -325,6 +325,7 @@ def validate_email_submission(candidate, eligible_body_text: str | None = None) 
 
 def process_email(email: dict, mailbox_address: str, extraction_provider=None) -> dict:
     """按固定顺序组装并校验一封邮件的精确 EmailSubmission。"""
+    started = perf_counter()
     normalized_mailbox = _extract_mailbox(mailbox_address)
     sender = _extract_mailbox(email.get("from"))
     direction = classify_direction(sender, mailbox_address)
@@ -353,12 +354,21 @@ def process_email(email: dict, mailbox_address: str, extraction_provider=None) -
             non_business_reason=non_business_reason,
             extract_status="skipped_non_business",
         )
-        return validate_email_submission(result, eligible_body_text)
+        submission = validate_email_submission(result, eligible_body_text)
+        logger.info(
+            "l1_email_skipped message_id=%s reason=%s",
+            result["gmail_message_id"], non_business_reason,
+        )
+        return submission
 
     provider = (
         bailian_extraction_provider
         if extraction_provider is None
         else extraction_provider
+    )
+    logger.info(
+        "l1_email_started message_id=%s direction=%s body_chars=%s prompt_version=%s",
+        result["gmail_message_id"], direction, len(eligible_body_text), EXTRACT_PROMPT_VERSION,
     )
     try:
         candidate = provider(result["subject"], eligible_body_text)
@@ -369,18 +379,19 @@ def process_email(email: dict, mailbox_address: str, extraction_provider=None) -
         )
     except Exception as first_error:
         final_error = first_error
+        logger.warning(
+            "l1_email_attempt_failed message_id=%s retryable=%s error_type=%s reason=%s",
+            result["gmail_message_id"],
+            provider is bailian_extraction_provider and isinstance(first_error, FactValidationError),
+            type(first_error).__name__,
+            first_error if isinstance(first_error, FactValidationError) else "provider_unavailable",
+        )
         # 百炼偶尔会返回格式正确但证据片段无法定位的结果。只对这种模型
         # 校验错误立即重试一次；网络、配置和自定义 provider 错误留到下轮同步。
         if (
             provider is bailian_extraction_provider
             and isinstance(first_error, FactValidationError)
         ):
-            if DEBUG_EXTRACTION_ERRORS:
-                print(
-                    "[DEBUG] 首次事实抽取未通过校验，正在重试："
-                    f"{type(first_error).__name__}: {first_error}",
-                    file=sys.stderr,
-                )
             try:
                 candidate = bailian_extraction_provider(
                     result["subject"],
@@ -394,15 +405,27 @@ def process_email(email: dict, mailbox_address: str, extraction_provider=None) -
                 )
             except Exception as retry_error:
                 final_error = retry_error
+                logger.warning(
+                    "l1_email_retry_failed message_id=%s error_type=%s reason=%s duration_ms=%s",
+                    result["gmail_message_id"], type(retry_error).__name__,
+                    retry_error if isinstance(retry_error, FactValidationError) else "provider_unavailable",
+                    round((perf_counter() - started) * 1000),
+                )
             else:
                 result.update(extract_status="completed", facts=facts)
-                return validate_email_submission(result, eligible_body_text)
+                submission = validate_email_submission(result, eligible_body_text)
+                logger.info(
+                    "l1_email_completed message_id=%s retry=True duration_ms=%s intent=%s",
+                    result["gmail_message_id"], round((perf_counter() - started) * 1000),
+                    facts.get("intent_hint"),
+                )
+                return submission
 
-        if DEBUG_EXTRACTION_ERRORS:
-            print(
-                f"[DEBUG] 事实抽取失败：{type(final_error).__name__}: {final_error}",
-                file=sys.stderr,
-            )
+        logger.warning(
+            "l1_email_failed message_id=%s error_type=%s duration_ms=%s",
+            result["gmail_message_id"], type(final_error).__name__,
+            round((perf_counter() - started) * 1000),
+        )
         result.update(
             extract_status="failed",
             extract_error=SAFE_EXTRACTION_ERROR,
@@ -410,7 +433,13 @@ def process_email(email: dict, mailbox_address: str, extraction_provider=None) -
         return validate_email_submission(result, eligible_body_text)
 
     result.update(extract_status="completed", facts=facts)
-    return validate_email_submission(result, eligible_body_text)
+    submission = validate_email_submission(result, eligible_body_text)
+    logger.info(
+        "l1_email_completed message_id=%s retry=False duration_ms=%s intent=%s",
+        result["gmail_message_id"], round((perf_counter() - started) * 1000),
+        facts.get("intent_hint"),
+    )
+    return submission
 
 
 def _base_submission(

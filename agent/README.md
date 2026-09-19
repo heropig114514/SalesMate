@@ -82,7 +82,14 @@ python -m unittest agent.tests.test_chat agent.tests.test_core agent.tests.test_
 python -m unittest discover -s agent/tests -p "test_*.py"
 ```
 
-`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。纯结构标题不要求引用，列表序号不作为业务数字核对；事实标题和正文仍须由证据支持。句末引用规范化会保留换行，避免分点回答产生孤立标点。模型结果不合规时，Agent 日志记录 `request_id`、失败阶段和校验规则，不记录模型原文、客户上下文或凭证；部署后可用 `journalctl -u salesmate-chat` 对照请求排查。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
+`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。纯结构标题不要求引用，列表序号不作为业务数字核对；事实标题和正文仍须由证据支持。句末引用规范化会保留换行，避免分点回答产生孤立标点。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
+
+开发阶段的 Agent 日志按 `request_id`、`gmail_message_id`、`company_id` 和 `job_id` 串联阶段：Gmail 读取与逐封提交、L1 抽取及重试、L2 归并、L3 模型与缓存、L4 信号与评分、聊天上下文/模型/校验/回报，以及后端 HTTP 失败。日志记录状态、数量、耗时、异常类型和校验原因，不记录 OAuth token、API Key、完整模型输出或完整客户上下文。聊天引用校验失败还记录句子序号与最多 160 字的失败句片段，遮盖常见邮箱和手机号；**该片段仍可能含客户业务信息，服务器日志应仅供开发人员排障，不要公开转发**。例如：
+
+```bash
+sudo journalctl -u salesmate-chat -f
+sudo journalctl -u salesmate-crm -n 300 --no-pager | grep -E 'gmail_sync_|l1_email_|l3_analysis_|l4_|company_analysis_'
+```
 
 ## 2. 目录职责
 

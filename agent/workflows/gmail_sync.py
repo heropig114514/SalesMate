@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import logging
+from time import perf_counter
 from typing import Any, Callable, Iterator, Mapping
 
 from agent.clients.backend_api import BackendClient
@@ -50,6 +52,7 @@ from agent.workflows.l1_email import (
 
 
 EMAIL_EXTRACTION_WORKERS = 4
+logger = logging.getLogger("salesmate.agent.gmail_sync")
 
 
 # 功能：同步一个邮箱并逐封保存 L1 结果。
@@ -78,6 +81,11 @@ def sync_gmail(
     if type(max_results) is not int or not 1 <= max_results <= 20:
         return _failed(mailbox_id, "invalid_authorization", "max_results 必须在 1 到 20 之间。")
 
+    started = perf_counter()
+    logger.info(
+        "gmail_sync_started mailbox_id=%s max_results=%s explicit_ids=%s",
+        mailbox_id, max_results, len(message_ids) if message_ids is not None else None,
+    )
     read_failures = []
 
     # 功能：转发进度并收集读取失败 ID。
@@ -106,12 +114,20 @@ def sync_gmail(
                 service, max_results, sync_state, progress=observer,
             )
     except Exception as error:
+        logger.warning(
+            "gmail_sync_failed mailbox_id=%s stage=read error_type=%s duration_ms=%s",
+            mailbox_id, type(error).__name__, round((perf_counter() - started) * 1000),
+        )
         return _failed(
             mailbox_id,
             "gmail_authorization_required",
             f"Gmail 读取失败：{type(error).__name__}: {error}",
         )
 
+    logger.info(
+        "gmail_sync_fetched mailbox_id=%s mode=%s fetched=%s pending=%s read_failures=%s",
+        mailbox_id, sync_mode, len(emails), len(pending_message_ids), len(read_failures),
+    )
     try:
         (
             submitted,
@@ -130,6 +146,10 @@ def sync_gmail(
             progress=observer,
         )
     except Exception as error:
+        logger.warning(
+            "gmail_sync_failed mailbox_id=%s stage=lookup_or_extract error_type=%s duration_ms=%s",
+            mailbox_id, type(error).__name__, round((perf_counter() - started) * 1000),
+        )
         return _failed(
             mailbox_id,
             "backend_email_lookup_failed",
@@ -150,6 +170,12 @@ def sync_gmail(
         next_cursor,
         pending_message_ids,
         retry_message_ids,
+    )
+    logger.info(
+        "gmail_sync_completed mailbox_id=%s fetched=%s processed=%s skipped=%s l1_failed=%s submit_failed=%s retry=%s cursor_saved=%s duration_ms=%s",
+        mailbox_id, len(emails), l1_processed_count, skipped_existing_count,
+        len(l1_failed_message_ids), len(submission_retry_ids), len(retry_message_ids),
+        cursor_saved, round((perf_counter() - started) * 1000),
     )
 
     return {
@@ -224,6 +250,10 @@ def _extract_new_or_retryable_emails(
                 try:
                     stored = reader(mailbox_id, dedupe_key)
                 except Exception as error:
+                    logger.warning(
+                        "gmail_email_failed mailbox_id=%s message_id=%s stage=lookup error_type=%s",
+                        mailbox_id, message_id, type(error).__name__,
+                    )
                     retry_message_ids.append(message_id)
                     if progress:
                         progress("failed", {"gmail_message_id": message_id, "stage": "lookup", "code": "stored_email_lookup_failed"})
@@ -232,6 +262,7 @@ def _extract_new_or_retryable_emails(
                     )
                     continue
             if _can_reuse_stored_extraction(stored):
+                logger.info("gmail_email_reused mailbox_id=%s message_id=%s", mailbox_id, message_id)
                 skipped_existing_count += 1
                 if progress:
                     progress("completed", {"gmail_message_id": message_id})
@@ -247,6 +278,10 @@ def _extract_new_or_retryable_emails(
     for email, stored, submission, error in processed:
         message_id = _email_message_id(email)
         if error is not None:
+            logger.warning(
+                "gmail_email_failed mailbox_id=%s message_id=%s stage=l1 error_type=%s",
+                mailbox_id, message_id, type(error).__name__,
+            )
             if progress:
                 progress("failed", {"gmail_message_id": message_id, "stage": "extracting", "code": "email_processing_failed"})
             if message_id is not None:
@@ -295,6 +330,12 @@ def _extract_new_or_retryable_emails(
             progress("persisting", {"gmail_message_id": message_id})
         current, current_retry_ids, current_errors = _submit_emails_individually(
             backend, [submission]
+        )
+        logger.info(
+            "gmail_email_processed mailbox_id=%s message_id=%s extract_status=%s submit_failed=%s created=%s updated=%s duplicate=%s",
+            mailbox_id, message_id, submission.get("extract_status"), bool(current_retry_ids),
+            current.get("created_count", 0), current.get("updated_count", 0),
+            current.get("duplicate_count", 0),
         )
         if progress:
             failed = bool(current_retry_ids) or submission.get("extract_status") == "failed"
@@ -379,6 +420,10 @@ def _submit_emails_individually(
         try:
             result = backend.submit_emails([submission])
         except Exception as error:
+            logger.warning(
+                "gmail_email_failed message_id=%s stage=submission error_type=%s",
+                message_id, type(error).__name__,
+            )
             if message_id is not None:
                 retry_message_ids.append(message_id)
             errors.append(

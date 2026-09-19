@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Mapping
 
 from agent.clients.backend_api import BackendClient
@@ -11,6 +12,7 @@ from agent.workflows.gmail_sync import sync_gmail
 from agent.workflows.l1_email import bailian_extraction_provider
 from agent.workflows.orchestration import process_jobs_once
 
+logger = logging.getLogger("salesmate.agent.authorized_gmail_sync")
 
 def sync_authorized_mailboxes_once(
     *,
@@ -21,9 +23,11 @@ def sync_authorized_mailboxes_once(
 ) -> list[dict[str, Any]]:
     """领取网页同步请求，先回报 Gmail/L1，再在后台继续处理公司任务。"""
     claims = backend.claim_mailbox_syncs(limit)
+    logger.info("authorized_gmail_claimed count=%s limit=%s", len(claims), limit)
     reports: list[dict[str, Any]] = []
     for claim in claims:
         mailbox_id = str(claim["mailbox_id"])
+        logger.info("authorized_gmail_started mailbox_id=%s", mailbox_id)
         refreshed_authorization: dict[str, Any] | None = None
         try:
             service, refreshed_authorization = create_service_from_authorization(
@@ -49,6 +53,10 @@ def sync_authorized_mailboxes_once(
                 else None
             )
         except Exception as exception:
+            logger.warning(
+                "authorized_gmail_failed mailbox_id=%s error_type=%s",
+                mailbox_id, type(exception).__name__,
+            )
             status = "failed"
             error = f"{type(exception).__name__}: {exception}"
             sync_result = {
@@ -65,6 +73,11 @@ def sync_authorized_mailboxes_once(
                 "error": error,
                 "authorization": refreshed_authorization,
             }
+        )
+        logger.info(
+            "authorized_gmail_reported mailbox_id=%s status=%s fetched=%s failed=%s",
+            mailbox_id, status, sync_result.get("fetched_count"),
+            sync_result.get("failed_email_count"),
         )
         reports.append(sync_result)
 
@@ -83,6 +96,7 @@ def sync_authorized_mailboxes_once(
     for result in reports:
         if result.get("status") == "completed":
             result["job_reports"] = job_reports
+    logger.info("authorized_gmail_completed mailbox_count=%s analysis_jobs=%s", len(reports), len(job_reports))
     return reports
 
 

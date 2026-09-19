@@ -708,6 +708,9 @@ class ChatAnswerModeTests(unittest.TestCase):
                 output = "\n".join(logs.output)
                 self.assertIn(f"stage={stage}", output)
                 self.assertIn(reason, output)
+                if stage == "policy":
+                    self.assertIn("sentence_index=1/2", output)
+                    self.assertIn("excerpt='预算为 28 万元：'", output)
                 self.assertNotIn("private-candidate-marker", output)
                 self.assertNotIn("客户需要 50 台检测设备", output)
 
