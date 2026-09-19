@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 校验 QQ 同步范围后排队，独立 Worker 执行；会话与 Agent 凭证路由隔离；本机调试可建立普通用户会话；事务服务校验归属。
+实现：Web 校验后排队；客户建档保存权威地区并传播行业变化；会话与 Agent 凭证隔离，事务服务校验归属。
 关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -271,8 +271,8 @@ class CompanyViewSet(ViewSet):
     # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
     # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。
     # 输出：新的公司投影和 revision。
-    # 逻辑：先锁 owner 再锁公司，修改版本并记录审计；agent 任务持久排队，rules 在事务提交后计算。
-    # 约束：人数非空必须有来源，不将邮件人数线索自动视为权威人数。
+    # 逻辑：先锁 owner 再锁公司，保存权威行业、人数及地区；行业变化还会更新其他公司的相似赢单输入版本。
+    # 约束：人数非空必须有来源；不从邮件猜测权威字段，缺失 country 保留原值。
     @extend_schema(request=RegisterSerializer, responses=OBJECT, parameters=VERSION_HEADERS[:1], tags=["companies"])
     @action(detail=True, methods=["post"])
     def register(self, request, pk=None):
@@ -283,6 +283,7 @@ class CompanyViewSet(ViewSet):
             get_user_model().objects.select_for_update().get(pk=request.user.pk)
             company = company_for(request.user, pk, lock=True)
             check_version(expected(request), company.revision)
+            previous_industry = company.customer.get("industry_from_crm")
             if CompanySettings.objects.filter(company=company, archived=True).exists():
                 raise InvalidState("客户已归档，请先恢复后编辑。")
             company.name, company.crm_status = data["company_name"], "registered"
@@ -293,6 +294,9 @@ class CompanyViewSet(ViewSet):
             company_settings, _ = CompanySettings.objects.get_or_create(company=company, defaults={"owner": request.user})
             audit(request.user, company_settings, "company_registered", {"fields": sorted(data)})
             jobs.enqueue(company, "external_updated")
+            if previous_industry != company.customer.get("industry_from_crm"):
+                from apps.sales.priority import refresh_owner_priority
+                refresh_owner_priority(company.owner_id, exclude=[company.pk])
         process_if_rules(request.user, company.pk)
         company.refresh_from_db()
         return versioned(selectors.company_row(company), company.revision)

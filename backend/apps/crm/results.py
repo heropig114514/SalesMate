@@ -1,5 +1,5 @@
 """职责：保存分析输入、判断与评分并验证并发和来源。
-实现：在公司行锁下验证 revision、租约、引用及不可变键；登记来源边并排除血缘失效结果。
+实现：在公司行锁下验证 revision、租约、引用及不可变键；正式评分解释与分数原子保存并核验邮件证据。
 关联：API 与规则占位共用该入口，selectors 从这些快照投影页面。
 目录：
 - save_input：保存 L2 原始输入快照。
@@ -23,6 +23,7 @@ from rest_framework.exceptions import ValidationError
 from .access import Conflict, InvalidState, check_version, company_for, plain
 from .jobs import require_lease
 from .models import Analysis, AnalysisInput, Score
+from .priority_results import validate_priority_sources
 from .selectors import context_pair
 from .serializers import AnalysisInputSerializer, AnalysisSerializer, ScoreSerializer, FACT_FIELDS
 
@@ -209,8 +210,8 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
 # 功能：保存与当前成功分析对应的评分。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 为身份、Score、后端版本与任务凭证。
 # 输出：Score 原始载荷。
-# 逻辑：绑定当前输入未失效的成功分析；按规则版本和 scored_at 去重允许显式时间重评分。
-# 约束：无有效分析不接收分数，缺失特征不允许非空分值。
+# 逻辑：绑定当前输入未失效的成功分析；正式结果独立于旧特征，解释来源验证后与分数原子保存；按规则版本和 scored_at 去重。
+# 约束：无有效分析不接收分数；只有旧版本继续校验旧特征，相同键的解释也不可覆盖。
 @transaction.atomic
 def save_score(owner, payload, expected, job_id, token):
     serializer = ScoreSerializer(data=payload)
@@ -224,8 +225,9 @@ def save_score(owner, payload, expected, job_id, token):
     if analysis is None:
         raise InvalidState("当前输入尚无成功分析。")
     view = analysis.payload["list_view"]
-    if data["score"] is not None and (view["signal"] == "unknown" or any(item["value"] is None for item in view["score_features"].values())):
+    if data["score_version"] != "score-v2" and data["score"] is not None and (view["signal"] == "unknown" or any(item["value"] is None for item in view["score_features"].values())):
         raise ValidationError("缺失评分特征必须返回 null。")
+    validate_priority_sources(data, company, analysis)
     existing = analysis.scores.filter(score_version=data["score_version"], payload__scored_at=data["scored_at"]).first()
     if existing:
         if existing.payload != data:

@@ -1,5 +1,5 @@
 """职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：显式字段白名单、只读状态保护和授权关系查询；金额计算使用 Decimal。
+实现：显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
 关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
 目录：
 - ConnectionSerializer：连接安全字段。
@@ -51,6 +51,7 @@
 - NotificationSerializer：应用内到期提醒的授权字段契约。
 - NotificationSerializer.Meta：声明本实体字段和不可直接写入的状态。
 变量索引：
+- OpportunitySerializer.product_names：规范产品名称的显式数组；省略沿用原值，null 或空数组表示未知。
 - ConnectionSerializer.Meta.model：连接模型。
 - ConnectionSerializer.Meta.fields：无凭证字段清单。
 - ConnectionSerializer.Meta.read_only_fields：所有字段只读。
@@ -488,11 +489,12 @@ class TicketSerializer(StrictModelSerializer):
 
 
 # 功能：声明销售商机与管线的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
+# 逻辑：关系字段按当前用户过滤，商机产品名称显式录入，状态由专门业务动作维护。
 # 约束：不接受客户端指定 owner、revision 或伪造执行结果。
 class OpportunitySerializer(StrictModelSerializer):
+    product_names = s.ListField(child=s.CharField(max_length=240), required=False, allow_empty=True, allow_null=True)
     # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
+    # 逻辑：显式开放产品名称和已有商机字段，不允许浏览器改变 owner 或状态。
     # 约束：跨字段规则由事务服务继续校验。
     class Meta:
         model = models.Opportunity
@@ -511,6 +513,7 @@ class OpportunitySerializer(StrictModelSerializer):
             "amount",
             "currency",
             "expected_close",
+            "product_names",
         ]
         read_only_fields = [
             "id",

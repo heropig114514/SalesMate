@@ -1,5 +1,7 @@
 # SalesMate 软件与 Agent 联调
 
+正式公司优先级 `score-v2` 已提供后端评分上下文、销售方资料维护、解释保存和版本触发；数据口径、接口及 Agent 待接提交字段见 [L4 后端适配](docs/l4-priority.md)。解释展示尚需 Agent 提交 `score_details` 及前端接入。
+
 面向用户协作的 123 个后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
 
 页面现已统一为销售工作空间：共享导航、首页待办、客户跨页上下文和业务表单预填。入口与验证记录见 [统一工作空间](docs/unified-workspace.md)。
@@ -10,8 +12,8 @@
 
 SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取往来邮件，提取客户意向和可定位证据，按公司归组，生成客户画像、销售分析与跟进优先级，并把结果展示在浏览器工作台中。
 
-更新日期：2026-09-12
-当前状态：前端、Django 后端和 Agent L1–L4 已按同一数据契约完成整合；本地 HTTP 全链路已验证。真实 Gmail 和阿里百炼需要开发者自己的授权与 API Key。
+更新日期：2026-09-19
+当前状态：既有 L1–L4 链路已完成整合；正式 score-v2 的后端上下文、保存及查询接口已适配，解释的 Agent 自动提交和前端展示待接入。真实 Gmail 和阿里百炼需要开发者自己的授权与 API Key。
 
 ## 1. 当前 MVP 范围
 
@@ -88,7 +90,7 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 | 任务入队 | 业务邮件且 `has_substantive_update=true` | `email_ingested` Job | Django `Job` |
 | L2 归并 | Grouping、邮件、客户、工单、报价、订单 | `AnalysisInput` | Django `AnalysisInput` |
 | L3 分析 | 完整 `AnalysisInput` | `Analysis` | Django `Analysis` |
-| L4 评分 | L3 信号与特征、L2 时间指标 | `Score` | Django `Score` |
+| L4 评分 | 公司邮件信号及后端 `priority_context` | `Score`，可附 `score_details` | Django `Score.payload` 与 `Score.value` |
 | 页面读取 | 当前员工 Session、公司列表或公司 ID | 该员工的邮箱状态、公司列表、详情、邮件、画像、分数、任务状态 | 浏览器展示 |
 
 重复同步规则：
@@ -212,14 +214,11 @@ L2 不调用模型。它保留全部事实历史并补充来源邮件和事实�
 
 | 特征 | 权重 |
 |---|---:|
-| signal | 0.30 |
-| demand_clarity | 0.20 |
-| urgency | 0.20 |
-| decision_visibility | 0.10 |
-| recency | 0.15 |
-| substantive_inbound_count | 0.05 |
+| urgency | 0.35 |
+| buying_intent | 0.35 |
+| opportunity_value | 0.30 |
 
-分数是各项整数贡献之和。信号未知、任一模型特征为 `null` 或缺少最近入站时间时，`score=null`，并只返回一条 `insufficient_data` 原因。
+正式版本为 `score-v2`，由 Agent 规则计算；商机价值由金额档位 60% 和客户匹配 40% 组成。后端检查三项整数贡献之和等于分数，资料不足时仅接受 `score=null` 和 `insufficient_data`，不再因旧 L3 特征为空拒绝正式分数。`ANALYSIS_PROVIDER=agent` 的页面投影只展示正式版本，历史数据保留但旧算法分数不参与正式排序。规则演示模式仍显式使用独立 `rules-score-v1`。
 
 ## 5. 目录结构
 

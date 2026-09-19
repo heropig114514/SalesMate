@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：Agent 业务变化只入队，独立 Worker 消费；按业务 owner 串行化写入，使用 revision 拒绝覆盖；审计与快照在同一事务提交。
+实现：按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
 - audit：追加不含正文或凭证的操作事件。
@@ -11,6 +11,7 @@
 - sync_company：将关系业务映射到已有 Agent 业务快照。
 - notify_due：为到期未完成跟进创建去重提醒。
 - enqueue_analysis：入队并在事务提交后按既有配置调度分析。
+- sync_priority_dependencies：传播订单及产品对其他客户评分的影响。
 变量索引：
 - logger：不输出业务正文或凭证的事务日志。
 - TRANSITIONS：各类单据允许的显式状态边。
@@ -290,7 +291,7 @@ def validate_record(instance, actor, changed, creating):
 # 功能：创建或版本化修改销售记录。
 # 输入：`serializer` 为已校验序列化器，`actor` 为用户，`expected` 为旧 revision 或 None。
 # 输出：已保存模型。
-# 逻辑：锁 owner 后重新读取输入关系，避免使用排队前的单据状态；检查归属不可变并同步审计、投影和父版本。
+# 逻辑：锁 owner 后检查关系及版本，保存商机产品与业务记录；当前客户同步后传播订单、产品的共享评分依赖。
 # 约束：动作、附件与提醒使用专门入口；写入错误整体回滚，无自动重试。
 @transaction.atomic
 def save_record(serializer, actor, expected=None):
@@ -369,6 +370,7 @@ def save_record(serializer, actor, expected=None):
             models.CompanySettings,
             models.ContactProfile,
             models.Ticket,
+            models.Opportunity,
             models.Quote,
             models.QuoteLine,
             models.SalesOrder,
@@ -376,13 +378,14 @@ def save_record(serializer, actor, expected=None):
         ),
     ):
         sync_company(company_of(candidate))
+    sync_priority_dependencies(candidate)
     return candidate
 
 
 # 功能：归档或恢复记录。
 # 输入：`instance`、`actor`、`expected` 旧版本，`archived` 为目标布尔值。
 # 输出：更新后的实例。
-# 逻辑：保留历史数据并递增版本，行项目变化同时更新父单据版本和分析投影。
+# 逻辑：保留历史数据并递增版本，商机及行项目变化更新当前公司，订单和产品归档传播评分依赖。
 # 约束：不可归档不可变消息、提醒或执行记录；冻结单据不得通过归档明细改变金额。
 @transaction.atomic
 def archive_record(instance, actor, expected, archived):
@@ -427,6 +430,7 @@ def archive_record(instance, actor, expected, archived):
         instance,
         (
             models.Ticket,
+            models.Opportunity,
             models.Quote,
             models.QuoteLine,
             models.SalesOrder,
@@ -434,13 +438,14 @@ def archive_record(instance, actor, expected, archived):
         ),
     ):
         sync_company(company_of(instance))
+    sync_priority_dependencies(instance)
     return instance
 
 
 # 功能：执行业务状态流转。
 # 输入：`instance`、`actor`、`expected` 为版本，`target` 为明确目标状态。
 # 输出：已转换记录。
-# 逻辑：校验状态边，确认单据必须有明细，确认订单写入时间并更新 Agent 投影。
+# 逻辑：校验状态边及单据明细；商机状态更新当前公司，确认或取消订单同步更新依赖该成交历史的其他公司。
 # 约束：禁止客户端声明报价已发送；不推断成交，也不触发外部服务。
 @transaction.atomic
 def transition_record(instance, actor, expected, target):
@@ -474,9 +479,23 @@ def transition_record(instance, actor, expected, target):
         instance.confirmed_at = timezone.now()
     instance.save()
     audit(actor, instance, "status_changed", {"from": previous, "to": target})
-    if isinstance(instance, (models.Ticket, models.Quote, models.SalesOrder)):
+    if isinstance(instance, (models.Ticket, models.Opportunity, models.Quote, models.SalesOrder)):
         sync_company(instance.company)
+    sync_priority_dependencies(instance)
     return instance
+
+
+# 功能：传播订单及产品对其他客户评分的影响。
+# 输入：`instance` 为刚保存、归档或完成状态转换的销售记录。
+# 输出：无；为相关客户更新两个版本并入队。
+# 逻辑：订单和订单行影响同 owner 历史均值与相似赢单，产品影响目录及历史产品名称。
+# 约束：调用者已持 owner 锁且已同步记录所属公司；普通商机不触发全 owner 扇出。
+def sync_priority_dependencies(instance):
+    from .priority import refresh_owner_priority
+
+    if isinstance(instance, (models.SalesOrder, models.OrderLine, models.Product)):
+        company = company_of(instance)
+        refresh_owner_priority(instance.owner_id, exclude=[company.pk] if company else [])
 
 
 # 功能：将关系业务映射到已有 Agent 业务快照。

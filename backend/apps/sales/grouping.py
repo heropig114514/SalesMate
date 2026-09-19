@@ -1,5 +1,5 @@
 """职责：管理客户目录、联系人及明确的人工邮件归组。
-实现：公司 owner 行锁与 revision 校验保护批量搬移，保留不可变原邮件和历史分析。
+实现：owner 锁与 revision 保护批量搬移；合并保留历史分析，并传播成交归属变化对其他客户评分的影响。
 关联：crm.ingestion 使用 CompanyAlias 的精确映射，sales API 仅向共享用户返回业务目录。
 目录：
 - directory_row：生成不含私人邮件的客户目录项。
@@ -198,7 +198,7 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
 # 功能：合并同一员工的公司并归档来源。
 # 输入：`actor`、`source_id`、`target_id`、`source_revision`、`target_revision`。
 # 输出：目标公司目录项。
-# 逻辑：拒绝冲突客户字段；转移邮件、业务关系和明确归组映射，历史分析快照留在来源。
+# 逻辑：拒绝冲突字段，转移业务关系；历史分析留在来源，成交订单归属变化同步更新其他公司的评分背景版本。
 # 约束：只允许公司所有者；团队共享授权不自动扩大，来源存在共享授权时须先撤销。
 @transaction.atomic
 def merge_companies(actor, source_id, target_id, source_revision, target_revision):
@@ -339,6 +339,8 @@ def merge_companies(actor, source_id, target_id, source_revision, target_revisio
     target.save(update_fields=["domains", "customer", "tickets", "quotes", "orders"])
     sync_company(target)
     sync_company(source)
+    from .priority import refresh_owner_priority
+    refresh_owner_priority(actor.pk, exclude=[target.pk, source.pk])
     source.refresh_from_db()
     settings, _ = models.CompanySettings.objects.get_or_create(
         company=source, defaults={"owner": actor}

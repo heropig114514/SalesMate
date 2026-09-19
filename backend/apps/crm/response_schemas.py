@@ -1,5 +1,5 @@
 """职责：为 Agent 查询和批量响应声明可消费的 OpenAPI 结构。
-实现：独立响应序列化器描述真实数组与对象，避免将批量结果误标为普通对象。
+实现：独立响应序列化器描述真实数组与对象；CompanyContext 增加与邮件分离的正式评分上下文。
 关联：views 用作 Schema 声明，服务的实际字段由契约测试核验。
 目录：
 - SubmissionResultSerializer：描述单封邮件的提交结果。
@@ -10,6 +10,7 @@
 - MailboxResponseSerializer：描述浏览器邮箱列表行。
 - MailboxSyncClaimResponseSerializer：描述 Agent 领取的员工邮箱同步请求。
 变量索引：
+- CompanyContextResponseSerializer.priority_context：公司级 customer、deal、seller 正式评分资料；未知字段保持缺失。
 - SubmissionResultSerializer.dedupe_key：本次提交的邮件天然键。
 - SubmissionResultSerializer.company_id：后端归组分配的公司 UUID。
 - SubmissionResultSerializer.status：created、updated 或 duplicate 提交结果。
@@ -105,8 +106,8 @@ class GroupingResponseSerializer(s.Serializer):
 
 
 # 功能：描述公司邮件与业务快照。
-# 逻辑：邮件回显 L1 标准载荷，其余数组保留后端权威业务事实。
-# 约束：工单、报价和订单当前没有编辑入口，不凭空补数据。
+# 逻辑：邮件回显 L1 标准载荷，priority_context 提供权威公司商机与销售方资料。
+# 约束：评分上下文不重复邮件、不混入已保存的 L2 载荷，不凭空补未知数据。
 class CompanyContextResponseSerializer(s.Serializer):
     company_id = s.UUIDField()
     external_snapshot_version = s.CharField()
@@ -115,6 +116,7 @@ class CompanyContextResponseSerializer(s.Serializer):
     tickets = s.ListField(child=s.DictField())
     quotes = s.ListField(child=s.DictField())
     orders = s.ListField(child=s.DictField())
+    priority_context = s.DictField()
 
 
 # 功能：描述浏览器邮箱列表行。

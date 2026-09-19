@@ -1,5 +1,5 @@
 """职责：校验当前 Agent README 业务载荷及浏览器请求。
-实现：显式声明协议字段并校验事实证据、状态与分数一致性；服务层再校验归属与来源范围。
+实现：显式声明协议字段并校验事实证据、状态与分数一致性；正式评分支持原子提交解释，服务层再校验归属与来源范围。
 关联：API 与规则占位共用校验，OpenAPI 以这些声明生成。
 目录：
 - StrictSerializer：严格拒绝未声明字段，避免授权令牌或拼错字段被静默接收。
@@ -38,6 +38,8 @@
 - MailboxSyncClaimSerializer：声明员工邮箱同步领取数量。
 - MailboxSyncReportSerializer：声明员工邮箱同步最终回报。
 变量索引：
+- ScoreSerializer.score_details：score-v2 的可选分项、原因、证据和建议动作；省略表示尚未提交解释。
+- RegisterSerializer.country：可选权威客户国家或地区；缺失不自动推断。
 - AnalysisInputSerializer.built_at：L2 快照构建时间
 - AnalysisInputSerializer.business_context：后端客户、工单、报价和订单快照
 - AnalysisInputSerializer.company：公司、域名和联系人归组快照
@@ -511,7 +513,7 @@ class AnalysisSerializer(StrictSerializer):
 
 
 # 功能：声明 L4 分数与贡献说明。
-# 逻辑：校验空分语义和贡献和。
+# 逻辑：校验空分语义、贡献和及 score-v2 可选解释；不依赖旧 L3 特征。
 # 约束：实际规则版本由生产者提交，不重写用户已定权重。
 class ScoreSerializer(StrictSerializer):
     company_id = s.UUIDField()
@@ -520,22 +522,29 @@ class ScoreSerializer(StrictSerializer):
     score_reasons = s.ListField(child=s.DictField(), allow_empty=False)
     score_version = s.CharField(max_length=100)
     scored_at = s.DateTimeField()
+    score_details = s.DictField(required=False)
 
     # 功能：检查贡献解释能否与分数对账。
     # 输入：`attrs` 为评分载荷。
     # 输出：attrs；不一致时抛 ValidationError。
-    # 逻辑：有分值要求贡献和相等，无分值要求唯一 insufficient_data 原因。
-    # 约束：不将空分填零，不修改分数。
+    # 逻辑：有分值要求贡献和相等，无分值要求唯一 insufficient_data；正式版本额外检查三项整数贡献及解释。
+    # 约束：不将空分填零，不修改分数；非有限贡献拒绝，来源校验由保存事务执行。
     def validate(self, attrs):
+        from math import isfinite
+        from .priority_results import validate_priority_score
+
         reasons = attrs["score_reasons"]
         for item in reasons:
             if set(item) != {"feature", "contribution", "note"} or not isinstance(item["feature"], str) or not isinstance(item["note"], str) or type(item["contribution"]) not in (int, float):
                 raise s.ValidationError("评分原因必须包含 feature、数值 contribution 和 note。")
+            if type(item["contribution"]) is float and not isfinite(item["contribution"]):
+                raise s.ValidationError("评分贡献必须为有限数值。")
         if attrs["score"] is None:
             if len(reasons) != 1 or reasons[0]["feature"] != "insufficient_data" or reasons[0]["contribution"] != 0:
                 raise s.ValidationError("空分仅允许 insufficient_data 原因。")
         elif abs(sum(item["contribution"] for item in reasons) - attrs["score"]) > 0.00001:
             raise s.ValidationError("贡献和必须等于 score。")
+        validate_priority_score(attrs)
         return attrs
 
 
@@ -572,13 +581,14 @@ class JobReportSerializer(StrictSerializer):
 
 
 # 功能：声明显式 CRM 建档输入。
-# 逻辑：只接收公司名、行业和有来源的人数。
+# 逻辑：接收公司名、行业、有来源的人数及可选权威国家或地区；不从邮件补全未知地区。
 # 约束：不会虚构报价或订单，业务快照通过独立协议提交。
 class RegisterSerializer(StrictSerializer):
     company_name = s.CharField(max_length=240)
     industry_from_crm = s.ChoiceField(choices=INDUSTRIES)
     employee_count = s.IntegerField(min_value=0, allow_null=True)
     employee_count_source = s.CharField(allow_null=True)
+    country = s.CharField(max_length=100, allow_null=True, required=False)
 
 
 # 功能：声明前端手工输入的模拟邮件。

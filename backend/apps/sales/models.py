@@ -1,5 +1,5 @@
 """职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：可编辑业务采用 UUID、revision 与归档；任务状态与到期时间建索引，消息、审计和外部动作采用专用写入约束。
+实现：可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
 关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
 目录：
 - Record：可归档的版本化业务记录基类。
@@ -19,6 +19,7 @@
 - Product.Meta：声明抽象性或数据库唯一及数值约束。
 - Ticket：客户服务工单。
 - Opportunity：销售商机与管线。
+- SellerProfile：保存 owner 隔离的销售方目标画像。
 - Quote：有审核与真实外发证据的报价单。
 - Quote.Meta：声明抽象性或数据库唯一及数值约束。
 - QuoteLine：报价明细快照。
@@ -41,6 +42,11 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
+- SellerProfile.owner：销售方资料的唯一业务所有者，不能跨 owner 共享统计。
+- SellerProfile.revision：销售方资料的乐观锁版本。
+- SellerProfile.profile：可缺失的目标行业、规模、地区和 IANA 时区，不存模型猜测。
+- SellerProfile.updated_at：最后一次显式更新的时间。
+- Opportunity.product_names：显式录入的规范产品名称列表，null 或空数组表示资料缺失。
 - Connection.provider：gmail、qq 或 calendar 服务提供方。
 - Connection.account：外部账号或日历连接名称。
 - Connection.encrypted_credentials：Fernet 加密的 Google 授权 JSON 或 QQ 授权码，浏览器不可读取。
@@ -365,7 +371,7 @@ class Ticket(CompanyRecord):
 
 
 # 功能：销售商机与管线。
-# 逻辑：只汇总明确金额，won/lost 为用户显式声明。
+# 逻辑：只汇总明确金额，产品名称由用户显式录入，won/lost 为用户显式声明。
 # 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
 class Opportunity(CompanyRecord):
     title = models.CharField(max_length=240)
@@ -374,6 +380,17 @@ class Opportunity(CompanyRecord):
     amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3)
     expected_close = models.DateField(null=True, blank=True)
+    product_names = models.JSONField(null=True, blank=True)
+
+
+# 功能：保存 owner 隔离的销售方目标画像。
+# 逻辑：一名业务所有者对应一份带版本的配置；JSON 仅接收专门接口验证后的目标条件。
+# 约束：无默认业务画像；均值、产品目录和相似赢单由权威数据计算，不由此表人工填充。
+class SellerProfile(models.Model):
+    owner = models.OneToOneField(settings.AUTH_USER_MODEL, primary_key=True, on_delete=models.CASCADE)
+    revision = models.PositiveIntegerField(default=0)
+    profile = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 # 功能：有审核与真实外发证据的报价单。

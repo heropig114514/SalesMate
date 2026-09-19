@@ -1,5 +1,5 @@
 """职责：声明销售业务 API 路由。
-实现：独立 QQ SMTP 连接入口与 Google OAuth 并存；固定业务操作优先，资源名由 views 白名单验证。
+实现：销售方画像与独立 QQ SMTP 连接入口并存；固定业务操作优先，资源名由 views 白名单验证。
 关联：config.urls 挂载于 /api/v1/sales/，视图统一要求登录。
 目录：
 - 无
@@ -10,8 +10,10 @@
 from django.urls import path
 from . import views
 from .qq_connection import QQSendConnectionView
+from .priority_views import SellerProfileView
 
 urlpatterns = [
+    path("seller-profile/", SellerProfileView.as_view()),
     path("catalog/", views.CatalogView.as_view()),
     path("overview/", views.OverviewView.as_view()),
     path("directory/", views.DirectoryView.as_view()),

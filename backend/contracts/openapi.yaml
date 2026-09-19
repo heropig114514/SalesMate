@@ -1924,6 +1924,50 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/sales/seller-profile/:
+    get:
+      operationId: v1_sales_seller_profile_retrieve
+      tags:
+      - sales
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SellerProfileResponse'
+          description: ''
+    patch:
+      operationId: v1_sales_seller_profile_partial_update
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      tags:
+      - sales
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedSellerProfile'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedSellerProfile'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedSellerProfile'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SellerProfileResponse'
+          description: ''
   /api/v1/session/:
     get:
       operationId: v1_session_retrieve
@@ -2170,12 +2214,16 @@ components:
           items:
             type: object
             additionalProperties: {}
+        priority_context:
+          type: object
+          additionalProperties: {}
       required:
       - company_id
       - customer
       - emails
       - external_snapshot_version
       - orders
+      - priority_context
       - quotes
       - tickets
     ConfidenceEnum:
@@ -2843,6 +2891,27 @@ components:
       properties:
         review_status:
           $ref: '#/components/schemas/ReviewStatusEnum'
+    PatchedSellerProfile:
+      type: object
+      properties:
+        target_industries:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+        target_company_size:
+          allOf:
+          - $ref: '#/components/schemas/SizeRange'
+          nullable: true
+        service_regions:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+        time_zone:
+          type: string
+          nullable: true
+          maxLength: 100
     Profile:
       type: object
       properties:
@@ -2941,6 +3010,10 @@ components:
         employee_count_source:
           type: string
           nullable: true
+        country:
+          type: string
+          nullable: true
+          maxLength: 100
       required:
       - company_name
       - employee_count
@@ -2992,6 +3065,9 @@ components:
         scored_at:
           type: string
           format: date-time
+        score_details:
+          type: object
+          additionalProperties: {}
       required:
       - company_id
       - input_version
@@ -2999,6 +3075,37 @@ components:
       - score_reasons
       - score_version
       - scored_at
+    SellerProfile:
+      type: object
+      properties:
+        target_industries:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+        target_company_size:
+          allOf:
+          - $ref: '#/components/schemas/SizeRange'
+          nullable: true
+        service_regions:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+        time_zone:
+          type: string
+          nullable: true
+          maxLength: 100
+    SellerProfileResponse:
+      type: object
+      properties:
+        revision:
+          type: integer
+        profile:
+          $ref: '#/components/schemas/SellerProfile'
+      required:
+      - profile
+      - revision
     SignalEnum:
       enum:
       - repeat_purchase
@@ -3049,6 +3156,18 @@ components:
         * `200_500` - 200_500
         * `gte_500` - gte_500
         * `unknown` - unknown
+    SizeRange:
+      type: object
+      properties:
+        min:
+          type: integer
+          minimum: 0
+        max:
+          type: integer
+          minimum: 0
+      required:
+      - max
+      - min
     SourceEnum:
       enum:
       - gmail_real
