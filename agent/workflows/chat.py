@@ -1,5 +1,5 @@
 """职责：提供客户证据问答及统一聊天消费入口。
-实现：保持客户严格证据流程；明确空客户请求分派 general_chat，不修改原模型参数与裁剪预算。
+实现：保持客户授权来源与引用结构校验；数字和词面问题仅记录日志；空客户请求分派 general_chat。
 关联：后端 chat 服务、sales-chat Skill、general_chat 通用流程。
 目录：
 - ChatValidationError：聊天边界数据不符合当前 Demo 的严格契约。
@@ -30,7 +30,7 @@
 - _validate_answer_policy：串联客户回答的动作、证据、判断和冲突措辞约束。
 - _is_insufficiency_only：识别短文本中不含引用和数字的明确资料不足声明。
 - _is_nonfactual_social_sentence：识别不涉及客户事实的礼貌问候或助手自我介绍。
-- _validate_numeric_support：核对回答数字是否可在已引用证据中找到；词面关联弱时只记诊断日志。
+- _log_numeric_support：记录数字与引用不一致及词面关联弱的诊断日志，不拒绝回答。
 - _number_tokens：提取数值和百分号并归一化整数及小数尾零。
 - _validate_judgment_wording：要求包含推测建议线索的文字明确标注判断或可能。
 - _validate_conflict_wording：要求冲突声明引用至少两个来源且标注待确认。
@@ -1182,7 +1182,7 @@ def _validate_answer_policy(
         raise ChatValidationError("资料不足回答不得附带 citation。")
 
     # Demo 阶段不再靠逐句关键词、标题白名单或特定措辞拒绝整条回答。
-    _validate_numeric_support(text, citations, relevant_context, request_id=request_id)
+    _log_numeric_support(text, citations, relevant_context, request_id=request_id)
     for check in (
         lambda: _validate_judgment_wording(text),
         lambda: _validate_conflict_wording(text, citations, relevant_context),
@@ -1245,12 +1245,12 @@ def _is_nonfactual_social_sentence(sentence: str) -> bool:
     )
 
 
-# 功能：检查回答数字能否在本次引用来源中找到，并提示词面关联弱的句子。
+# 功能：记录回答数字与引用来源不一致及词面关联弱的诊断信息。
 # 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
 # 输出：None。
-# 逻辑：有 marker 的句子核对其来源；无 marker 的句子核对本次所有已引用来源。词面不重合仅记录警告。
+# 逻辑：有 marker 的句子核对其来源；无 marker 的句子核对本次所有已引用来源；不因数字错引拒绝回答。
 # 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_numeric_support(
+def _log_numeric_support(
     text: str,
     citations: list[dict[str, str]],
     relevant_context: Mapping[str, list[dict[str, str]]],
@@ -1258,8 +1258,10 @@ def _validate_numeric_support(
     request_id: str,
 ) -> None:
     item_lookup: dict[tuple[str, str, str], list[dict[str, str]]] = {}
-    for item in _flatten_context(relevant_context):
+    all_items = _flatten_context(relevant_context)
+    for item in all_items:
         item_lookup.setdefault(_citation_key(item), []).append(item)
+    context_numbers = _number_tokens("\n".join(item["content"] for item in all_items))
 
     normalized = re.sub(
         r"([。！？!?])[ \t]*((?:\[\d+\][ \t]*)+)",
@@ -1291,11 +1293,16 @@ def _validate_numeric_support(
         )
         claim_numbers = _number_tokens(claim)
         evidence_numbers = _number_tokens(evidence_text)
-        if claim_numbers - evidence_numbers:
-            raise ChatValidationError(
-                "回答中的数值未被所引用来源支持。"
-                f" sentence_index={index} unsupported_numbers={sorted(claim_numbers - evidence_numbers)}"
-                f" excerpt={_diagnostic_excerpt(sentence)!r}"
+        missing_numbers = claim_numbers - evidence_numbers
+        if missing_numbers:
+            logger.warning(
+                "chat_numeric_evidence_gap request_id=%s sentence_index=%s kind=%s "
+                "numbers=%s excerpt=%r",
+                request_id,
+                index,
+                "present_elsewhere" if missing_numbers <= context_numbers else "absent_from_context",
+                sorted(missing_numbers),
+                _diagnostic_excerpt(sentence),
             )
 
         if marker_indexes and not (_support_units(claim) & _support_units(evidence_text)):

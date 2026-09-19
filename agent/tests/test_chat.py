@@ -740,17 +740,19 @@ class ChatAnswerModeTests(unittest.TestCase):
         self.assertNotIn("[分析:3]", result["assistant_text"])
         self.assertIn("chat_nonstandard_source_tags_removed", "\n".join(logs.output))
 
-    def test_real_unsupported_business_quantity_still_fails(self):
+    def test_unsupported_business_quantity_is_logged_in_demo_mode(self):
         item = context_item(content="客户需要 50 台检测设备。")
         backend = InMemoryChatBackend(internal=answer_context(customer_context=[item]))
-        result = answer_conversation_request(
-            conversation_request(),
-            backend=backend,
-            chat_provider=FakeChatProvider(
-                model_json("客户需要 3 台检测设备。[1]", item)
-            ),
-        )
-        self.assertEqual(result["error"]["code"], "invalid_model_output")
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(),
+                backend=backend,
+                chat_provider=FakeChatProvider(
+                    model_json("客户需要 3 台检测设备。[1]", item)
+                ),
+            )
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("kind=absent_from_context", "\n".join(logs.output))
 
     def test_internal_knowledge_failure_allows_only_supported_partial_answer(self):
         item = context_item()
@@ -841,35 +843,78 @@ class ChatAnswerModeTests(unittest.TestCase):
         backend = InMemoryChatBackend(
             internal=answer_context(customer_context=[item])
         )
-        cases = (
-            (
-                "candidate",
-                '{"assistant_text":"private-candidate-marker","citations":[],"extra":true}',
-                "model_candidate 字段必须与契约完全一致",
-            ),
-            (
-                "policy",
-                model_json("预算为 28 万元：\n客户需要 50 台检测设备。[1]", item),
-                "回答中的数值未被所引用来源支持",
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(),
+                backend=backend,
+                chat_provider=FakeChatProvider(
+                    '{"assistant_text":"private-candidate-marker","citations":[],"extra":true}'
+                ),
+            )
+        self.assertEqual(result["error"]["code"], "invalid_model_output")
+        output = "\n".join(logs.output)
+        self.assertIn("stage=candidate", output)
+        self.assertIn("model_candidate 字段必须与契约完全一致", output)
+        self.assertNotIn("private-candidate-marker", output)
+
+    def test_numeric_claim_with_wrong_citation_is_logged_not_rejected(self):
+        wrong = context_item(
+            source_id="mail:other",
+            content="客户要求在 2026-10-15 前给出报价。",
+        )
+        original = context_item(
+            source_id="mail:original",
+            content=(
+                "试点覆盖 3 个洁净室小组和 60 个操作席位，"
+                "希望在 2026-10-15 前完成系统闭环验证。"
             ),
         )
-        for stage, response, reason in cases:
-            with self.subTest(stage=stage):
-                with self.assertLogs("salesmate.chat", level="WARNING") as logs:
-                    result = answer_conversation_request(
-                        conversation_request(),
-                        backend=backend,
-                        chat_provider=FakeChatProvider(response),
-                    )
-                self.assertEqual(result["error"]["code"], "invalid_model_output")
-                output = "\n".join(logs.output)
-                self.assertIn(f"stage={stage}", output)
-                self.assertIn(reason, output)
-                if stage == "policy":
-                    self.assertIn("sentence_index=1", output)
-                    self.assertIn("excerpt='预算为 28 万元：'", output)
-                self.assertNotIn("private-candidate-marker", output)
-                self.assertNotIn("客户需要 50 台检测设备", output)
+        backend = InMemoryChatBackend(
+            internal=answer_context(customer_context=[wrong, original])
+        )
+        provider = FakeChatProvider(
+            model_json(
+                "1. **项目范围**：试点覆盖 3 个洁净室小组和 60 个操作席位，"
+                "希望在 2026-10-15 前完成验证 [1]。",
+                wrong,
+            )
+        )
+
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(question="总结客户需求"),
+                backend=backend,
+                chat_provider=provider,
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(wrong)])
+        self.assertIn("60 个操作席位", result["assistant_text"])
+        self.assertIn("kind=present_elsewhere", "\n".join(logs.output))
+
+    def test_unrelated_numbers_are_diagnosed_without_rewriting_citation(self):
+        wrong = context_item(source_id="mail:other", content="客户要求提供报价。")
+        unrelated = context_item(
+            source_id="mail:unrelated",
+            content="仓库有 3 扇窗户和 60 张桌子。",
+        )
+        backend = InMemoryChatBackend(
+            internal=answer_context(customer_context=[wrong, unrelated])
+        )
+        provider = FakeChatProvider(
+            model_json("试点覆盖 3 个洁净室小组和 60 个操作席位 [1]。", wrong)
+        )
+
+        with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+            result = answer_conversation_request(
+                conversation_request(question="总结客户需求"),
+                backend=backend,
+                chat_provider=provider,
+            )
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["citations"], [citation(wrong)])
+        self.assertIn("kind=present_elsewhere", "\n".join(logs.output))
 
     def test_structural_headings_and_list_numbers_do_not_need_evidence(self):
         item = context_item()
@@ -929,21 +974,23 @@ class ChatAnswerModeTests(unittest.TestCase):
         self.assertIn("**项目概况与建议：**", result["assistant_text"])
         self.assertIn("chat_answer_style_warning", "\n".join(logs.output))
 
-    def test_unsupported_number_in_heading_is_rejected(self):
+    def test_unsupported_number_in_heading_is_logged(self):
         item = context_item()
         backend = InMemoryChatBackend(
             internal=answer_context(customer_context=[item])
         )
         for heading in ("预算为 28 万元：", "**预算为 28 万元：**"):
             with self.subTest(heading=heading):
-                result = answer_conversation_request(
-                    conversation_request(),
-                    backend=backend,
-                    chat_provider=FakeChatProvider(
-                        model_json(f"{heading}\n客户需要 50 台检测设备。[1]", item)
-                    ),
-                )
-                self.assertEqual(result["error"]["code"], "invalid_model_output")
+                with self.assertLogs("salesmate.chat", level="WARNING") as logs:
+                    result = answer_conversation_request(
+                        conversation_request(),
+                        backend=backend,
+                        chat_provider=FakeChatProvider(
+                            model_json(f"{heading}\n客户需要 50 台检测设备。[1]", item)
+                        ),
+                    )
+                self.assertEqual(result["status"], "completed")
+                self.assertIn("kind=absent_from_context", "\n".join(logs.output))
 
     def test_external_knowledge_failure_preserves_customer_evidence_and_gap(self):
         item = context_item()
