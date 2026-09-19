@@ -1,5 +1,5 @@
 # 职责：主分支提交通过隔离测试后，通知 Lightsail 自动拉取并部署该提交。
-# 实现：PR 只验证；main 推送或手动运行才使用专用部署密钥；部署串行且不取消在途部署。
+# 实现：PR 验证后端、聊天与世界消息浏览器流程；main 推送或手动运行才用部署密钥，部署串行不取消。
 # 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
 # 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
@@ -104,6 +104,9 @@ jobs:
           node backend/tools/browser_qq_send.cjs
           node backend/tools/browser_workspace.cjs
           node backend/tools/browser_processing.cjs
+          node backend/tools/browser_chat.cjs
+          node backend/tools/browser_world_news.cjs
+          python backend/manage.py test tools.chat_browser_e2e --noinput
 
   deploy:
     needs: verify

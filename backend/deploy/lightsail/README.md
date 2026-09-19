@@ -10,8 +10,8 @@ CRM Worker 现为所有有效员工共享调度，升级后自动处理已排队
 2. 强制 SSH 命令只允许 root 安装的 `deploy-trigger.sh`；任意 Shell、端口转发及非 SHA 输入均不被允许。它启动独立 systemd 临时服务，连接断开不会主动中止服务器部署。
 3. 服务器用自己的只读 GitHub Deploy Key 拉取 `main`。如果提交已过时，记录跳过；同一版本且服务健康时不重复部署。服务器部署锁与 Actions 并发组共同阻止发布交叉执行。
 4. 在独立目录构建候选代码、虚拟环境和静态资源；检查保守迁移门禁与 Redis/pgvector。
-5. 停止调度器并等待在途工作，再停 Celery 消费者；旧 Web 保持运行。备份数据库并执行兼容迁移。
-6. 启动候选 Gunicorn 实例，健康检查通过后 Nginx 切流；启动新消费者、验证消息往返，再启动调度器，排空旧请求后停旧 Web。
+5. 先排空独立聊天服务，再停止调度器并等待在途工作，最后停 Celery 消费者；旧 Web 保持运行。备份数据库并执行兼容迁移。
+6. 启动候选 Gunicorn 实例，健康检查通过后 Nginx 切流；启动新消费者、验证消息往返，再启动调度器和独立聊天服务，排空旧请求后停旧 Web。
 
 首次初始化、目录、失败边界、向量接口和服务配置见 [服务器基础设施与在线发布](../../docs/server-infrastructure.md)。后台有短暂停领窗口，破坏性迁移默认拒绝自动发布；不能把所有数据库变更都视为无中断更新。
 
@@ -44,10 +44,14 @@ CRM Worker 现为所有有效员工共享调度，升级后自动处理已排队
 sudo cat /var/lib/salesmate-deploy/status
 sudo tail -n 80 /var/lib/salesmate-deploy/deploy.log
 sudo journalctl -u salesmate-deploy --no-pager
-systemctl is-active salesmate-crm salesmate-sales salesmate-celery@crm salesmate-celery@sales
+systemctl is-active salesmate-crm salesmate-sales salesmate-chat salesmate-celery@crm salesmate-celery@sales
 cat /opt/salesmate/deployed-revision
 ```
 
 备份位于 `/opt/salesmate/backups/online-<SHA>-<UTC时间>/`，包含 `database.dump`、旧代码/环境路径、Nginx 配置及 `previous-revision`；旧代码和独立环境保留在 releases 中。恢复前先确认当前进程、迁移结果和发信状态，再由管理员明确选择恢复代码、环境或数据库；备份不会自动清理，应定期检查磁盘空间。
 
 需要暂停自动部署时，在 GitHub Actions 中禁用 **Verify and deploy**，同时确认已有部署任务是否结束。不要通过删除邮箱配置或停止 PostgreSQL 来暂停发布。
+
+## 首次启用聊天消费者
+
+本次增加 `salesmate-chat.service` 和部署脚本预检/排空/启动。管理员须先审阅并安装该 service，执行 daemon-reload 和 enable（代码及迁移就绪前不启动），并更新 root 所有的 `/usr/local/sbin/salesmate-deploy-from-git`。新脚本缺少聊天 service 时会在停机前失败，不从普通 Git 更新自动替换 systemd 配置。使用同一员工 token 和 `.env`，失败不自动重启。详见 [聊天部署与恢复](../../docs/chat-integration.md)。安装后必须核对部署提交、迁移和服务状态，不能仅凭代码合并判断消费者已运行。

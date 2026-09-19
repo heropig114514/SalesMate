@@ -1,23 +1,25 @@
 /**
- * 职责：提供客户专属助手侧栏、持久化会话和可编辑聊天草稿。
- * 实现：显式保存至员工私有 API；上下文和请求代次隔离异步响应，窄屏保持模态焦点。
- * 关联：app.js 传入客户上下文；sales-api.js 通信；index.html 提供历史、草稿及保存控件。
+ * 职责：提供客户专属只读聊天、来源引用、持久化会话和可编辑草稿。
+ * 实现：显式提问入队，有界轮询读取真实回答；客户/会话切换取消旧观察，窄屏保持模态焦点。
+ * 关联：app.js 与 assistant-entry.js 传入客户上下文；sales-api.js 通信；index.html 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.setContext、AssistantPanel.open、
  * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
- * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run。
+ * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
+ * AssistantPanel.stopPolling、AssistantPanel.watch、AssistantPanel.poll、AssistantPanel.refreshAnswers、AssistantPanel.pausePolling、AssistantPanel.retryAnswer。
  * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，companyId 为当前公司；
  * conversations 保存当前客户会话，conversation/draft 保存所选记录及版本，epoch 防止旧请求覆盖；
- * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局。
+ * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
+ * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
  */
 import { escapeHtml as esc } from "./api.js";
 import { salesRequest, allRows } from "./sales-api.js";
 
 /** 功能：管理客户助手的会话和草稿交互。
- * 逻辑：消息只记录明确用户输入；所有外部工具另经业务管理页审阅确认。
- * 约束：当前聊天模型尚未接入，不生成模拟助手回复。 */
+ * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
+ * 约束：不在浏览器推理或伪造回复，失败后只允许明确重试。 */
 export class AssistantPanel {
   /** 功能：连接静态侧栏并绑定操作。输入：无参数，读取 DOM。
-   * 输出：实例。逻辑：保存和新建为显式请求，文本编辑暂存于本页。
+   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，文本编辑暂存于本页。
    * 约束：不会因输入或页面初始化调用模型与外部服务。 */
   constructor() {
     this.nodes = Object.fromEntries(
@@ -40,6 +42,7 @@ export class AssistantPanel {
     this.drafts = new Map();
     this.companyId = null;
     this.isOpen = false;
+    this.opener = null;
     this.epoch = 0;
     this.conversations = [];
     this.conversation = null;
@@ -47,6 +50,11 @@ export class AssistantPanel {
     this.busy = false;
     this.needsLoad = false;
     this.messageKey = crypto.randomUUID();
+    this.answers = [];
+    this.pollTimer = null;
+    this.pollController = null;
+    this.pollEpoch = 0;
+    this.pollCount = 0;
     this.narrow = window.matchMedia("(max-width: 1000px)");
     this.nodes.close.addEventListener("click", () => this.close());
     this.nodes.input.addEventListener("input", () => {
@@ -88,6 +96,14 @@ export class AssistantPanel {
         await this.load(this.conversation.id);
       }),
     );
+    this.nodes.history.addEventListener("click", (event) => {
+      const retry = event.target.closest("[data-chat-retry]");
+      if (retry) this.run(() => this.retryAnswer(retry.dataset.chatRetry));
+    });
+    this.nodes["draft-note"].addEventListener("click", (event) => {
+      if (event.target.closest("[data-chat-resume]"))
+        this.run(() => this.refreshAnswers());
+    });
     document.addEventListener("keydown", (event) => this.handleKeydown(event));
     this.narrow.addEventListener("change", () => this.syncLayout());
   }
@@ -103,25 +119,27 @@ export class AssistantPanel {
       this.conversation = null;
       this.draft = null;
       this.conversations = [];
+      this.answers = [];
       this.nodes.input.value = this.drafts.get(`${this.companyId}:new`) || "";
       this.nodes.history.textContent = "";
       this.nodes.sessions.innerHTML = '<option value="">尚未选择会话</option>';
     }
-    this.nodes.company.textContent = company?.name || "请先打开客户详情";
+    this.nodes.company.textContent = company?.name || "请先选择客户";
     document
       .getElementById("assistant-toggle")
       ?.setAttribute("aria-expanded", String(this.isOpen));
   }
 
-  /** 功能：展开或收起当前客户侧栏。输入：隐式当前上下文。
+  /** 功能：展开或收起当前客户侧栏。输入：opener 可选触发元素，默认读取详情页按钮；隐式当前上下文。
    * 输出：无。逻辑：展开后读取持久化会话及草稿，焦点移至关闭入口。
    * 约束：读取不会新建会话或触发分析。 */
-  open() {
+  open(opener = null) {
     if (!this.companyId) return;
     if (this.isOpen) {
       this.close();
       return;
     }
+    this.opener = opener || document.getElementById("assistant-toggle");
     this.isOpen = true;
     this.nodes.panel.hidden = false;
     document.body.classList.add("assistant-open");
@@ -136,9 +154,10 @@ export class AssistantPanel {
   }
 
   /** 功能：收起并恢复背景交互。输入：restoreFocus 默认 true。
-   * 输出：无。逻辑：保留本页未保存文本，关闭模态语义。
+   * 输出：无。逻辑：保留本页文本，取消状态观察，关闭模态语义；返回仍存在的原触发元素或一级聊天入口。
    * 约束：路由切换使用 false，避免聚焦即将移除的元素。 */
   close(restoreFocus = true) {
+    this.stopPolling();
     const wasOpen = this.isOpen;
     this.isOpen = false;
     document.getElementById("workspace").inert = false;
@@ -146,7 +165,10 @@ export class AssistantPanel {
     this.nodes.panel.hidden = true;
     const trigger = document.getElementById("assistant-toggle");
     trigger?.setAttribute("aria-expanded", "false");
-    if (wasOpen && restoreFocus) trigger?.focus();
+    if (wasOpen && restoreFocus) {
+      const target = this.opener?.isConnected ? this.opener : document.querySelector('#workspace-nav a[data-assistant-entry]');
+      (target || trigger)?.focus();
+    }
   }
 
   /** 功能：同步响应式模态语义。输入：isOpen/narrow 实例状态。
@@ -200,9 +222,11 @@ export class AssistantPanel {
   }
 
   /** 功能：加载指定或最近的当前客户会话。输入：selected 可选会话标识。
-   * 输出：无。逻辑：完整分页读取会话、消息和草稿；旧 epoch 响应不更新视图。
+   * 输出：无。逻辑：完整分页读取会话、消息、草稿及回答状态；旧 epoch 响应不更新视图。
    * 约束：当前页未保存文本优先展示，并明确标记未保存。 */
   async load(selected) {
+    this.stopPolling();
+    this.answers = [];
     const company = this.companyId,
       epoch = ++this.epoch;
     if (!company) return;
@@ -226,10 +250,13 @@ export class AssistantPanel {
     let messages = [],
       draft = null;
     if (this.conversation) {
-      const [history, drafts] = await Promise.all([
+      const [history, drafts, answers] = await Promise.all([
         allRows(`records/messages/?conversation=${this.conversation.id}`),
         allRows(`records/drafts/?conversation=${this.conversation.id}`),
+        allRows(`chat/requests/?conversation=${this.conversation.id}`),
       ]);
+      if (epoch !== this.epoch) return;
+      this.answers = answers;
       messages = history;
       draft =
         drafts
@@ -250,6 +277,7 @@ export class AssistantPanel {
       ? "有本页未保存修改。"
       : "已读取服务器会话与草稿；修改后请手动保存。";
     this.draw(messages);
+    this.watch();
   }
 
   /** 功能：在显式保存或新建操作中建立会话。输入：当前公司及会话状态。
@@ -269,9 +297,9 @@ export class AssistantPanel {
     return conversation;
   }
 
-  /** 功能：保存当前草稿或不可变用户消息。输入：asMessage 指定保存目标。
-   * 输出：无。逻辑：消息使用稳定幂等键；草稿编辑携带 revision，新建或修改均为显式请求。
-   * 约束：不调用聊天模型；保存消息后保留草稿，避免把两次独立写入混为原子操作。 */
+  /** 功能：保存草稿或明确提交问答。输入：asMessage 指定是否请求回答。
+   * 输出：无。逻辑：提问使用稳定幂等键，后端原子保存问题及任务；草稿仍按 revision 保存。
+   * 约束：只有成功提交后才更换幂等键，网络失败保留输入和键供用户明确重传。 */
   async save(asMessage) {
     const content = this.nodes.input.value;
     if (asMessage && !content.trim()) throw new Error("请先输入消息内容。");
@@ -279,10 +307,10 @@ export class AssistantPanel {
     const conversation = await this.ensureConversation();
     const epoch = this.epoch;
     if (asMessage)
-      await salesRequest("records/messages/", {
+      await salesRequest("chat/messages/", {
         method: "POST",
         data: {
-          conversation: conversation.id,
+          conversation_id: conversation.id,
           content,
           client_key: this.messageKey,
         },
@@ -304,38 +332,139 @@ export class AssistantPanel {
     if (company !== this.companyId || epoch !== this.epoch) return;
     this.drafts.delete(`${company}:new`);
     this.drafts.delete(`${company}:${conversation.id}`);
+    if (asMessage) {
+      this.drafts.set(`${company}:${conversation.id}`, "");
+      this.messageKey = crypto.randomUUID();
+    }
     await this.load(conversation.id);
-    this.nodes["draft-note"].textContent = asMessage
-      ? "用户消息已保存。聊天模型尚未接入；已有草稿仍保留。"
-      : "草稿已保存到服务器，刷新页面后可以恢复。";
+    if (!asMessage) this.nodes["draft-note"].textContent = "草稿已保存到服务器，刷新页面后可以恢复。";
   }
 
   /** 功能：显示真实持久化的历史消息。输入：messages 数组。
-   * 输出：无。逻辑：逐条显示角色、时间和原文；空会话明确说明。
-   * 约束：全部文本转义，不伪造回复或执行结果。 */
+   * 输出：无。逻辑：消息关联本次请求状态，助手消息展开后端冻结证据，最后一次失败可明确重试。
+   * 约束：全部文本转义，引用不执行 HTML 或不可信 URL；不伪造回复或执行结果。 */
   draw(messages) {
+    const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
+    const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
+    const labels = { pending: "等待回答", processing: "正在生成回答", completed: "回答完成", failed: "回答失败" };
     this.nodes.history.innerHTML = messages.length
       ? messages
-          .map(
-            (message) =>
-              `<article class="assistant-message"><small>${message.role === "user" ? "我" : "助手"} · ${esc(new Date(message.created_at).toLocaleString())}</small><p>${esc(message.content)}</p></article>`,
-          )
+          .map((message) => {
+            const answer = byMessage.get(message.id), question = byQuestion.get(message.id);
+            const citations = (answer?.citations || []).map((citation) => `<details><summary>[${citation.position}] ${esc(citation.title_or_label)}</summary><p>${esc(citation.content)}</p></details>`).join("");
+            const state = question ? `<p class="fine">${labels[question.status] || "状态未知"}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? `<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
+            return `<article class="assistant-message"><small>${message.role === "user" ? "我" : "助手"} · ${esc(new Date(message.created_at).toLocaleString())}</small><p>${esc(message.content)}</p>${citations}${state}</article>`;
+          })
           .join("")
-      : '<p class="fine">尚无已保存消息。可以先保存草稿，或把消息记录到会话中。</p>';
+      : '<p class="fine">尚无消息。可以先保存草稿，或提交关于当前客户的问题。</p>';
+  }
+
+  /** 功能：取消当前状态观察。输入：实例定时器、控制器及观察代次。
+   * 输出：无。逻辑：清除定时器、取消 fetch 并使旧响应失效。
+   * 约束：不取消后端回答任务，也不改变消息。 */
+  stopPolling() {
+    clearTimeout(this.pollTimer);
+    this.pollController?.abort();
+    this.pollController = null;
+    this.pollEpoch += 1;
+  }
+
+  /** 功能：观察当前会话活动请求。输入：answers 和面板状态。
+   * 输出：无。逻辑：每轮最多 120 次，每次响应后间隔 2 秒；同一时刻只有一次读取。
+   * 约束：没有活动任务或已关闭时不发送请求，不创建模型工作。 */
+  watch() {
+    this.stopPolling();
+    const active = this.answers.find((row) => ["pending", "processing"].includes(row.status));
+    this.nodes.submit.disabled = this.busy || Boolean(active);
+    if (!active || !this.isOpen) return;
+    this.pollCount = 0;
+    this.nodes["draft-note"].textContent = active.status === "pending" ? "问题已提交，等待回答。" : "正在生成回答。";
+    const epoch = this.pollEpoch;
+    this.pollTimer = setTimeout(() => this.poll(active.request_id, epoch), 2000);
+  }
+
+  /** 功能：读取一次生成状态。输入：requestId 绑定任务，epoch 观察代次。
+   * 输出：无。逻辑：终态刷新消息，活动状态继续有界观察；错误暂停并提供手动恢复。
+   * 约束：取消、切换客户和关闭后的响应均不展示；不隐式重试失败 HTTP。 */
+  async poll(requestId, epoch) {
+    if (epoch !== this.pollEpoch || !this.isOpen) return;
+    this.pollController = new AbortController();
+    try {
+      const result = await salesRequest(`chat/requests/${requestId}/`, { signal: this.pollController.signal });
+      if (epoch !== this.pollEpoch || !this.isOpen) return;
+      this.answers = this.answers.map((row) => row.request_id === requestId ? result : row);
+      if (["completed", "failed"].includes(result.status)) {
+        await this.refreshAnswers();
+        return;
+      }
+      this.nodes["draft-note"].textContent = result.status === "pending" ? "等待回答。" : "正在生成回答。";
+      this.pollCount += 1;
+      if (this.pollCount >= 120) throw new Error("等待时间较长，自动查询已暂停。");
+      this.pollTimer = setTimeout(() => this.poll(requestId, epoch), 2000);
+    } catch (error) {
+      if (epoch !== this.pollEpoch || error.name === "AbortError") return;
+      this.pausePolling(error.message);
+    }
+  }
+
+  /** 功能：刷新答案而保留用户正在编辑的文本。输入：当前客户、会话及 epoch。
+   * 输出：无。逻辑：只读取消息和请求，检查绑定和观察代次；任一读取失败显示明确恢复入口。
+   * 约束：不重新加载草稿、不抢焦点；保留历史区阅读位置，不静默吞掉刷新错误。 */
+  async refreshAnswers() {
+    this.stopPolling();
+    const conversation = this.conversation?.id, epoch = this.epoch, observation = this.pollEpoch;
+    if (!conversation) return;
+    let messages, answers;
+    try {
+      [messages, answers] = await Promise.all([
+        allRows(`records/messages/?conversation=${conversation}`),
+        allRows(`chat/requests/?conversation=${conversation}`),
+      ]);
+    } catch (error) {
+      if (epoch === this.epoch && observation === this.pollEpoch && this.isOpen)
+        this.pausePolling(error.message);
+      return;
+    }
+    if (epoch !== this.epoch || observation !== this.pollEpoch || conversation !== this.conversation?.id || !this.isOpen) return;
+    this.answers = answers;
+    const scrollContainer = this.nodes.history.parentElement, position = scrollContainer.scrollTop;
+    this.draw(messages);
+    scrollContainer.scrollTop = position;
+    this.nodes["draft-note"].textContent = "回答状态已更新；输入中的未保存内容已保留。";
+    this.watch();
+  }
+
+  /** 功能：显示观察暂停原因和明确恢复入口。输入：message 安全提示。
+   * 输出：无。逻辑：取消观察后用转义文本显示错误，不影响后端任务。
+   * 约束：不会因网络错误自动重新提交问题或恢复查询。 */
+  pausePolling(message) {
+    this.stopPolling();
+    this.nodes["draft-note"].innerHTML = `${esc(message)} <button type="button" class="text-btn" data-chat-resume>继续查询</button>`;
+    console.warn("assistant_poll_paused");
+  }
+
+  /** 功能：明确请求重新回答失败的问题。输入：requestId 原失败请求。
+   * 输出：无。逻辑：后端创建新尝试，前端重新读取状态。
+   * 约束：不覆盖原失败记录，不在错误处理分支自动调用。 */
+  async retryAnswer(requestId) {
+    const epoch = this.epoch;
+    await salesRequest(`chat/requests/${requestId}/retry/`, { method: "POST", data: {} });
+    if (epoch === this.epoch) await this.refreshAnswers();
   }
 
   /** 功能：串行化当前侧栏操作并显示错误。输入：task 异步回调。
-   * 输出：无。逻辑：禁用保存、输入及会话切换；完成后处理操作期间新增的展开请求，错误进入状态区域。
+   * 输出：无。逻辑：禁用保存、输入及会话切换；完成后活动任务继续禁止新提问，错误进入状态区域。
    * 约束：不重试；不记录正文。切换客户后仍可关闭面板。 */
   async run(task) {
     if (this.busy) return;
+    const company = this.companyId;
     this.busy = true;
     for (const name of ["submit", "save", "sessions", "new", "input", "clear"])
       this.nodes[name].disabled = true;
     try {
       await task();
     } catch (error) {
-      this.nodes["draft-note"].textContent = error.message;
+      if (company === this.companyId) this.nodes["draft-note"].textContent = error.message;
       console.warn("assistant_operation_failed");
     } finally {
       this.busy = false;
@@ -348,6 +477,7 @@ export class AssistantPanel {
         "clear",
       ])
         this.nodes[name].disabled = false;
+      this.nodes.submit.disabled = this.answers.some((row) => ["pending", "processing"].includes(row.status));
       if (this.needsLoad && this.isOpen) {
         this.needsLoad = false;
         this.run(() => this.load(this.conversation?.id));

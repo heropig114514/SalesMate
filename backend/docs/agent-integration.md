@@ -47,3 +47,7 @@ python backend/manage.py crm_worker
 - 真实 Gmail 与百炼不属于自动测试依赖。
 
 持久批次、Worker、复核及迁移兼容边界见 [邮件处理适配](processing-integration.md)。
+
+## 只读聊天适配
+
+2026-09-18 新增独立 `apps.chat`，复用员工 Agent 服务认证；固定 claim/context/answers 三接口与原 Agent 聊天工作流兼容。运行使用独立 `chat_worker`，不修改本页的邮箱或 L1–L4 流程。精确契约、迁移、知识与恢复说明见 [聊天适配](chat-integration.md)。

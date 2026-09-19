@@ -42,6 +42,7 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 - [代码注释规范](backend/docs/coding-agent-guidelines.md)
 - [API 契约](backend/docs/api-contract.md)
 - [Agent 联调说明](backend/docs/agent-integration.md)
+- [世界消息地图与后续推送契约](backend/docs/world-news.md)：`/world/` 提供行业消息地图、摘要侧栏和详情页；当前使用明确标注的虚构演示数据。
 
 在仓库根目录启动本地工作台：
 
@@ -60,7 +61,7 @@ Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `
 
 ## 销售业务扩展
 
-`/business/` 已提供客户关系、交易单据、跟进、团队授权、附件和动作确认；助手侧栏支持持久化会话与草稿。新增 `backend/apps/sales/` 管理关系 Schema 和业务事务，原 Agent 协议不变。详细模型、接口、验证边界及 Worker/OAuth 配置见 [销售扩展说明](backend/docs/backend-expansion.md)。聊天模型与自主工具选择仍未接入，真实 Gmail 发信和日历执行须完成明确的写权限授权。
+`/business/` 已提供客户关系、交易单据、跟进、团队授权、附件和动作确认；助手侧栏支持持久化会话与草稿。新增 `backend/apps/sales/` 管理关系 Schema 和业务事务，原 Agent 协议不变。详细模型、接口、验证边界及 Worker/OAuth 配置见 [销售扩展说明](backend/docs/backend-expansion.md)。只读销售聊天已通过独立 `apps.chat` 接入，支持任务状态、证据快照、引用和 `chat_worker`；启动与验证边界见 [聊天适配](backend/docs/chat-integration.md)。自主工具选择未开放，真实 Gmail 发信和日历执行须完成明确的写权限授权。
 
 ## 邮件持久处理
 

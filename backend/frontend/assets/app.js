@@ -1,14 +1,14 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：简易注册/登录、哈希路由和单客户持续读取；QQ 同步每次询问范围，会话隔离旧响应，保留阅读位置及独立草稿。
- * 关联：workspace.js 共享导航；api.js 通信，qq.js 管理 QQ，mail-source.js 标注来源，assistant.js 管理草稿，notice.js 管理提示的自动关闭与阅读暂停。
+ * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接选择客户，QQ 同步每次询问范围，旧响应隔离并保留独立草稿。
+ * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
  * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
- * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理草稿，notices 管理页面提示生命周期。
+ * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的中文展示映射；assistant 管理聊天，assistantEntry 管理客户选择入口，notices 管理页面提示生命周期。
  */
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260914-mail-source';
 import { mailSourceLabel } from './mail-source.js';
@@ -16,10 +16,12 @@ import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260914-mail
 import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js';
 import { request, escapeHtml as e } from './api.js?v=20260914-signup';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
-import { AssistantPanel } from './assistant.js?v=20260913-sales';
+import { AssistantPanel } from './assistant.js?v=20260919-entry';
+import { AssistantEntry } from './assistant-entry.js';
 import { Notice } from './notice.js';
 
 const assistant = new AssistantPanel();
+const assistantEntry = new AssistantEntry(assistant);
 
 /** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
 const $ = id => document.getElementById(id);
@@ -186,15 +188,24 @@ async function loadDetail(id, trigger = true) {
   }
 }
 
-/** 功能：按哈希切换列表和详情。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止详情观察并隔离旧响应；路由区分工作台、客户、复核和进度入口。
- * 约束：复核和授权只打开界面；现有客户分析触发条件不变，路由错误可见。 */
+/** 功能：按哈希切换列表、详情和聊天入口。输入：location.hash 隐式状态。输出：无。
+ * 逻辑：切换时停止旧观察；聊天路由独立加载客户选择或指定客户会话，不经过详情分析入口。
+ * 约束：聊天、复核和授权入口不触发分析；原客户详情的分析条件保持不变。 */
 async function navigate() {
   detailObserver.stop();
+  assistantEntry.hide();
   ++state.navigation;
   state.detail = null;
   assistant.setContext(null);
   $('notice').hidden = true;
+  const chat = location.hash.match(/^#assistant(?:\/([\w-]+))?$/);
+  if (chat) {
+    $('workspace-overview').hidden = true; $('list-page').hidden = true; $('detail-page').hidden = true;
+    $('workspace-crumb').textContent = '聊天助手'; $('detail-crumb').textContent = '';
+    setWorkspaceContext(null, 'assistant');
+    await assistantEntry.show(chat[1] || null);
+    return;
+  }
   const match = location.hash.match(/^#company\/([\w-]+)$/);
   const home = !location.hash || location.hash === '#home';
   mountWorkspace(home ? 'home' : 'inbox');
@@ -439,10 +450,11 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：先使旧观察失效，再核验会话；已登录挂载工作台，匿名清空助手并恢复登录表单。
+ * 逻辑：先取消旧详情和聊天入口读取，再核验会话；已登录挂载工作台，匿名清空助手并恢复登录表单。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
   detailObserver.stop();
+  assistantEntry.hide();
   ++state.navigation;
   const session = await request('session/');
   $('login-screen').hidden = session.authenticated;
@@ -484,7 +496,7 @@ async function initialize() {
 }
 
 /** 功能：注册静态表单与动态内容事件。输入：现有 DOM。输出：无。
- * 逻辑：绑定账号注册、登录切换和业务表单；复核同步待办，恢复按钮只读重启观察，pagehide 取消旧响应。
+ * 逻辑：绑定账号注册和业务表单；重复点击聊天入口重开选择/会话，恢复按钮只读观察，pagehide 取消旧响应。
  * 约束：只绑定一次，不通过 eval 或字符串内联事件执行代码。 */
 function bindEvents() {
   initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
@@ -530,10 +542,11 @@ function bindEvents() {
       else notice('该依据来自已保存的 CRM 业务记录，来源 ID：' + reference.dataset.ref, false);
     }
   });
-  window.addEventListener('pagehide', () => { detailObserver.stop(); ++state.navigation; });
+  window.addEventListener('pagehide', () => { detailObserver.stop(); assistantEntry.hide(); ++state.navigation; });
   window.addEventListener('pageshow', event => {
     const match = location.hash.match(/^#company\/([\w-]+)$/);
     if (event.persisted && match && !$('workspace').hidden) busy(null, () => loadDetail(match[1], false));
+    if (event.persisted && /^#assistant(?:\/|$)/.test(location.hash) && !$('workspace').hidden) busy(null, navigate);
   });
   window.addEventListener('hashchange', () => { if (!$('workspace').hidden) busy(null, navigate); });
 }

@@ -32,6 +32,7 @@ SalesMate/
     │   ├── migrations/                # 数据表与唯一约束
     │   └── management/commands/       # 本地账号初始化
     ├── apps/sales/                    # 销售关系模型、权限、事务、外部动作和 sales_worker
+    ├── apps/chat/                     # 只读聊天任务、证据、引用、知识版本和 chat_worker
     ├── common/                       # 日志、错误和健康检查
     ├── tests/                        # 框架、契约、业务与权限测试
     ├── frontend/
@@ -52,6 +53,6 @@ crm 保持邮件与 L1–L4 分析持久化职责，sales 管理交易、协作�
 
 在 `SalesMate/backend/` 执行 `python tools/check_docs.py`，默认覆盖本目录全部 Python 文件，包括迁移、测试、工具和包初始化。修改检查器时同时执行 `python tools/test_check_docs.py`。JS/CSS/HTML 与 browser_smoke.cjs 的说明和目录人工核对。
 
-源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。交易维护、发送/日历确认、会话草稿与团队权限已放入 sales；知识库、翻译和自主助手仍待后续接入。未引入 RAG、LangGraph、Celery 或容器。
+源码、迁移、契约和文档应一起提交；`.env`、`.local-access.json`、日志、数据库和运行产物不提交。交易维护、发送/日历确认、会话草稿与团队权限已放入 sales；只读聊天及内部知识版本归 chat；外部检索、翻译和自主工具仍待后续接入。未引入 RAG、LangGraph、Celery 或容器。
 
 新增 `processing_models.py`、`processing.py`、`classification.py`、`processing_views.py` 管理持久批次、阶段和复核；`dispatch.py` 轮转员工并管理临时 HTTP 身份，`management/commands/crm_worker.py` 共享消费任务，`classify_emails.py` 回填历史分类。

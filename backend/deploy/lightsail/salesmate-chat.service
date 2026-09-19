@@ -1,0 +1,27 @@
+# 职责：持续串行处理员工自有客户的只读聊天请求。
+# 实现：独立 chat_worker；失败不自动重启，SIGTERM 等待当前任务回报。
+# 关联：蓝绿部署在切流后启动聊天、换版前排空聊天；依赖 PostgreSQL，HTTP 就绪由部署脚本检查。
+# 目录：无函数或类。
+# 变量索引：EnvironmentFile 从 shared/runtime.env 提供员工绑定 Agent 配置；ExecStart 为消费者；
+# User/Group 为既有服务账号；TimeoutStopSec 保留在途回报，Restart 禁止隐式恢复。
+[Unit]
+Description=SalesMate read-only sales chat worker
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=salesmate
+Group=salesmate
+WorkingDirectory=/opt/salesmate/app
+EnvironmentFile=/opt/salesmate/shared/runtime.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.lightsail
+ExecStart=/opt/salesmate/venv/bin/python backend/manage.py chat_worker
+Restart=no
+TimeoutStopSec=infinity
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

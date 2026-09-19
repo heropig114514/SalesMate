@@ -1,0 +1,28 @@
+/* 职责：聊天助手一级入口的客户选择与空状态样式。
+ * 实现：沿用工作空间绿色体系，搜索和客户按钮在窄屏自然换行。
+ * 关联：assistant-entry.js、index.html；实际会话继续使用已有 AssistantPanel 样式。
+ * 目录：无函数或类；区域为欢迎区、搜索、客户按钮、分页和移动布局。
+ * 变量索引：无新增全局变量；复用 --green、--muted、--line。 */
+.assistant-entry-intro { max-width:680px; margin:14px auto 30px; text-align:center; }
+.assistant-entry-mark { display:grid; place-items:center; width:58px; height:58px; border-radius:18px; background:#e5efe5; color:var(--green); font-size:31px; margin:0 auto 18px; }
+.assistant-entry-intro h1 { font-size:28px; margin-bottom:13px; }
+.assistant-entry-intro>p:last-child { color:var(--muted); font-size:13px; line-height:1.9; }
+.assistant-entry-box { max-width:860px; margin:0 auto; border:1px solid var(--line); background:white; border-radius:14px; padding:24px; }
+.assistant-entry-box h2 { font-size:16px; margin-bottom:16px; }
+#assistant-entry-search { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+#assistant-entry-search label { flex:1; }
+#assistant-entry-search input { font-size:12px; }
+#assistant-entry-search button { font-size:12px; }
+#assistant-entry-results { display:grid; gap:10px; }
+.assistant-entry-customer { display:flex; width:100%; gap:14px; align-items:center; text-align:left; border:1px solid #e8ede6; border-radius:9px; padding:16px; background:#fafcf8; }
+.assistant-entry-customer:hover { border-color:#a0b99f; background:#f1f6ed; }
+.assistant-entry-customer>span:nth-child(2) { min-width:0; flex:1; }
+.assistant-entry-customer strong { display:block; font-size:14px; font-weight:550; }
+.assistant-entry-customer small { display:block; margin-top:7px; font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.assistant-entry-arrow { font-size:11px; color:var(--green); white-space:nowrap; }
+.assistant-entry-pagination { display:flex; justify-content:flex-end; align-items:center; gap:14px; margin-top:18px; font-size:12px; color:var(--muted); }
+.assistant-entry-empty { text-align:center; padding:30px 16px; color:var(--muted); font-size:13px; }
+.assistant-entry-empty p { margin:12px 0; font-size:12px; line-height:1.8; }
+.assistant-entry-empty a { display:inline-block; margin-top:6px; color:var(--green); }
+#assistant-entry-error { color:#a15242; font-size:12px; margin:12px 0; line-height:1.8; }
+@media(max-width:760px) { .assistant-entry-box { padding:18px; } .assistant-entry-intro h1 { font-size:24px; } #assistant-entry-search { flex-wrap:wrap; } #assistant-entry-search label { flex-basis:100%; } .assistant-entry-customer { flex-wrap:wrap; padding:13px; } .assistant-entry-arrow { margin-left:56px; } }

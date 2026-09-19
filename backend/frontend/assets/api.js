@@ -1,6 +1,6 @@
 /**
  * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
- * 实现：fetch 发送 JSON，写请求附 CSRF；递归提取表单错误为可读提示，保留失败状态。
+ * 实现：fetch 发送 JSON，写请求附 CSRF；支持调用方取消只读观察，保留失败状态并展开表单错误。
  * 关联：app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
  * 目录：csrfToken（读取 cookie）；errorMessage（提取错误文本）；request（执行请求）；escapeHtml（转义文本）。
  * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
@@ -23,18 +23,19 @@ function errorMessage(detail) {
   return '';
 }
 
-/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data、version。
+/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data、version、signal。
  * 输出：成功 JSON 或 null；失败抛 Error。逻辑：保持 HTTP 失败语义，展开字段错误并附 request_id。
- * 约束：无重试、无降级；不将秘密放入 URL，不保存账号密码。 */
-export async function request(path, { method = 'GET', data, version } = {}) {
+ * 约束：取消保留 AbortError 交给观察者处理；无重试、无降级，不将秘密放入 URL。 */
+export async function request(path, { method = 'GET', data, version, signal } = {}) {
   const headers = { 'Accept': 'application/json' };
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') headers['X-CSRFToken'] = csrfToken();
   if (version !== undefined) headers['If-Match'] = String(version);
   let response;
   try {
-    response = await fetch(BASE + path, { method, headers, credentials: 'same-origin', body: data === undefined ? undefined : JSON.stringify(data) });
-  } catch {
+    response = await fetch(BASE + path, { method, headers, signal, credentials: 'same-origin', body: data === undefined ? undefined : JSON.stringify(data) });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
     throw new Error('无法连接后端，请检查服务是否启动。');
   }
   if (response.status === 204) return null;

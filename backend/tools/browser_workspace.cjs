@@ -1,7 +1,7 @@
 /**
- * 职责：验证统一导航、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证统一导航、直接聊天入口、真实总数展示、跨页客户上下文和表单预填。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
- * 关联：workspace.js、app.js、business.js；需显式 Playwright 模块和 Chrome 路径。
+ * 关联：workspace.js、app.js、assistant-entry.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
  */
@@ -14,7 +14,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
- * 逻辑：A 公司邮件详情跳转新报价、跟进并刷新，检验 URL 和表单一致；额外检验未知客户与请求失败。
+ * 逻辑：聊天入口搜索、选择和刷新不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户与失败。
  * 约束：所有业务请求均拦截；除原有客户分析入口的模拟 POST 外，禁止任何写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -51,8 +51,9 @@ async function main() {
       else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'Asia/Shanghai' };
       else if (endpoint === 'mailboxes/') data = [];
       else if (endpoint === 'email-reviews/') data = { pending_count: 3, count: 0, results: [], page: 1, page_size: 20 };
-      else if (endpoint === 'companies/') data = { results: [row], count: 1, stats: { companies: 1, unregistered: 0, new_emails_today: 1 } };
+      else if (endpoint === 'companies/') data = { results: url.searchParams.get('q') === '不存在' ? [] : [row], count: url.searchParams.get('q') === '不存在' ? 0 : 1, stats: { companies: 1, unregistered: 0, new_emails_today: 1 } };
       else if (endpoint === 'companies/company-a/') data = { ...row, analysis: null, score_reasons: [], context: { emails: [], tickets: [], quotes: [], orders: [] } };
+      else if (endpoint === 'companies/unavailable/') return route.fulfill({ status: 404, json: { error: { detail: '客户不存在或无权访问' } } });
       else if (endpoint === 'sales/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, unread_notifications: 2, confirmed_order_net: {}, open_opportunity_amount: {} };
       else if (endpoint === 'sales/catalog/') data = { resources };
       else if (endpoint === 'sales/directory/') data = { results: [company], count: 1 };
@@ -68,7 +69,46 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).getByText('7', { exact: true }).waitFor();
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
+    assert.equal(navLabels[1], '聊天助手');
     await page.screenshot({ path: path.join(OUTPUT, 'workspace-home-desktop.png'), fullPage: true });
+    await page.locator('#workspace-nav').getByRole('link', { name: '聊天助手', exact: true }).click();
+    await page.locator('[data-chat-company]').waitFor();
+    assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '聊天助手');
+    await page.getByRole('searchbox', { name: '搜索聊天客户' }).fill('不存在');
+    await page.getByRole('button', { name: '查找客户', exact: true }).click();
+    await page.getByText('没有找到匹配的客户', { exact: true }).waitFor();
+    await page.getByRole('searchbox', { name: '搜索聊天客户' }).fill('精密设备');
+    await page.getByRole('button', { name: '查找客户', exact: true }).click();
+    await page.locator('[data-chat-company]').waitFor();
+    assert(queries.some(url => url.includes('page_size=6') && url.includes('q=')));
+    await page.screenshot({ path: path.join(OUTPUT, 'assistant-entry-desktop.png'), fullPage: true });
+    await page.locator('[data-chat-company]').click();
+    await page.locator('#assistant-panel').waitFor();
+    assert.equal(await page.locator('#assistant-company').textContent(), company.name);
+    assert.equal(new URL(page.url()).hash, '#assistant/company-a');
+    await page.locator('#assistant-close').click();
+    assert.equal(await page.locator('[data-chat-company]').evaluate(node => document.activeElement === node), true);
+    await page.locator('#workspace-nav').getByRole('link', { name: '聊天助手', exact: true }).click();
+    await page.locator('#assistant-panel').waitFor();
+    await page.reload();
+    await page.locator('#assistant-panel').waitFor();
+    assert.equal(await page.locator('#assistant-company').textContent(), company.name);
+    await page.locator('#assistant-close').click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('[data-chat-company]').waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Chat entry mobile overflow');
+    await page.screenshot({ path: path.join(OUTPUT, 'assistant-entry-mobile.png'), fullPage: true });
+    await page.locator('[data-chat-company]').click();
+    await page.locator('#assistant-panel').waitFor();
+    assert.equal(await page.locator('#workspace').evaluate(node => node.inert), true);
+    await page.locator('#assistant-close').click();
+    assert.equal(await page.locator('#workspace').evaluate(node => node.inert), false);
+    await page.goto(base + '/#assistant/unavailable');
+    await page.locator('#assistant-entry-error').filter({ hasText: '客户不存在或无权访问' }).waitFor();
+    assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+    assert.deepEqual(writes, [], 'Opening chat must not submit an analysis or a question');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole('link', { name: '工作台', exact: true }).click();
     await page.locator('.company-row').click();
     await page.locator('#workspace-context strong').filter({ hasText: company.name }).waitFor();
     await page.locator('.workspace-customer-actions a').filter({ hasText: '创建报价' }).click();
@@ -77,6 +117,7 @@ async function main() {
     assert.equal(await page.locator('#company-filter').inputValue(), company.id);
     assert.equal(new URL(page.url()).searchParams.get('company'), company.id);
     assert.equal(new URL(page.url()).searchParams.has('create'), false, 'Consumed form request remains in URL');
+    assert.equal(await page.locator('#workspace-nav').getByRole('link', { name: '聊天助手', exact: true }).getAttribute('href'), '/#assistant/company-a');
     assert.deepEqual(await page.locator('#workspace-nav a').allTextContents(), navLabels);
     await page.screenshot({ path: path.join(OUTPUT, 'workspace-quote-prefill.png'), fullPage: true });
     await page.locator('#close-editor').click();
@@ -115,7 +156,7 @@ async function main() {
     assert.match(await page.locator('.workspace-task').filter({ hasText: '待确认动作' }).textContent(), /暂不可用/);
     assert.deepEqual(errors, []);
     assert.deepEqual(writes, ['companies/company-a/analyze/']);
-    console.log('Workspace browser checks passed: shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
+    console.log('Workspace browser checks passed: direct chat entry, search/empty state, chat refresh/reopen, focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

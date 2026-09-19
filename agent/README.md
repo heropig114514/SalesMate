@@ -64,21 +64,13 @@ python -m agent.main --process-chat-once
 | `get_answer_context(request_id, scope)` | `POST chat/context/` | `scope` 仅允许 `internal|external`；独立校验客户上下文状态、知识状态、检索缺口和 external 可用性 |
 | `report_answer(result)` | `POST chat/answers/` | 回报 `chat_prompt_version`、`completed|failed`、回答、Citation 和安全错误；接受后端首存或幂等重复响应 |
 
-这些是 **Agent 适配器和 mocked contract**，不是“真实 Django 已经提供聊天接口”的声明。联调时，Backend Team 必须在现有 `/api/v1/agent/` 基址下实现并保护以上路径，按 service token 对员工、conversation、company、user message 和 request_id 做授权绑定；Agent 不发送任意 company/query 覆盖，也不得直连知识库。自动测试使用 fake session/backend，不连接真实 HTTP、模型、数据库或知识服务。
+2026-09-18 后端适配更新：`backend/apps/chat/` 已实现以上三个受保护路径、员工绑定、证据快照、幂等结果和唯一助手消息。浏览器已接入提交、状态观察和引用；独立 `chat_worker` 串行调用原 `process_chat_once()`。Agent 不发送任意 company/query 覆盖，也不直连知识库。后端当前支持员工自有客户、显式内部知识，外部知识保持关闭。
 
 ### 1.4 Agent Delivery 与 Web Demo Delivery
 
-当前文档中的 **Agent Delivery** 仅指 `agent/` 内已有的 Chat Skill、有序模型边界、只读回答工作流、BackendClient 三接口映射、一次性 CLI，以及单元、示例、失败路径和四个确定性属性测试。它不等于网页可聊天 Demo 已交付。
+Agent 本目录的单元测试继续使用 fake session/backend，不代表真实模型或生产网页验收。后端新增集成测试使用真实 PostgreSQL 和临时 Django HTTP 服务运行原 Agent HTTP 客户端/工作流，模型输出模拟；浏览器测试使用真实页面与模拟 API。
 
-以下仍是 **Web Demo Delivery 的外部阻塞依赖**：
-
-1. **Backend Team**：实现 pending/processing/completed/failed answer request、原子 claim、员工与客户授权隔离、request_id 幂等 report、唯一 immutable assistant Message、Citation/安全错误持久化和浏览器可读状态投影。
-2. **知识与上下文基础设施**：按当前 request 返回授权的最近客户邮件、最新有效 L3 画像、可用工单/报价/订单摘要、内部/外部知识，以及独立的 `customer_context_status`、`knowledge_status` 和安全 `retrieval_gaps`；Agent 当前只消费该契约，不检索或保存这些数据。
-3. **Frontend Team**：提交 user Message 后显示生成中状态，以有界间隔轮询状态或会话历史，completed 时自动展示唯一 assistant Message 和 Citation，failed 时显示安全错误；切换客户/会话或关闭侧栏时取消旧轮询。
-4. **Deployment/Backend Team**：Demo 运行期间由外部调度器或现有 Worker 串行、持续触发 `python -m agent.main --process-chat-once`。Agent 本身不会增加常驻循环。
-5. **端到端验收**：只有“网页提问 → pending → Agent 领取 → 授权上下文/知识读取 → 一次模型回答 → 后端保存 → 网页自动显示回答与引用”通过，并且 Existing L1–L4 Pipeline 回归不变，才能声明 Web Demo Delivery 完成。
-
-不要把 Agent 的 fake backend、mocked HTTP 测试或手工执行一次 CLI 当作真实后端持久化、浏览器自动刷新或持续运行能力。
+后端代码适配已交付，但 Web Demo 上线仍需应用迁移、配置模型与员工 token、启动独立 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。聊天不执行发信、日历或业务写入。当前完整契约、恢复和部署步骤以 [后端聊天适配说明](../backend/docs/chat-integration.md) 为准；尤其 report 必须包含 `chat_prompt_version=chat-v2`，失败请求不能重置后复用原 request_id。
 
 ### 1.5 聊天离线测试
 

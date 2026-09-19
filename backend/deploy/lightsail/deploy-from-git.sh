@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 职责：发布 CI 验证的 main 提交，使用独立环境和双 Web 实例切换。
-# 实现：校验源文件、构建候选、排空后台、兼容迁移、探测后切流，旧请求结束后退役。
-# 关联：root 受限入口、systemd 模板及 shared 目录须由管理员初始化。
+# 实现：校验源文件、构建候选、排空含聊天的后台、兼容迁移、探测后切流，旧请求结束后退役。
+# 关联：root 受限入口、systemd 模板、独立聊天服务及 shared 目录须由管理员初始化。
 # 目录：report_failure 记录失败；phase 记录状态转换；其余为顺序部署。
 # 变量索引：revision/latest/previous 为版本；state/repo 为发布目录；stage/backup 为故障定位；
 # release/app/py 为候选路径；active/target 为端口；source/mode/name 为归档和共享路径处理；
@@ -46,6 +46,8 @@ active=$(cat /opt/salesmate/active-port)
 [[ "$active" == 8001 || "$active" == 8002 ]]
 target=8001
 [[ "$active" != 8001 ]] || target=8002
+# 受保护的聊天服务须先由管理员安装；缺失时在排空后台前明确失败。
+systemctl cat salesmate-chat.service > /dev/null 2>&1 || { printf 'Install the reviewed salesmate-chat.service before deployment.\n' >&2; exit 64; }
 phase fetch
 export GIT_SSH_COMMAND='ssh -i /etc/salesmate-deploy/repository_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/salesmate-deploy/github_known_hosts'
 git --git-dir="$repo" fetch --no-tags origin +refs/heads/main:refs/heads/main
@@ -57,7 +59,7 @@ fi
 previous=$(cat /opt/salesmate/deployed-revision)
 [[ "$previous" =~ ^[0-9a-f]{40}$ ]]
 if [[ "$revision" == "$previous" ]]; then
-    systemctl is-active --quiet "salesmate-web@$active" salesmate-crm salesmate-sales salesmate-celery@crm salesmate-celery@sales redis-server
+    systemctl is-active --quiet "salesmate-web@$active" salesmate-crm salesmate-sales salesmate-chat salesmate-celery@crm salesmate-celery@sales redis-server
     curl -fsS --max-time 15 https://milkdragon.dev/api/v1/health/ready/ > /dev/null
     printf 'healthy %s\n' "$revision" > "$state/status"
     exit 0
@@ -100,7 +102,8 @@ sudo -u salesmate cp -a backend/frontend/assets/. backend/staticfiles/
 find backend/staticfiles -type d -exec chmod 755 {} +
 find backend/staticfiles -type f -exec chmod 644 {} +
 phase drain
-# 停调度器并等待结果，再停消费者；整个过程旧 Web 继续服务。
+# 先排空独立聊天，再停调度器并等待结果，最后停 Celery 消费者；旧 Web 继续服务。
+systemctl stop salesmate-chat
 systemctl stop salesmate-crm salesmate-sales
 systemctl stop salesmate-celery@crm salesmate-celery@sales
 phase backup
@@ -154,8 +157,8 @@ curl -fsS --max-time 15 https://milkdragon.dev/api/v1/health/ready/ > "$backup/p
 phase workers
 systemctl start salesmate-celery@crm salesmate-celery@sales
 sudo -u salesmate "$py" backend/manage.py check_infrastructure --workers
-systemctl start salesmate-crm salesmate-sales
-systemctl is-active "salesmate-web@$target" salesmate-crm salesmate-sales salesmate-celery@crm salesmate-celery@sales nginx redis-server postgresql
+systemctl start salesmate-crm salesmate-sales salesmate-chat
+systemctl is-active "salesmate-web@$target" salesmate-crm salesmate-sales salesmate-chat salesmate-celery@crm salesmate-celery@sales nginx redis-server postgresql
 phase retire
 # 等旧 Nginx 释放请求再停旧 Web；超时保留旧实例供排查。
 for pid in $old_nginx; do

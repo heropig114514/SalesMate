@@ -1,8 +1,9 @@
 <!doctype html>
 <!-- 职责：提供 SalesMate 同源工作台的语义化页面骨架与对话框。
-实现：app.js 切换登录/注册并建立会话；workspace.js 统一导航、待办与客户上下文，assistant.js 管理会话。
+实现：app.js 切换登录/注册并建立会话；workspace.js 提供含聊天助手的一级导航，assistant-entry.js 选择客户，assistant.js 管理聊天、来源与会话。
 关联：Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
-目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，qq-dialog/qq-form 管理独立 QQ 连接及首次范围，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-panel 提供会话历史和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
+目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，qq-dialog/qq-form 管理独立 QQ 连接及首次范围，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-panel 提供聊天状态、引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
+目录补充：assistant-entry-page 为独立聊天入口，assistant-entry-search/results 提供员工客户搜索与选择，assistant-entry-previous/next 为分页。
 变量索引：无脚本变量；所有标识符为 DOM 定位用途；静态资源 v 查询参数标识本次界面版本，避免复用旧缓存。 -->
 <html lang="zh-CN">
 <head>
@@ -11,6 +12,7 @@
   <link rel="stylesheet" href="/static/app.css?v=20260914-qq">
   <link rel="stylesheet" href="/static/processing.css?v=20260913">
   <link rel="stylesheet" href="/static/workspace.css?v=20260913-unified">
+  <link rel="stylesheet" href="/static/assistant-entry.css?v=20260919">
 </head>
 <body>
   <div id="notice" role="alert" hidden></div>
@@ -25,6 +27,10 @@
       <div id="workspace-status" class="workspace-status" aria-label="全局待办">正在读取待办…</div><p id="workspace-load-error" class="workspace-load-error" role="alert" hidden></p>
       <section id="workspace-context" class="workspace-context" aria-label="当前客户" hidden></section>
       <section id="workspace-overview" class="workspace-overview" hidden><p class="eyebrow">YOUR WORKSPACE</p><h1>今天，从重要的下一步开始。</h1><p>处理新线索，跟进客户，把需要确认的事情安排好。</p><div id="workspace-tasks" class="workspace-tasks"></div></section>
+      <section id="assistant-entry-page" class="page" hidden>
+        <div class="assistant-entry-intro"><span class="assistant-entry-mark" aria-hidden="true">✧</span><p class="eyebrow">YOUR SALES ASSISTANT</p><h1>关于客户，直接问我。</h1><p>选择一位客户，聊聊需求、风险与下一步。<br>回答基于该客户的授权资料，并附上可核对的来源。</p></div>
+        <div class="assistant-entry-box"><h2>选择客户，开始聊天</h2><form id="assistant-entry-search"><label><span class="sr-only">搜索聊天客户</span><input name="q" type="search" placeholder="搜索公司、域名或联系人" autocomplete="off"></label><button type="submit" class="primary">查找客户</button></form><p id="assistant-entry-error" role="alert" hidden></p><div id="assistant-entry-results" aria-live="polite"></div><div class="assistant-entry-pagination"><button id="assistant-entry-previous" type="button" class="icon-btn" aria-label="上一页聊天客户" disabled>←</button><span id="assistant-entry-pagination">1 / 1</span><button id="assistant-entry-next" type="button" class="icon-btn" aria-label="下一页聊天客户" disabled>→</button></div></div>
+      </section>
       <section id="list-page" class="page"><div class="page-heading"><div><p class="eyebrow">CUSTOMER INBOX</p><h1>把注意力，放在值得跟进的客户上。</h1><p class="muted">业务邮件按客户公司归组；演示样例单独标注来源。QQ 的完整已同步邮件可从「QQ 邮箱」查看。</p></div><div class="actions"><button id="gmail-manage" class="secondary">连接 Gmail</button><button id="qq-manage" class="secondary" type="button">连接 QQ 邮箱</button><button id="seed" class="secondary">导入演示样例</button><button id="compose" class="primary">＋ 模拟新邮件</button></div></div>
         <div id="stats" class="stats"><div class="stat-card">正在读取工作空间…</div></div>
         <div class="inbox-panel"><div class="panel-heading"><div><h2><span id="customer-list-title">邮件与客户分析</span> <span id="result-count" class="count-pill">0</span></h2><p id="inbox-scope" class="muted">只显示当前员工已同步的客户邮件，并按公司域名归组。</p></div><button id="refresh" class="secondary">↻ 同步并刷新</button></div>
@@ -42,26 +48,26 @@
   <dialog id="register-dialog"><form id="register-form"><div class="dialog-heading"><h2>建立客户档案</h2><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><label>公司名称<input name="company_name" required></label><label>已确认行业<select name="industry_from_crm"><option value="unknown">尚未确认</option><option>半导体检测</option><option>精密量测</option><option>光学检测</option><option>工业检测</option></select></label><label>员工人数<input name="employee_count" type="number" min="0" placeholder="未知可留空"></label><label>人数来源<input name="employee_count_source" placeholder="例如：客户确认；未知可留空"></label><button class="primary" type="submit">保存客户档案</button></form></dialog>
   <aside id="assistant-panel" class="assistant-panel" role="complementary" aria-labelledby="assistant-title" hidden>
     <header class="assistant-header">
-      <div class="assistant-heading"><span class="assistant-mark" aria-hidden="true">✧</span><div><h2 id="assistant-title">AI 助手</h2><span class="assistant-development">会话与草稿</span></div></div>
+      <div class="assistant-heading"><span class="assistant-mark" aria-hidden="true">✧</span><div><h2 id="assistant-title">AI 助手</h2><span class="assistant-development">客户问答</span></div></div>
       <button id="assistant-close" class="icon-btn" type="button" aria-label="收起 AI 助手" title="收起（Esc）">×</button>
     </header>
-    <div class="assistant-context"><span class="assistant-context-icon" aria-hidden="true">▤</span><div><span>当前客户</span><strong id="assistant-company">请先打开客户详情</strong></div><span class="assistant-context-tag">私有会话</span></div>
+    <div class="assistant-context"><span class="assistant-context-icon" aria-hidden="true">▤</span><div><span>当前客户</span><strong id="assistant-company">请先选择客户</strong></div><span class="assistant-context-tag">私有会话</span></div>
     <div class="assistant-body"><div class="assistant-session-controls"><label for="assistant-sessions" class="sr-only">选择历史会话</label><select id="assistant-sessions"><option value="">尚未选择会话</option></select><button id="assistant-new" type="button" class="text-btn">新建会话</button></div><div id="assistant-history" aria-live="polite"></div>
-      <section class="assistant-welcome" aria-label="助手介绍"><span class="assistant-welcome-mark" aria-hidden="true">✧</span><p class="eyebrow">YOUR NEXT CONVERSATION</p><h3>围绕这位客户，<br>一起想清楚下一步。</h3><p>会话消息与草稿可以保存并恢复。你也可以在业务管理中准备邮件或会议计划，审阅后再确认执行。</p></section>
+      <section class="assistant-welcome" aria-label="助手介绍"><span class="assistant-welcome-mark" aria-hidden="true">✧</span><p class="eyebrow">YOUR NEXT CONVERSATION</p><h3>围绕这位客户，<br>一起想清楚下一步。</h3><p>基于当前客户资料提问，查看回答与来源依据。会话和草稿可跨刷新恢复。</p></section>
       <div class="assistant-shortcut-heading"><span>从一个问题开始</span><small>点击填入草稿</small></div>
       <div id="assistant-shortcuts" class="assistant-shortcuts">
         <button type="button" data-assistant-prompt="请总结这位客户的需求，并列出需要进一步确认的信息。"><span class="assistant-task-icon" aria-hidden="true">≡</span><span><strong>总结客户需求</strong><small>梳理重点与待确认信息</small></span><span aria-hidden="true">↗</span></button>
         <button type="button" data-assistant-prompt="请结合这位客户的邮件，起草一封供我审核的回复。"><span class="assistant-task-icon" aria-hidden="true">✎</span><span><strong>起草回复</strong><small>准备一份可审核的邮件草稿</small></span><span aria-hidden="true">↗</span></button>
         <button type="button" data-assistant-prompt="请分析这位客户的跟进风险，并建议下一步行动。"><span class="assistant-task-icon" aria-hidden="true">↗</span><span><strong>建议下一步</strong><small>明确风险与跟进方向</small></span><span aria-hidden="true">↗</span></button>
       </div>
-      <div class="assistant-availability"><span aria-hidden="true">◷</span><p><strong>聊天模型尚未接入</strong>当前可以记录用户消息、保存草稿。外部工具请前往 <a href="/business/#actions">业务管理 → 外部动作</a>，先审阅内容再确认。</p></div>
+      <div class="assistant-availability"><span aria-hidden="true">◷</span><p><strong>只读客户问答</strong>回答会标注可用来源，资料不足时会明确说明。发送邮件等操作请前往 <a href="/business/#actions">业务管理 → 外部动作</a>，先审阅内容再确认。</p></div>
     </div>
     <form id="assistant-form" class="assistant-composer">
       <div class="assistant-composer-heading"><label for="assistant-input">消息草稿</label><button id="assistant-clear" class="text-btn" type="button">清空草稿</button></div>
-      <div class="assistant-input-box"><textarea id="assistant-input" rows="3" placeholder="想为这位客户做些什么？" aria-describedby="assistant-unavailable assistant-draft-note"></textarea><div class="assistant-send-row"><span id="assistant-unavailable">仅记录消息，不调用模型</span><button id="assistant-save" class="secondary" type="button">保存草稿</button><button id="assistant-submit" class="primary" type="submit">保存消息</button></div></div>
+      <div class="assistant-input-box"><textarea id="assistant-input" rows="3" placeholder="想为这位客户做些什么？" aria-describedby="assistant-unavailable assistant-draft-note"></textarea><div class="assistant-send-row"><span id="assistant-unavailable">基于当前客户资料回答</span><button id="assistant-save" class="secondary" type="button">保存草稿</button><button id="assistant-submit" class="primary" type="submit">发送问题</button></div></div>
       <p id="assistant-draft-note" class="assistant-draft-note" role="status">保存后可跨刷新恢复；未保存修改仅在当前页面保留。</p>
     </form>
   </aside>
   <dialog id="qq-scope-dialog"><div class="dialog-heading"><h2>选择本次 QQ 同步范围</h2><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><p id="qq-scope-address" class="muted"></p><form id="qq-scope-form"><label>最近 N 天<input name="recent_days" type="number" min="1" step="1" placeholder="留空则不限制天数" autocomplete="off"></label><label>最多 N 封<input name="max_messages" type="number" min="1" step="1" placeholder="留空则不限制封数" autocomplete="off"></label><p class="fine">至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。</p><p id="qq-scope-error" class="failure" role="alert"></p><button type="submit" class="primary wide-button">按此范围同步</button></form></dialog>
-  <script type="module" src="/static/app.js?v=20260914-mail-source"></script>
+  <script type="module" src="/static/app.js?v=20260919-assistant-entry"></script>
 </body></html>
