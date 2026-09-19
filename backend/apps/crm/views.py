@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 校验后排队；客户建档保存权威地区并传播行业变化；会话与 Agent 凭证隔离，事务服务校验归属。
+实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；会话与 Agent 身份隔离。
 关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -397,14 +397,15 @@ class MailboxViewSet(ViewSet):
 class DemoViewSet(ViewSet):
     # 功能：返回前端需要的运行能力。
     # 输入：`request` 为登录用户请求。
-    # 输出：provider、时区、是否可模拟以及版本。
+    # 输出：provider、时区、是否可模拟、QQ 能力开关以及版本。
     # 逻辑：读取显式配置，不探测后自动改变模式。
     # 约束：只统计当前登录员工自己的授权连接。
     @extend_schema(responses=OBJECT, tags=["demo"])
     @action(detail=False, methods=["get"])
     def runtime(self, request):
         return Response({"provider": settings.ANALYSIS_PROVIDER, "simulation_enabled": settings.ANALYSIS_PROVIDER == "rules", "gmail_connected": Mailbox.objects.filter(owner=request.user, gmail_credential__isnull=False).exists(),
-                         "timezone": settings.TIME_ZONE, "analysis_version": rules.ANALYSIS_VERSION if settings.ANALYSIS_PROVIDER == "rules" else None})
+                         "timezone": settings.TIME_ZONE, "qq_enabled": settings.QQ_MAIL_ENABLED,
+                         "analysis_version": rules.ANALYSIS_VERSION if settings.ANALYSIS_PROVIDER == "rules" else None})
 
     # 功能：提交一封人工模拟邮件。
     # 输入：`request`.data 含业务邮箱、发送人、主题和正文。

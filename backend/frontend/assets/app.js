@@ -1,7 +1,7 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接打开通用会话，QQ 同步每次询问范围，旧响应隔离并保留独立草稿。
- * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
+ * 实现：简易注册/登录、哈希路由和单客户持续读取；聊天一级入口直接打开通用会话，QQ 能力控制入口和同步，启用后每次询问范围，旧响应隔离并保留独立草稿。
+ * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
@@ -227,7 +227,7 @@ async function navigate() {
     if (location.hash === '#reviews') $('email-reviews-open').click();
     if (location.hash === '#gmail') await openGmail();
     if (location.hash === '#processing') {
-      const mailboxIds = state.mailboxes.filter(item => item.sync_state?.run_id).map(item => item.mailbox_id);
+      const mailboxIds = state.mailboxes.filter(item => item.sync_state?.run_id && (!item.qq_authorized || state.runtime.qq_enabled)).map(item => item.mailbox_id);
       if (mailboxIds.length) void pollGmailSync(mailboxIds).catch(error => notice(error.message));
       else { $('sync-progress').hidden = false; $('sync-progress').textContent = '暂无同步批次，可连接 Gmail 后发起同步。'; }
       $('sync-progress').scrollIntoView({ block: 'center' });
@@ -237,17 +237,17 @@ async function navigate() {
 
 
 /** 功能：读取当前员工 Gmail 和 QQ 连接。输入：当前会话。输出：邮箱数组。
- * 逻辑：Gmail 顶部按钮保留原语义，两种邮箱独立渲染，列表汇总全部授权账号。约束：不向浏览器提供凭证。 */
+ * 逻辑：Gmail 顶部按钮保留原语义，两种邮箱独立渲染，列表汇总当前启用提供方的授权账号。约束：不向浏览器提供凭证。 */
 async function loadMailboxes() {
   state.mailboxes = await request('mailboxes/');
   const authorized = state.mailboxes.filter(item => item.gmail_authorized);
-  const connected = state.mailboxes.filter(item => item.gmail_authorized || item.qq_authorized);
+  const connected = state.mailboxes.filter(item => item.gmail_authorized || (state.runtime?.qq_enabled && item.qq_authorized));
   const primary = authorized[0];
   $('gmail-chip-label').textContent = primary ? primary.address : '连接 Gmail';
   $('gmail-manage').textContent = primary ? '管理 Gmail' : '连接 Gmail';
   $('inbox-scope').textContent = connected.length
     ? `已连接账号：${connected.map(item => item.address).join('、')} · 客户邮件按公司域名归组。`
-    : '尚未连接邮箱；连接 Gmail 或 QQ 后显示当前员工同步的客户邮件。';
+    : (state.runtime?.qq_enabled ? '尚未连接邮箱；连接 Gmail 或 QQ 后显示当前员工同步的客户邮件。' : '尚未连接 Gmail；连接后显示当前员工同步的客户邮件。');
   renderGmailAccounts();
   renderQQAccounts(state.mailboxes);
   await refreshReviewBadge();
@@ -307,9 +307,10 @@ async function pollGmailSync(mailboxIds) {
 }
 
 /** 功能：请求同步一个已授权员工邮箱。输入：mailboxId。输出：无。
- * 逻辑：QQ 先询问范围，后端排队后由 Worker 执行，页面轮询批次结果。约束：取消不发同步请求。 */
+ * 逻辑：QQ 关闭时拒绝请求，启用时先询问范围，后端排队后由 Worker 执行，页面轮询批次结果。约束：取消不发同步请求。 */
 async function requestGmailSync(mailboxId) {
   const mailbox = state.mailboxes.find(item => item.mailbox_id === mailboxId);
+  if (mailbox?.qq_authorized && !state.runtime.qq_enabled) throw new Error('QQ 邮箱功能暂时停用。');
   const scope = mailbox?.qq_authorized ? await chooseQQScope(mailbox.address) : null;
   if (mailbox?.qq_authorized && !scope) return;
   await request(`mailboxes/${encodeURIComponent(mailboxId)}/request-sync/`, { method: 'POST', ...(scope ? { data: { sync_options: scope } } : {}) });
@@ -319,10 +320,10 @@ async function requestGmailSync(mailboxId) {
 }
 
 /** 功能：刷新当前员工收件箱。输入：当前已授权邮箱。输出：无。
- * 逻辑：先逐个询问 QQ 范围，再提交所有邮箱同步并轮询；活动邮箱沿用当前批次。约束：取消任一范围不提交新请求，未授权时只刷新页面数据。 */
+ * 逻辑：先排除停用的 QQ，再逐个询问其范围，提交启用邮箱的同步并轮询；活动邮箱沿用当前批次。约束：取消任一范围不提交新请求，未授权时只刷新页面数据。 */
 async function refreshInbox() {
   await loadMailboxes();
-  const authorized = state.mailboxes.filter(item => item.gmail_authorized || item.qq_authorized);
+  const authorized = state.mailboxes.filter(item => item.gmail_authorized || (state.runtime?.qq_enabled && item.qq_authorized));
   if (!authorized.length) {
     await loadList();
     notice('尚未连接邮箱，当前只刷新了已有客户数据。');
@@ -450,7 +451,7 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：先取消旧详情和聊天入口读取，再核验会话；已登录挂载工作台，匿名清空助手并恢复登录表单。
+ * 逻辑：先取消旧详情和聊天入口读取，再核验会话；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名恢复登录表单。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
   detailObserver.stop();
@@ -465,6 +466,7 @@ async function initialize() {
   mountWorkspace();
   void refreshWorkspace();
   state.runtime = await request('demo/runtime/');
+  for (const id of ['qq-manage', 'qq-manage-top']) $(id).hidden = !state.runtime.qq_enabled;
   await loadMailboxes();
   const isRules = state.runtime.provider === 'rules';
   $('seed').hidden = !isRules; $('compose').hidden = !isRules;
@@ -472,7 +474,7 @@ async function initialize() {
     ? '当前员工数据空间 · 支持 Gmail 授权与离线规则演示 · 统计时区：' + state.runtime.timezone
     : '当前员工数据空间 · Gmail 同步与 Agent 分析独立执行 · 统计时区：' + state.runtime.timezone;
   await navigate();
-  const trackedMailboxes = state.mailboxes.filter(item => item.sync_state?.run_id).map(item => item.mailbox_id);
+  const trackedMailboxes = state.mailboxes.filter(item => item.sync_state?.run_id && (!item.qq_authorized || state.runtime.qq_enabled)).map(item => item.mailbox_id);
   if (trackedMailboxes.length) void pollGmailSync(trackedMailboxes).catch(error => notice(error.message));
   const callback = new URLSearchParams(location.search);
   if (callback.get('gmail') === 'authorized') {

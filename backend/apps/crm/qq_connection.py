@@ -1,5 +1,5 @@
 """职责：验证、加密保存及移除当前员工的 QQ 邮箱连接。
-实现：固定 IMAP 服务验证登录和收发文件夹；邮箱锁保护授权与活动同步关系。
+实现：能力开关控制连接和解密；固定 IMAP 验证登录及文件夹，邮箱锁保护活动同步关系。
 关联：qq_views 提供 Session 接口，qq_sync/worker 消费凭证，复用 sales 的显式加密器。
 目录：
 - connect_mailbox：验证授权后保存并请求首次同步。
@@ -16,6 +16,7 @@ from django.views.decorators.debug import sensitive_variables
 
 from agent.tools import qq_mail
 from apps.sales.integrations import vault
+from common.mail_features import require_qq_enabled
 from .access import Conflict, InvalidState, mailbox_for
 from .models import GmailCredential, Mailbox, QQCredential
 from .qq_scope import snapshot
@@ -26,10 +27,11 @@ logger = logging.getLogger("salesmate.qq_connection")
 # 功能：连接当前员工的 QQ 邮箱并排队首次同步。
 # 输入：`owner` 为当前会话员工；`address` 为验证后地址；`code` 为授权码；`sync_options` 为本次限制。
 # 输出：已授权 Mailbox；网络或配置失败不创建连接。
-# 逻辑：先校验范围、准备加密器并验证 IMAP 登录/文件夹，再锁邮箱保存密文并按冻结范围排队。
+# 逻辑：先检查 QQ 能力，再校验范围及 IMAP 登录/文件夹，最后锁邮箱保存和排队。
 # 约束：活动批次中不可换凭证；Gmail 连接不能被覆盖；网络错误只输出安全说明。
 @sensitive_variables("code", "cipher", "client")
 def connect_mailbox(owner, address, code, sync_options):
+    require_qq_enabled("connect_mailbox")
     scope = snapshot(sync_options)
     cipher = vault()
     try:
@@ -62,10 +64,11 @@ def connect_mailbox(owner, address, code, sync_options):
 # 功能：获取运行批次需要的 QQ 授权码。
 # 输入：`credential` 为已通过邮箱 owner 校验的 QQCredential。
 # 输出：明文授权码，仅用于本次内存内 IMAP 登录。
-# 逻辑：现有显式 vault 密钥认证解密。
+# 逻辑：先检查 QQ 能力，再通过显式 vault 密钥认证解密。
 # 约束：缺失/不匹配密钥时报错，不生成新密钥、不记录密文或明文。
 @sensitive_variables()
 def authorization_code(credential):
+    require_qq_enabled("read_authorization")
     try:
         return vault().decrypt(credential.encrypted_code.encode("ascii")).decode("ascii")
     except (InvalidToken, ValueError, UnicodeError):

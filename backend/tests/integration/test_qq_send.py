@@ -1,5 +1,5 @@
 """职责：验证 QQ 发信连接、SMTP 载荷和动作状态边界。
-实现：隔离数据库，模拟 SMTP/IMAP 网络；真实执行加密、审批和状态写入。
+实现：显式启用 QQ 能力，隔离数据库，模拟 SMTP/IMAP 网络；真实执行加密、审批和状态写入。
 关联：sales.qq_connection、qq_smtp、actions；不使用开发邮箱凭证。
 目录：
 - QQSendTests：QQ 发信集成测试。
@@ -35,8 +35,9 @@ from apps.sales import actions, grouping, integrations, models, qq_smtp
 
 
 # 功能：覆盖独立 QQ 发信的状态与载荷契约。
-# 逻辑：仅替换网络传输，其余业务和数据库走真实实现。
+# 逻辑：显式启用 QQ，仅替换网络传输，其余业务和数据库走真实实现。
 # 约束：不读取真实授权码，不发送邮件；模拟成功不证明外部服务可用。
+@override_settings(QQ_MAIL_ENABLED=True)
 class QQSendTests(TestCase):
     # 功能：建立合成测试数据和固定 SMTP 成功响应。
     # 输入：无外部参数；使用一次性测试密钥。

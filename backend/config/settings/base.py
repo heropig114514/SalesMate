@@ -31,6 +31,7 @@
 - STATIC_ROOT：静态文件收集目录。
 - MEDIA_ROOT：媒体文件目录。
 - ANALYSIS_PROVIDER：显式选择 rules 占位或 agent 独立任务消费者。
+- QQ_MAIL_ENABLED：QQ 收信及发信开关，默认关闭，历史数据仍可读。
 - GOOGLE_OAUTH_CLIENT_ID：Google Web application OAuth 客户端标识。
 - GOOGLE_OAUTH_CLIENT_SECRET：Google Web application OAuth 客户端密钥。
 - GOOGLE_OAUTH_REDIRECT_URI：Google 回到 Django 的精确授权回调地址。
@@ -131,6 +132,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 SALESMATE_VAULT_KEY = env.str("SALESMATE_VAULT_KEY", default="")
 MEDIA_ROOT = BASE_DIR / "media"
 ANALYSIS_PROVIDER = env.str("ANALYSIS_PROVIDER", default="rules")
+QQ_MAIL_ENABLED = env.bool("QQ_MAIL_ENABLED", default=False)
 if ANALYSIS_PROVIDER not in {"rules", "agent"}:
     raise ImproperlyConfigured("ANALYSIS_PROVIDER must be rules or agent.")
 

@@ -1,6 +1,6 @@
 /**
  * 职责：隔离验证 QQ/Gmail 共存、来源标识、原文入口、同步进度、人工复核及移动端布局。
- * 实现：本地静态服务提供真实页面，模拟 API 验证 QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
+ * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
  * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
  * 目录：main 运行浏览器场景；静态服务及路由回调属于 main 的测试夹具。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为被忽略的截图目录；其余导入无业务状态。
@@ -15,7 +15,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：验证真实浏览器交互与文本安全。输入：显式模块/浏览器环境变量。输出：成功说明与截图。
- * 逻辑：模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；回归 Gmail 进度和人工复核。
+ * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；回归 Gmail 进度和人工复核。
  * 约束：拒绝非本地网络，测试独立静态服务在 finally 关闭，不写实际业务记录。 */
 async function main() {
   const server = http.createServer((request, response) => {
@@ -32,6 +32,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    let qqEnabled = false;
     let runId = null, reads = 0, reviewed = false, retried = false, qqConnected = false, qqAttempts = 0, qqSyncs = 0;
     await page.route('**/*', async route => {
       const request = route.request();
@@ -43,7 +44,7 @@ async function main() {
       if (endpoint === 'session/') data = { authenticated: true, username: 'UI 测试', debug_auto_login: true };
       else if (endpoint === 'sales/overview/') data = { open_follow_ups: 0 };
       else if (endpoint === 'sales/records/actions/') data = { results: [], count: 0 };
-      else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'UTC' };
+      else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'UTC', qq_enabled: qqEnabled };
       else if (endpoint === 'companies/') data = { results: [{ company_id: 'sample-company', company_name: '演示客户', domains: ['demo.example'], contacts: [], crm_status: 'unregistered', email_count: 1, email_sources: ['synthetic_sample'], headline_summary: '演示样例摘要', industry: 'unknown', size_band: 'unknown', signal: 'unknown', score: null }], count: 1, page: 1, page_size: 20, stats: { companies: 1, unregistered: 1, new_emails_today: 0 } };
       else if (endpoint === 'mailboxes/') data = [{ mailbox_id: 'mb1', address: 'sales@example.com', gmail_authorized: true, qq_authorized: false, sync_state: { status: runId ? 'sync_running' : 'completed', run_id: runId } }, ...(qqConnected ? [{ mailbox_id: 'qq1', address: 'demo@qq.com', qq_authorized: true, gmail_authorized: false, sync_state: { status: 'completed', run_id: qqSyncs ? 'qq-run-2' : 'qq-run' } }] : [])];
       else if (endpoint === 'mailboxes/qq-connect/') {
@@ -86,6 +87,11 @@ async function main() {
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.locator('#email-reviews-open').filter({ hasText: '(1)' }).waitFor();
     assert.match(await page.locator('.company-row .row-tags').textContent(), /演示样例/);
+    assert.equal(await page.locator('#qq-manage-top').isVisible(), false);
+    assert.equal(await page.locator('#qq-manage').isVisible(), false);
+    qqEnabled = true;
+    await page.reload();
+    await page.locator('#qq-manage-top').waitFor({ state: 'visible' });
     await page.locator('#qq-manage-top').click();
     await page.locator('#qq-form [name=address]').fill('demo@qq.com');
     await page.locator('#qq-form [name=authorization_code]').fill('abcdefghijklmnop');

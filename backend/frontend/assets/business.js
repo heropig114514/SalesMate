@@ -8,7 +8,7 @@
  * syncBusinessContext、loadPage、renderRows、renderStats、boot。
  * 变量索引：$ 为 DOM 查询；labels 为字段中文名；states 为状态中文名；
  * metadata 为资源契约，companies 为授权目录，user 为当前身份，current 为路由，page 为页码，
- * generation 为异步加载代次，relations 为当前已读关系名称缓存。
+ * qqEnabled 为服务端 QQ 能力开关，generation 为异步加载代次，relations 为当前已读关系名称缓存。
  */
 import { request, escapeHtml as esc } from "./api.js";
 import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js";
@@ -125,6 +125,7 @@ const states = {
 let metadata = {},
   companies = [],
   user = null,
+  qqEnabled = false,
   current = "directory",
   page = 1,
   generation = 0;
@@ -632,10 +633,10 @@ function attachmentForm() {
 }
 
 /** 功能：准备邮件发送或会议创建计划。输入：无参数，读取当前筛选及连接。
- * 输出：无。逻辑：按动作提供方筛选连接，明确指定客户和内容来源，后端返回冻结快照供用户审阅。
+ * 输出：无。逻辑：按服务端 QQ 能力及动作提供方筛选连接，明确指定客户和内容来源，后端返回冻结快照供用户审阅。
  * 约束：准备计划不会执行；会议时间使用当前设备时区转换为有偏移的绝对时间。 */
 async function actionForm() {
-  const connections = await allRows("records/connections/"),
+  const connections = (await allRows("records/connections/")).filter(item => qqEnabled || item.provider !== "qq"),
     drafts = await allRows("records/drafts/"),
     quotes = await allRows("records/quotes/");
   if (!connections.length)
@@ -643,7 +644,7 @@ async function actionForm() {
   const key = crypto.randomUUID();
   showDialog(
     "准备外部动作",
-    `<form id="action-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>动作类型<select name="tool" required><option value="gmail.send">Gmail 发送邮件</option><option value="qq.send">QQ 发送邮件</option><option value="calendar.create">创建会议</option></select></label><label class="wide">外部连接<select name="connection_id" required>${optionRows(connections.map((c) => ({ ...c, name: `${states[c.provider]} · ${c.account}` })))}</select></label><div id="email-fields" class="wide form-grid"><label>邮件草稿<select name="draft_id">${optionRows(drafts.filter((d) => d.kind === "email"))}</select></label><label>附带已审核报价（可选）<select name="quote_id">${optionRows(quotes.filter((q) => q.status === "approved"))}</select></label></div><div id="calendar-fields" class="wide form-grid" hidden><label>日历标识<input name="calendar_id" placeholder="例如 primary"></label><label>会议标题<input name="title"></label><label>开始时间<input name="start" type="datetime-local"></label><label>结束时间<input name="end" type="datetime-local"></label><label class="wide">说明<textarea name="description"></textarea></label><label class="wide">参会人邮箱<textarea name="attendees" placeholder="逗号或换行分隔，可留空"></textarea></label><label>日历通知方式<select name="send_updates"><option value="">请明确选择</option>${["none", "all", "externalOnly"].map((value) => `<option value="${value}">${states[value]}</option>`).join("")}</select></label></div></div><p class="form-note">准备后将展示完整收件人、正文或会议内容。只有你再次确认，任务才会进入执行队列。</p><div class="actions"><button class="primary">生成待确认计划</button></div></form>`,
+    `<form id="action-form"><div class="form-grid"><label>客户<select name="company" required>${optionRows(companies, $("company-filter").value)}</select></label><label>动作类型<select name="tool" required><option value="gmail.send">Gmail 发送邮件</option>${qqEnabled ? '<option value="qq.send">QQ 发送邮件</option>' : ""}<option value="calendar.create">创建会议</option></select></label><label class="wide">外部连接<select name="connection_id" required>${optionRows(connections.map((c) => ({ ...c, name: `${states[c.provider]} · ${c.account}` })))}</select></label><div id="email-fields" class="wide form-grid"><label>邮件草稿<select name="draft_id">${optionRows(drafts.filter((d) => d.kind === "email"))}</select></label><label>附带已审核报价（可选）<select name="quote_id">${optionRows(quotes.filter((q) => q.status === "approved"))}</select></label></div><div id="calendar-fields" class="wide form-grid" hidden><label>日历标识<input name="calendar_id" placeholder="例如 primary"></label><label>会议标题<input name="title"></label><label>开始时间<input name="start" type="datetime-local"></label><label>结束时间<input name="end" type="datetime-local"></label><label class="wide">说明<textarea name="description"></textarea></label><label class="wide">参会人邮箱<textarea name="attendees" placeholder="逗号或换行分隔，可留空"></textarea></label><label>日历通知方式<select name="send_updates"><option value="">请明确选择</option>${["none", "all", "externalOnly"].map((value) => `<option value="${value}">${states[value]}</option>`).join("")}</select></label></div></div><p class="form-note">准备后将展示完整收件人、正文或会议内容。只有你再次确认，任务才会进入执行队列。</p><div class="actions"><button class="primary">生成待确认计划</button></div></form>`,
   );
   const form = $("action-form");
   form.elements.tool.onchange = () => {
@@ -737,6 +738,7 @@ function connectionForm() {
     "连接外部服务",
     '<p>Gmail 连接申请发送与核对已发送邮件权限；日历连接申请事件管理与读取权限。原邮件同步连接保持独立。</p><div class="actions"><button id="connect-qq-send">连接 QQ 发信</button><button data-provider="gmail">连接 Gmail 发信</button><button data-provider="calendar">连接 Google 日历</button></div>',
   );
+  $("connect-qq-send").hidden = !qqEnabled;
   $("connect-qq-send").onclick = qqConnectionForm;
   for (const button of $("editor-body").querySelectorAll("[data-provider]"))
     button.onclick = () =>
@@ -750,9 +752,10 @@ function connectionForm() {
 }
 
 /** 功能：收集独立 QQ 发信授权。输入：无参数，读取本次表单。
- * 输出：无。逻辑：提交固定服务连接入口；请求开始及对话框关闭时清空授权码。
+ * 输出：无。逻辑：QQ 关闭时拒绝打开；启用后提交固定连接入口并清空授权码。
  * 约束：仅验证登录，不发送邮件；不保存到浏览器缓存，不复用收信授权。 */
 function qqConnectionForm() {
+  if (!qqEnabled) throw new Error("QQ 邮箱功能暂时停用。");
   showDialog("连接 QQ 发信", '<form id="qq-send-form"><div class="form-grid"><label class="wide">QQ 或 foxmail 邮箱<input name="address" type="email" autocomplete="off" required></label><label class="wide">客户端授权码<input name="authorization_code" type="password" autocomplete="new-password" minlength="16" maxlength="16" required></label></div><p class="form-note">与 QQ 收信连接独立。此操作仅验证连接；发送前仍需预览并确认。请在 QQ 邮箱中开启 SMTP；核对发送结果还需开启 IMAP 并保留发送副本。</p><div class="actions"><button class="primary">验证并连接发信</button></div></form>');
   const form = $("qq-send-form");
   $("editor").addEventListener("close", () => { form.elements.authorization_code.value = ""; }, { once: true });
@@ -961,7 +964,7 @@ function renderStats(overview) {
 }
 
 /** 功能：初始化登录态、元数据及页面交互。输入：无参数，读取当前路由。
- * 输出：无。逻辑：验证 URL 客户后挂载共享导航，恢复筛选并可打开明确请求的新建表单。
+ * 输出：无。逻辑：读取 QQ 能力开关并验证 URL 客户后挂载共享导航，恢复筛选并可打开明确请求的新建表单。
  * 约束：初始化仅执行读取；用户数据不保存到浏览器本地存储。 */
 async function boot() {
   const session = await request("session/");
@@ -970,6 +973,7 @@ async function boot() {
     return;
   }
   user = await request("accounts/me/");
+  qqEnabled = (await request("demo/runtime/")).qq_enabled === true;
   $("account").textContent = `当前员工：${user.username}`;
   metadata = Object.fromEntries(
     (await salesRequest("catalog/")).resources.map((item) => [item.key, item]),

@@ -1,5 +1,5 @@
 """职责：管理邮箱批次、逐封进度和恢复所需的持久状态。
-实现：邮箱行锁串行化请求，批次租约拒绝旧执行者；任务及原文缓存失败状态一致，计数从任务查询派生。
+实现：行锁串行化请求，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
 关联：Gmail 与 QQ 共用持久队列，worker 分发提供方；processing_views 提供进度和显式重试。
 目录：
 - request_run：创建或复用邮箱活动批次。
@@ -19,6 +19,8 @@ import logging
 import uuid
 
 from django.db import transaction
+from django.conf import settings
+from common.mail_features import require_qq_enabled
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework.exceptions import NotFound
@@ -35,11 +37,13 @@ RUN_LEASE_SECONDS = 600
 # 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围；`sync_options` 为 QQ 限制，`retry_scope` 为内部重试原快照。
 # 输出：新建或复用的 MailboxSyncRun。
 # 逻辑：邮箱锁内冻结 QQ 范围；QQ 活动批次拒绝替换，Gmail 普通重复点击合并；重试保留原时间窗口。
-# 约束：必须有 Gmail 或 QQ 凭证；不启动线程或访问邮箱，排队可跨 Web 重启保留。
+# 约束：必须有凭证；QQ 关闭时拒绝排队；不启动线程或访问邮箱。
 @transaction.atomic
 def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry_scope=None):
     mailbox = mailbox_for(owner, mailbox_id, lock=True)
     is_qq = QQCredential.objects.filter(mailbox=mailbox).exists()
+    if is_qq:
+        require_qq_enabled("request_sync")
     if not (GmailCredential.objects.filter(mailbox=mailbox).exists() or is_qq):
         raise InvalidState("该邮箱尚未完成 Gmail 授权或 QQ 连接。")
     active = mailbox.sync_runs.filter(status__in=["queued", "running"]).first()
@@ -63,11 +67,13 @@ def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry
 # 功能：原子领取当前员工的一个批次。
 # 输入：`owner` 为服务凭证关联员工；`gmail_only` 为旧 Gmail CLI 的显式过滤开关。
 # 输出：含邮箱的运行批次，队列为空返回 None。
-# 逻辑：锁邮箱再锁批次，只有 queued 可领取，生成租约凭证。
+# 逻辑：禁用时跳过 QQ 队列；锁邮箱再锁批次，只有 queued 可领取，生成租约凭证。
 # 约束：不自动重试失败或过期批次；避免与请求路径反向加锁。
 @transaction.atomic
 def claim_run(owner, *, gmail_only=False):
     candidates = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued")
+    if not settings.QQ_MAIL_ENABLED:
+        candidates = candidates.filter(mailbox__qq_credential__isnull=True)
     if gmail_only:
         candidates = candidates.filter(mailbox__gmail_credential__isnull=False)
     candidate = candidates.order_by("requested_at").first()

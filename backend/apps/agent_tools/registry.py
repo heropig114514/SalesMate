@@ -1,5 +1,5 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：从既有销售序列化器派生记录工具，显式登记客户、邮件、日历与证据能力。
+实现：派生记录工具，登记客户、邮件、日历及证据能力；QQ 禁用时不发布其发信准备工具。
 关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
@@ -11,6 +11,7 @@
 """
 
 from apps.sales.serializers import SERIALIZERS
+from django.conf import settings
 from apps.sales.services import TRANSITIONS
 from apps.sales.views import LABELS
 from apps.crm.serializers import RegisterSerializer
@@ -70,7 +71,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
 # 逻辑：记录、关系和状态沿用现有模型；会话支持通用/客户筛选，特殊能力独立列举。
-# 约束：不注册外部动作批准/执行、任意 SQL、凭证读取、数据库运维或虚构新闻查询。
+# 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
     entries = []
     for resource, prefix in RESOURCES.items():
@@ -443,4 +444,4 @@ def build_registry():
                 + (".create" if provider == "calendar" else ".send"),
             )
         )
-    return {entry["name"]: entry for entry in entries}
+    return {entry["name"]: entry for entry in entries if settings.QQ_MAIL_ENABLED or entry["name"] != "actions.prepare_qq"}

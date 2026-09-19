@@ -1,6 +1,6 @@
 /**
  * 职责：验证 QQ 发信连接表单、服务筛选及发送前预览。
- * 实现：真实业务页面运行于隔离静态服务，全部 API 被模拟，任何非预期写入失败。
+ * 实现：先验证 QQ 关闭时入口、动作及连接筛选均隐藏，再启用原场景；真实业务页面运行于隔离静态服务，全部 API 被模拟，任何非预期写入失败。
  * 关联：business.js 与 sales-api.js；使用显式 Playwright 模块和浏览器路径。
  * 目录：main 执行连接和待确认邮件场景。
  * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的截图目录。
@@ -14,7 +14,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立 QQ 发信 UI 验收。输入：环境中的 Playwright/浏览器路径。
- * 输出：检查结果和预览截图。逻辑：验证授权码清除、按服务筛选连接及完整冻结预览。
+ * 输出：检查结果和预览截图。逻辑：先验证关闭不产生写入，再验证授权码清除、按服务筛选连接及完整冻结预览。
  * 约束：模拟连接与准备请求，不点击发送确认；所有外部网络禁止。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -29,6 +29,7 @@ async function main() {
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [], writes = [];
+    let qqEnabled = false;
     page.on('pageerror', error => errors.push(error.message));
     const company = { id: 'company-a', name: '测试客户', archived: false, revision: 1 };
     const connections = [{ id: 'qq-a', provider: 'qq', account: 'sender@qq.com' }, { id: 'gmail-a', provider: 'gmail', account: 'sender@gmail.com' }, { id: 'calendar-a', provider: 'calendar', account: 'calendar@gmail.com' }];
@@ -52,6 +53,7 @@ async function main() {
       }
       let data;
       if (endpoint === 'session/') data = { authenticated: true, username: '测试销售' };
+      else if (endpoint === 'demo/runtime/') data = { qq_enabled: qqEnabled };
       else if (endpoint === 'accounts/me/') data = { username: '测试销售' };
       else if (endpoint === 'mailboxes/') data = [];
       else if (endpoint === 'sales/catalog/') data = { resources };
@@ -66,6 +68,18 @@ async function main() {
     });
     const base = `http://127.0.0.1:${server.address().port}`;
     await page.goto(base + '/business/#connections');
+    await page.locator('#page-title').filter({ hasText: '外部连接' }).waitFor();
+    await page.locator('#create-business').click();
+    assert.equal(await page.locator('#connect-qq-send').isVisible(), false);
+    await page.goto(base + '/business/#actions');
+    await page.locator('#page-title').filter({ hasText: '外部动作' }).waitFor();
+    await page.locator('#create-business').click();
+    assert.equal(await page.locator('#action-form [name=tool] option[value="qq.send"]').count(), 0);
+    assert.equal(await page.locator('#action-form [name=connection_id] option[value="qq-a"]').count(), 0);
+    assert.equal(writes.length, 0);
+    qqEnabled = true;
+    await page.goto(base + '/business/#connections');
+    await page.reload();
     await page.locator('#page-title').filter({ hasText: '外部连接' }).waitFor();
     await page.locator('#create-business').click();
     await page.locator('#connect-qq-send').click();

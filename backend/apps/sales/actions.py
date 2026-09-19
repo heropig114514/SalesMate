@@ -1,5 +1,5 @@
 """职责：保存可审查的外部动作、明确审批并执行 Google 或 QQ 工具。
-实现：冻结动作和 QQ 连接版本、原子领取；SMTP 明确拒绝与 DATA 中断分开记录，无隐式重试。
+实现：冻结动作和连接版本、原子领取；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
 关联：integrations 提供已授权凭证，后台命令执行已批准动作，报价实际发送后才同步 Agent。
 目录：
 - validate_parameters：形成包含完整内容的可确认动作快照。
@@ -33,6 +33,7 @@ from . import models
 from .integrations import credentials_for
 from .services import audit, sync_company
 from . import qq_smtp
+from common.mail_features import require_qq_enabled
 
 logger = logging.getLogger("salesmate.actions")
 
@@ -40,9 +41,11 @@ logger = logging.getLogger("salesmate.actions")
 # 功能：形成包含完整内容的可确认动作快照。
 # 输入：`actor`、`company`、`tool`、`parameters`。
 # 输出：普通 JSON 参数，包括连接身份和明确发送内容。
-# 逻辑：Gmail/QQ 发信读取员工草稿及报价明细，QQ 冻结连接版本并限制 ASCII 信封；日历验证时间与通知方式。
+# 逻辑：检查 QQ 能力后读取草稿及报价，QQ 冻结连接版本与 ASCII 信封；日历验证时间与通知方式。
 # 约束：不执行外部调用；未知参数拒绝，来源必须与公司和员工一致。
 def validate_parameters(actor, company, tool, parameters):
+    if tool == "qq.send":
+        require_qq_enabled("prepare_send")
     if not isinstance(parameters, dict):
         raise ValidationError("parameters 必须是对象。")
     provider = {"gmail.send": "gmail", "qq.send": "qq", "calendar.create": "calendar"}.get(tool)
@@ -224,7 +227,7 @@ def create_action(actor, data):
 # 功能：批准或取消尚未执行的动作。
 # 输入：`action`、`actor`、`expected`、`decision`，仅 approved/cancelled。
 # 输出：更新后的动作。
-# 逻辑：要求当前 owner 明确提交正确版本，批准后参数不再可编辑。
+# 逻辑：要求 owner 提交正确版本；QQ 关闭时仅允许取消，批准后参数冻结。
 # 约束：执行中的动作不能保证撤销，不接受取消；不在审批请求内发送外部消息。
 @transaction.atomic
 def decide_action(action, actor, expected, decision):
@@ -233,6 +236,8 @@ def decide_action(action, actor, expected, decision):
         pk=action.pk, owner=actor
     )
     check_version(expected, action.revision)
+    if decision == "approved" and action.tool == "qq.send":
+        require_qq_enabled("approve_send")
     allowed = (
         action.status == "pending_confirmation"
         if decision == "approved"
@@ -322,7 +327,7 @@ def execute_provider(action, credentials):
 # 功能：领取并执行一个已批准动作。
 # 输入：`action_id` 为动作 UUID。
 # 输出：动作最终状态；非 approved 直接返回当前状态。
-# 逻辑：短事务领取后调用服务；核对连接提供方、QQ 连接版本及报价；SMTP 明确拒绝 failed，提交结果不明 uncertain。
+# 逻辑：领取后核对 QQ 能力及连接版本；禁用时在网络前记为 failed，SMTP 结果不明为 uncertain。
 # 约束：SMTP 接受不代表最终送达；不自动重试；进程中断留下 running，需人工核对。
 def run_action(action_id):
     with transaction.atomic():
@@ -340,6 +345,8 @@ def run_action(action_id):
     result, error, status = None, None, "failed"
     sent = False
     try:
+        if action.tool == "qq.send":
+            require_qq_enabled("execute_send")
         connection = models.Connection.objects.get(
             pk=action.parameters["connection_id"], owner=action.owner, archived=False
         )
@@ -435,10 +442,12 @@ def reconcile_action(action, actor, expected):
 # 功能：只读核对未知动作是否已存在于外部服务。
 # 输入：`action`、`actor`、`expected` 为当前版本。
 # 输出：找到明确标识则更新成功，否则保持 uncertain 并抛明确错误。
-# 逻辑：QQ 只读核对 IMAP 发送副本，Gmail 查 Message-ID，日历查事件 ID；写回前重新校验版本。
+# 逻辑：QQ 开启后才核对 IMAP 副本，Gmail 查 Message-ID，日历查事件 ID；写回前校验版本。
 # 约束：不重新发送或创建；未找到不能证明未执行，不能自动解除报价冻结。
 def verify_action(action, actor, expected):
     action = models.ToolAction.objects.get(pk=action.pk, owner=actor)
+    if action.tool == "qq.send":
+        require_qq_enabled("verify_send")
     check_version(expected, action.revision)
     if action.status != "uncertain":
         raise InvalidState("只有未知结果动作需要外部核对。")

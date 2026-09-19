@@ -1,5 +1,5 @@
 """职责：共享 CRM 调度的员工选择与单次工作凭证生命周期。
-实现：按员工主键轮转待办，每个执行单元生成高熵临时凭证，仅存摘要并在退出时撤销。
+实现：按员工主键轮转待办，禁用时排除 QQ 同步；工作单元使用并回收临时凭证。
 关联：crm_worker 选择员工，worker 使用 scoped_backend；HTTP 仍由 AgentAuthentication 校验归属。
 目录：
 - next_owner：选择某通道下一位有可执行工作的有效员工。
@@ -13,6 +13,7 @@ import logging
 import secrets
 
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
@@ -26,7 +27,7 @@ logger = logging.getLogger("salesmate.crm_dispatch")
 # 功能：从持久任务中轮转选择有工作且未停用的员工。
 # 输入：`kind` 为 sync/analysis；`after` 为本通道上次调度的员工主键，初始为 0。
 # 输出：员工对象或 None；未知通道抛 ValueError。
-# 逻辑：先选择主键大于游标的员工，末尾回绕；过期工作也须被调度以显式结束租约。
+# 逻辑：排除禁用 QQ 同步后按主键轮转；其他过期任务仍被调度，历史邮件修复仍可执行。
 # 约束：此处只发现待办，领取仍由原事务与租约保护；不增加并发或自动重试。
 def next_owner(kind, after=0):
     now = timezone.now()
@@ -36,8 +37,11 @@ def next_owner(kind, after=0):
             Q(status="queued") | Q(status="running", lease_until__lte=now)
         )
         repairs = ExtractionRepair.objects.filter(email__mailbox__owner_id=OuterRef("pk")).filter(
+            # 修复读取已缓存原文，不连接 QQ，因此无需暂停。
             Q(status="pending") | Q(status="running", lease_until__lte=now)
         )
+        if not settings.QQ_MAIL_ENABLED:
+            syncs = syncs.filter(mailbox__qq_credential__isnull=True)
         owners = owners.annotate(sync_waiting=Exists(syncs), repair_waiting=Exists(repairs)).filter(
             Q(sync_waiting=True) | Q(repair_waiting=True)
         )

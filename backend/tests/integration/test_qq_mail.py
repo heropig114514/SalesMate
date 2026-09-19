@@ -1,5 +1,5 @@
 """职责：验证 QQ 接入、持久同步、权限与 Gmail 共存。
-实现：隔离 PostgreSQL 真实事务和 HTTP 序列化器，模拟 IMAP/LLM 边界。
+实现：显式启用 QQ 能力以覆盖恢复后的行为；隔离 PostgreSQL 真实事务和 HTTP 序列化器，模拟 IMAP/LLM 边界。
 关联：qq_views、qq_connection、qq_sync、worker；不读取真实邮箱或调用真实模型。
 目录：
 - QQMailTests：QQ 跨模块回归测试。
@@ -47,9 +47,9 @@ TEST_KEY = base64.urlsafe_b64encode(b"q" * 32).decode("ascii")
 
 
 # 功能：贯通 QQ 连接及后台处理的真实业务边界。
-# 逻辑：测试数据库和账户隔离，外部 IMAP、模型和 HTTP 网络被模拟。
+# 逻辑：显式启用 QQ，测试数据库和账户隔离，外部 IMAP、模型和 HTTP 被模拟。
 # 约束：通过不等于真实 QQ 授权或部署已验证。
-@override_settings(ANALYSIS_PROVIDER="agent", SALESMATE_VAULT_KEY=TEST_KEY, LOCAL_DEBUG_AUTO_LOGIN=False)
+@override_settings(QQ_MAIL_ENABLED=True, ANALYSIS_PROVIDER="agent", SALESMATE_VAULT_KEY=TEST_KEY, LOCAL_DEBUG_AUTO_LOGIN=False)
 class QQMailTests(TransactionTestCase):
     # 功能：准备独立用户、QQ 连接和 HTTP 客户端。
     # 输入：无外部参数；测试框架调用。

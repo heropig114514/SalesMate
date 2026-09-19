@@ -1,5 +1,5 @@
 """职责：通过固定 QQ SMTP TLS 服务发送已确认的邮件并核对发送副本。
-实现：全部收件人获准后才提交 DATA；明确拒绝与提交中断分别报告失败和结果未知，不自动重发。
+实现：QQ 能力启用且全部收件人获准后提交 DATA；区分明确拒绝与结果未知，不自动重发。
 关联：qq_connection 验证账号；actions 提供冻结快照；agent.tools.qq_mail 仅用于只读查询发送目录。
 目录：
 - QQSMTPError：携带受控失败阶段与不确定性。
@@ -28,6 +28,7 @@ from django.views.decorators.debug import sensitive_variables
 
 from agent.tools import qq_mail
 from apps.crm.access import InvalidState
+from common.mail_features import require_qq_enabled
 
 SMTP_HOST = "smtp.qq.com"
 SMTP_PORT = 465
@@ -52,10 +53,11 @@ class QQSMTPError(RuntimeError):
 # 功能：校验固定服务的账号和授权码。
 # 输入：`address` 为完整 QQ/foxmail 地址；`code` 为客户端授权码。
 # 输出：无；非法输入抛 InvalidState。
-# 逻辑：限制 ASCII 地址与 16 位字母，防止头部和 SMTP 命令注入。
+# 逻辑：检查 QQ 能力并限制 ASCII 地址与 16 位字母，防止协议注入。
 # 约束：格式通过不代表服务器已认证。
 @sensitive_variables("code")
 def validate_credentials(address, code):
+    require_qq_enabled("smtp_credentials")
     if not isinstance(address, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+@(qq|foxmail)\.com", address, re.IGNORECASE):
         raise InvalidState("请输入完整的 QQ 或 foxmail 邮箱地址。")
     if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z]{16}", code):

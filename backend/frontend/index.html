@@ -2,7 +2,7 @@
 <!-- 职责：提供 SalesMate 同源工作台的语义化页面骨架与对话框。
 实现：app.js 切换登录/注册并建立会话；workspace.js 提供含聊天助手的一级导航，assistant-entry.js 直接打开通用聊天，assistant.js 管理聊天、来源与会话。
 关联：Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
-目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，qq-dialog/qq-form 管理独立 QQ 连接及首次范围，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-panel 提供聊天状态、引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
+目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，qq-dialog/qq-form 保留独立 QQ 连接表单，入口默认隐藏并由运行时能力开关控制，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-panel 提供聊天状态、引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
 目录补充：assistant-entry-page 为独立聊天入口，assistant-entry-host 挂载通用会话，assistant-entry-error 显示旧客户链接读取错误。
 变量索引：无脚本变量；所有标识符为 DOM 定位用途；静态资源 v 查询参数标识本次界面版本，避免复用旧缓存。 -->
 <html lang="zh-CN">
@@ -23,7 +23,7 @@
   </section>
   <div id="workspace" hidden>
     <aside class="workspace-shell"><a href="/#home" class="brand"><span class="brand-mark">S</span><span>SalesMate<small>销售工作空间</small></span></a><nav id="workspace-nav" aria-label="主导航"></nav><div class="sidebar-bottom"><div class="avatar small">我</div><div><strong id="username">—</strong><small>当前员工工作空间</small></div><button id="logout" class="icon-btn" aria-label="退出登录">↪</button></div></aside>
-    <main><header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <a href="/#home" id="workspace-crumb">工作台</a><span id="detail-crumb"></span></div><div class="topbar-right"><button id="email-reviews-open" class="secondary" type="button">待复核邮件</button><button id="qq-manage-top" class="secondary" type="button">QQ 邮箱</button><button id="gmail-manage-top" class="gmail-chip" type="button"><span class="gmail-logo">M</span><span id="gmail-chip-label">连接 Gmail</span></button></div></header>
+    <main><header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <a href="/#home" id="workspace-crumb">工作台</a><span id="detail-crumb"></span></div><div class="topbar-right"><button id="email-reviews-open" class="secondary" type="button">待复核邮件</button><button id="qq-manage-top" hidden class="secondary" type="button">QQ 邮箱</button><button id="gmail-manage-top" class="gmail-chip" type="button"><span class="gmail-logo">M</span><span id="gmail-chip-label">连接 Gmail</span></button></div></header>
       <div id="workspace-status" class="workspace-status" aria-label="全局待办">正在读取待办…</div><p id="workspace-load-error" class="workspace-load-error" role="alert" hidden></p>
       <section id="workspace-context" class="workspace-context" aria-label="当前客户" hidden></section>
       <section id="workspace-overview" class="workspace-overview" hidden><p class="eyebrow">YOUR WORKSPACE</p><h1>今天，从重要的下一步开始。</h1><p>处理新线索，跟进客户，把需要确认的事情安排好。</p><div id="workspace-tasks" class="workspace-tasks"></div></section>
@@ -31,7 +31,7 @@
         <p id="assistant-entry-error" role="alert" hidden></p>
         <div id="assistant-entry-host"></div>
       </section>
-      <section id="list-page" class="page"><div class="page-heading"><div><p class="eyebrow">CUSTOMER INBOX</p><h1>把注意力，放在值得跟进的客户上。</h1><p class="muted">业务邮件按客户公司归组；演示样例单独标注来源。QQ 的完整已同步邮件可从「QQ 邮箱」查看。</p></div><div class="actions"><button id="gmail-manage" class="secondary">连接 Gmail</button><button id="qq-manage" class="secondary" type="button">连接 QQ 邮箱</button><button id="seed" class="secondary">导入演示样例</button><button id="compose" class="primary">＋ 模拟新邮件</button></div></div>
+      <section id="list-page" class="page"><div class="page-heading"><div><p class="eyebrow">CUSTOMER INBOX</p><h1>把注意力，放在值得跟进的客户上。</h1><p class="muted">业务邮件按客户公司归组；演示样例单独标注来源。已保存的历史邮件可继续查看。</p></div><div class="actions"><button id="gmail-manage" class="secondary">连接 Gmail</button><button id="qq-manage" hidden class="secondary" type="button">连接 QQ 邮箱</button><button id="seed" class="secondary">导入演示样例</button><button id="compose" class="primary">＋ 模拟新邮件</button></div></div>
         <div id="stats" class="stats"><div class="stat-card">正在读取工作空间…</div></div>
         <div class="inbox-panel"><div class="panel-heading"><div><h2><span id="customer-list-title">邮件与客户分析</span> <span id="result-count" class="count-pill">0</span></h2><p id="inbox-scope" class="muted">只显示当前员工已同步的客户邮件，并按公司域名归组。</p></div><button id="refresh" class="secondary">↻ 同步并刷新</button></div>
         <form id="filters" class="filters"><label class="search-label"><span>⌕</span><input name="q" aria-label="搜索公司或联系人" placeholder="搜索公司、域名或联系人"></label><label><span class="sr-only">行业</span><select name="industry"><option value="">全部行业</option><option>半导体检测</option><option>精密量测</option><option>光学检测</option><option>工业检测</option><option value="unknown">行业未知</option></select></label><label><span class="sr-only">规模</span><select name="size_band"><option value="">全部规模</option><option value="lt_50">少于 50 人</option><option value="50_100">50–99 人</option><option value="100_200">100–199 人</option><option value="200_500">200–499 人</option><option value="gte_500">500 人及以上</option><option value="unknown">规模未知</option></select></label><label><span class="sr-only">业务信号</span><select name="signal"><option value="">全部信号</option><option value="new_lead_no_profile">新线索未建档</option><option value="inquiry_intent">询盘</option><option value="quoted_not_closed">已报价未成交</option><option value="repeat_purchase">复购</option><option value="unknown">待确认</option></select></label><button class="filter-apply" type="submit">筛选</button><button type="reset" class="text-btn">重置</button></form>
@@ -65,5 +65,5 @@
     </form>
   </aside>
   <dialog id="qq-scope-dialog"><div class="dialog-heading"><h2>选择本次 QQ 同步范围</h2><button type="button" class="icon-btn close-dialog" aria-label="关闭">×</button></div><p id="qq-scope-address" class="muted"></p><form id="qq-scope-form"><label>最近 N 天<input name="recent_days" type="number" min="1" step="1" placeholder="留空则不限制天数" autocomplete="off"></label><label>最多 N 封<input name="max_messages" type="number" min="1" step="1" placeholder="留空则不限制封数" autocomplete="off"></label><p class="fine">至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。</p><p id="qq-scope-error" class="failure" role="alert"></p><button type="submit" class="primary wide-button">按此范围同步</button></form></dialog>
-  <script type="module" src="/static/app.js?v=20260919-message-order"></script>
+  <script type="module" src="/static/app.js?v=20260919-qq-paused"></script>
 </body></html>

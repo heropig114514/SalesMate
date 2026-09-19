@@ -1,5 +1,5 @@
 """职责：验证业务工具端到端授权、写入、确认和外部动作边界。
-实现：真实隔离 PostgreSQL 与 HTTP 请求；只在外部发送边界模拟 provider。
+实现：工具全目录用例显式启用 QQ；真实隔离 PostgreSQL 与 HTTP 请求；只在外部发送边界模拟 provider。
 关联：agent_tools 包及原 crm/sales/chat 服务；不验证真实邮箱授权或发信。
 目录：
 - AgentToolTests：工具集成验证。
@@ -32,7 +32,7 @@ from threading import Barrier
 from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections
-from django.test import TestCase, TransactionTestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from jsonschema import Draft202012Validator
 from rest_framework.response import Response
@@ -46,8 +46,9 @@ BASE = "/api/v1/agent-tools/"
 
 
 # 功能：验证工具边界。
-# 逻辑：所有业务断言基于隔离数据库及真实工具 HTTP 入口。
+# 逻辑：显式启用 QQ 的全目录断言基于隔离数据库及真实工具 HTTP 入口。
 # 约束：不运行外部发送服务，不连接真实邮箱。
+@override_settings(QQ_MAIL_ENABLED=True)
 class AgentToolTests(TestCase):
     # 功能：建立上下文。
     # 输入：无外部参数。
