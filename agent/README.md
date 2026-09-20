@@ -1,8 +1,8 @@
 # SalesMate Agent MVP
 
-更新日期：2026-09-19<br>
-版本：v2.4<br>
-状态：员工网页 Gmail 授权、一次性同步请求及原有 L1–L4 链路已完成联调；正式 L4 评分规则已在 Agent 侧实现，新的评分上下文与解释结果仍待后端和前端对接。
+更新日期：2026-09-20<br>
+版本：v2.5<br>
+状态：员工网页 Gmail 授权、一次性同步请求及原有 L1–L4 链路已完成联调；工作空间聊天已对接后端请求绑定的只读客户工具，真实模型与网页联合验收仍需执行。
 
 ## 1. 当前范围
 
@@ -28,21 +28,15 @@ Agent 不自行提供 HTTP 服务或数据库。现有 Django 后端负责员工
 
 每个 Agent 服务凭证只绑定一名后端员工。共享 `crm_worker` 会为每个执行单元创建临时员工凭证并在结束后撤销；CLI 仍使用其配置的单员工凭证。Agent 领取的是这名员工从页面请求的邮箱同步任务，后端归组和页面查询也继续按员工隔离，因此前端表示“当前员工的 Gmail 收件箱”，不是整个公司的共享收件箱。
 
-Agent 目录已经包含只读销售聊天的 Skill、模型适配、工作流、一次性 CLI 和离线测试，但不包含聊天 HTTP 服务、数据库、权威会话存储、知识库基础设施、业务工具执行器、常驻 Worker 或轮询循环。Gmail 发送、日历操作、CRM/文件写入及其他业务或外部数据创建、修改、删除均不在 Initial Release 能力范围内。页面筛选、排序、分页、CRM 建档和实际持久化仍由前后端负责。
+Agent 目录包含工作空间聊天的 Skill、模型适配、工作流、一次性 CLI 和离线测试，但不提供聊天 HTTP 服务、数据库、权威会话存储或轮询循环。当前聊天只使用后端按员工和请求授权的客户搜索、客户详情只读工具，不执行发信、日历操作或 CRM/文件写入。页面入口、会话保存、权限和实际持久化由后端与前端负责。
 
-### 1.1 只读销售聊天（Agent 侧已实现）
+### 1.1 工作空间聊天（唯一聊天流程）
 
-Agent Delivery 中已实现的聊天能力如下：
+`workflows/chat.py` 只执行 `skills/workspace-chat/SKILL.md`（`workspace-chat-v1`），不再按客户绑定或环境变量切换聊天模式。员工从工作空间发起问题，Agent 内部请求不包含预选 `company_id`；HTTP 适配层暂时接受后端返回的 `company_id: null` 并移除该字段，也接受后端直接省略它，非空值会被拒绝。普通问题可直接回答；需要客户资料时，模型选择 `customers.search` 与 `customers.context`，后者的 `company_id` 仅用于本次客户查询。Agent 从本次请求发布的工具目录核对参数，最多执行 6 次只读查询。后端按员工和请求验证权限，并登记每次读取的证据。Agent 只引用本轮实际展示的授权来源；较长客户详情以标记过的节选进入模型，完整来源仍由后端保存。
 
-- `skills/sales-chat/SKILL.md` 通过现有 loader 提供独立 `sales-chat` Skill，版本为 `chat-v2`。它规定客户/内部来源优先、外部来源仅补缺、资料不足/部分支持/冲突/判断表达、精确 Citation 和提示注入隔离。
-- `llm/bailian.py` 的 `generate_chat_json(messages, *, max_tokens)` 接收原序 `system|user|assistant` 消息并请求 JSON Object；请求不包含 `tools`、`tool_choice` 或函数调用字段。Existing L1–L4 Pipeline 继续使用原有 `generate_json()` 两消息接口。
-- `workflows/chat.py` 严格解析请求、历史、上下文和模型候选；先读取 internal，再只在 `external_available=true` 时预取 external；按 customer → internal → external 裁剪，并把上下文、历史和当前问题包装为不可信数据。外部资料只能补足客户/内部证据没有支持的部分。
-- 直接要求发送邮件、安排日历、写 CRM/文件等 Tool Action 时，工作流在读取客户或知识上下文前就在本地返回“未执行、当前仅支持问答”，不调用模型或业务工具。生成邮件文本、解释会议信息等无副作用文本请求仍属于只读问答。
-- 可用资料为空时，本地返回资料不足和零引用；非空上下文完整交给模型结合当前问题与最近历史判断，不使用关键词规则提前丢弃同义表达。等价的简短资料不足措辞可以通过校验；事项指代不足时只返回一个简短澄清问题。其余请求至多调用模型一次，不自动修复或重试。
-- 模型结果仍须通过精确 JSON 字段、Citation 三元组白名单与来源标识唯一性及 marker 编号校验。模型若多列了正文未使用的合法来源，或重复列出同一来源，Agent 会合并引用并将实际使用的编号重排为连续编号；正文完全没有引用编号的客户事实回答仍会失败。测试阶段，数字与所引来源不一致只记录 `chat_numeric_evidence_gap` 诊断日志，区分数字出现在其他授权资料中或本次资料完全没有该数字，不因此拒绝回答，也不自动改写模型引用。模型偶尔输出的 `[分析:3]` 等非标准来源标签会移除，不把标签中的序号误当成客户业务数字。逐句引用、词面重合、冲突与判断措辞不作为拒绝条件；这些自动检查不能证明语义正确，测试人员仍需核对有疑问的事实与引用。检索缺口只有与当前问题有关时才应进入回答；Agent 不因无关知识源失败而强制添加缺口说明，也不根据不同业务指标中的数字自动推断来源冲突。
-- `process_chat_once()` 每次最多领取一个请求并尝试回报一次；无工作返回 `None`。回报失败只返回本地 `report_failed`，不会自动重试或声称已经保存。
+`llm/bailian.py` 的 `generate_chat_json()` 请求 JSON Object。模型输出可选择下一次只读查询或最终回答；引用须对应本轮授权来源，正文编号与引用列表须一致。无证据时可以进行普通对话、澄清或明确说明资料不足。直接要求发送邮件、安排日历或写入业务数据时返回未执行说明。工具级参数错误或详情不可用可以在同一请求内修正或回答；请求级错误结束本轮。
 
-Initial Release 的工具扩展点是关闭的：模型看不到工具 schema、回调或业务写接口，整个请求的 Tool Action 调用数为零。Agent 仍不是服务端，不监听 HTTP、不建数据库、不保存会话、不实现检索基础设施，也不自行持续领取请求。
+`process_chat_once()` 每次最多领取一个请求并尝试回报一次；无工作返回 `None`。回报响应丢失时仅查询一次后端权威状态，确认结果已保存才视为成功。工作空间聊天默认启用，没有功能开关和旧聊天回退。接口与权限边界见[后端工作空间聊天契约](../backend/docs/workspace-chat-tools.md)。
 
 ### 1.2 一次性聊天 CLI
 
@@ -54,37 +48,40 @@ python -m agent.main --process-chat-once
 
 命令复用现有 `.env` 加载和 `DjangoBackendClient`：领取零个或一个聊天请求、生成稳定结果、尝试回报后立即退出。标准输出是 UTF-8 JSON；无工作或 `completed` 正常退出，`failed`（包括本地 `report_failed`）返回非零。该参数与 `--analysis-company-id`、`--process-jobs-once`、`--sync-authorized-mailboxes-once` 互斥。它不是 daemon；Demo 期间的重复触发必须由外部调度器或现有 Worker 串行完成。
 
-### 1.3 三接口联调契约
+### 1.3 聊天接口联调契约
 
 `DjangoBackendClient` 已实现下列 Agent 侧 HTTP 映射，均复用既有 `Authorization: Agent <service-token>` 和 timeout，并对响应做最小契约校验：
 
 | Agent 方法 | 受保护路径 | Agent 侧行为 |
 |---|---|---|
-| `claim_answer_request()` | `POST chat/requests/claim/` | 发送 `{}`；把 `{"request": null}` 规范为无工作，否则返回一条已绑定的请求 |
+| `claim_answer_request()` | `POST chat/requests/claim/` | 发送 `{}`；把 `{"request": null}` 规范为无工作；省略 `company_id` 或返回 `null` 均归一为无预选公司请求，非空值拒绝 |
 | `get_answer_context(request_id, scope)` | `POST chat/context/` | `scope` 仅允许 `internal|external`；独立校验客户上下文状态、知识状态、检索缺口和 external 可用性 |
+| `get_chat_tools(request_id)` | `GET chat/tools/` | 获取当前请求实际发布的只读工具与参数 Schema；普通问题无需调用 |
+| `get_chat_request_status(request_id)` | `GET chat/requests/<request_id>/` | 仅在回报响应无法确认时核对权威终态，不重新执行模型或工具 |
 | `report_answer(result)` | `POST chat/answers/` | 回报 `chat_prompt_version`、`completed|failed`、回答、Citation 和安全错误；接受后端首存或幂等重复响应 |
+| `read_chat_tool(request_id, name, arguments)` | `POST chat/tool-reads/` | 只允许目录发布的客户搜索与详情，核对请求、工具、读取 ID 和后端登记的证据项；保留工具级或请求级错误范围 |
 
-2026-09-18 后端适配更新：`backend/apps/chat/` 已实现以上三个受保护路径、员工绑定、证据快照、幂等结果和唯一助手消息。浏览器已接入提交、状态观察和引用；独立 `chat_worker` 串行调用原 `process_chat_once()`。Agent 不发送任意 company/query 覆盖，也不直连知识库。后端当前支持员工自有客户、显式内部知识，外部知识保持关闭。
+`backend/apps/chat/` 已提供员工绑定、证据快照、幂等结果和唯一助手消息。独立 `chat_worker` 调用 `process_chat_once()`；Agent 不覆盖员工身份或后端可见范围，也不直连知识库。当前只使用员工可见客户和显式内部知识，外部知识保持关闭。
 
 ### 1.4 Agent Delivery 与 Web Demo Delivery
 
 Agent 本目录的单元测试继续使用 fake session/backend，不代表真实模型或生产网页验收。后端新增集成测试使用真实 PostgreSQL 和临时 Django HTTP 服务运行原 Agent HTTP 客户端/工作流，模型输出模拟；浏览器测试使用真实页面与模拟 API。
 
-后端代码适配已交付，但 Web Demo 上线仍需应用迁移、配置模型与后端地址、启动共享 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。聊天不执行发信、日历或业务写入。当前完整契约、恢复和部署步骤以 [后端聊天适配说明](../backend/docs/chat-integration.md) 为准。Agent 当前仍按客户/通用模式产出 `chat-v2` / `general-chat-v1` 并执行自身引用校验；后端回报入口已改为仅校验 Schema，不再强制版本与会话模式一致，也不拒绝未登记来源。未登记引用只有元数据，没有后端附加的证据正文。后端新增了 Agent 凭证可调用的请求绑定工具目录、只读执行和状态查询，接入见[工作空间聊天对接契约](../backend/docs/workspace-chat-tools.md)；工具选择循环仍由 Agent 侧实现。失败请求不能重置后复用原 request_id。
+Web Demo 仍需部署对应后端迁移、配置模型与后端地址、启动 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。Agent 只产出 `workspace-chat-v1` 结果；既有绑定客户会话如需迁移或隐藏，应由后端与前端处理。失败请求不能重置后复用原 `request_id`。
 
 ### 1.5 聊天离线测试
 
 ```powershell
-# 聊天工作流、CLI/百炼回归和三接口 mocked contract
-python -m unittest agent.tests.test_chat agent.tests.test_core agent.tests.test_http_backend
+# 工作空间聊天、CLI/百炼回归和 HTTP mocked contract
+python -m unittest agent.tests.test_workspace_chat agent.tests.test_core agent.tests.test_http_backend
 
 # 包含 Existing L1–L4 Pipeline 回归的完整 Agent 离线套件
 python -m unittest discover -s agent/tests -p "test_*.py"
 ```
 
-`test_chat.py` 使用内存 fake backend 和 fake provider 覆盖消息顺序、空内容裁剪、提示注入、零 Tool Action、完整/部分/不足/冲突/判断回答、多轮同义提问、来源标识歧义、失败路径和一次回报，以及 Citation 精确匹配、资料不足、零工具动作和 request_id 幂等四个属性。客户会话中的纯问候直接返回无事实的简短回复；问候后带客户问题仍走证据问答。带引用的回答允许独立礼貌问候、自由标题与建议句不逐句加编号，但引用列表和正文 marker 仍须一致；数字缺少引用依据时只记诊断日志，列表序号不当作业务数字。无引用回答仅允许简短资料不足说明或纯礼貌回应。句末引用规范化会保留换行，避免分点回答产生孤立标点。测试不会发送仓库代码、客户数据或凭据到外部服务。真实 Backend/Frontend/Deployment 联调和网页端到端验收必须由对应团队另行执行。
+`test_workspace_chat.py` 使用内存后端和模拟模型覆盖普通对话、客户搜索与详情、跨公司引用、工具错误、越权来源、长内容节选和结果回报确认。离线测试不发送客户数据或凭据到外部服务；真实模型与网页端到端验收仍需部署后执行。
 
-开发阶段的 Agent 日志按 `request_id`、`gmail_message_id`、`company_id` 和 `job_id` 串联阶段：Gmail 读取与逐封提交、L1 抽取及重试、L2 归并、L3 模型与缓存、L4 信号与评分、聊天上下文/模型/校验/回报，以及后端 HTTP 失败。日志记录状态、数量、耗时、异常类型和校验原因，不记录 OAuth token、API Key、完整模型输出或完整客户上下文。聊天引用校验失败还记录句子序号与最多 160 字的失败句片段，遮盖常见邮箱和手机号；**该片段仍可能含客户业务信息，服务器日志应仅供开发人员排障，不要公开转发**。例如：
+开发阶段的 Agent 日志按 `request_id`、`gmail_message_id`、`company_id` 和 `job_id` 串联阶段：Gmail 读取与逐封提交、L1 抽取及重试、L2 归并、L3 模型与缓存、L4 信号与评分、聊天模型/工具/回报，以及后端 HTTP 失败。日志记录状态、数量、耗时和异常类型，不记录 OAuth token、API Key、完整模型输出或完整客户上下文。例如：
 
 ```bash
 sudo journalctl -u salesmate-chat -f
@@ -99,7 +96,7 @@ agent/
 ├── config.py                       # 从项目根目录 .env 读取共享配置
 ├── clients/
 │   ├── __init__.py                 # 外部服务客户端包出口
-│   └── backend_api.py              # BackendClient 协议、Django API 与聊天三接口映射
+│   └── backend_api.py              # BackendClient 协议、Django API 与聊天工具映射
 ├── tools/
 │   ├── gmail.py                    # 后端授权信息、Gmail History 与邮件读取
 │   └── email_parser.py             # MIME、正文和历史回复解析
@@ -111,8 +108,8 @@ agent/
 │   │   └── SKILL.md                # L1 抽取指令、版本和输出上限
 │   ├── customer-analysis/
 │   │   └── SKILL.md                # L3 画像指令、版本和输出上限
-│   └── sales-chat/
-│       └── SKILL.md                # chat-v2 只读问答、grounding 与安全规则
+│   └── workspace-chat/
+│       └── SKILL.md                # workspace-chat-v1 只读客户工具选择与回答
 ├── workflows/
 │   ├── l1_email.py                 # L1 单封邮件事实抽取
 │   ├── gmail_sync.py               # 前端 Gmail 同步服务函数
@@ -121,12 +118,12 @@ agent/
 │   ├── customer_analysis.py        # L3 客户画像和分析
 │   ├── lead_score.py               # L4 确定性优先级评分
 │   ├── orchestration.py            # L2–L4 和一次任务处理
-│   └── chat.py                     # 只读聊天验证、裁剪、回答和一次性编排
+│   └── chat.py                     # 工作空间只读查询、回答与一次性编排
 └── tests/
     ├── __init__.py                 # 测试包标记
     ├── email_submission_exploration.py  # L1 公共 fixture 与数据契约边界测试
     ├── fake_backend.py             # 仅供离线测试使用的协议假实现
-    ├── test_chat.py                # 聊天示例、失败路径和四个属性测试
+    ├── test_workspace_chat.py      # 工作空间只读查询、引用和越权动作测试
     ├── test_core.py                # L1、CLI、百炼客户端和数据契约单元测试
     ├── test_integration.py         # Gmail 只读读取、History 与百炼客户端集成测试
     ├── test_analysis_input.py      # L2 AnalysisInput 行为测试
@@ -137,15 +134,15 @@ agent/
 
 没有单独的 `schemas` 或 `prompts` 层。模型能力以 `agent/skills/<skill-name>/SKILL.md` 组织，frontmatter 提供路由名称、用途描述、版本和输出 token 上限，正文保存模型指令。workflow 按名称加载 Skill，只负责拼装本次输入、调用百炼和校验结果。数据结构继续使用普通字典和少量就地 dataclass。
 
-当前提供三个 Skill：
+当前提供工作流所需的 Skill：
 
 | Skill | 调用阶段 | 输入边界 | 产出 |
 |---|---|---|---|
 | `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
 | `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
-| `sales-chat` (`chat-v2`) | 只读聊天 | 当前问题、最近历史和本次授权上下文 | 经校验的自然语言回答与简单 Citation |
+| `workspace-chat` (`workspace-chat-v1`) | 工作空间聊天 | 当前问题、最近历史、内部知识及后端请求绑定的只读工具结果 | 客户搜索/详情查询选择和有来源的回答 |
 
-`agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他 Tool Action 必须经过独立规格、权限和确认设计；当前 `sales-chat` 不提供或预留可调用执行器。
+`agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他写入动作须另行设计权限和确认流程；当前 `workspace-chat` 不执行这些动作。
 
 QQ 邮箱已作为独立 IMAP 读取源追加，保留现有 Gmail 接入。`tools/qq_mail.py` 提供固定 QQ TLS 服务的只读适配，后端 `qq_sync` 持久同步并复用现有 L1–L4；无需 Google 回调域名。配置及协议兼容边界见 [QQ 邮箱试用](../backend/docs/qq-mailbox.md)。QQ 通过 `crm_worker` 运行，旧 Gmail CLI 不领取 QQ 任务。
 
@@ -782,7 +779,7 @@ python -m agent.main --sync-authorized-mailboxes-once
 python -m agent.main --process-chat-once
 ```
 
-`--process-chat-once` 是只读聊天的一次性 Agent 客户端入口，依次使用受保护的 claim/context/report 接口；它不启动 HTTP 服务、数据库、常驻循环或工具执行器。后端的回答请求、授权上下文、assistant/Citation 持久化和浏览器状态投影，以及持续触发该一次性命令的运行器，仍是 Web Demo 的外部依赖。
+`--process-chat-once` 是工作空间聊天的一次性 Agent 客户端入口，使用受保护的 claim、context、tool-read 和 report 接口；它不启动 HTTP 服务、数据库或常驻循环。后端负责请求、授权上下文、工具证据、assistant/Citation 持久化和浏览器状态投影；运行器负责持续领取任务。
 
 网页授权通过 Django 建立员工邮箱连接；浏览器不接触 token，Django 按需启动的 Agent 或 `--sync-authorized-mailboxes-once` 调试命令从受保护的 Agent API 领取。旧的 `--message-id`、`--recent` 和 `--sync-gmail` 本机 Desktop OAuth 命令已经删除，避免与正式网页授权流程维护两套凭据。
 
@@ -816,20 +813,20 @@ python -m unittest discover -s agent/tests -p "test_*.py"
 python -m unittest agent.tests.test_mvp_pipeline
 ```
 
-自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。当前完整离线发现命令通过 207 项测试。
+自动测试不连接真实 Gmail、百炼、数据库、HTTP 或知识服务；真实外部联调只使用非敏感 Demo 数据做人工冒烟验证。当前完整离线发现命令通过 189 项测试。
 
 测试文件分工：
 
 | 文件 | 职责 |
 |---|---|
 | `agent/tests/email_submission_exploration.py` | 提供 L1 公共 fixture，并覆盖 EmailSubmission 的数据契约边界；文件名不以 `test_` 开头，由 `test_core.py` 导入执行 |
-| `agent/tests/test_chat.py` | 覆盖只读聊天消息构造、裁剪、回答策略、失败路径、一次性编排和四个确定性属性 |
+| `agent/tests/test_workspace_chat.py` | 覆盖工作空间聊天的客户搜索、详情、证据引用、工具失败与一次性回报 |
 | `agent/tests/test_core.py` | 覆盖百炼客户端、聊天 CLI 回归、Gmail resource、MIME、证据边界、L1 Prompt、事实抽取和 EmailSubmission 契约 |
 | `agent/tests/test_integration.py` | 覆盖 Gmail 只读读取、History 分页与过期、profile 回退和百炼客户端集成边界 |
 | `agent/tests/test_analysis_input.py` | 覆盖 L2 事实归并、业务上下文、版本和错误边界 |
 | `agent/tests/test_mvp_pipeline.py` | 覆盖 Gmail 同步、L1 并发与失败隔离、L2–L4、缓存和既有端到端流程 |
 | `agent/tests/test_lead_score.py` | 覆盖公司级正式公式、信号证据、截止时间档位、资料不足和排序 |
-| `agent/tests/test_http_backend.py` | 覆盖 Django 服务认证、邮箱/游标/ETag/任务租约、响应归一化及聊天三接口 mocked contract |
+| `agent/tests/test_http_backend.py` | 覆盖 Django 服务认证、邮箱/游标/ETag/任务租约、响应归一化及聊天工具 mocked contract |
 | `agent/tests/test_qq_mail.py` | 覆盖 QQ IMAP 只读适配边界 |
 
 `agent/tests/fake_backend.py` 只是既有流程的测试 fixture；聊天测试中的内存 fake backend 也只模拟外部契约。二者都不参与运行时或真实后端持久化。

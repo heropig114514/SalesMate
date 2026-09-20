@@ -1,91 +1,7 @@
-"""职责：提供客户证据问答及统一聊天消费入口。
-实现：保持客户授权来源与引用结构校验；数字和词面问题仅记录日志；空客户请求分派 general_chat。
-关联：后端 chat 服务、sales-chat Skill、general_chat 通用流程。
-目录：
-- ChatValidationError：聊天边界数据不符合当前 Demo 的严格契约。
-- parse_recent_history：严格解析后端按原序返回的 user/assistant 最近历史。
-- parse_conversation_request：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求。
-- parse_context_item：严格解析一个可引用来源；空 content 只能作为无证据元数据保留。
-- deduplicate_context_items：按完整四字段去重并保留第一次出现的 Context Item。
-- parse_retrieval_gap：解析不含原始提供商细节的稳定检索缺口对象。
-- parse_answer_context：严格解析一次 request-bound 的 internal 或 external 上下文响应。
-- trim_recent_history：删除完整的最旧消息，直到保留历史的 content 字符数不超预算。
-- trim_context_items：按 customer → internal → external 优先级去重、限量并截断内容。
-- build_chat_messages：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息。
-- validate_citation_allowlist：要求每个 citation 三元组精确命中本次上下文中的同一来源。
-- parse_model_candidate：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。
-- parse_report_answer：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本。
-- stable_failure_result：为已识别 request_id 生成不含事实正文的固定失败结果。
-- answer_conversation_request：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次。
-- _completed_result：组装客户模式 completed 结果并经回报解析器校验。
-- _recognizable_request_id：仅从映射中提取非空字符串请求标识，无法识别时返回 None。
-- _failed_external_context：构造外部检索失败的严格上下文与安全缺口。
-- _add_missing_failure_gap：只在缺少对应 scope 缺口时追加检索失败描述。
-- _is_direct_tool_action：按中英文动作模式识别直接执行请求，排除教程式问法。
-- _is_simple_greeting：识别没有业务问题的纯问候。
-- _needs_matter_clarification：结合问题代词、剩余词段及历史判断是否需要澄清事项。
-- _history_has_specific_matter：通过移除泛化词后的词元判断历史是否提及具体事项。
-- _lexical_units：提取英文词及中文片段并移除既定停用词。
-- _support_units：将词元与既定概念同义词映射成证据比较单元。
-- _validate_answer_policy：串联客户回答的动作、证据、判断和冲突措辞约束。
-- _is_insufficiency_only：识别短文本中不含引用和数字的明确资料不足声明。
-- _is_nonfactual_social_sentence：识别不涉及客户事实的礼貌问候或助手自我介绍。
-- _log_numeric_support：记录数字与引用不一致及词面关联弱的诊断日志，不拒绝回答。
-- _number_tokens：提取数值和百分号并归一化整数及小数尾零。
-- _validate_judgment_wording：要求包含推测建议线索的文字明确标注判断或可能。
-- _validate_conflict_wording：要求冲突声明引用至少两个来源且标注待确认。
-- _flatten_context：按客户、内部、外部的固定顺序展开证据数组。
-- _parse_context_item_array：校验数组后按索引路径解析每个来源条目。
-- _deduplicate_parsed_context_items：按四字段身份保留首次出现的来源副本。
-- _truncate_context_item：仅截断超预算正文并追加节选标记，保留来源身份。
-- _context_item_key：按身份三字段及正文构造完整去重键。
-- _citation_key：按来源标识、类型和标题构造引用身份键。
-- _record_unique_citation_identity：记录来源身份对应正文并拒绝同身份的内容冲突。
-- _ensure_unique_citation_identities：遍历来源并验证同一引用身份只有一种正文。
-- _parse_citations：严格解析有序的三字段引用数组并拒绝重复。
-- _compact_model_citations：移除模型多列但正文未使用的来源，并保持编号连续。
-- _validate_citation_markers：检查正文编号集合与引用数组位置完整一致。
-- _parse_report_error：要求错误代码及文案精确命中安全失败集合。
-- _untrusted_block：将证据序列化为明确标注不可信数据的消息块。
-- _decode_json_object：解析 JSON 对象并拒绝无效语法、重复键和非对象根值。
-- _unique_json_object：从有序键值对构造对象并拒绝重复键。
-- _object：要求输入为映射对象，否则抛带字段路径的校验异常。
-- _array：要求输入为 list，否则抛带字段路径的校验异常。
-- _keys：要求对象键集合与协议字段精确一致。
-- _string：要求输入为字符串，不做隐式类型转换。
-- _nonblank：要求字符串去空白后非空，返回原始字符串。
-- _enum：要求字符串属于明确的枚举集合。
-- _boolean：只接受 bool 类型，不把整数当作布尔值。
-- _nonnegative_integer：只接受非负整数预算，排除 bool 类型。
-- bailian_chat_provider：通过聊天专用百炼边界发送有序消息，不提供任何工具能力。
-- process_chat_once：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报。
-变量索引：
-- _SALES_CHAT_SKILL：客户聊天 Skill 元数据。
-- CHAT_PROMPT：客户专用提示。
-- CHAT_PROMPT_VERSION：客户提示版本。
-- CHAT_MAX_TOKENS：原输出 token 上限。
-- DEFAULT_HISTORY_CHARACTER_BUDGET：原历史字符预算。
-- DEFAULT_CONTEXT_ITEM_LIMIT：原证据条数预算。
-- DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT：原单条证据字符预算。
-- TRUNCATION_MARKER：裁剪标记。
-- _REQUEST_FIELDS：对应协议字段或枚举白名单。
-- _HISTORY_FIELDS：对应协议字段或枚举白名单。
-- _CONTEXT_ITEM_FIELDS：对应协议字段或枚举白名单。
-- _ANSWER_CONTEXT_FIELDS：对应协议字段或枚举白名单。
-- _RETRIEVAL_GAP_FIELDS：对应协议字段或枚举白名单。
-- _CANDIDATE_FIELDS：对应协议字段或枚举白名单。
-- _CITATION_FIELDS：对应协议字段或枚举白名单。
-- _REPORT_FIELDS：对应协议字段或枚举白名单。
-- _ERROR_FIELDS：对应协议字段或枚举白名单。
-- _HISTORY_ROLES：对应协议字段或枚举白名单。
-- _CONTEXT_SCOPES：对应协议字段或枚举白名单。
-- _KNOWLEDGE_STATUSES：对应协议字段或枚举白名单。
-- _REPORT_STATUSES：对应协议字段或枚举白名单。
-- _FAILURE_MESSAGES：安全错误文案。
-- _CITATION_MARKER：引用编号匹配表达式。
-- _LEXICAL_STOP_UNITS：相关性词元中的泛化停用词。
-- _SUPPORT_CONCEPTS：确定性证据比较的同义概念词组。
-- __all__：公开导出符号。
+"""工作空间聊天：按员工请求发现只读工具、读取后端证据并回报回答。
+
+本模块只处理没有预选公司的聊天请求。后端决定员工可见范围并保存会话、
+工具读取及引用；Agent 只选择查询、控制模型输入和核对输出。
 """
 
 from __future__ import annotations
@@ -93,64 +9,37 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from time import perf_counter
 from typing import Any, Mapping
 
-from agent.clients.backend_api import BackendRequestError
-from agent.llm.bailian import LLMError
+from agent.clients.backend_api import BackendContractError, BackendRequestError
 from agent.skills import load_skill
 
 
-_SALES_CHAT_SKILL = load_skill("sales-chat")
-CHAT_PROMPT = _SALES_CHAT_SKILL.instructions
-CHAT_PROMPT_VERSION = _SALES_CHAT_SKILL.version
-CHAT_MAX_TOKENS = _SALES_CHAT_SKILL.max_tokens
-
-DEFAULT_HISTORY_CHARACTER_BUDGET = 6_000
-DEFAULT_CONTEXT_ITEM_LIMIT = 12
-DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT = 2_000
-TRUNCATION_MARKER = "...[truncated]"
-
+_WORKSPACE_CHAT_SKILL = load_skill("workspace-chat")
+WORKSPACE_CHAT_PROMPT_VERSION = _WORKSPACE_CHAT_SKILL.version
+_WORKSPACE_MAX_TOOL_READS = 6
+_WORKSPACE_MAX_SEARCH_PAGE_SIZE = 20
+_WORKSPACE_MAX_EVIDENCE_ITEMS = 12
+_WORKSPACE_MAX_PROMPT_CHARACTERS = 18_000
+_WORKSPACE_DETAIL_EXCERPT_CHARACTERS = 5_000
+_WORKSPACE_OTHER_EXCERPT_CHARACTERS = 1_200
+_HISTORY_CHARACTER_BUDGET = 6_000
+_SOURCE_FIELDS = {"source_id", "source_type", "title_or_label", "content"}
+_CITATION_FIELDS = {"source_id", "source_type", "title_or_label"}
 _REQUEST_FIELDS = {
-    "request_id",
-    "conversation_id",
-    "company_id",
-    "user_message_id",
-    "question",
-    "recent_history",
+    "request_id", "conversation_id", "user_message_id",
+    "question", "recent_history",
 }
-_HISTORY_FIELDS = {"role", "content"}
-_CONTEXT_ITEM_FIELDS = {"source_id", "source_type", "title_or_label", "content"}
-_ANSWER_CONTEXT_FIELDS = {
-    "request_id",
-    "scope",
-    "customer_context",
-    "context_items",
-    "customer_context_status",
-    "knowledge_status",
-    "retrieval_gaps",
+_CONTEXT_FIELDS = {
+    "request_id", "scope", "customer_context", "context_items",
+    "customer_context_status", "knowledge_status", "retrieval_gaps",
     "external_available",
 }
-_RETRIEVAL_GAP_FIELDS = {"scope", "code", "message"}
-_CANDIDATE_FIELDS = {"assistant_text", "citations"}
-_CITATION_FIELDS = {"source_id", "source_type", "title_or_label"}
-_REPORT_FIELDS = {
-    "request_id",
-    "chat_prompt_version",
-    "assistant_text",
-    "citations",
-    "status",
-    "error",
-}
-_ERROR_FIELDS = {"code", "message"}
-_HISTORY_ROLES = frozenset({"user", "assistant"})
-_CONTEXT_SCOPES = frozenset({"internal", "external"})
-_KNOWLEDGE_STATUSES = frozenset({"completed", "failed"})
-_REPORT_STATUSES = frozenset({"completed", "failed"})
 _FAILURE_MESSAGES = {
-    "invalid_request": "回答请求无效。",
-    "context_unavailable": "客户上下文暂时不可用。",
-    "knowledge_unavailable": "回答所需资料暂时不可用。",
+    "invalid_request": "工作空间聊天请求无效。",
+    "context_unavailable": "聊天资料暂时不可用。",
     "model_unavailable": "回答模型暂时不可用，请稍后重试。",
     "invalid_model_output": "回答模型返回了无效结果。",
     "report_failed": "回答结果暂时无法保存。",
@@ -162,1587 +51,629 @@ _NONSTANDARD_SOURCE_TAG = re.compile(
 logger = logging.getLogger("salesmate.chat")
 
 
-def _diagnostic_excerpt(value: str, limit: int = 160) -> str:
-    """只在校验失败日志中保留短片段，并遮盖常见联系方式。"""
-    excerpt = re.sub(r"\s+", " ", value).strip()
-    excerpt = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email]", excerpt)
-    excerpt = re.sub(r"(?<!\d)1[3-9]\d{9}(?!\d)", "[phone]", excerpt)
-    return excerpt[:limit] + ("…" if len(excerpt) > limit else "")
-
-
-# 功能：聊天边界数据不符合当前 Demo 的严格契约。
-# 逻辑：以 ValueError 子类标识可控聊天契约失败。
-# 约束：错误不包含服务凭证。
 class ChatValidationError(ValueError):
-    """聊天边界数据不符合当前 Demo 的严格契约。"""
+    """请求、来源或模型输出不符合工作空间聊天契约。"""
 
 
-# 功能：严格解析后端按原序返回的 user/assistant 最近历史。
-# 输入：`value` 待验证数据。
-# 输出：list[dict[str, str]]。
-# 逻辑：严格解析后端按原序返回的 user/assistant 最近历史，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_recent_history(value: object) -> list[dict[str, str]]:
-    """严格解析后端按原序返回的 user/assistant 最近历史。"""
-    history = _array(value, "recent_history")
-    parsed: list[dict[str, str]] = []
-    for index, raw_message in enumerate(history):
-        path = f"recent_history[{index}]"
-        message = _object(raw_message, path)
-        _keys(message, _HISTORY_FIELDS, path)
-        parsed.append(
-            {
-                "role": _enum(message["role"], _HISTORY_ROLES, f"{path}.role"),
-                "content": _nonblank(message["content"], f"{path}.content"),
-            }
-        )
-    return parsed
+def _nonblank(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ChatValidationError(f"{path} 必须是非空字符串。")
+    return value.strip()
 
 
-# 功能：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求。
-# 输入：`value` 待验证数据、`expected_company_id` 预期客户绑定。
-# 输出：dict[str, Any]。
-# 逻辑：解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_conversation_request(
-    value: object,
-    *,
-    expected_company_id: str | None = None,
-) -> dict[str, Any]:
-    """解析领取请求；缺失或与已知绑定不符的 company_id 均为无效请求。"""
-    request = _object(value, "request")
-    _keys(request, _REQUEST_FIELDS, "request")
-    company_id = _nonblank(request["company_id"], "request.company_id")
-    if expected_company_id is not None:
-        expected = _nonblank(expected_company_id, "expected_company_id")
-        if company_id != expected:
-            raise ChatValidationError("request.company_id 与当前客户绑定不一致。")
-
-    return {
-        "request_id": _nonblank(request["request_id"], "request.request_id"),
-        "conversation_id": _nonblank(
-            request["conversation_id"], "request.conversation_id"
-        ),
-        "company_id": company_id,
-        "user_message_id": _nonblank(
-            request["user_message_id"], "request.user_message_id"
-        ),
-        "question": _nonblank(request["question"], "request.question"),
-        "recent_history": parse_recent_history(request["recent_history"]),
-    }
+def _keys(value: object, expected: set[str], path: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ChatValidationError(f"{path} 字段必须与契约完全一致。")
+    return value
 
 
-# 功能：严格解析一个可引用来源；空 content 只能作为无证据元数据保留。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：dict[str, str]。
-# 逻辑：严格解析一个可引用来源；空 content 只能作为无证据元数据保留，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_context_item(value: object, *, path: str = "context_item") -> dict[str, str]:
-    """严格解析一个可引用来源；空 content 只能作为无证据元数据保留。"""
-    item = _object(value, path)
-    _keys(item, _CONTEXT_ITEM_FIELDS, path)
-    return {
-        "source_id": _nonblank(item["source_id"], f"{path}.source_id"),
-        "source_type": _nonblank(item["source_type"], f"{path}.source_type"),
-        "title_or_label": _nonblank(item["title_or_label"], f"{path}.title_or_label"),
-        "content": _string(item["content"], f"{path}.content"),
-    }
-
-
-# 功能：按完整四字段去重并保留第一次出现的 Context Item。
-# 输入：`value` 待验证数据。
-# 输出：list[dict[str, str]]。
-# 逻辑：按完整四字段去重并保留第一次出现的 Context Item，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def deduplicate_context_items(value: object) -> list[dict[str, str]]:
-    """按完整四字段去重并保留第一次出现的 Context Item。"""
-    items = _array(value, "context_items")
-    result: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
-    for index, raw_item in enumerate(items):
-        item = parse_context_item(raw_item, path=f"context_items[{index}]")
-        key = _context_item_key(item)
-        if key not in seen:
-            seen.add(key)
-            result.append(item)
-    return result
-
-
-# 功能：解析不含原始提供商细节的稳定检索缺口对象。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：dict[str, str]。
-# 逻辑：解析不含原始提供商细节的稳定检索缺口对象，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_retrieval_gap(
-    value: object, *, path: str = "retrieval_gap"
-) -> dict[str, str]:
-    """解析不含原始提供商细节的稳定检索缺口对象。"""
-    gap = _object(value, path)
-    _keys(gap, _RETRIEVAL_GAP_FIELDS, path)
-    return {
-        "scope": _nonblank(gap["scope"], f"{path}.scope"),
-        "code": _nonblank(gap["code"], f"{path}.code"),
-        "message": _nonblank(gap["message"], f"{path}.message"),
-    }
-
-
-# 功能：严格解析一次 request-bound 的 internal 或 external 上下文响应。
-# 输入：`value` 待验证数据、`expected_request_id` 预期请求标识、`expected_scope` 预期知识范围。
-# 输出：dict[str, Any]。
-# 逻辑：严格解析一次 request-bound 的 internal 或 external 上下文响应，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_answer_context(
-    value: object,
-    *,
-    expected_request_id: str | None = None,
-    expected_scope: str | None = None,
-) -> dict[str, Any]:
-    """严格解析一次 request-bound 的 internal 或 external 上下文响应。"""
-    context = _object(value, "answer_context")
-    _keys(context, _ANSWER_CONTEXT_FIELDS, "answer_context")
-
-    request_id = _nonblank(context["request_id"], "answer_context.request_id")
-    if expected_request_id is not None:
-        expected_id = _nonblank(expected_request_id, "expected_request_id")
-        if request_id != expected_id:
-            raise ChatValidationError("answer_context.request_id 与当前请求不一致。")
-
-    scope = _enum(context["scope"], _CONTEXT_SCOPES, "answer_context.scope")
-    if expected_scope is not None:
-        expected = _enum(expected_scope, _CONTEXT_SCOPES, "expected_scope")
-        if scope != expected:
-            raise ChatValidationError("answer_context.scope 与请求范围不一致。")
-
-    customer_status = _nonblank(
-        context["customer_context_status"],
-        "answer_context.customer_context_status",
-    )
-    if scope == "internal":
-        if customer_status not in {"completed", "failed"}:
-            raise ChatValidationError(
-                "internal answer_context.customer_context_status 枚举值无效。"
-            )
-    elif customer_status != "not_applicable":
-        raise ChatValidationError(
-            "external answer_context.customer_context_status 必须为 not_applicable。"
-        )
-
-    external_available = _boolean(
-        context["external_available"], "answer_context.external_available"
-    )
-    if scope == "external" and not external_available:
-        raise ChatValidationError(
-            "external answer_context.external_available 必须为 true。"
-        )
-
-    customer_context = _parse_context_item_array(
-        context["customer_context"], "answer_context.customer_context"
-    )
-    if scope == "external" and customer_context:
-        raise ChatValidationError("external answer_context 不得包含 customer_context。")
-
-    context_items = _parse_context_item_array(
-        context["context_items"], "answer_context.context_items"
-    )
-    _ensure_unique_citation_identities(
-        [*customer_context, *context_items],
-        "answer_context",
-    )
-    raw_gaps = _array(context["retrieval_gaps"], "answer_context.retrieval_gaps")
-    retrieval_gaps = [
-        parse_retrieval_gap(item, path=f"answer_context.retrieval_gaps[{index}]")
-        for index, item in enumerate(raw_gaps)
-    ]
-
-    return {
-        "request_id": request_id,
-        "scope": scope,
-        "customer_context": _deduplicate_parsed_context_items(customer_context),
-        "context_items": _deduplicate_parsed_context_items(context_items),
-        "customer_context_status": customer_status,
-        "knowledge_status": _enum(
-            context["knowledge_status"],
-            _KNOWLEDGE_STATUSES,
-            "answer_context.knowledge_status",
-        ),
-        "retrieval_gaps": retrieval_gaps,
-        "external_available": external_available,
-    }
-
-
-# 功能：删除完整的最旧消息，直到保留历史的 content 字符数不超预算。
-# 输入：`value` 待验证数据、`character_budget` 既定字符预算。
-# 输出：list[dict[str, str]]。
-# 逻辑：删除完整的最旧消息，直到保留历史的 content 字符数不超预算，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def trim_recent_history(
-    value: object,
-    *,
-    character_budget: int = DEFAULT_HISTORY_CHARACTER_BUDGET,
-) -> list[dict[str, str]]:
-    """删除完整的最旧消息，直到保留历史的 content 字符数不超预算。"""
-    budget = _nonnegative_integer(character_budget, "character_budget")
-    history = parse_recent_history(value)
-    total = sum(len(message["content"]) for message in history)
-    first_retained = 0
-    while first_retained < len(history) and total > budget:
-        total -= len(history[first_retained]["content"])
-        first_retained += 1
-    return [dict(message) for message in history[first_retained:]]
-
-
-# 功能：按 customer → internal → external 优先级去重、限量并截断内容。
-# 输入：`customer_context` 客户证据、`internal_knowledge` 内部知识、`external_knowledge` 外部知识、`item_limit` 最大来源条数、`content_character_limit` 既定单条字符预算。
-# 输出：dict[str, list[dict[str, str]]]。
-# 逻辑：按 customer → internal → external 优先级去重、限量并截断内容，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def trim_context_items(
-    customer_context: object,
-    internal_knowledge: object,
-    external_knowledge: object,
-    *,
-    item_limit: int = DEFAULT_CONTEXT_ITEM_LIMIT,
-    content_character_limit: int = DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT,
-) -> dict[str, list[dict[str, str]]]:
-    """按 customer → internal → external 优先级去重、限量并截断内容。"""
-    maximum_items = _nonnegative_integer(item_limit, "item_limit")
-    maximum_content = _nonnegative_integer(
-        content_character_limit, "content_character_limit"
-    )
-    groups = (
-        (
-            "customer_context",
-            _parse_context_item_array(customer_context, "customer_context"),
-        ),
-        (
-            "internal_knowledge",
-            _parse_context_item_array(internal_knowledge, "internal_knowledge"),
-        ),
-        (
-            "external_knowledge",
-            _parse_context_item_array(external_knowledge, "external_knowledge"),
-        ),
-    )
-    result: dict[str, list[dict[str, str]]] = {
-        "customer_context": [],
-        "internal_knowledge": [],
-        "external_knowledge": [],
-    }
-    seen: set[tuple[str, str, str, str]] = set()
-    source_contents: dict[tuple[str, str, str], str] = {}
-    retained_count = 0
-    for group_name, items in groups:
-        for item in items:
-            _record_unique_citation_identity(item, source_contents, group_name)
-            if not item["content"].strip():
-                continue
-            key = _context_item_key(item)
-            if key in seen:
-                continue
-            seen.add(key)
-            if retained_count >= maximum_items:
-                continue
-            result[group_name].append(
-                _truncate_context_item(item, content_character_limit=maximum_content)
-            )
-            retained_count += 1
-    return result
-
-
-# 功能：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息。
-# 输入：`request` 后端领取的请求、`internal_context` 内部上下文、`external_context` 外部上下文、`expected_company_id` 预期客户绑定、`history_character_budget` 历史字符预算、`context_item_limit` 既定条目预算、`context_content_character_limit` 单条来源字符预算。
-# 输出：list[dict[str, str]]。
-# 逻辑：构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def build_chat_messages(
-    request: object,
-    *,
-    internal_context: object,
-    external_context: object | None = None,
-    expected_company_id: str | None = None,
-    history_character_budget: int = DEFAULT_HISTORY_CHARACTER_BUDGET,
-    context_item_limit: int = DEFAULT_CONTEXT_ITEM_LIMIT,
-    context_content_character_limit: int = DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT,
-) -> list[dict[str, str]]:
-    """构造 Skill、上下文、原序历史、当前问题组成的固定顺序消息。"""
-    parsed_request = parse_conversation_request(
-        request, expected_company_id=expected_company_id
-    )
-    parsed_internal = parse_answer_context(
-        internal_context,
-        expected_request_id=parsed_request["request_id"],
-        expected_scope="internal",
-    )
-    parsed_external = None
-    if external_context is not None:
-        parsed_external = parse_answer_context(
-            external_context,
-            expected_request_id=parsed_request["request_id"],
-            expected_scope="external",
-        )
-
-    trimmed_context = trim_context_items(
-        parsed_internal["customer_context"],
-        parsed_internal["context_items"],
-        parsed_external["context_items"] if parsed_external is not None else [],
-        item_limit=context_item_limit,
-        content_character_limit=context_content_character_limit,
-    )
-    retrieval_gaps = list(parsed_internal["retrieval_gaps"])
-    if parsed_external is not None:
-        retrieval_gaps.extend(parsed_external["retrieval_gaps"])
-    context_payload = {
-        **trimmed_context,
-        "retrieval_gaps": retrieval_gaps,
-    }
-
-    messages = [
-        {"role": "system", "content": CHAT_PROMPT},
-        {
-            "role": "user",
-            "content": _untrusted_block("UNTRUSTED_CONTEXT_DATA", context_payload),
-        },
-    ]
-    retained_history = trim_recent_history(
-        parsed_request["recent_history"],
-        character_budget=history_character_budget,
-    )
-    messages.extend(
-        {
-            "role": message["role"],
-            "content": _untrusted_block(
-                "UNTRUSTED_HISTORY_DATA", {"content": message["content"]}
-            ),
-        }
-        for message in retained_history
-    )
-    messages.append(
-        {
-            "role": "user",
-            "content": _untrusted_block(
-                "CURRENT_USER_QUESTION_UNTRUSTED_DATA",
-                {"question": parsed_request["question"]},
-            ),
-        }
-    )
-    return messages
-
-
-# 功能：要求每个 citation 三元组精确命中本次上下文中的同一来源。
-# 输入：`citations` 有序引用、`allowed_context_items` 当前授权证据。
-# 输出：list[dict[str, str]]。
-# 逻辑：要求每个 citation 三元组精确命中本次上下文中的同一来源，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def validate_citation_allowlist(
-    citations: object,
-    allowed_context_items: object,
-) -> list[dict[str, str]]:
-    """要求每个 citation 三元组精确命中本次上下文中的同一来源。"""
-    parsed_citations = _parse_citations(citations)
-    allowed_items = _parse_context_item_array(
-        allowed_context_items, "allowed_context_items"
-    )
-    _ensure_unique_citation_identities(allowed_items, "allowed_context_items")
-    allowed_triples = {_citation_key(item) for item in allowed_items}
-    for index, citation in enumerate(parsed_citations):
-        if _citation_key(citation) not in allowed_triples:
-            raise ChatValidationError(
-                f"citations[{index}] 未精确命中当前请求的来源白名单。"
-            )
-    return parsed_citations
-
-
-# 功能：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。
-# 输入：`value` 待验证数据、`allowed_context_items` 当前授权证据。
-# 输出：dict[str, Any]。
-# 逻辑：解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_model_candidate(
-    value: object,
-    *,
-    allowed_context_items: object,
-    request_id: str | None = None,
-) -> dict[str, Any]:
-    """解析模型 JSON，校验精确 Schema、marker 和 Citation 白名单闭包。"""
-    candidate_value = _decode_json_object(value) if isinstance(value, str) else value
-    candidate = _object(candidate_value, "model_candidate")
-    _keys(candidate, _CANDIDATE_FIELDS, "model_candidate")
-    assistant_text = _nonblank(
-        candidate["assistant_text"], "model_candidate.assistant_text"
-    )
-    nonstandard_tags = _NONSTANDARD_SOURCE_TAG.findall(assistant_text)
-    if nonstandard_tags:
-        assistant_text = _NONSTANDARD_SOURCE_TAG.sub("", assistant_text)
-        logger.info(
-            "chat_nonstandard_source_tags_removed request_id=%s count=%s",
-            request_id, len(nonstandard_tags),
-        )
-    citations = validate_citation_allowlist(
-        candidate["citations"], allowed_context_items
-    )
-    assistant_text, citations = _compact_model_citations(
-        assistant_text, citations, request_id=request_id
-    )
-    _validate_citation_markers(assistant_text, citations)
-    return {"assistant_text": assistant_text, "citations": citations}
-
-
-# 功能：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本。
-# 输入：`value` 待验证数据、`expected_request_id` 预期请求标识、`allowed_context_items` 当前授权证据。
-# 输出：dict[str, Any]。
-# 逻辑：严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def parse_report_answer(
-    value: object,
-    *,
-    expected_request_id: str | None = None,
-    allowed_context_items: object | None = None,
-) -> dict[str, Any]:
-    """严格解析 completed/failed Report Answer，并返回稳定字段顺序的副本。"""
-    report = _object(value, "report_answer")
-    _keys(report, _REPORT_FIELDS, "report_answer")
-    request_id = _nonblank(report["request_id"], "report_answer.request_id")
-    if expected_request_id is not None:
-        expected = _nonblank(expected_request_id, "expected_request_id")
-        if request_id != expected:
-            raise ChatValidationError("report_answer.request_id 与当前请求不一致。")
-
-    status = _enum(report["status"], _REPORT_STATUSES, "report_answer.status")
-    prompt_version = _nonblank(
-        report["chat_prompt_version"], "report_answer.chat_prompt_version"
-    )
-    if prompt_version != CHAT_PROMPT_VERSION:
-        raise ChatValidationError("report_answer.chat_prompt_version 不受支持。")
-    if status == "completed":
-        assistant_text = _nonblank(
-            report["assistant_text"], "report_answer.assistant_text"
-        )
-        citations = (
-            validate_citation_allowlist(report["citations"], allowed_context_items)
-            if allowed_context_items is not None
-            else _parse_citations(report["citations"])
-        )
-        _validate_citation_markers(assistant_text, citations)
-        if report["error"] is not None:
-            raise ChatValidationError("completed report_answer.error 必须为 null。")
-        error = None
-    else:
-        if report["assistant_text"] != "":
-            raise ChatValidationError("failed report_answer.assistant_text 必须为空。")
-        if _array(report["citations"], "report_answer.citations"):
-            raise ChatValidationError("failed report_answer.citations 必须为空。")
-        error = _parse_report_error(report["error"])
-        assistant_text = ""
-        citations = []
-
-    return {
-        "request_id": request_id,
-        "chat_prompt_version": prompt_version,
-        "assistant_text": assistant_text,
-        "citations": citations,
-        "status": status,
-        "error": error,
-    }
-
-
-# 功能：为已识别 request_id 生成不含事实正文的固定失败结果。
-# 输入：`request_id` 当前请求标识、`code` 稳定错误码。
-# 输出：dict[str, Any]。
-# 逻辑：为已识别 request_id 生成不含事实正文的固定失败结果，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
-    """为已识别 request_id 生成不含事实正文的固定失败结果。"""
-    parsed_request_id = _nonblank(request_id, "request_id")
-    parsed_code = _nonblank(code, "code")
-    if parsed_code not in _FAILURE_MESSAGES:
-        raise ChatValidationError("code 不是受支持的稳定失败代码。")
-    return {
-        "request_id": parsed_request_id,
-        "chat_prompt_version": CHAT_PROMPT_VERSION,
-        "assistant_text": "",
-        "citations": [],
-        "status": "failed",
-        "error": {
-            "code": parsed_code,
-            "message": _FAILURE_MESSAGES[parsed_code],
-        },
-    }
-
-
-# 功能：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次。
-# 输入：`request` 后端领取的请求、`backend` 后端客户端、`chat_provider` 单次模型调用边界。
-# 输出：dict[str, Any]。
-# 逻辑：用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def answer_conversation_request(
-    request: Mapping[str, Any],
-    *,
-    backend: Any,
-    chat_provider: Any,
-) -> dict[str, Any]:
-    """用当前请求绑定的授权资料生成一次只读回答，模型调用至多一次。"""
-    recognizable_request_id = _recognizable_request_id(request)
-    try:
-        parsed_request = parse_conversation_request(request)
-    except ChatValidationError as error:
-        logger.warning(
-            "chat_request_invalid request_id=%s reason=%s",
-            recognizable_request_id,
-            error,
-        )
-        if recognizable_request_id is None:
-            raise
-        return stable_failure_result(recognizable_request_id, "invalid_request")
-
-    request_id = parsed_request["request_id"]
-    logger.info(
-        "chat_request_started request_id=%s company_id=%s history_count=%s",
-        request_id,
-        parsed_request["company_id"],
-        len(parsed_request["recent_history"]),
-    )
-    if _is_direct_tool_action(parsed_request["question"]):
-        logger.info("chat_request_short_circuit request_id=%s reason=direct_action", request_id)
-        return _completed_result(
-            request_id,
-            "该操作未执行，当前仅支持问答，不会执行邮件、日历、CRM、文件或其他业务写操作。",
-            [],
-        )
-    if _is_simple_greeting(parsed_request["question"]):
-        logger.info("chat_request_short_circuit request_id=%s reason=greeting", request_id)
-        return _completed_result(
-            request_id,
-            "你好！想了解这位客户的什么信息？",
-            [],
-        )
-    if _needs_matter_clarification(
-        parsed_request["question"], parsed_request["recent_history"]
-    ):
-        logger.info("chat_request_short_circuit request_id=%s reason=clarification", request_id)
-        return _completed_result(
-            request_id,
-            "请问您指的是该客户的哪一项具体事项？",
-            [],
-        )
-
-    try:
-        internal = parse_answer_context(
-            backend.get_answer_context(request_id, "internal"),
-            expected_request_id=request_id,
-            expected_scope="internal",
-        )
-    except Exception as error:
-        logger.warning(
-            "chat_context_failed request_id=%s scope=internal error_type=%s reason=%s",
-            request_id,
-            type(error).__name__,
-            error if isinstance(error, ChatValidationError) else "unavailable",
-        )
-        return stable_failure_result(request_id, "context_unavailable")
-
-    if internal["customer_context_status"] == "failed":
-        logger.warning("chat_context_failed request_id=%s scope=customer status=failed", request_id)
-        return stable_failure_result(request_id, "context_unavailable")
-    logger.info(
-        "chat_context_loaded request_id=%s scope=internal customer_items=%s knowledge_items=%s knowledge_status=%s gaps=%s external_available=%s",
-        request_id, len(internal["customer_context"]), len(internal["context_items"]),
-        internal["knowledge_status"], len(internal["retrieval_gaps"]), internal["external_available"],
-    )
-    _add_missing_failure_gap(
-        internal,
-        scope="internal_knowledge",
-        message="内部知识暂时不可用。",
-    )
-
-    external = None
-    if internal["external_available"]:
-        try:
-            external = parse_answer_context(
-                backend.get_answer_context(request_id, "external"),
-                expected_request_id=request_id,
-                expected_scope="external",
-            )
-        except Exception as error:
-            logger.warning(
-                "chat_context_failed request_id=%s scope=external error_type=%s reason=%s",
-                request_id,
-                type(error).__name__,
-                error if isinstance(error, ChatValidationError) else "unavailable",
-            )
-            external = _failed_external_context(request_id)
-        else:
-            logger.info(
-                "chat_context_loaded request_id=%s scope=external items=%s knowledge_status=%s gaps=%s",
-                request_id, len(external["context_items"]), external["knowledge_status"],
-                len(external["retrieval_gaps"]),
-            )
-            _add_missing_failure_gap(
-                external,
-                scope="external_knowledge",
-                message="外部知识暂时不可用。",
-            )
-
-    try:
-        trimmed = trim_context_items(
-            internal["customer_context"],
-            internal["context_items"],
-            external["context_items"] if external is not None else [],
-        )
-    except ChatValidationError as error:
-        logger.warning("chat_context_invalid request_id=%s stage=trim reason=%s", request_id, error)
-        return stable_failure_result(request_id, "context_unavailable")
-    usable = {
-        group: [item for item in items if item["content"].strip()]
-        for group, items in trimmed.items()
-    }
-    allowed_items = [
-        *usable["customer_context"],
-        *usable["internal_knowledge"],
-        *usable["external_knowledge"],
-    ]
-    knowledge_failed = internal["knowledge_status"] == "failed" or (
-        external is not None and external["knowledge_status"] == "failed"
-    )
-    logger.info(
-        "chat_context_ready request_id=%s customer_items=%s internal_items=%s external_items=%s knowledge_failed=%s",
-        request_id, len(usable["customer_context"]), len(usable["internal_knowledge"]),
-        len(usable["external_knowledge"]), knowledge_failed,
-    )
-    if not allowed_items:
-        if knowledge_failed:
-            logger.warning("chat_request_failed request_id=%s reason=knowledge_unavailable", request_id)
-            return stable_failure_result(request_id, "knowledge_unavailable")
-        logger.info("chat_request_completed request_id=%s reason=no_evidence", request_id)
-        return _completed_result(
-            request_id,
-            "现有资料不足，无法回答该问题。",
-            [],
-        )
-
-    model_internal = {
-        **internal,
-        "customer_context": usable["customer_context"],
-        "context_items": usable["internal_knowledge"],
-    }
-    model_external = None
-    if external is not None:
-        model_external = {
-            **external,
-            "customer_context": [],
-            "context_items": usable["external_knowledge"],
-        }
-    messages = build_chat_messages(
-        parsed_request,
-        internal_context=model_internal,
-        external_context=model_external,
-    )
-
-    model_started = perf_counter()
-    logger.info(
-        "chat_model_started request_id=%s prompt_version=%s messages=%s context_items=%s",
-        request_id, CHAT_PROMPT_VERSION, len(messages), len(allowed_items),
-    )
-    try:
-        raw_candidate = chat_provider(messages, max_tokens=CHAT_MAX_TOKENS)
-    except Exception as error:
-        logger.warning(
-            "chat_model_failed request_id=%s stage=provider error_type=%s duration_ms=%s reason=%s",
-            request_id,
-            type(error).__name__,
-            round((perf_counter() - model_started) * 1000),
-            str(error) if isinstance(error, LLMError) else "details_hidden",
-        )
-        return stable_failure_result(request_id, "model_unavailable")
-    logger.info(
-        "chat_model_completed request_id=%s duration_ms=%s output_chars=%s",
-        request_id, round((perf_counter() - model_started) * 1000),
-        len(raw_candidate) if isinstance(raw_candidate, str) else None,
-    )
-    if not isinstance(raw_candidate, str):
-        logger.warning(
-            "chat_model_invalid request_id=%s stage=response_type actual_type=%s",
-            request_id,
-            type(raw_candidate).__name__,
-        )
-        return stable_failure_result(request_id, "invalid_model_output")
-
-    try:
-        candidate = parse_model_candidate(
-            raw_candidate,
-            allowed_context_items=allowed_items,
-            request_id=request_id,
-        )
-    except ChatValidationError as error:
-        logger.warning(
-            "chat_model_invalid request_id=%s stage=candidate reason=%s",
-            request_id,
-            error,
-        )
-        return stable_failure_result(request_id, "invalid_model_output")
-
-    try:
-        _validate_answer_policy(
-            candidate,
-            relevant_context=usable,
-            request_id=request_id,
-        )
-    except ChatValidationError as error:
-        logger.warning(
-            "chat_model_invalid request_id=%s stage=policy reason=%s",
-            request_id,
-            error,
-        )
-        return stable_failure_result(request_id, "invalid_model_output")
-
-    logger.info(
-        "chat_request_completed request_id=%s answer_chars=%s citations=%s",
-        request_id, len(candidate["assistant_text"]), len(candidate["citations"]),
-    )
-    return _completed_result(
-        request_id,
-        candidate["assistant_text"],
-        candidate["citations"],
-    )
-
-
-# 功能：组装客户模式 completed 结果并经回报解析器校验。
-# 输入：`request_id` 当前请求标识、`assistant_text` 助手正文、`citations` 有序引用。
-# 输出：dict[str, Any]。
-# 逻辑：组装客户模式 completed 结果并经回报解析器校验，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _completed_result(
-    request_id: str,
-    assistant_text: str,
-    citations: list[dict[str, str]],
-) -> dict[str, Any]:
-    return {
-        "request_id": request_id,
-        "chat_prompt_version": CHAT_PROMPT_VERSION,
-        "assistant_text": assistant_text,
-        "citations": [dict(citation) for citation in citations],
-        "status": "completed",
-        "error": None,
-    }
-
-
-# 功能：仅从映射中提取非空字符串请求标识，无法识别时返回 None。
-# 输入：`value` 待验证数据。
-# 输出：str | None。
-# 逻辑：仅从映射中提取非空字符串请求标识，无法识别时返回 None，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _recognizable_request_id(value: object) -> str | None:
     if not isinstance(value, Mapping):
         return None
     request_id = value.get("request_id")
-    if not isinstance(request_id, str) or not request_id.strip():
-        return None
-    return request_id
+    return request_id.strip() if isinstance(request_id, str) and request_id.strip() else None
 
 
-# 功能：构造外部检索失败的严格上下文与安全缺口。
-# 输入：`request_id` 当前请求标识。
-# 输出：dict[str, Any]。
-# 逻辑：构造外部检索失败的严格上下文与安全缺口，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _failed_external_context(request_id: str) -> dict[str, Any]:
+def _source(value: object, path: str) -> dict[str, str]:
+    item = _keys(value, _SOURCE_FIELDS, path)
+    content = item["content"]
+    if not isinstance(content, str):
+        raise ChatValidationError(f"{path}.content 必须是字符串。")
+    return {
+        key: content if key == "content" else _nonblank(item[key], f"{path}.{key}")
+        for key in ("source_id", "source_type", "title_or_label", "content")
+    }
+
+
+def parse_conversation_request(value: object) -> dict[str, Any]:
+    """解析后端领取的工作空间请求。"""
+    request = _keys(value, _REQUEST_FIELDS, "request")
+    history = request["recent_history"]
+    if not isinstance(history, list):
+        raise ChatValidationError("recent_history 必须是数组。")
+    parsed_history = []
+    for index, raw in enumerate(history):
+        row = _keys(raw, {"role", "content"}, f"recent_history[{index}]")
+        if row["role"] not in {"user", "assistant"}:
+            raise ChatValidationError("历史消息角色无效。")
+        parsed_history.append({
+            "role": row["role"],
+            "content": _nonblank(row["content"], f"recent_history[{index}].content"),
+        })
+    return {
+        "request_id": _nonblank(request["request_id"], "request.request_id"),
+        "conversation_id": _nonblank(request["conversation_id"], "request.conversation_id"),
+        "user_message_id": _nonblank(request["user_message_id"], "request.user_message_id"),
+        "question": _nonblank(request["question"], "request.question"),
+        "recent_history": parsed_history,
+    }
+
+
+def parse_answer_context(
+    value: object, *, expected_request_id: str | None = None,
+    expected_scope: str | None = None,
+) -> dict[str, Any]:
+    """解析后端冻结的上下文；资料来源必须保持本次请求内唯一。"""
+    context = _keys(value, _CONTEXT_FIELDS, "answer_context")
+    request_id = _nonblank(context["request_id"], "answer_context.request_id")
+    if expected_request_id is not None and request_id != expected_request_id:
+        raise ChatValidationError("answer_context.request_id 与当前请求不一致。")
+    scope = context["scope"]
+    if scope not in {"internal", "external"} or (
+        expected_scope is not None and scope != expected_scope
+    ):
+        raise ChatValidationError("answer_context.scope 与请求范围不一致。")
+    for field in ("customer_context", "context_items", "retrieval_gaps"):
+        if not isinstance(context[field], list):
+            raise ChatValidationError(f"answer_context.{field} 必须是数组。")
+    customer = [_source(item, "customer_context") for item in context["customer_context"]]
+    knowledge = [_source(item, "context_items") for item in context["context_items"]]
+    identities: dict[tuple[str, str, str], str] = {}
+    for item in [*customer, *knowledge]:
+        key = tuple(item[field] for field in ("source_id", "source_type", "title_or_label"))
+        if key in identities and identities[key] != item["content"]:
+            raise ChatValidationError("同一来源标识对应不同证据正文。")
+        identities[key] = item["content"]
+    customer_status = context["customer_context_status"]
+    if customer_status not in ({"completed", "failed"} if scope == "internal" else {"not_applicable"}):
+        raise ChatValidationError("answer_context.customer_context_status 无效。")
+    if context["knowledge_status"] not in {"completed", "failed"}:
+        raise ChatValidationError("answer_context.knowledge_status 无效。")
+    if type(context["external_available"]) is not bool:
+        raise ChatValidationError("answer_context.external_available 必须是布尔值。")
+    if scope == "external" and (customer or not context["external_available"]):
+        raise ChatValidationError("外部上下文状态无效。")
+    return {
+        **context,
+        "request_id": request_id,
+        "scope": scope,
+        "customer_context": customer,
+        "context_items": knowledge,
+    }
+
+
+def trim_recent_history(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        raise ChatValidationError("recent_history 必须是数组。")
+    retained = list(value)
+    while retained and sum(len(row["content"]) for row in retained) > _HISTORY_CHARACTER_BUDGET:
+        retained.pop(0)
+    return retained
+
+
+def trim_context_items(customer_context: object, internal_knowledge: object, external_knowledge: object) -> dict[str, list[dict[str, str]]]:
+    """本流程只展示最多 12 条知识，单条至多 2000 字；不改后端原始证据。"""
+    result = {"customer_context": [], "internal_knowledge": [], "external_knowledge": []}
+    for field, items in (
+        ("customer_context", customer_context),
+        ("internal_knowledge", internal_knowledge),
+        ("external_knowledge", external_knowledge),
+    ):
+        if not isinstance(items, list):
+            raise ChatValidationError(f"{field} 必须是数组。")
+        for raw in items:
+            if sum(map(len, result.values())) >= 12:
+                break
+            item = _source(raw, field)
+            if item["content"].strip():
+                result[field].append({
+                    **item,
+                    "content": item["content"][:1985] + "\n[节选，原文未完整提供]"
+                    if len(item["content"]) > 2000 else item["content"],
+                })
+    return result
+
+
+def _decode_json_object(value: str) -> dict[str, Any]:
+    def unique(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ChatValidationError("模型结果含重复 JSON 字段。")
+            result[key] = item
+        return result
+    try:
+        parsed = json.loads(value, object_pairs_hook=unique)
+    except (ValueError, TypeError) as error:
+        raise ChatValidationError("模型结果不是有效 JSON Object。") from error
+    if not isinstance(parsed, dict):
+        raise ChatValidationError("模型结果必须是 JSON Object。")
+    return parsed
+
+
+def parse_model_candidate(
+    value: object, *, allowed_context_items: object, request_id: str | None = None
+) -> dict[str, Any]:
+    """只允许本轮可见证据的引用，并重排已使用的编号。"""
+    candidate = _keys(value, {"assistant_text", "citations"}, "model_candidate")
+    text = _NONSTANDARD_SOURCE_TAG.sub("", _nonblank(candidate["assistant_text"], "assistant_text"))
+    raw_citations = candidate["citations"]
+    if not isinstance(raw_citations, list) or not isinstance(allowed_context_items, list):
+        raise ChatValidationError("citations 必须是数组。")
+    allowlist = {
+        tuple(item[field] for field in ("source_id", "source_type", "title_or_label"))
+        for item in allowed_context_items if item["content"].strip()
+    }
+    citations = []
+    for index, raw in enumerate(raw_citations):
+        citation = _keys(raw, _CITATION_FIELDS, f"citations[{index}]")
+        parsed = {field: _nonblank(citation[field], field) for field in _CITATION_FIELDS}
+        if tuple(parsed[field] for field in ("source_id", "source_type", "title_or_label")) not in allowlist:
+            raise ChatValidationError("引用不属于本轮可见的授权来源。")
+        citations.append(parsed)
+    markers = [int(value) for value in _CITATION_MARKER.findall(text)]
+    if (not markers and citations) or any(marker < 1 or marker > len(citations) for marker in markers):
+        raise ChatValidationError("回答引用编号与 citations 不一致。")
+    used: dict[tuple[str, str, str], int] = {}
+    compact = []
+    for marker in markers:
+        row = citations[marker - 1]
+        key = tuple(row[field] for field in ("source_id", "source_type", "title_or_label"))
+        if key not in used:
+            used[key] = len(compact) + 1
+            compact.append(row)
+    cursor = iter(markers)
+
+    def replace_marker(_: re.Match[str]) -> str:
+        row = citations[next(cursor) - 1]
+        key = tuple(row[field] for field in ("source_id", "source_type", "title_or_label"))
+        return f"[{used[key]}]"
+
+    text = _CITATION_MARKER.sub(replace_marker, text)
+    return {"assistant_text": text, "citations": compact}
+
+
+def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
+    request_id = _nonblank(request_id, "request_id")
+    if code not in _FAILURE_MESSAGES:
+        raise ChatValidationError("失败代码无效。")
     return {
         "request_id": request_id,
-        "scope": "external",
-        "customer_context": [],
-        "context_items": [],
-        "customer_context_status": "not_applicable",
-        "knowledge_status": "failed",
-        "retrieval_gaps": [
-            {
-                "scope": "external_knowledge",
-                "code": "temporarily_unavailable",
-                "message": "外部知识暂时不可用。",
-            }
-        ],
-        "external_available": True,
+        "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
+        "assistant_text": "", "citations": [], "status": "failed",
+        "error": {"code": code, "message": _FAILURE_MESSAGES[code]},
     }
 
 
-# 功能：只在缺少对应 scope 缺口时追加检索失败描述。
-# 输入：`context` 当前校验或裁剪参数、`scope` 知识范围、`message` 安全错误说明。
-# 输出：None。
-# 逻辑：只在缺少对应 scope 缺口时追加检索失败描述，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _add_missing_failure_gap(
-    context: dict[str, Any], *, scope: str, message: str
-) -> None:
-    if context["knowledge_status"] != "failed" or context["retrieval_gaps"]:
-        return
-    context["retrieval_gaps"].append(
-        {
-            "scope": scope,
-            "code": "temporarily_unavailable",
-            "message": message,
-        }
-    )
+def _diagnostic_excerpt(value: str, limit: int = 160) -> str:
+    excerpt = re.sub(r"\s+", " ", value).strip()
+    excerpt = re.sub(r"[\w.+-]+@[\w.-]+", "[email]", excerpt)
+    return excerpt[:limit]
 
 
-# 功能：按中英文动作模式识别直接执行请求，排除教程式问法。
-# 输入：`question` 用户问题。
-# 输出：bool。
-# 逻辑：按中英文动作模式识别直接执行请求，排除教程式问法，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _is_direct_tool_action(question: str) -> bool:
-    normalized = re.sub(r"\s+", "", question).lower()
-    english = question.lower()
-    if re.search(
-        r"(?:如何|怎么|怎样|说明|解释|教程).{0,8}(?:发送|安排|创建|更新|删除|写入)",
-        normalized,
-    ):
-        return False
-
-    side_effect_patterns = (
-        r"(?:请|帮我|替我|直接|马上|现在|务必|给[^，。！？!?]{0,20})*(?:发送|发出|寄出|群发|转发|发)(?:一封|这封|该封)?(?:邮件|消息|短信|通知|信)",
-        r"(?:请|帮我|替我|直接|马上|现在)*(?:回复)(?:客户|邮件|消息|这封信)",
-        r"(?:请|帮我|替我|直接|马上|现在)*(?:创建|新增|安排|预约|取消|修改|删除).{0,20}(?:会议|日程|日历|预约)",
-        r"(?:请|帮我|替我|直接|马上|现在)*(?:创建|新增|更新|修改|删除|写入|保存).{0,20}(?:crm|客户记录|商机|机会|工单|报价|订单|联系人)",
-        r"(?:请|帮我|替我|直接|马上|现在)*(?:创建|新建|写入|保存|上传|移动|修改|删除).{0,20}(?:文件|文档|表格|附件)",
-    )
-    if any(
-        re.search(pattern, normalized, re.IGNORECASE)
-        for pattern in side_effect_patterns
-    ):
-        return True
-    return bool(
-        re.search(
-            r"\b(?:send|schedule|create|update|delete|write|upload)\b.{0,30}"
-            r"\b(?:email|message|calendar|meeting|crm|file|record)\b",
-            english,
-        )
-    )
-
-
-# 功能：只识别完整的纯问候，带客户问题的句子继续走证据问答。
-# 输入：`question` 当前问题。
-# 输出：bool。
-def _is_simple_greeting(question: str) -> bool:
-    return bool(
-        re.fullmatch(
-            r"(?:你好|您好|嗨|哈喽|早上好|中午好|下午好|晚上好|hi|hello|hey)[\s!！?？。.]*",
-            question.strip(),
-            flags=re.IGNORECASE,
-        )
-    )
-
-
-# 功能：结合问题代词、剩余词段及历史判断是否需要澄清事项。
-# 输入：`question` 用户问题、`recent_history` 会话历史。
-# 输出：bool。
-# 逻辑：结合问题代词、剩余词段及历史判断是否需要澄清事项，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _needs_matter_clarification(
-    question: str, recent_history: list[dict[str, str]]
-) -> bool:
-    normalized = re.sub(r"[\s，。！？!?、；;：:]", "", question)
-    # company_id 已绑定，因此“这个客户”本身不是不明确事项。
-    normalized = normalized.replace("这个客户", "客户").replace("该客户", "客户")
-    ambiguous_reference = re.search(
-        r"(?:这个|那个|它|这件事|那件事|之前那个|上次那个|上述事项|该事项)",
-        normalized,
-    )
-    if ambiguous_reference is None:
-        return False
-
-    residue = re.sub(
-        r"(?:这个|那个|它|这件事|那件事|之前那个|上次那个|上述事项|该事项|"
-        r"关于|请问|帮我|看看|一下|下一步|目前|现在|后来|怎么|怎样|如何|"
-        r"处理|办理|情况|进展|结果|怎么样|怎么办|呢|吗|可以|是否|客户)",
-        "",
-        normalized,
-    )
-    if len(residue) >= 2:
-        return False
-    return not any(
-        _history_has_specific_matter(item["content"]) for item in recent_history
-    )
-
-
-# 功能：通过移除泛化词后的词元判断历史是否提及具体事项。
-# 输入：`content` 来源或历史文本。
-# 输出：bool。
-# 逻辑：通过移除泛化词后的词元判断历史是否提及具体事项，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _history_has_specific_matter(content: str) -> bool:
-    units = _lexical_units(content)
-    return bool(units - {"可以", "请问", "客户", "需求", "风险", "情况"})
-
-
-_LEXICAL_STOP_UNITS = {
-    "这个",
-    "那个",
-    "什么",
-    "怎么",
-    "如何",
-    "是否",
-    "可以",
-    "请问",
-    "帮我",
-    "客户",
-    "公司",
-    "目前",
-    "现在",
-    "相关",
-    "资料",
-    "信息",
-    "情况",
-    "一下",
-    "the",
-    "and",
-    "for",
-    "with",
-    "what",
-    "how",
-    "this",
-    "that",
-    "customer",
-}
-
-_SUPPORT_CONCEPTS = {
-    "company_size": ("规模", "员工", "人数", "人力", "headcount", "employee"),
-    "budget": ("预算", "资金", "金额", "价格", "报价", "费用", "price", "budget"),
-    "decision": ("决策", "审批", "负责人", "联系人", "采购", "decision", "approver"),
-    "delivery": ("交期", "交付", "到货", "发货", "周期", "delivery", "lead time"),
-    "demand": ("需求", "采购", "购买", "意向", "询价", "demand"),
-    "product": ("产品", "设备", "系统", "型号", "功能", "方案", "product", "equipment"),
-    "risk": ("风险", "异议", "问题", "阻碍", "担忧", "risk", "issue"),
-    "contract": ("订单", "合同", "签约", "成交", "续购", "order", "contract"),
-    "meeting": ("会议", "会面", "日程", "预约", "meeting", "schedule"),
-    "status": ("状态", "进展", "阶段", "跟进", "目前", "status", "progress"),
-}
-
-
-# 功能：提取英文词及中文片段并移除既定停用词。
-# 输入：`value` 待验证数据。
-# 输出：set[str]。
-# 逻辑：提取英文词及中文片段并移除既定停用词，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
 def _lexical_units(value: str) -> set[str]:
-    text = value.lower()
-    units = {
-        word
-        for word in re.findall(r"[a-z0-9][a-z0-9_-]+", text)
-        if word not in _LEXICAL_STOP_UNITS
-    }
-    for sequence in re.findall(r"[\u4e00-\u9fff]+", text):
-        if len(sequence) == 1:
-            continue
-        if len(sequence) == 2:
-            candidates = (sequence,)
-        else:
-            candidates = tuple(
-                sequence[index : index + 2] for index in range(len(sequence) - 1)
-            )
-        units.update(
-            candidate
-            for candidate in candidates
-            if candidate not in _LEXICAL_STOP_UNITS
-        )
+    units = set(re.findall(r"[a-z0-9][a-z0-9_-]+", value.lower()))
+    for sequence in re.findall(r"[\u4e00-\u9fff]+", value):
+        units.update(sequence[index:index + 2] for index in range(len(sequence) - 1))
     return units
 
 
-# 功能：将词元与既定概念同义词映射成证据比较单元。
-# 输入：`value` 待验证数据。
-# 输出：set[str]。
-# 逻辑：将词元与既定概念同义词映射成证据比较单元，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _support_units(value: str) -> set[str]:
-    units = _lexical_units(value)
-    lowered = value.lower()
-    units.update(
-        f"concept:{concept}"
-        for concept, terms in _SUPPORT_CONCEPTS.items()
-        if any(term in lowered for term in terms)
-    )
-    return units
-
-
-# 功能：串联客户回答的动作、证据、判断和冲突措辞约束。
-# 输入：`candidate` 模型候选结果、`relevant_context` 本请求裁剪后的证据。
-# 输出：None。
-# 逻辑：串联客户回答的动作、证据、判断和冲突措辞约束，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_answer_policy(
-    candidate: Mapping[str, Any],
-    *,
-    relevant_context: Mapping[str, list[dict[str, str]]],
-    request_id: str,
-) -> None:
-    text = candidate["assistant_text"]
-    citations = candidate["citations"]
-    if not citations:
-        if not (_is_insufficiency_only(text) or _is_nonfactual_social_answer(text)):
-            raise ChatValidationError("无引用回答只能是资料不足说明或不含客户事实的礼貌回应。")
-        return
-    if _is_insufficiency_only(text):
-        raise ChatValidationError("资料不足回答不得附带 citation。")
-
-    # Demo 阶段不再靠逐句关键词、标题白名单或特定措辞拒绝整条回答。
-    _log_numeric_support(text, citations, relevant_context, request_id=request_id)
-    for check in (
-        lambda: _validate_judgment_wording(text),
-        lambda: _validate_conflict_wording(text, citations, relevant_context),
-    ):
-        try:
-            check()
-        except ChatValidationError as error:
-            logger.warning("chat_answer_style_warning request_id=%s reason=%s", request_id, error)
-
-
-# 功能：识别短文本中不含引用和数字的明确资料不足声明。
-# 输入：`text` 待检查文本。
-# 输出：bool。
-# 逻辑：识别短文本中不含引用和数字的明确资料不足声明，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _is_insufficiency_only(text: str) -> bool:
-    compact = re.sub(r"\s+", "", text)
-    if len(compact) > 120 or _CITATION_MARKER.search(compact):
+def _is_direct_tool_action(question: str) -> bool:
+    compact = re.sub(r"\s+", "", question).lower()
+    if re.search(r"(?:如何|怎么|怎样).{0,8}(?:发送|安排|创建|更新|删除)", compact):
         return False
-    gap_cue = bool(
-        re.search(
-            r"(?:资料不足|证据不足|信息不足|上下文不足|未提供|未找到|缺少|缺失|"
-            r"无相关(?:资料|证据|信息)|没有.{0,8}(?:资料|证据|信息))",
-            compact,
-        )
-    )
-    uncertainty_cue = bool(
-        re.search(
-            r"(?:无法|不能|不足以|暂时无法).{0,12}(?:回答|确认|判断|确定)", compact
-        )
-    )
-    return gap_cue and uncertainty_cue and not _number_tokens(compact)
+    return bool(re.search(
+        r"(?:请|帮我|替我|直接|马上|现在).{0,30}(?:发送|发信|寄出|群发|安排会议|预约会议|创建日程|删除客户|修改客户|写入crm|保存报价)",
+        compact,
+    ))
 
 
-def _is_nonfactual_social_answer(text: str) -> bool:
-    """无引用时只允许短且全部由礼貌句组成的回答。"""
-    if len(text) > 200:
-        return False
-    sentences = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", text)
-        if sentence.strip()
-    ]
-    return bool(sentences) and len(sentences) <= 4 and all(
-        _is_nonfactual_social_sentence(sentence) for sentence in sentences
-    )
-
-
-def _is_nonfactual_social_sentence(sentence: str) -> bool:
-    """仅允许完整匹配的寒暄句，不把客户事实当成礼貌用语。"""
-    value = sentence.strip()
-    return any(
-        re.fullmatch(pattern, value, flags=re.IGNORECASE)
-        for pattern in (
-            r"(?:您好|你好|嗨|哈喽|hi|hello|hey)[！!。.?？]*",
-            r"(?:您好|你好)[，,]\s*我是\s*SalesMate(?:\s*销售聊天助手|\s*助手)?[。.!！]*",
-            r"(?:请问)?(?:您|你)?(?:想了解这位客户的什么信息|有什么可以帮(?:您|你)|有什么我可以帮(?:您|你))(?:吗)?[？?。.!！]*",
-            r"很高兴为(?:您|你)服务[。.!！]*",
-        )
-    )
-
-
-# 功能：记录回答数字与引用来源不一致及词面关联弱的诊断信息。
-# 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
-# 输出：None。
-# 逻辑：有 marker 的句子核对其来源；无 marker 的句子核对本次所有已引用来源；不因数字错引拒绝回答。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _log_numeric_support(
-    text: str,
-    citations: list[dict[str, str]],
-    relevant_context: Mapping[str, list[dict[str, str]]],
-    *,
-    request_id: str,
-) -> None:
-    item_lookup: dict[tuple[str, str, str], list[dict[str, str]]] = {}
-    all_items = _flatten_context(relevant_context)
-    for item in all_items:
-        item_lookup.setdefault(_citation_key(item), []).append(item)
-    context_numbers = _number_tokens("\n".join(item["content"] for item in all_items))
-
-    normalized = re.sub(
-        r"([。！？!?])[ \t]*((?:\[\d+\][ \t]*)+)",
-        lambda match: match.group(2) + match.group(1),
-        text,
-    )
-    sentences = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[。！？!?])|[\r\n]+", normalized)
-        if sentence.strip()
-    ]
-    for index, sentence in enumerate(sentences, start=1):
-        marker_indexes = {int(value) for value in _CITATION_MARKER.findall(sentence)}
-        source_indexes = marker_indexes or set(range(1, len(citations) + 1))
-        cited_items = [
-            item
-            for marker in source_indexes
-            for item in item_lookup.get(_citation_key(citations[marker - 1]), [])
-        ]
-        evidence_text = "\n".join(
-            f'{item["title_or_label"]} {item["content"]}' for item in cited_items
-        )
-        claim = _CITATION_MARKER.sub("", sentence)
-        # 列表序号是排版，不是来源中必须出现的业务数字。
-        claim = re.sub(
-            r"^\s*(?:[-*]\s*)?(?:\d{1,2}[.、)]|[（(]\d{1,2}[）)])(?!\d)\s*",
-            "",
-            claim,
-        )
-        claim_numbers = _number_tokens(claim)
-        evidence_numbers = _number_tokens(evidence_text)
-        missing_numbers = claim_numbers - evidence_numbers
-        if missing_numbers:
-            logger.warning(
-                "chat_numeric_evidence_gap request_id=%s sentence_index=%s kind=%s "
-                "numbers=%s excerpt=%r",
-                request_id,
-                index,
-                "present_elsewhere" if missing_numbers <= context_numbers else "absent_from_context",
-                sorted(missing_numbers),
-                _diagnostic_excerpt(sentence),
-            )
-
-        if marker_indexes and not (_support_units(claim) & _support_units(evidence_text)):
-            logger.warning(
-                "chat_weak_evidence_match request_id=%s sentence_index=%s markers=%s excerpt=%r",
-                request_id, index, sorted(marker_indexes), _diagnostic_excerpt(sentence),
-            )
-
-
-# 功能：提取数值和百分号并归一化整数及小数尾零。
-# 输入：`value` 待验证数据。
-# 输出：set[str]。
-# 逻辑：提取数值和百分号并归一化整数及小数尾零，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _number_tokens(value: str) -> set[str]:
-    tokens: set[str] = set()
-    for raw_number, percent in re.findall(r"(\d+(?:\.\d+)?)(%?)", value):
-        if "." in raw_number:
-            normalized = raw_number.rstrip("0").rstrip(".")
-        else:
-            normalized = str(int(raw_number))
-        tokens.add(normalized + percent)
-    return tokens
-
-
-# 功能：要求包含推测建议线索的文字明确标注判断或可能。
-# 输入：`text` 待检查文本。
-# 输出：None。
-# 逻辑：要求包含推测建议线索的文字明确标注判断或可能，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_judgment_wording(text: str) -> None:
-    has_judgment_cue = bool(
-        re.search(r"(?:预计|推测|倾向|大概|或许|看起来|看来|意味着|建议|认为)", text)
-    )
-    if has_judgment_cue and not re.search(r"(?:判断|可能)", text):
-        raise ChatValidationError("证据判断或建议必须使用‘判断’或‘可能’。")
-
-
-# 功能：要求冲突声明引用至少两个来源且标注待确认。
-# 输入：`text` 待检查文本、`citations` 有序引用、`relevant_context` 本请求裁剪后的证据。
-# 输出：None。
-# 逻辑：要求冲突声明引用至少两个来源且标注待确认，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_conflict_wording(
-    text: str,
-    citations: list[dict[str, str]],
-    relevant_context: Mapping[str, list[dict[str, str]]],
-) -> None:
-    del relevant_context
-    citation_keys = {_citation_key(citation) for citation in citations}
-    conflict_claimed = bool(
-        re.search(r"(?:\u51b2\u7a81|\u4e0d\u4e00\u81f4|\u77db\u76fe)", text)
-    )
-    unconfirmed = bool(
-        re.search(
-            r"(?:\u672a\u786e\u8ba4|\u65e0\u6cd5\u786e\u8ba4|"
-            r"\u6709\u5f85\u786e\u8ba4|\u5f85\u786e\u8ba4)",
-            text,
-        )
-    )
-    if conflict_claimed and (len(citation_keys) < 2 or not unconfirmed):
-        raise ChatValidationError(
-            "Conflict answers must cite both sources and mark the fact unconfirmed."
-        )
-
-
-# 功能：按客户、内部、外部的固定顺序展开证据数组。
-# 输入：`relevant_context` 本请求裁剪后的证据。
-# 输出：list[dict[str, str]]。
-# 逻辑：按客户、内部、外部的固定顺序展开证据数组，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _flatten_context(
-    relevant_context: Mapping[str, list[dict[str, str]]]
-) -> list[dict[str, str]]:
-    return [
-        *relevant_context["customer_context"],
-        *relevant_context["internal_knowledge"],
-        *relevant_context["external_knowledge"],
-    ]
-
-
-# 功能：校验数组后按索引路径解析每个来源条目。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：list[dict[str, str]]。
-# 逻辑：校验数组后按索引路径解析每个来源条目，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _parse_context_item_array(value: object, path: str) -> list[dict[str, str]]:
-    items = _array(value, path)
-    return [
-        parse_context_item(item, path=f"{path}[{index}]")
-        for index, item in enumerate(items)
-    ]
-
-
-# 功能：按四字段身份保留首次出现的来源副本。
-# 输入：`items` 已解析来源数组。
-# 输出：list[dict[str, str]]。
-# 逻辑：按四字段身份保留首次出现的来源副本，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _deduplicate_parsed_context_items(
-    items: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
-    seen: set[tuple[str, str, str, str]] = set()
-    for item in items:
-        key = _context_item_key(item)
-        if key not in seen:
-            seen.add(key)
-            result.append(dict(item))
-    return result
-
-
-# 功能：仅截断超预算正文并追加节选标记，保留来源身份。
-# 输入：`item` 来源条目、`content_character_limit` 既定单条字符预算。
-# 输出：dict[str, str]。
-# 逻辑：仅截断超预算正文并追加节选标记，保留来源身份，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _truncate_context_item(
-    item: Mapping[str, str], *, content_character_limit: int
-) -> dict[str, str]:
-    content = item["content"]
-    if len(content) > content_character_limit:
-        content = content[:content_character_limit] + TRUNCATION_MARKER
-    return {
-        "source_id": item["source_id"],
-        "source_type": item["source_type"],
-        "title_or_label": item["title_or_label"],
-        "content": content,
-    }
-
-
-# 功能：按身份三字段及正文构造完整去重键。
-# 输入：`item` 来源条目。
-# 输出：tuple[str, str, str, str]。
-# 逻辑：按身份三字段及正文构造完整去重键，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _context_item_key(item: Mapping[str, str]) -> tuple[str, str, str, str]:
-    return (
-        item["source_id"],
-        item["source_type"],
-        item["title_or_label"],
-        item["content"],
-    )
-
-
-# 功能：按来源标识、类型和标题构造引用身份键。
-# 输入：`item` 来源条目。
-# 输出：tuple[str, str, str]。
-# 逻辑：按来源标识、类型和标题构造引用身份键，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _citation_key(item: Mapping[str, str]) -> tuple[str, str, str]:
-    return item["source_id"], item["source_type"], item["title_or_label"]
-
-
-# 功能：记录来源身份对应正文并拒绝同身份的内容冲突。
-# 输入：`item` 来源条目、`source_contents` 已见引用身份到正文的映射、`path` 错误定位路径。
-# 输出：None。
-# 逻辑：记录来源身份对应正文并拒绝同身份的内容冲突，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _record_unique_citation_identity(
-    item: Mapping[str, str],
-    source_contents: dict[tuple[str, str, str], str],
-    path: str,
-) -> None:
-    identity = _citation_key(item)
-    content = item["content"]
-    if identity in source_contents and source_contents[identity] != content:
-        raise ChatValidationError(f"{path} 中同一引用标识对应了不同内容。")
-    source_contents[identity] = content
-
-
-# 功能：遍历来源并验证同一引用身份只有一种正文。
-# 输入：`items` 已解析来源数组、`path` 错误定位路径。
-# 输出：None。
-# 逻辑：遍历来源并验证同一引用身份只有一种正文，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _ensure_unique_citation_identities(items: list[dict[str, str]], path: str) -> None:
-    source_contents: dict[tuple[str, str, str], str] = {}
-    for item in items:
-        _record_unique_citation_identity(item, source_contents, path)
-
-
-# 功能：严格解析有序的三字段引用数组并拒绝重复。
-# 输入：`value` 待验证数据。
-# 输出：list[dict[str, str]]。
-# 逻辑：严格解析有序的三字段引用数组并拒绝重复，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _parse_citations(value: object) -> list[dict[str, str]]:
-    raw_citations = _array(value, "citations")
-    citations: list[dict[str, str]] = []
-    for index, raw_citation in enumerate(raw_citations):
-        path = f"citations[{index}]"
-        citation = _object(raw_citation, path)
-        _keys(citation, _CITATION_FIELDS, path)
-        citations.append(
-            {
-                "source_id": _nonblank(citation["source_id"], f"{path}.source_id"),
-                "source_type": _nonblank(
-                    citation["source_type"], f"{path}.source_type"
-                ),
-                "title_or_label": _nonblank(
-                    citation["title_or_label"], f"{path}.title_or_label"
-                ),
-            }
-        )
-    return citations
-
-
-# 只合并同一授权来源并删除未使用来源；没有 marker 或 marker 越界仍交给原校验拒绝。
-def _compact_model_citations(
-    assistant_text: str,
-    citations: list[dict[str, str]],
-    *,
-    request_id: str | None,
-) -> tuple[str, list[dict[str, str]]]:
-    raw_markers = _CITATION_MARKER.findall(assistant_text)
-    if not raw_markers or any(
-        raw != str(int(raw)) or not 1 <= int(raw) <= len(citations)
-        for raw in raw_markers
-    ):
-        return assistant_text, citations
-    used_indexes = sorted({int(raw) for raw in raw_markers})
-    renumber: dict[int, int] = {}
-    unique_citations: list[dict[str, str]] = []
-    positions: dict[tuple[str, str, str], int] = {}
-    for old_index in used_indexes:
-        citation = citations[old_index - 1]
-        key = _citation_key(citation)
-        if key not in positions:
-            positions[key] = len(unique_citations) + 1
-            unique_citations.append(citation)
-        renumber[old_index] = positions[key]
-    if len(unique_citations) == len(citations) and all(
-        old == new for old, new in renumber.items()
-    ):
-        return assistant_text, citations
-    normalized_text = _CITATION_MARKER.sub(
-        lambda match: f"[{renumber[int(match.group(1))]}]", assistant_text
-    )
-    normalized_text = re.sub(r"(\[\d+\])(?:[ \t]*\1)+", r"\1", normalized_text)
-    logger.info(
-        "chat_model_citations_compacted request_id=%s original=%s retained=%s",
-        request_id, len(citations), len(unique_citations),
-    )
-    return normalized_text, unique_citations
-
-
-# 功能：检查正文编号集合与引用数组位置完整一致。
-# 输入：`assistant_text` 助手正文、`citations` 有序引用。
-# 输出：None。
-# 逻辑：检查正文编号集合与引用数组位置完整一致，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _validate_citation_markers(
-    assistant_text: str, citations: list[dict[str, str]]
-) -> None:
-    raw_markers = _CITATION_MARKER.findall(assistant_text)
-    marker_indexes: set[int] = set()
-    for raw_marker in raw_markers:
-        marker = int(raw_marker)
-        if raw_marker != str(marker) or marker < 1 or marker > len(citations):
-            raise ChatValidationError(
-                "assistant_text 含越界或非规范 Citation marker。"
-                f" marker={raw_marker} citation_count={len(citations)}"
-            )
-        marker_indexes.add(marker)
-    expected_indexes = set(range(1, len(citations) + 1))
-    if marker_indexes != expected_indexes:
-        raise ChatValidationError(
-            "每个 citation 都必须由正文中的对应 marker 使用。"
-            f" marker_count={len(marker_indexes)} citation_count={len(citations)}"
-        )
-
-
-# 功能：要求错误代码及文案精确命中安全失败集合。
-# 输入：`value` 待验证数据。
-# 输出：dict[str, str]。
-# 逻辑：要求错误代码及文案精确命中安全失败集合，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _parse_report_error(value: object) -> dict[str, str]:
-    error = _object(value, "report_answer.error")
-    _keys(error, _ERROR_FIELDS, "report_answer.error")
-    code = _nonblank(error["code"], "report_answer.error.code")
-    if code not in _FAILURE_MESSAGES:
-        raise ChatValidationError("report_answer.error.code 不是稳定失败代码。")
-    return {
-        "code": code,
-        "message": _nonblank(error["message"], "report_answer.error.message"),
-    }
-
-
-# 功能：将证据序列化为明确标注不可信数据的消息块。
-# 输入：`label` 数据块标签、`payload` 不可信输入载荷。
-# 输出：str。
-# 逻辑：将证据序列化为明确标注不可信数据的消息块，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _untrusted_block(label: str, payload: object) -> str:
-    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return f"BEGIN_{label}\n{serialized}\nEND_{label}"
-
-
-# 功能：解析 JSON 对象并拒绝无效语法、重复键和非对象根值。
-# 输入：`value` 待验证数据。
-# 输出：object。
-# 逻辑：解析 JSON 对象并拒绝无效语法、重复键和非对象根值，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _decode_json_object(value: str) -> object:
-    if not value.strip():
-        raise ChatValidationError("模型候选必须是非空 JSON 文本。")
-    try:
-        return json.loads(value, object_pairs_hook=_unique_json_object)
-    except ChatValidationError:
-        raise
-    except (json.JSONDecodeError, TypeError, ValueError):
-        raise ChatValidationError("模型候选不是有效 JSON Object。") from None
-
-
-# 功能：从有序键值对构造对象并拒绝重复键。
-# 输入：`pairs` 解码键值对。
-# 输出：dict[str, Any]。
-# 逻辑：从有序键值对构造对象并拒绝重复键，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ChatValidationError("模型候选 JSON 不得包含重复字段。")
-        result[key] = value
-    return result
-
-
-# 功能：要求输入为映射对象，否则抛带字段路径的校验异常。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：Mapping[str, Any]。
-# 逻辑：要求输入为映射对象，否则抛带字段路径的校验异常，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _object(value: object, path: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ChatValidationError(f"{path} 必须是对象。")
-    return value
-
-
-# 功能：要求输入为 list，否则抛带字段路径的校验异常。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：list[Any]。
-# 逻辑：要求输入为 list，否则抛带字段路径的校验异常，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _array(value: object, path: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise ChatValidationError(f"{path} 必须是数组。")
-    return value
-
-
-# 功能：要求对象键集合与协议字段精确一致。
-# 输入：`value` 待验证数据、`expected` 允许字段集合、`path` 错误定位路径。
-# 输出：None。
-# 逻辑：要求对象键集合与协议字段精确一致，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
-    if set(value) != expected:
-        raise ChatValidationError(f"{path} 字段必须与契约完全一致。")
-
-
-# 功能：要求输入为字符串，不做隐式类型转换。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：str。
-# 逻辑：要求输入为字符串，不做隐式类型转换，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _string(value: object, path: str) -> str:
-    if not isinstance(value, str):
-        raise ChatValidationError(f"{path} 必须是字符串。")
-    return value
-
-
-# 功能：要求字符串去空白后非空，返回原始字符串。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：str。
-# 逻辑：要求字符串去空白后非空，返回原始字符串，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _nonblank(value: object, path: str) -> str:
-    text = _string(value, path)
-    if not text.strip():
-        raise ChatValidationError(f"{path} 必须是非空字符串。")
-    return text
-
-
-# 功能：要求字符串属于明确的枚举集合。
-# 输入：`value` 待验证数据、`allowed` 允许枚举集合、`path` 错误定位路径。
-# 输出：str。
-# 逻辑：要求字符串属于明确的枚举集合，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _enum(value: object, allowed: frozenset[str], path: str) -> str:
-    text = _nonblank(value, path)
-    if text not in allowed:
-        raise ChatValidationError(f"{path} 枚举值无效。")
-    return text
-
-
-# 功能：只接受 bool 类型，不把整数当作布尔值。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：bool。
-# 逻辑：只接受 bool 类型，不把整数当作布尔值，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _boolean(value: object, path: str) -> bool:
-    if type(value) is not bool:
-        raise ChatValidationError(f"{path} 必须是布尔值。")
-    return value
-
-
-# 功能：只接受非负整数预算，排除 bool 类型。
-# 输入：`value` 待验证数据、`path` 错误定位路径。
-# 输出：int。
-# 逻辑：只接受非负整数预算，排除 bool 类型，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def _nonnegative_integer(value: object, path: str) -> int:
-    if type(value) is not int or value < 0:
-        raise ChatValidationError(f"{path} 必须是非负整数。")
-    return value
-
-
-# 功能：通过聊天专用百炼边界发送有序消息，不提供任何工具能力。
-# 输入：`messages` 有序模型消息、`max_tokens` 既定输出上限。
-# 输出：str。
-# 逻辑：通过聊天专用百炼边界发送有序消息，不提供任何工具能力，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
-def bailian_chat_provider(
-    messages: list[dict[str, str]],
-    *,
-    max_tokens: int = CHAT_MAX_TOKENS,
-) -> str:
-    """通过聊天专用百炼边界发送有序消息，不提供任何工具能力。"""
+def bailian_chat_provider(messages: list[dict[str, str]], *, max_tokens: int = _WORKSPACE_CHAT_SKILL.max_tokens) -> str:
     from agent.llm.bailian import generate_chat_json
-
     return generate_chat_json(messages, max_tokens=max_tokens)
 
 
-# 功能：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报。
+def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
+    return {**stable_failure_result(request_id, code), "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION}
+
+
+def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, Any]]:
+    """只接受当前后端协定的两个只读客户工具及其参数。"""
+    if (
+        not isinstance(name, str)
+        or name not in {"customers.search", "customers.context"}
+        or not isinstance(value, dict)
+    ):
+        raise ChatValidationError("工作空间只允许客户搜索和客户详情只读工具。")
+    arguments = dict(value)
+    if name == "customers.search":
+        if set(arguments) - {"q", "company", "archived", "page", "page_size"}:
+            raise ChatValidationError("客户搜索含不支持的参数。")
+        if "q" in arguments and (
+            not isinstance(arguments["q"], str) or len(arguments["q"]) > 500
+        ):
+            raise ChatValidationError("客户搜索关键词无效。")
+        if "company" in arguments:
+            _workspace_uuid(arguments["company"])
+        if "archived" in arguments and (
+            not isinstance(arguments["archived"], str)
+            or arguments["archived"] not in {"false", "all"}
+        ):
+            raise ChatValidationError("客户搜索归档参数无效。")
+        if type(arguments.get("page", 1)) is not int or arguments.get("page", 1) < 1:
+            raise ChatValidationError("客户搜索页码无效。")
+        size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+        if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
+            raise ChatValidationError("客户搜索每页数量无效。")
+        arguments.setdefault("page", 1)
+        arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+    elif set(arguments) != {"company_id"}:
+        raise ChatValidationError("客户详情只接受 company_id。")
+    else:
+        _workspace_uuid(arguments["company_id"])
+    return name, arguments
+
+
+def _workspace_uuid(value: object) -> None:
+    if not isinstance(value, str):
+        raise ChatValidationError("公司 ID 必须是 UUID。")
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError):
+        raise ChatValidationError("公司 ID 必须是 UUID。") from None
+
+
+def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
+    """只采用后端在本次 processing 请求中发布的两个 read 工具。"""
+    if not isinstance(raw, Mapping) or (
+        raw.get("contract_version") != "chat-tools-v1"
+        or raw.get("request_id") != request_id
+        or not isinstance(raw.get("tools"), list)
+    ):
+        raise ChatValidationError("工作空间工具目录与当前请求不一致。")
+    catalog: dict[str, dict[str, Any]] = {}
+    for entry in raw["tools"]:
+        if not isinstance(entry, Mapping):
+            raise ChatValidationError("工作空间工具目录项无效。")
+        name = entry.get("name")
+        if name not in {"customers.search", "customers.context"}:
+            continue
+        schema = entry.get("inputSchema")
+        if (
+            name in catalog
+            or entry.get("executionMode") != "read"
+            or not isinstance(schema, Mapping)
+            or schema.get("type") != "object"
+            or not isinstance(schema.get("properties"), Mapping)
+            or not isinstance(schema.get("required"), list)
+            or schema.get("additionalProperties") is not False
+        ):
+            raise ChatValidationError("工作空间工具声明与只读契约不一致。")
+        catalog[name] = {
+            "name": name,
+            "description": entry.get("description", ""),
+            "inputSchema": dict(schema),
+        }
+    return catalog
+
+
+def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
+    """模型参数先满足当前目录声明；具体业务约束仍由后端验证。"""
+    properties = schema["properties"]
+    if set(arguments) - set(properties) or set(schema["required"]) - set(arguments):
+        raise ChatValidationError("工具参数与后端目录 Schema 不一致。")
+
+
+def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id: str):
+    if not isinstance(raw, str):
+        raise ChatValidationError("模型结果必须是 JSON 文本。")
+    value = _decode_json_object(raw)
+    if value.get("action") == "tool" and set(value) == {"action", "name", "arguments"}:
+        name, arguments = _workspace_arguments(value["name"], value["arguments"])
+        return "tool", {"name": name, "arguments": arguments}
+    if value.get("action") == "answer" and set(value) == {
+        "action", "assistant_text", "citations"
+    }:
+        candidate = parse_model_candidate(
+            {"assistant_text": value["assistant_text"], "citations": value["citations"]},
+            allowed_context_items=evidence,
+            request_id=request_id,
+        )
+        return "answer", candidate
+    raise ChatValidationError("模型动作必须是只读工具查询或最终回答。")
+
+
+def _workspace_tool_result(raw: object, request_id: str, name: str):
+    if not isinstance(raw, Mapping):
+        raise ChatValidationError("工具响应必须是对象。")
+    if raw.get("request_id") != request_id or raw.get("tool") != name:
+        raise ChatValidationError("工具响应不属于本次请求。")
+    if (
+        raw.get("status") != "completed"
+        or raw.get("http_status") != 200
+        or not isinstance(raw.get("data"), Mapping)
+    ):
+        raise ChatValidationError("工具没有返回完成的查询数据。")
+    _workspace_uuid(raw.get("read_id"))
+    items = raw.get("evidence_items")
+    if not isinstance(items, list) or not items:
+        raise ChatValidationError("工具证据必须是数组。")
+    evidence = [
+        _source(item, path=f"tool.evidence_items[{index}]")
+        for index, item in enumerate(items)
+    ]
+    if any(not item["source_id"].startswith(f"chat-tool:{raw['read_id']}:") for item in evidence):
+        raise ChatValidationError("工具证据与本次读取 ID 不一致。")
+    data = dict(raw["data"])
+    if name == "customers.search":
+        if (
+            not isinstance(data.get("results"), list)
+            or type(data.get("count")) is not int
+            or data["count"] < 0
+            or type(data.get("page")) is not int
+            or data["page"] < 1
+            or type(data.get("page_size")) is not int
+            or data["page_size"] < 1
+        ):
+            raise ChatValidationError("客户搜索响应缺少分页数据。")
+        rows = []
+        for result in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]:
+            if not isinstance(result, Mapping):
+                raise ChatValidationError("客户搜索结果必须是对象。")
+            rows.append({key: result[key] for key in ("id", "name", "domains") if key in result})
+        summary = {
+            "count": data["count"], "page": data["page"],
+            "page_size": data["page_size"], "results": rows,
+        }
+    else:
+        summary = {
+            key: data[key]
+            for key in ("company_id", "company_name", "id", "name")
+            if key in data
+        }
+    return summary, evidence
+
+
+def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[dict[str, str]]):
+    identities = {
+        (item["source_id"], item["source_type"], item["title_or_label"]): item["content"]
+        for item in allowed
+    }
+    for item in additions:
+        key = (item["source_id"], item["source_type"], item["title_or_label"])
+        if key in identities:
+            if identities[key] != item["content"]:
+                raise ChatValidationError("同一证据标识对应不同内容。")
+            continue
+        allowed.append(item)
+        identities[key] = item["content"]
+
+
+def _workspace_excerpt(content: str, question: str, limit: int) -> str:
+    """对模型展示明确标记的节选，优先保留与问题匹配的原文片段。"""
+    if len(content) <= limit:
+        return content
+    marker = "\n[节选，原文未完整提供]"
+    budget = limit - len(marker)
+    head = min(700, budget // 3)
+    excerpts = [content[:head]]
+    used = [(0, head)]
+    for term in sorted(_lexical_units(question), key=len, reverse=True):
+        position = content.lower().find(term)
+        if position < 0 or any(start <= position < end for start, end in used):
+            continue
+        start, end = max(0, position - 160), min(len(content), position + 320)
+        if sum(map(len, excerpts)) + end - start > budget:
+            break
+        excerpts.append(content[start:end])
+        used.append((start, end))
+    if len(excerpts) == 1 and budget - len(excerpts[0]) >= 300:
+        excerpts.append(content[-min(600, budget - len(excerpts[0])):])
+    return "\n…\n".join(excerpts)[:budget] + marker
+
+
+def _workspace_prompt_evidence(
+    evidence: list[dict[str, str]], question: str
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """选择可放入模型输入的来源；引用白名单仍使用所选来源的完整正文。"""
+    priorities = {
+        "customer_context": 0,
+        "customer_search_page": 1,
+        "internal_knowledge": 2,
+        "customer_search": 3,
+    }
+    ranked = sorted(
+        enumerate(evidence),
+        key=lambda pair: (priorities.get(pair[1]["source_type"], 2), pair[0]),
+    )
+    visible: list[dict[str, str]] = []
+    prompt: list[dict[str, str]] = []
+    remaining = _WORKSPACE_MAX_PROMPT_CHARACTERS
+    for _, item in ranked[:_WORKSPACE_MAX_EVIDENCE_ITEMS]:
+        if remaining < 250:
+            break
+        limit = min(
+            remaining,
+            _WORKSPACE_DETAIL_EXCERPT_CHARACTERS
+            if item["source_type"] == "customer_context"
+            else _WORKSPACE_OTHER_EXCERPT_CHARACTERS,
+        )
+        excerpt = _workspace_excerpt(item["content"], question, limit)
+        visible.append(item)
+        prompt.append({**item, "content": excerpt})
+        remaining -= len(excerpt)
+    return visible, prompt
+
+
+def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
+    """最多六次只读查询；每次由模型选择，最终回答仅引用后端登记的证据。"""
+    request_id = _recognizable_request_id(request)
+    code = "invalid_request"
+    try:
+        request = parse_conversation_request(request)
+        history = trim_recent_history(request["recent_history"])
+        request_id = request["request_id"]
+        if _is_direct_tool_action(request["question"]):
+            return {
+                "request_id": request_id,
+                "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
+                "assistant_text": "该操作未执行，当前工作空间聊天只支持只读查询和文字建议。",
+                "citations": [], "status": "completed", "error": None,
+            }
+        code = "context_unavailable"
+        context = parse_answer_context(
+            backend.get_answer_context(request_id, "internal"),
+            expected_request_id=request_id,
+            expected_scope="internal",
+        )
+        if context["customer_context"] or context["customer_context_status"] != "completed":
+            raise ChatValidationError("工作空间初始上下文不得包含预选客户。")
+        if context["knowledge_status"] != "completed":
+            raise ChatValidationError("工作空间内部知识状态不可用。")
+        knowledge = trim_context_items([], context["context_items"], [])["internal_knowledge"]
+        evidence = list(knowledge)
+        observations: list[dict[str, Any]] = []
+        signatures: set[tuple[str, str]] = set()
+        catalog: dict[str, dict[str, Any]] | None = None
+        for turn in range(_WORKSPACE_MAX_TOOL_READS + 1):
+            visible_evidence, prompt_evidence = _workspace_prompt_evidence(
+                evidence, request["question"]
+            )
+            messages = [
+                {"role": "system", "content": _WORKSPACE_CHAT_SKILL.instructions},
+                *history,
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "question": request["question"],
+                            "authorized_evidence": prompt_evidence,
+                            "evidence_items_available": len(evidence),
+                            "evidence_items_shown": len(prompt_evidence),
+                            "available_tools": list(catalog.values()) if catalog is not None else [
+                                {"name": "customers.search"}, {"name": "customers.context"}
+                            ],
+                            "tool_results": observations,
+                            "remaining_reads": _WORKSPACE_MAX_TOOL_READS - turn,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            code = "model_unavailable"
+            started = perf_counter()
+            logger.info(
+                "workspace_chat_model_started request_id=%s turn=%s reads=%s evidence=%s",
+                request_id, turn + 1, turn, len(prompt_evidence),
+            )
+            raw = chat_provider(messages, max_tokens=_WORKSPACE_CHAT_SKILL.max_tokens)
+            logger.info(
+                "workspace_chat_model_completed request_id=%s turn=%s duration_ms=%s output_chars=%s",
+                request_id, turn + 1, round((perf_counter() - started) * 1000),
+                len(raw) if isinstance(raw, str) else None,
+            )
+            code = "invalid_model_output"
+            action, payload = _workspace_decision(raw, visible_evidence, request_id)
+            if action == "answer":
+                return {
+                    "request_id": request_id, "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
+                    **payload, "status": "completed", "error": None,
+                }
+            if turn >= _WORKSPACE_MAX_TOOL_READS:
+                raise ChatValidationError("只读查询次数已达上限，模型仍未回答。")
+            name, arguments = payload["name"], payload["arguments"]
+            if catalog is None:
+                code = "context_unavailable"
+                catalog = _workspace_catalog(backend.get_chat_tools(request_id), request_id)
+                logger.info(
+                    "workspace_chat_tools_loaded request_id=%s tools=%s",
+                    request_id, sorted(catalog),
+                )
+            if name not in catalog:
+                observations.append({
+                    "tool": name, "status": "unavailable", "reason": "not_published",
+                })
+                continue
+            _workspace_schema_arguments(arguments, catalog[name]["inputSchema"])
+            signature = (name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+            if signature in signatures:
+                raise ChatValidationError("模型重复请求同一只读查询。")
+            signatures.add(signature)
+            code = "context_unavailable"
+            try:
+                raw_result = backend.read_chat_tool(request_id, name, arguments)
+            except BackendRequestError as error:
+                if (
+                    error.scope != "tool"
+                    or error.status_code not in {400, 404}
+                ):
+                    raise
+                observations.append({
+                    "tool": name, "arguments": arguments,
+                    "status": "invalid_arguments" if error.status_code == 400 else "unavailable",
+                    "http_status": error.status_code,
+                })
+                logger.info(
+                    "workspace_chat_tool_unavailable request_id=%s tool=%s status=%s",
+                    request_id, name, error.status_code,
+                )
+                continue
+            summary, items = _workspace_tool_result(raw_result, request_id, name)
+            _workspace_append_evidence(evidence, items)
+            observations.append({
+                "tool": name, "arguments": arguments, "status": "completed",
+                "data": summary,
+            })
+            logger.info(
+                "workspace_chat_tool_completed request_id=%s tool=%s evidence=%s total_evidence=%s",
+                request_id, name, len(items), len(evidence),
+            )
+        raise ChatValidationError("工作空间聊天未生成回答。")
+    except Exception as error:
+        logger.warning(
+            "workspace_chat_failed request_id=%s stage=%s error_type=%s reason=%s",
+            request_id, code, type(error).__name__,
+            str(error) if isinstance(error, ChatValidationError) else "unavailable",
+        )
+        if request_id is None:
+            raise
+        return _workspace_failure(request_id, code)
+
+
+def _chat_report_is_saved(result: Mapping[str, Any], state: object) -> bool:
+    """回报响应丢失时，仅在权威终态与本地结果相符才确认已保存。"""
+    if not isinstance(state, Mapping) or (
+        state.get("request_id") != result["request_id"]
+        or state.get("status") != result["status"]
+        or state.get("chat_prompt_version") != result["chat_prompt_version"]
+    ):
+        return False
+    if result["status"] == "failed":
+        return state.get("error") == result["error"]
+    stored = state.get("citations")
+    if not isinstance(stored, list) or not state.get("assistant_message_id"):
+        return False
+    identity = ("source_id", "source_type", "title_or_label")
+    return [tuple(item.get(key) for key in identity) for item in stored if isinstance(item, Mapping)] == [
+        tuple(item[key] for key in identity) for item in result["citations"]
+    ] and len(stored) == len(result["citations"])
+
+
+# 功能：领取一次工作空间聊天请求并尝试一次回报。
 # 输入：`backend` 后端客户端、`chat_provider` 单次模型调用边界。
 # 输出：dict[str, Any] | None。
-# 逻辑：领取一次请求，按可空客户绑定路由客户或通用问答，并尝试一次回报，保持现有字段规则与处理顺序。
-# 约束：复用既定预算与错误语义；通用模式仅在入口明确选择，不作为客户问答失败后的回退。
+# 逻辑：领取请求后只执行工作空间聊天；不根据客户绑定或配置切换旧流程。
+# 约束：请求必须没有预选公司；后端负责员工可见范围和权威结果保存。
 def process_chat_once(
     *,
     backend: Any,
@@ -1754,31 +685,32 @@ def process_chat_once(
         return None
 
     request_id = _recognizable_request_id(claimed_request)
-    logger.info(
-        "chat_request_claimed request_id=%s mode=%s",
-        request_id,
-        "general" if isinstance(claimed_request, Mapping) and claimed_request.get("company_id", "missing") is None else "customer",
-    )
     if request_id is None:
-        # 无安全可识别的 request_id 时无法回报；严格请求解析会在此失败，
-        # 而不会调用上下文、模型或 report 接口。
-        return answer_conversation_request(
-            claimed_request,
-            backend=backend,
-            chat_provider=chat_provider,
-        )
-
-    if claimed_request.get("company_id", "missing") is None:
-        from .general_chat import answer
-
-        result = answer(claimed_request, backend=backend, chat_provider=chat_provider)
-    else:
-        result = answer_conversation_request(
-            claimed_request, backend=backend, chat_provider=chat_provider
-        )
+        raise ChatValidationError("领取的聊天请求缺少 request_id。")
+    logger.info("chat_request_claimed request_id=%s mode=workspace", request_id)
+    result = answer_workspace_request(
+        claimed_request, backend=backend, chat_provider=chat_provider
+    )
     try:
         backend.report_answer(result)
     except Exception as error:
+        if (
+            isinstance(error, BackendContractError)
+            or isinstance(error, BackendRequestError) and error.status_code == 0
+        ) and hasattr(backend, "get_chat_request_status"):
+            try:
+                state = backend.get_chat_request_status(request_id)
+                if _chat_report_is_saved(result, state):
+                    logger.info(
+                        "chat_report_confirmed request_id=%s status=%s",
+                        request_id, result["status"],
+                    )
+                    return result
+            except Exception as status_error:
+                logger.warning(
+                    "chat_report_status_failed request_id=%s error_type=%s",
+                    request_id, type(status_error).__name__,
+                )
         backend_detail = (
             _diagnostic_excerpt(error.detail)
             if isinstance(error, BackendRequestError) and error.status_code == 400
@@ -1791,7 +723,7 @@ def process_chat_once(
             error.code if isinstance(error, BackendRequestError) else None,
             backend_detail,
         )
-        # Report Answer 失败只形成本地结果。Demo 不自动重试，也不伪装已保存。
+        # 回报失败只形成本地结果；不自动重试，也不伪装已保存。
         return {
             **stable_failure_result(request_id, "report_failed"),
             "chat_prompt_version": result["chat_prompt_version"],
@@ -1804,28 +736,13 @@ def process_chat_once(
 
 
 __all__ = [
-    "CHAT_MAX_TOKENS",
-    "CHAT_PROMPT",
-    "CHAT_PROMPT_VERSION",
-    "DEFAULT_CONTEXT_CONTENT_CHARACTER_LIMIT",
-    "DEFAULT_CONTEXT_ITEM_LIMIT",
-    "DEFAULT_HISTORY_CHARACTER_BUDGET",
-    "TRUNCATION_MARKER",
     "ChatValidationError",
-    "answer_conversation_request",
+    "WORKSPACE_CHAT_PROMPT_VERSION",
+    "answer_workspace_request",
     "bailian_chat_provider",
-    "build_chat_messages",
-    "deduplicate_context_items",
     "parse_answer_context",
-    "parse_context_item",
     "parse_conversation_request",
     "parse_model_candidate",
-    "parse_recent_history",
-    "parse_report_answer",
-    "parse_retrieval_gap",
     "process_chat_once",
     "stable_failure_result",
-    "trim_context_items",
-    "trim_recent_history",
-    "validate_citation_allowlist",
 ]

@@ -393,7 +393,7 @@ class AgentMainCliTests(unittest.TestCase):
 
         completed = {
             "request_id": "request-completed",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "客户关注正式报价。[1]",
             "citations": [
                 {
@@ -407,7 +407,7 @@ class AgentMainCliTests(unittest.TestCase):
         }
         failed = {
             "request_id": "request-failed",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "",
             "citations": [],
             "status": "failed",
@@ -415,7 +415,7 @@ class AgentMainCliTests(unittest.TestCase):
         }
         report_failed = {
             "request_id": "request-report-failed",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "",
             "citations": [],
             "status": "failed",

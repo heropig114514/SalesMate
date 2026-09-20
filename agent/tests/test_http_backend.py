@@ -41,6 +41,72 @@ class DjangoBackendClientTests(unittest.TestCase):
             session=session,
         )
 
+    def test_request_bound_chat_read_uses_agent_identity_and_checks_evidence(self):
+        session = _Session(_Response({
+            "request_id": "request-1", "tool": "customers.search",
+            "status": "completed",
+            "data": {"count": 0, "page": 1, "page_size": 20, "results": []},
+            "evidence_items": [],
+        }))
+        backend = self.client(session)
+        result = backend.read_chat_tool("request-1", "customers.search", {"q": "盛微"})
+        self.assertEqual(result["data"]["count"], 0)
+        method, url, kwargs = session.calls[0]
+        self.assertEqual(method, "POST")
+        self.assertTrue(url.endswith("/chat/tool-reads/"))
+        self.assertEqual(kwargs["headers"]["Authorization"], "Agent service-secret")
+        self.assertEqual(kwargs["json"], {
+            "request_id": "request-1", "name": "customers.search",
+            "arguments": {"q": "盛微"},
+        })
+        with self.assertRaises(BackendContractError):
+            backend.read_chat_tool("request-1", "customers.create", {"name": "假客户"})
+
+    def test_chat_tool_catalog_is_bound_to_request_and_agent_identity(self):
+        session = _Session(_Response({
+            "contract_version": "chat-tools-v1", "request_id": "request-1",
+            "count": 1, "page": 1, "page_size": 30,
+            "tools": [{"name": "customers.search", "executionMode": "read", "inputSchema": {}}],
+        }))
+        result = self.client(session).get_chat_tools("request-1")
+        self.assertEqual(result["tools"][0]["name"], "customers.search")
+        method, url, kwargs = session.calls[0]
+        self.assertEqual(method, "GET")
+        self.assertIn("/chat/tools/?request_id=request-1", url)
+        self.assertEqual(kwargs["headers"]["Authorization"], "Agent service-secret")
+
+    def test_chat_tool_error_preserves_backend_scope(self):
+        session = _Session(_Response({
+            "error": {"scope": "tool", "code": "not_found", "detail": "不可访问"}
+        }, status=404))
+        with self.assertRaises(BackendRequestError) as caught:
+            self.client(session).read_chat_tool(
+                "request-1", "customers.context", {"company_id": "company-1"}
+            )
+        self.assertEqual(caught.exception.scope, "tool")
+
+    def test_chat_request_status_uses_agent_identity(self):
+        session = _Session(_Response({
+            "request_id": "request-1", "status": "completed",
+            "assistant_message_id": "assistant-1", "citations": [],
+        }))
+        result = self.client(session).get_chat_request_status("request-1")
+        self.assertEqual(result["status"], "completed")
+        method, url, kwargs = session.calls[0]
+        self.assertEqual(method, "GET")
+        self.assertTrue(url.endswith("/chat/requests/request-1/"))
+        self.assertEqual(kwargs["headers"]["Authorization"], "Agent service-secret")
+
+    def test_chat_read_rejects_wrong_request_identity(self):
+        session = _Session(_Response({
+            "request_id": "other", "tool": "customers.context", "status": "completed",
+            "data": {}, "evidence_items": [],
+        }))
+        with self.assertRaises(BackendContractError):
+            self.client(session).read_chat_tool(
+                "request-1", "customers.context", {"company_id": "company-1"}
+            )
+
     def test_submit_adds_transport_fields_and_aggregates_response(self):
         session = _Session(
             _Response(
@@ -258,7 +324,6 @@ class DjangoBackendClientTests(unittest.TestCase):
         claimed_request = {
             "request_id": "request-1",
             "conversation_id": "conversation-1",
-            "company_id": "company-1",
             "user_message_id": "message-1",
             "question": "这个客户最近最关心什么？",
             "recent_history": [
@@ -269,6 +334,7 @@ class DjangoBackendClientTests(unittest.TestCase):
         session = _Session(
             _Response({"request": None}),
             _Response({"request": claimed_request}),
+            _Response({"request": {**claimed_request, "company_id": None}}),
         )
         backend = self.client(session, mailbox_id=None)
 
@@ -276,6 +342,7 @@ class DjangoBackendClientTests(unittest.TestCase):
         claimed = backend.claim_answer_request()
 
         self.assertEqual(claimed, claimed_request)
+        self.assertEqual(backend.claim_answer_request(), claimed_request)
         self.assertIsNot(claimed, claimed_request)
         claimed["recent_history"][0]["content"] = "changed"
         self.assertEqual(
@@ -384,7 +451,7 @@ class DjangoBackendClientTests(unittest.TestCase):
     def test_chat_report_maps_completed_failed_and_duplicate_results(self):
         completed = {
             "request_id": "request-1",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "客户关注正式报价。[1]",
             "citations": [
                 {
@@ -398,7 +465,7 @@ class DjangoBackendClientTests(unittest.TestCase):
         }
         failed = {
             "request_id": "request-2",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "",
             "citations": [],
             "status": "failed",
@@ -494,6 +561,10 @@ class DjangoBackendClientTests(unittest.TestCase):
             [],
             {},
             {"request": []},
+            {"request": {
+                "request_id": "request-1", "conversation_id": "conversation-1",
+                "company_id": "company-1", "user_message_id": "message-1",
+            }},
             {
                 "request": {
                     "request_id": "",
@@ -585,7 +656,7 @@ class DjangoBackendClientTests(unittest.TestCase):
     def test_chat_report_rejects_mismatched_and_malformed_response_objects(self):
         result = {
             "request_id": "request-1",
-            "chat_prompt_version": "chat-v2",
+            "chat_prompt_version": "workspace-chat-v1",
             "assistant_text": "有依据的回答。[1]",
             "citations": [],
             "status": "completed",

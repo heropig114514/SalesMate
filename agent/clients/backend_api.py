@@ -18,7 +18,7 @@
 - BackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
 - BackendClient.get_sync_state：读取邮箱游标和 ETag。
 - BackendClient.save_sync_state：条件更新邮箱游标。
-- BackendClient.claim_answer_request：领取一条客户或通用聊天回答请求。
+- BackendClient.claim_answer_request：领取一条工作空间聊天回答请求。
 - BackendClient.get_answer_context：读取请求绑定的客户和知识上下文。
 - BackendClient.report_answer：回报带 Prompt 版本的聊天结果。
 - BackendRetrievalError：表示后端读取失败。
@@ -45,7 +45,7 @@
 - DjangoBackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
 - DjangoBackendClient.get_sync_state：读取邮箱游标和 ETag。
 - DjangoBackendClient.save_sync_state：条件更新邮箱游标。
-- DjangoBackendClient.claim_answer_request：映射客户或无客户绑定的通用聊天领取接口。
+- DjangoBackendClient.claim_answer_request：映射工作空间聊天领取接口并移除过渡期空公司字段。
 - DjangoBackendClient.get_answer_context：映射聊天上下文接口。
 - DjangoBackendClient.report_answer：映射聊天回答保存接口。
 - DjangoBackendClient._required_string：读取并校验非空字符串。
@@ -76,7 +76,7 @@ import os
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Mapping, Protocol
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -202,7 +202,7 @@ class BackendClient(Protocol):
     # 约束：声明或异常构造不执行 HTTP 请求。
     def save_sync_state(self, sync_state: JsonObject) -> JsonObject: ...
 
-    # 功能：领取一条客户或通用聊天回答请求。
+    # 功能：领取一条工作空间聊天回答请求。
     # 输入：无外部参数，读取实例认证与请求状态。
     # 输出：JsonObject | None。
     # 逻辑：仅声明接口，具体传输由实现者提供。
@@ -215,6 +215,18 @@ class BackendClient(Protocol):
     # 逻辑：仅声明接口，具体传输由实现者提供。
     # 约束：声明或异常构造不执行 HTTP 请求。
     def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
+
+    # 功能：发现当前聊天请求已获授权的只读工具及参数 Schema。
+    def get_chat_tools(self, request_id: str) -> JsonObject: ...
+
+    # 功能：回报响应丢失后核对当前请求的权威终态。
+    def get_chat_request_status(self, request_id: str) -> JsonObject: ...
+
+    # 功能：在当前聊天请求中执行后端授权的只读客户工具，并登记可引用证据。
+    # 约束：仅声明请求绑定的查询，不允许 Agent 指定员工身份或写工具。
+    def read_chat_tool(
+        self, request_id: str, name: str, arguments: JsonObject
+    ) -> JsonObject: ...
 
     # 功能：回报带 Prompt 版本的聊天结果。
     # 输入：`result` 包含提示版本的聊天结果。
@@ -256,11 +268,14 @@ class BackendRequestError(RuntimeError):
     # 输出：无返回值，初始化实例状态。
     # 逻辑：保存状态、代码和说明，并构造安全异常消息。
     # 约束：声明或异常构造不执行 HTTP 请求。
-    def __init__(self, status_code: int, code: str, detail: str):
+    def __init__(
+        self, status_code: int, code: str, detail: str, *, scope: str | None = None
+    ):
         super().__init__(f"后端请求失败（HTTP {status_code}, {code}）：{detail}")
         self.status_code = status_code
         self.code = code
         self.detail = detail
+        self.scope = scope
 
 
 # 功能：保存不可变的已领任务身份、版本和租约。
@@ -712,11 +727,11 @@ class DjangoBackendClient:
         return saved
 
     def claim_answer_request(self) -> dict[str, Any] | None:
-        """功能：领取零个或一个待回答请求，支持通用会话。
+        """功能：领取零个或一个工作空间聊天请求。
         输入：无外部参数，使用实例 HTTP 认证与服务地址。
         输出：请求字典或 None；缺字段、空字符串等非法响应抛 BackendContractError。
-        逻辑：请求一次 claim，验证稳定标识；company_id 必须存在，显式 null 表示通用聊天。
-        约束：不把缺字段当作通用模式，不在传输层重试或改写身份。
+        逻辑：请求一次 claim 并验证稳定标识；过渡期将后端的 company_id:null 归一为无预选公司字段。
+        约束：拒绝非空 company_id，不在传输层重试或改写员工身份。
         """
         response, _ = self._request("POST", "chat/requests/claim/", json={})
         document = self._object(response, "Answer request claim")
@@ -738,10 +753,9 @@ class DjangoBackendClient:
             "user_message_id",
         ):
             self._required_string(request, field, "Answer request claim")
-        if "company_id" not in request:
-            raise BackendContractError("Answer request claim 缺少 company_id。")
-        if request["company_id"] is not None:
-            self._required_string(request, "company_id", "Answer request claim")
+        if "company_id" in request:
+            if request.pop("company_id") is not None:
+                raise BackendContractError("工作空间聊天请求不能绑定公司。")
         return request
 
     # 功能：映射聊天上下文接口。
@@ -799,6 +813,67 @@ class DjangoBackendClient:
             raise BackendContractError(
                 "External answer context 的 external_available 必须为 true。"
             )
+        return document
+
+    def get_chat_tools(self, request_id: str) -> dict[str, Any]:
+        """读取本次 processing 请求可用的工具目录，不从全局注册表猜测权限。"""
+        self._required_string({"request_id": request_id}, "request_id", "Chat tools 请求")
+        response, _ = self._request(
+            "GET", "chat/tools/", query={"request_id": request_id, "page": 1, "page_size": 30}
+        )
+        document = self._object(response, "Chat tools")
+        if (
+            document.get("contract_version") != "chat-tools-v1"
+            or document.get("request_id") != request_id
+            or type(document.get("count")) is not int
+            or type(document.get("page")) is not int
+            or type(document.get("page_size")) is not int
+            or document["page"] != 1
+            or document["count"] > document["page_size"]
+        ):
+            raise BackendContractError("Chat tools 目录版本、请求或分页不一致。")
+        tools = document.get("tools")
+        self._object_list(tools, "Chat tools tools")
+        if len(tools) != document["count"]:
+            raise BackendContractError("Chat tools 目录数量不一致。")
+        return document
+
+    def get_chat_request_status(self, request_id: str) -> dict[str, Any]:
+        """只查询本人聊天请求的已保存状态，不重新领取或生成回答。"""
+        self._required_string({"request_id": request_id}, "request_id", "Chat status 请求")
+        response, _ = self._request(
+            "GET", f"chat/requests/{quote(request_id, safe='')}/"
+        )
+        document = self._object(response, "Chat request status")
+        if (
+            document.get("request_id") != request_id
+            or document.get("status") not in {"pending", "processing", "completed", "failed"}
+        ):
+            raise BackendContractError("Chat request status 与本次请求不一致。")
+        return document
+
+    def read_chat_tool(
+        self, request_id: str, name: str, arguments: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """调用请求绑定的只读工具；工具结果和证据由后端共同确认。"""
+        self._required_string({"request_id": request_id}, "request_id", "Chat tool 请求")
+        if name not in {"customers.search", "customers.context"}:
+            raise BackendContractError("Chat tool 仅支持只读客户搜索与详情。")
+        if not isinstance(arguments, Mapping):
+            raise BackendContractError("Chat tool arguments 必须是对象。")
+        response, _ = self._request(
+            "POST",
+            "chat/tool-reads/",
+            json={"request_id": request_id, "name": name, "arguments": dict(arguments)},
+        )
+        document = self._object(response, "Chat tool")
+        if document.get("request_id") != request_id or document.get("tool") != name:
+            raise BackendContractError("Chat tool 响应与本次请求或工具不一致。")
+        if document.get("status") != "completed":
+            raise BackendContractError("Chat tool 未确认只读查询完成。")
+        if not isinstance(document.get("data"), Mapping):
+            raise BackendContractError("Chat tool data 必须是对象。")
+        self._object_list(document.get("evidence_items"), "Chat tool evidence_items")
         return document
 
     # 功能：映射聊天回答保存接口。
@@ -947,13 +1022,13 @@ class DjangoBackendClient:
         if allowed_statuses and response.status_code in allowed_statuses:
             return None, response.headers
         if not 200 <= response.status_code < 300:
-            code, detail = self._error(response)
+            code, detail, scope = self._error(response)
             logger.warning(
                 "backend_request_failed method=%s path=%s status=%s code=%s request_id=%s duration_ms=%s",
                 method, path, response.status_code, code,
                 response.headers.get("X-Request-ID"), round((perf_counter() - started) * 1000),
             )
-            raise BackendRequestError(response.status_code, code, detail)
+            raise BackendRequestError(response.status_code, code, detail, scope=scope)
         logger.debug(
             "backend_request_completed method=%s path=%s status=%s duration_ms=%s",
             method, path, response.status_code, round((perf_counter() - started) * 1000),
@@ -1008,17 +1083,22 @@ class DjangoBackendClient:
     # 逻辑：提取统一 error 对象的 code/detail；非法错误体返回明确的通用 HTTP 错误说明。
     # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
     @staticmethod
-    def _error(response: Any) -> tuple[str, str]:
+    def _error(response: Any) -> tuple[str, str, str | None]:
         try:
             payload = response.json()
         except ValueError:
-            return "http_error", "后端返回非 JSON 错误。"
+            return "http_error", "后端返回非 JSON 错误。", None
         error = payload.get("error") if isinstance(payload, Mapping) else None
         if not isinstance(error, Mapping):
-            return "http_error", "后端请求被拒绝。"
+            return "http_error", "后端请求被拒绝。", None
         code = error.get("code")
         detail = error.get("detail")
-        return str(code or "http_error"), str(detail or "后端请求被拒绝。")
+        scope = error.get("scope")
+        return (
+            str(code or "http_error"),
+            str(detail or "后端请求被拒绝。"),
+            scope if scope in {"tool", "request"} else None,
+        )
 
 
 # 功能：构造独立 HTTP 客户端，支持 CLI 环境身份或 Worker 的显式任务身份。
