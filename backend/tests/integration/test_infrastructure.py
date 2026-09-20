@@ -1,4 +1,4 @@
-"""职责：验证向量隔离、执行模式和在线迁移门禁。
+"""职责：验证向量隔离、执行模式和手动迁移诊断。
 实现：向量测试使用真实 PostgreSQL 扩展；消息边界使用模拟 broker，不调用真实邮件或模型。
 关联：vectors.services、common.execution/tasks、check_release_migrations。
 目录：
@@ -7,7 +7,7 @@
 - VectorTests.test_search_isolates_owner_model_and_dimension：验证相似度及归属隔离。
 - VectorTests.test_update_and_dimension_change：验证更新和模型维度契约。
 - VectorTests.test_invalid_vectors_and_inactive_owner：验证非法输入和停用员工。
-- ExecutionTests：任务传输和迁移门禁测试。
+- ExecutionTests：任务传输和手动迁移诊断测试。
 - ExecutionTests.test_local_mode_never_contacts_broker：本地执行不接触消息服务。
 - ExecutionTests.test_remote_only_sends_identifiers：远程仅发送数据库标识。
 - ExecutionTests.test_publish_failure_does_not_run_locally：发送失败无本地回退。
@@ -140,10 +140,10 @@ class ExecutionTests(SimpleTestCase):
             publish.return_value.get.assert_called_once_with()
         local.assert_not_called()
 
-    # 功能：阻止破坏性及任意代码迁移进入在线发布。
+    # 功能：验证手动迁移诊断仍识别破坏性及任意代码操作。
     # 输入：真实 Django 迁移操作实例。
     # 输出：新表与可空字段通过，删除、SQL、非空字段拒绝。
-    # 逻辑：直接调用与部署共用的门禁判定。
+    # 逻辑：直接调用可选诊断的保守判定，不表示自动部署仍有该门禁。
     # 约束：不会执行传入的 SQL。
     def test_release_gate_rejects_destructive_operations(self):
         self.assertTrue(compatible(migrations.CreateModel("NewTable", [])))

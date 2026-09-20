@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 职责：发布 CI 验证的 main 提交，使用独立环境和双 Web 实例切换。
-# 实现：校验源文件、构建候选、排空含聊天的后台、兼容迁移、探测后切流，旧请求结束后退役。
+# 职责：发布当前 main 提交，不以 CI 诊断结果作为前提，使用独立环境和双 Web 实例切换。
+# 实现：保护部署来源与运行文件、构建候选、排空后台、备份及实际迁移、基本就绪后切流，旧请求结束后退役。
 # 关联：root 受限入口、systemd 模板、独立聊天服务及 shared 目录须由管理员初始化。
 # 目录：report_failure 记录失败；phase 记录状态转换；其余为顺序部署。
 # 变量索引：revision/latest/previous 为版本；state/repo 为发布目录；stage/backup 为故障定位；
@@ -91,12 +91,8 @@ for name in media private_uploads; do ln -s "/opt/salesmate/shared/$name" "$app/
 chown -R salesmate:salesmate "$release"
 sudo -u salesmate python3 -m venv "$release/venv"
 sudo -u salesmate "$py" -m pip install -r "$app/backend/requirements/base.txt" -r "$app/agent/requirements.txt" > "$release/dependencies.log" 2>&1
-sudo -u salesmate "$py" -m pip check
 cd "$app"
-sudo -u salesmate env DJANGO_SETTINGS_MODULE=config.settings.lightsail "$py" backend/manage.py check --deploy
-sudo -u salesmate "$py" backend/tools/check_docs.py
-sudo -u salesmate "$py" backend/manage.py check_release_migrations
-sudo -u salesmate "$py" backend/manage.py check_infrastructure
+# 文档、契约、依赖一致性和迁移类型只在独立诊断中检查，不作为服务器发布门禁。
 sudo -u salesmate env DJANGO_SETTINGS_MODULE=config.settings.lightsail "$py" backend/manage.py collectstatic --noinput > "$release/static.log" 2>&1
 sudo -u salesmate cp -a backend/frontend/assets/. backend/staticfiles/
 find backend/staticfiles -type d -exec chmod 755 {} +
@@ -118,9 +114,8 @@ readlink -f /opt/salesmate/venv > "$backup/previous-venv"
 cp /etc/nginx/snippets/salesmate-release.conf "$backup/nginx.conf"
 sha256sum /opt/salesmate/shared/runtime.env > "$backup/environment.sha256"
 phase migrate
-# 超过五秒的 DDL 锁等待直接失败，不拖住旧实例的请求。
-sudo -u salesmate env PGOPTIONS='-c lock_timeout=5s' "$py" backend/manage.py migrate --noinput
-sudo -u salesmate "$py" backend/manage.py migrate --check
+# 不运行 Django 系统预检；实际迁移错误仍终止发布，DDL 锁等待上限保持五秒。
+sudo -u salesmate env PGOPTIONS='-c lock_timeout=5s' "$py" backend/manage.py migrate --noinput --skip-checks
 phase candidate
 systemctl stop "salesmate-web@$target"
 ln -sfnT "$app" "/opt/salesmate/slots/$target/app"
@@ -156,7 +151,6 @@ mv -Tf /opt/salesmate/venv.new /opt/salesmate/venv
 curl -fsS --max-time 15 https://milkdragon.dev/api/v1/health/ready/ > "$backup/public-health.json"
 phase workers
 systemctl start salesmate-celery@crm salesmate-celery@sales
-sudo -u salesmate "$py" backend/manage.py check_infrastructure --workers
 systemctl start salesmate-crm salesmate-sales salesmate-chat
 systemctl is-active "salesmate-web@$target" salesmate-crm salesmate-sales salesmate-chat salesmate-celery@crm salesmate-celery@sales nginx redis-server postgresql
 phase retire

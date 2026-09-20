@@ -1,8 +1,8 @@
-"""职责：在旧版仍服务请求时阻止未经审查的破坏性数据库迁移。
+"""职责：提供可手动执行的保守数据库迁移审查。
 实现：检查实际待执行迁移，只放行新表、新索引、可空非唯一新增字段及 vector 扩展创建。
-关联：自动蓝绿部署调用；不代替业务级新旧版本兼容审查，DDL 锁等待另由 PGOPTIONS 限制。
+关联：自动部署不再调用本命令；运维可按需手动运行；不代替业务级新旧版本兼容审查，DDL 锁等待另由 PGOPTIONS 限制。
 目录：
-- compatible：判定一个迁移操作能否进入自动发布路径。
+- compatible：判定一个迁移操作是否符合保守在线迁移建议。
 - Command：检查实际数据库待执行迁移。
 - Command.handle：拒绝逆向或不在允许集合中的操作。
 变量索引：
@@ -14,22 +14,22 @@ from django.db.migrations.executor import MigrationExecutor
 from pgvector.django import VectorExtension
 
 
-# 功能：识别允许在线执行的保守操作集合。
+# 功能：识别手动审查所用的保守操作集合。
 # 输入：`operation` 为 Django 迁移操作。
 # 输出：布尔值。
 # 逻辑：只接受精确类型以阻止自定义子类藏入任意 SQL；新增字段须可空且无唯一约束。
-# 约束：Alter/Remove/Rename/RunPython/RunSQL 默认拒绝，须单独设计维护发布，不自动绕过。
+# 约束：Alter/Remove/Rename/RunPython/RunSQL 默认拒绝，仅影响显式运行本诊断的退出码，不阻断自动部署。
 def compatible(operation):
     if type(operation) in {migrations.CreateModel, migrations.AddIndex, VectorExtension}:
         return True
     return type(operation) is migrations.AddField and operation.field.null and not operation.field.unique and not operation.field.primary_key
 
 
-# 功能：检查待执行迁移是否满足发布门禁。
-# 逻辑：读取迁移图和数据库记录，不执行迁移。
+# 功能：供运维显式检查待执行迁移是否符合保守建议。
+# 逻辑：仅手动调用时读取迁移图和数据库记录，不执行迁移或参与自动发布。
 # 约束：依赖真实目标数据库状态。
 class Command(BaseCommand):
-    help = "拒绝自动蓝绿发布中的破坏性或未审查迁移。"
+    help = "手动检查迁移是否符合保守在线发布建议；不参与自动部署。"
 
     # 功能：检查待执行迁移并列出不兼容项。
     # 输入：`args`/`options` 为命令参数，无自定义参数；读取默认数据库。

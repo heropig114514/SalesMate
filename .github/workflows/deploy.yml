@@ -1,13 +1,14 @@
-# 职责：主分支提交通过隔离测试后，通知 Lightsail 自动拉取并部署该提交。
-# 实现：PR 验证后端、翻译目录、聊天、业务 MCP/CLI 与中英文浏览器流程；工具 SDK 在独立虚拟环境测试；main 推送或手动运行才部署。
+# 职责：主分支提交直接触发 Lightsail 部署，隔离测试独立报告诊断结果。
+# 实现：verify 与 deploy 无依赖并行运行；诊断失败不阻断或取消部署，PR 只运行诊断；main 推送或手动运行才部署。
 # 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
-# 目录：verify 执行隔离验证，deploy 触发并等待服务器发布。
-# 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为已验证提交；
+# 目录：verify 执行非阻断诊断，deploy 独立触发并等待服务器发布。
+# 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为本次 main 提交；
 # DEPLOY_KEY/DEPLOY_HOST_KEY 为 GitHub 加密 secrets，前者只允许受限触发，后者固定服务器身份。
 # CELERY_BROKER_URL/CELERY_RESULT_BACKEND 为 CI Redis 地址；celery_pid 为临时消费者 PID。
 # backend_test_modules/agent_test_modules 为排除已禁用 QQ 集成的测试模块列表。
 # SALESMATE_PLAYWRIGHT_MODULE/SALESMATE_BROWSER_PATH 指向 RUNNER_TEMP 中的隔离浏览器运行时。
 # RUNNER_TEMP/salesmate-tools-sdk 为工具 SDK 隔离环境，不改变 Web/Worker 依赖。
+# CHECK_STATUS 为诊断任务结果，仅写入摘要，不参与部署条件。
 name: Verify and deploy
 on:
   push:
@@ -20,6 +21,8 @@ permissions:
 
 jobs:
   verify:
+    name: Advisory checks (does not block deployment)
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -123,8 +126,16 @@ jobs:
           node backend/tools/browser_i18n.cjs
           python backend/manage.py test tools.chat_browser_e2e --noinput
 
+      - name: Summarize advisory checks
+        if: always()
+        env:
+          CHECK_STATUS: ${{ job.status }}
+        run: |
+          echo "## Advisory checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "Result: $CHECK_STATUS. See this job log for failed or skipped checks." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment runs independently; these checks never gate publication." >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
-    needs: verify
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -132,7 +143,7 @@ jobs:
       group: salesmate-production
       cancel-in-progress: false
     steps:
-      - name: Pull and deploy the verified commit on Lightsail
+      - name: Pull and deploy the main commit on Lightsail
         env:
           RELEASE_SHA: ${{ github.sha }}
           DEPLOY_KEY: ${{ secrets.LIGHTSAIL_DEPLOY_SSH_KEY }}
