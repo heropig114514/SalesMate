@@ -1,10 +1,10 @@
 /**
- * 职责：为邮件、业务及世界消息页面提供共享导航、客户上下文和真实待办概览及共享悬浮聊天入口。
+ * 职责：为邮件、业务及世界消息页面提供精简共享导航、客户上下文和真实待办概览及底部聊天入口。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
- * 变量索引：groups 为导航目录；globalResources 为不传递客户的全局资源；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
+ * 变量索引：customerResources 为客户下的四类业务入口；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
 import { t, h } from './i18n.js?v=20260920-i18n';
 
@@ -12,12 +12,7 @@ import './product-header.js';
 import { enableAssistant } from './assistant-widget.js?v=20260920-floating';
 import { request, escapeHtml as e } from './api.js';
 
-const groups = [
-  [t('销售业务'), [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')], ['products', t('产品')]]],
-  [t('沟通与资料'), [['actions', t('待确认动作')], ['conversations', t('会话')], ['messages', t('消息')], ['drafts', t('草稿')], ['files', t('附件')]]],
-  [t('设置与协作'), [['connections', t('外部连接')], ['contact-profiles', t('联系人资料')], ['aliases', t('归组规则')], ['teams', t('团队')], ['memberships', t('团队成员')], ['grants', t('客户授权')], ['audit', t('操作审计')]]],
-];
-const globalResources = new Set(['products', 'messages', 'connections', 'contact-profiles', 'teams', 'memberships', 'grants']);
+const customerResources = [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')]];
 let context = null, activePage = 'home', refreshSequence = 0;
 
 /** 功能：生成保留客户的业务路由。输入：resource、company、extra 查询项。输出：同源 URL。
@@ -29,12 +24,11 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：聊天通过独立浮窗使用，世界消息保留导航入口，次级资源分组收起，保留用户展开状态和当前资源。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：按产品目录展示工作台、Channels 与客户，四类销售业务从属于客户；当前资源保留选中状态。约束：客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
-  const open = new Set([...nav.querySelectorAll('details[open]')].map(node => node.dataset.group));
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('directory', t('客户'), businessHref('directory'))}${link('inbox', t('邮件与分析'), context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', t('世界消息'), '/world/')}${link('follow-ups', t('跟进'), businessHref('follow-ups'))}${link('notifications', t('通知'), businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('inbox', 'Channels', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。
@@ -58,15 +52,15 @@ export function mountWorkspace(active = 'home') {
 }
 
 /** 功能：同步客户上下文和跨模块操作。输入：company 为 id/name 对象或 null，active 为页面。
- * 输出：无。逻辑：生成当前客户的档案、邮件、报价订单跟进入口；清除入口明确返回全量目录。
+ * 输出：无。逻辑：业务页生成当前客户的操作入口；邮件与分析页不显示重复客户导航；清除入口明确返回全量目录。
  * 约束：不把客户保存到 localStorage，不通过导航修改业务数据。 */
 export function setWorkspaceContext(company, active = activePage) {
   context = company;
   activePage = active;
   renderWorkspaceNav();
   const panel = document.getElementById('workspace-context');
-  panel.hidden = !company;
-  if (!company) { panel.innerHTML = ''; return; }
+  panel.hidden = !company || active === 'inbox';
+  if (panel.hidden) { panel.innerHTML = ''; return; }
   panel.innerHTML = h`<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a><a href="/#company/${encodeURIComponent(company.id)}">邮件与分析</a><a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
 }
 

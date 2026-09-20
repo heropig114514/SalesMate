@@ -1,5 +1,5 @@
 /**
- * 职责：验证产品顶栏、统一导航、可收起悬浮聊天入口、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证产品顶栏、产品精简导航、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
  * 关联：product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
@@ -15,7 +15,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
- * 逻辑：产品分区切换、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户、客户/通用切换、停用清理与失败。
+ * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户、客户/通用切换、停用清理与失败。
  * 约束：所有业务请求均拦截；除原有客户分析入口的模拟 POST 外，禁止任何写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -70,7 +70,8 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).getByText('7', { exact: true }).waitFor();
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
-    assert.equal(navLabels.includes('聊天助手'), false);
+    assert.deepEqual(navLabels, ['工作台', 'Channels', '客户', '商机', '报价', '订单', '工单']);
+    assert.equal(await page.locator('#workspace-nav .workspace-customer-nav a').count(), 4);
     assert.equal(await page.locator('#assistant-launcher').isVisible(), true);
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     const productNav = page.getByRole('navigation', { name: '产品分区' });
@@ -98,14 +99,18 @@ async function main() {
     await page.locator('[data-assistant-prompt]').first().click();
     const draft = await page.locator('#assistant-input').inputValue();
     assert.match(draft, /商务邮件/);
-    await page.screenshot({ path: path.join(OUTPUT, 'assistant-floating-desktop.png'), fullPage: true });
-    await page.locator('#assistant-launcher').click();
+    const chatBox = await page.locator('#assistant-panel').boundingBox();
+    assert(chatBox.width > chatBox.height * 2.5, 'Desktop chat must form a horizontal strip');
+    assert(chatBox.height <= 460 && chatBox.y > 500, 'Chat must open near the bottom without occupying the full page');
+    assert(Math.abs(chatBox.y + chatBox.height - 984) < 2, 'Chat must remain anchored to the bottom');
+    await page.screenshot({ path: path.join(OUTPUT, 'assistant-bottom-desktop.png'), fullPage: true, animations: 'disabled' });
+    await page.locator('#assistant-close').click();
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     assert.equal(await page.locator('#assistant-launcher').getAttribute('aria-expanded'), 'false');
     await page.locator('#assistant-launcher').click();
     await page.locator('#assistant-input:not(:disabled)').waitFor();
     assert.equal(await page.locator('#assistant-input').inputValue(), draft);
-    await page.locator('#workspace-nav').getByRole('link', { name: '邮件与分析', exact: true }).click();
+    await page.locator('#workspace-nav').getByRole('link', { name: 'Channels', exact: true }).click();
     await page.waitForURL('**/#inbox');
     assert.equal(await page.locator('#assistant-input').inputValue(), draft);
     assert.equal(await page.locator('#assistant-panel').isVisible(), true);
@@ -118,11 +123,13 @@ async function main() {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Floating chat mobile overflow');
     assert.equal(await page.locator('#workspace').evaluate(node => node.inert), true);
     assert.equal(await page.locator('#assistant-close').isVisible(), true);
+    const mobileChat = await page.locator('#assistant-panel').boundingBox();
+    assert(mobileChat.y > 240 && mobileChat.height <= 520, 'Mobile chat must open from the bottom instead of covering the full screen');
     await page.locator('#assistant-input').fill('手机端未保存草稿');
     await page.locator('#assistant-close').focus();
     await page.keyboard.press('Shift+Tab');
     assert.equal(await page.locator('#assistant-panel').evaluate(node => node.contains(document.activeElement)), true);
-    await page.screenshot({ path: path.join(OUTPUT, 'assistant-floating-mobile.png'), fullPage: true });
+    await page.screenshot({ path: path.join(OUTPUT, 'assistant-bottom-mobile.png'), fullPage: true, animations: 'disabled' });
     await page.locator('#assistant-close').click();
     assert.equal(await page.locator('#workspace').evaluate(node => node.inert), false);
     await page.locator('#assistant-launcher').click();
@@ -136,7 +143,8 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('#workspace-nav').getByRole('link', { name: '工作台', exact: true }).click();
     await page.locator('.company-row').click();
-    await page.locator('#workspace-context strong').filter({ hasText: company.name }).waitFor();
+    await page.locator('.detail-identity h1').filter({ hasText: company.name }).waitFor();
+    assert.equal(await page.locator('#workspace-context').isVisible(), false);
     await page.locator('#assistant-toggle').click();
     await page.locator('#assistant-input:not(:disabled)').waitFor();
     assert.equal(await page.locator('#assistant-company').textContent(), company.name);
@@ -157,7 +165,7 @@ async function main() {
     await page.locator('#assistant-input:not(:disabled)').waitFor();
     assert.equal(await page.locator('#assistant-company').textContent(), '通用聊天');
     assert.equal(await page.locator('#assistant-panel').count(), 1);
-    await page.screenshot({ path: path.join(OUTPUT, 'assistant-floating-business.png'), fullPage: true });
+    await page.screenshot({ path: path.join(OUTPUT, 'assistant-bottom-business.png'), fullPage: true, animations: 'disabled' });
     await page.locator('#assistant-close').click();
     await page.locator('#workspace-context a').filter({ hasText: /^跟进$/ }).click();
     await page.locator('#page-title').filter({ hasText: '跟进' }).waitFor();
@@ -201,7 +209,7 @@ async function main() {
     assert.equal(await page.locator('#assistant-input').inputValue(), '');
     assert.deepEqual(errors, []);
     assert.deepEqual(writes, ['companies/company-a/analyze/']);
-    console.log('Workspace browser checks passed: floating general chat, minimize/reopen, preserved draft/URL/layout, legacy links, mobile focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
+    console.log('Workspace browser checks passed: bottom chat strip, simplified nested navigation, minimize/reopen, preserved draft/URL/layout, legacy links, mobile focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

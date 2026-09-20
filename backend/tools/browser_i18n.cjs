@@ -1,7 +1,7 @@
 /**
  * 职责：验证真实页面的英文界面、浏览器语言协商、偏好保存和内容隔离。
  * 实现：隔离静态服务器与 GET 夹具，使用真实 Chrome 加载三个入口；业务写入一律拒绝。
- * 关联：i18n.js/translations.js、页面语言控件、业务表单和跨页面悬浮聊天；后端语言由 test_i18n.py 独立验证。
+ * 关联：i18n.js/translations.js、页面语言控件、业务表单和精简导航和跨页面底部聊天条；后端语言由 test_i18n.py 独立验证。
  * 目录：main 执行浏览器验收；main.serve 提供受限静态资源。
  * 变量索引：FRONTEND 为页面根，OUTPUT 为忽略的截图目录；其他状态限于 main。
  */
@@ -88,6 +88,7 @@ async function main() {
     authenticated = true;
     await page.goto(base + '/?authenticated-preview#inbox');
     await page.locator('#company-list h3').waitFor();
+    assert.deepEqual(await page.locator('#workspace-nav > a').allTextContents(), ['Dashboard', 'Channels', 'Customers']);
     await page.locator('#interface-language').click({ trial: true });
     assert.equal(await page.locator('#company-list h3').textContent(), '客户');
     assert.ok((await page.locator('#company-list').textContent()).includes('保存草稿'), 'Stored summary is not translated even when it equals a UI key');

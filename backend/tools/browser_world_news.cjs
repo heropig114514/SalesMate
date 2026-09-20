@@ -1,5 +1,5 @@
 /**
- * 职责：验证世界消息的真实页面交互，并提供不连接业务系统的本地预览。
+ * 职责：验证精简导航下世界消息的真实页面交互，并提供不连接业务系统的本地预览。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：同源静态 HTTP 服务承载地图和详情；Playwright 使用本地浏览器，禁止外部网络。
  * 关联：world-news.js/world-map.js/world-feed.js；页面模块按实际 script 地址导入，避免资源版本变化时重复初始化；不依赖 Django 数据库，不调用真实 Agent。
@@ -60,7 +60,8 @@ async function main() {
     assert.equal(await page.locator('#news-total').textContent(), '8');
     assert.equal(await page.locator('#location-total').textContent(), '7');
     assert.ok(await page.locator('#world-map path').count() > 100);
-    assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '世界消息');
+    assert.equal(await page.locator('#workspace-nav a[aria-current=page]').count(), 0);
+    assert.equal(await page.locator('#workspace-nav a[href="/world/"]').count(), 0);
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-desktop.png'), fullPage: true });
 
     await page.locator('.news-pin[data-news-ids~="singapore-packaging"]').click();

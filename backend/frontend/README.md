@@ -8,13 +8,15 @@
 | --- | --- |
 | `assets/design-system.css` | 颜色、语义状态、字号基线、顶栏与交互焦点；所有入口最先加载 |
 | `assets/product-header.js` | 原生 `salesmate-header` Web Component，展示产品分区并跟随地址标记当前分区 |
-| `assets/workspace.js` / `workspace.css` | 左侧导航、真实待办统计、客户上下文、手机布局 |
+| `assets/workspace.js` / `workspace.css` | 精简左侧导航、真实待办统计、业务页客户上下文、手机布局 |
 | `assets/app.js` / `app.css` | 登录、客户邮件卡片、筛选、详情与邮箱管理 |
 | `assets/business.js` / `business.css` | 根据服务端字段契约渲染业务表格、编辑及确认表单 |
-| `assets/assistant-widget.js` / `assistant-widget.css` | 各工作空间页面共享的悬浮入口、可收起聊天面板与移动布局 |
+| `assets/assistant-widget.js` / `assistant-widget.css` | 各工作空间页面共享的悬浮入口、可收起底部聊天条与移动布局 |
 | `assets/world-news.css` / `world-map.js` | 全球洞察、本地地图及消息摘要；行业色来自共享 CSS 变量 |
 
 顶栏使用 light DOM，沿用全局设计变量和原生链接，不另建路由系统、不查询账户、不产生写入。首页不标记为“社媒情报”；聊天浮窗保持当前页面和产品分区。社媒情报入口对应现有邮件与客户分析；没有增加未接入的社交渠道。
+
+产品导航为 Dashboard、Channels（原 Emails and analysis）、Customers；商机、报价、订单、工单作为 Customers 的子入口。移除左侧 World news、通知、沟通与资料、设置与协作及旧销售业务分组；邮件客户详情不再显示上方客户导航条。顶部产品分区及业务页面保留原路由，既有数据与功能未删除。
 
 ## 修改约定
 
