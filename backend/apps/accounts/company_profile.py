@@ -9,6 +9,7 @@
 - CompanyProfileView.patch：按版本合并保存并记录非敏感审计日志。
 变量索引：
 - logger：仅记录账号标识、版本及修改字段名。
+- CompanyProfileSerializer.updated_at：只读保存时间，首次未建档时为 null。
 - CompanyProfileSerializer.Meta.model：资料模型。
 - CompanyProfileSerializer.Meta.fields：可见资料及版本字段。
 - CompanyProfileSerializer.Meta.read_only_fields：服务端维护的版本和时间。
@@ -19,6 +20,7 @@ import logging
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -30,9 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 # 功能：验证并输出公司资料。
-# 逻辑：复用严格字段拒绝规则和模型长度、邮箱与 URL 校验。
+# 逻辑：复用严格字段拒绝规则和模型长度、邮箱与 URL 校验；未建档时间显式允许 null。
 # 约束：不允许 owner、revision 或未知字段写入；公司名称必填，其他字段可清空。
 class CompanyProfileSerializer(StrictModelSerializer):
+    updated_at = serializers.DateTimeField(read_only=True, allow_null=True)
+
     # 功能：声明字段白名单。
     # 逻辑：排除 owner，服务端版本及时间只读。
     # 约束：不暴露邮箱授权、团队信息或客户资料。

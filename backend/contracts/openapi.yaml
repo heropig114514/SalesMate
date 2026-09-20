@@ -1,5 +1,5 @@
 # 职责：保存后端公开 OpenAPI 的版本化契约。
-# 实现：由 drf-spectacular 生成路径、参数及载荷结构；邮箱同步要求显式范围，Gmail 超过 50 封须批准。
+# 实现：由 drf-spectacular 生成；本公司资料采用版本化保存，Gmail 超过 50 封须批准。
 # 关联：views/serializers 定义接口；tests/contracts/test_schema.py 比较生成结构。
 # 目录：无函数或类；paths 为 HTTP 操作，components 为共用 Schema 和认证声明。
 # 变量索引：openapi 为规范版本，info 为服务信息；无运行时变量。
@@ -10,6 +10,50 @@ info:
   description: SalesMate Gmail understanding contract, company workspace and explicit
     rule placeholder.
 paths:
+  /api/v1/accounts/company-profile/:
+    get:
+      operationId: v1_accounts_company_profile_retrieve
+      tags:
+      - accounts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyProfile'
+          description: ''
+    patch:
+      operationId: v1_accounts_company_profile_partial_update
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      tags:
+      - accounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedCompanyProfile'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedCompanyProfile'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedCompanyProfile'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyProfile'
+          description: ''
   /api/v1/accounts/me/:
     get:
       operationId: v1_accounts_me_retrieve
@@ -2285,6 +2329,50 @@ components:
       - priority_context
       - quotes
       - tickets
+    CompanyProfile:
+      type: object
+      properties:
+        company_name:
+          type: string
+          maxLength: 240
+        industry:
+          type: string
+          maxLength: 100
+        website:
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 500
+          - type: string
+            maxLength: 0
+        email:
+          oneOf:
+          - type: string
+            format: email
+            maxLength: 254
+          - type: string
+            maxLength: 0
+        phone:
+          type: string
+          maxLength: 80
+        address:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+          maxLength: 5000
+        revision:
+          type: integer
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - company_name
+      - revision
+      - updated_at
     ConfidenceEnum:
       enum:
       - low
@@ -2968,6 +3056,46 @@ components:
       required:
       - mailbox_id
       - status
+    PatchedCompanyProfile:
+      type: object
+      properties:
+        company_name:
+          type: string
+          maxLength: 240
+        industry:
+          type: string
+          maxLength: 100
+        website:
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 500
+          - type: string
+            maxLength: 0
+        email:
+          oneOf:
+          - type: string
+            format: email
+            maxLength: 254
+          - type: string
+            maxLength: 0
+        phone:
+          type: string
+          maxLength: 80
+        address:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+          maxLength: 5000
+        revision:
+          type: integer
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
     PatchedReviewRequest:
       type: object
       properties:
