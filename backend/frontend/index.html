@@ -1,10 +1,9 @@
 <!DOCTYPE html>
 
 <!-- 职责：提供 SalesMate 同源工作台的语义化页面骨架与对话框。
-实现：app.js 切换登录/注册并建立会话；workspace.js 提供含聊天助手的一级导航，assistant-entry.js 直接打开通用聊天，assistant.js 管理聊天、来源与会话。
+实现：app.js 切换登录/注册并建立会话；workspace.js 提供共享导航，assistant-widget.js 挂载可收起的悬浮聊天，assistant.js 管理聊天、来源与会话。
 关联：product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
-目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，gmail-scope-dialog/gmail-scope-form 要求每次选择范围，默认最多 50 封，超量由警告确认，qq-dialog/qq-form 保留独立 QQ 连接表单，入口默认隐藏并由运行时能力开关控制，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-panel 提供聊天状态、引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
-目录补充：assistant-entry-page 为独立聊天入口，assistant-entry-host 挂载通用会话，assistant-entry-error 显示旧客户链接读取错误。
+目录：无函数或类；login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；gmail-dialog 管理员工 Gmail 授权，gmail-scope-dialog/gmail-scope-form 要求每次选择范围，默认最多 50 封，超量由警告确认，qq-dialog/qq-form 保留独立 QQ 连接表单，入口默认隐藏并由运行时能力开关控制，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-widget.js 动态挂载聊天面板，提供引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
 国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
 变量索引：无脚本变量；所有标识符为 DOM 定位用途；静态资源 v 查询参数标识本次界面版本，避免复用旧缓存。 -->
 <html lang="zh-CN">
@@ -12,10 +11,10 @@
 <meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/>
 <meta content="dark" name="color-scheme"/><title data-i18n="SalesMate · 客户工作台">SalesMate · 客户工作台</title>
 <link href="/static/design-system.css?v=20260920-i18n" rel="stylesheet"/>
-<link href="/static/app.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/app.css?v=20260920-floating" rel="stylesheet"/>
 <link href="/static/processing.css?v=20260920-i18n" rel="stylesheet"/>
+<link href="/static/assistant-widget.css?v=20260920-floating" rel="stylesheet"/>
 <link href="/static/workspace.css?v=20260920-i18n" rel="stylesheet"/>
-<link href="/static/assistant-entry.css?v=20260920-i18n" rel="stylesheet"/>
 <script type="module" src="/static/i18n.js?v=20260920-i18n"></script></head>
 <body><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
 <div hidden="" id="notice" role="alert"></div>
@@ -31,10 +30,6 @@
 <div aria-label="全局待办" class="workspace-status" data-i18n-aria-label="全局待办" id="workspace-status"><span data-i18n="正在读取待办…">正在读取待办…</span></div><p class="workspace-load-error" hidden="" id="workspace-load-error" role="alert"></p>
 <section aria-label="当前客户" class="workspace-context" data-i18n-aria-label="当前客户" hidden="" id="workspace-context"></section>
 <section class="workspace-overview" hidden="" id="workspace-overview"><p class="eyebrow">YOUR WORKSPACE</p><h1><span data-i18n="今天，从重要的下一步开始。">今天，从重要的下一步开始。</span></h1><p><span data-i18n="处理新线索，跟进客户，把需要确认的事情安排好。">处理新线索，跟进客户，把需要确认的事情安排好。</span></p><div class="workspace-tasks" id="workspace-tasks"></div></section>
-<section class="page" hidden="" id="assistant-entry-page">
-<p hidden="" id="assistant-entry-error" role="alert"></p>
-<div id="assistant-entry-host"></div>
-</section>
 <section class="page" id="list-page"><div class="page-heading"><div><p class="eyebrow">SOCIAL CHANNEL</p><h1><span data-i18n="邮件与客户洞察">邮件与客户洞察</span></h1><p class="muted"><span data-i18n="业务邮件按客户公司归组；演示样例单独标注来源。已保存的历史邮件可继续查看。">业务邮件按客户公司归组；演示样例单独标注来源。已保存的历史邮件可继续查看。</span></p></div><div class="actions"><button class="secondary" id="gmail-manage"><span data-i18n="连接 Gmail">连接 Gmail</span></button><button class="secondary" hidden="" id="qq-manage" type="button"><span data-i18n="连接 QQ 邮箱">连接 QQ 邮箱</span></button><button class="secondary" id="seed"><span data-i18n="导入演示样例">导入演示样例</span></button><button class="primary" id="compose"><span data-i18n="＋ 模拟新邮件">＋ 模拟新邮件</span></button></div></div>
 <div class="stats" id="stats"><div class="stat-card"><span data-i18n="正在读取工作空间…">正在读取工作空间…</span></div></div>
 <div class="inbox-panel"><div class="panel-heading"><div><h2><span id="customer-list-title"><span data-i18n="邮件与客户分析">邮件与客户分析</span></span> <span class="count-pill" id="result-count">0</span></h2><p class="muted" id="inbox-scope"><span data-i18n="只显示当前员工已同步的客户邮件，并按公司域名归组。">只显示当前员工已同步的客户邮件，并按公司域名归组。</span></p></div><button class="secondary" id="refresh"><span data-i18n="↻ 同步并刷新">↻ 同步并刷新</span></button></div>
@@ -63,25 +58,8 @@
 交期：希望下月交付
 决策流程：技术总监审批" required="" rows="9"></textarea></label><p class="fine"><span data-i18n="当前规则识别“公司、联系人、职位、行业、需求、数量、预算、交期、决策流程、顾虑”等带冒号的行。其他内容仍保存原文。">当前规则识别“公司、联系人、职位、行业、需求、数量、预算、交期、决策流程、顾虑”等带冒号的行。其他内容仍保存原文。</span></p><button class="primary" type="submit"><span data-i18n="保存邮件并分析 →">保存邮件并分析 →</span></button></form></dialog>
 <dialog id="register-dialog"><form id="register-form"><div class="dialog-heading"><h2><span data-i18n="建立客户档案">建立客户档案</span></h2><button aria-label="关闭" class="icon-btn close-dialog" data-i18n-aria-label="关闭" type="button">×</button></div><label><span data-i18n="公司名称">公司名称</span><input name="company_name" required=""/></label><label><span data-i18n="已确认行业">已确认行业</span><select name="industry_from_crm"><option data-i18n="尚未确认" value="unknown">尚未确认</option><option data-i18n="半导体检测" value="半导体检测">半导体检测</option><option data-i18n="精密量测" value="精密量测">精密量测</option><option data-i18n="光学检测" value="光学检测">光学检测</option><option data-i18n="工业检测" value="工业检测">工业检测</option></select></label><label><span data-i18n="员工人数">员工人数</span><input data-i18n-placeholder="未知可留空" min="0" name="employee_count" placeholder="未知可留空" type="number"/></label><label><span data-i18n="人数来源">人数来源</span><input data-i18n-placeholder="例如：客户确认；未知可留空" name="employee_count_source" placeholder="例如：客户确认；未知可留空"/></label><button class="primary" type="submit"><span data-i18n="保存客户档案">保存客户档案</span></button></form></dialog>
-<aside aria-labelledby="assistant-title" class="assistant-panel" hidden="" id="assistant-panel" role="complementary">
-<header class="assistant-header">
-<div class="assistant-heading"><span aria-hidden="true" class="assistant-mark">✧</span><div><h2 id="assistant-title"><span data-i18n="AI 助手">AI 助手</span></h2><span class="assistant-development"><span data-i18n="通用助手">通用助手</span></span></div></div>
-<button aria-label="收起 AI 助手" class="icon-btn" data-i18n-aria-label="收起 AI 助手" data-i18n-title="收起（Esc）" id="assistant-close" title="收起（Esc）" type="button">×</button>
-</header>
-<div class="assistant-context"><span aria-hidden="true" class="assistant-context-icon">▤</span><div><span id="assistant-context-label"><span data-i18n="当前会话">当前会话</span></span><strong id="assistant-company"><span data-i18n="通用聊天">通用聊天</span></strong></div><span class="assistant-context-tag"><span data-i18n="私有会话">私有会话</span></span></div>
-<div class="assistant-body"><div class="assistant-session-controls"><label class="sr-only" for="assistant-sessions"><span data-i18n="选择历史会话">选择历史会话</span></label><select id="assistant-sessions"><option data-i18n="尚未选择会话" value="">尚未选择会话</option></select><button class="text-btn" id="assistant-new" type="button"><span data-i18n="新建会话">新建会话</span></button></div><div aria-live="polite" id="assistant-history"></div>
-<section aria-label="助手介绍" class="assistant-welcome" data-i18n-aria-label="助手介绍"><span aria-hidden="true" class="assistant-welcome-mark">✧</span><p class="eyebrow">YOUR NEXT CONVERSATION</p><h3 id="assistant-welcome-title"><span data-i18n="有什么想聊的？">有什么想聊的？</span></h3><p id="assistant-welcome-copy"><span data-i18n="讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。">讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。</span></p></section>
-<div class="assistant-shortcut-heading"><span><span data-i18n="从一个问题开始">从一个问题开始</span></span><small><span data-i18n="点击填入草稿">点击填入草稿</span></small></div>
-<div class="assistant-shortcuts" id="assistant-shortcuts"></div>
-<div class="assistant-availability"><span aria-hidden="true">◷</span><p><span id="assistant-availability-copy"><span data-i18n="可协助讨论与起草。">可协助讨论与起草。</span></span><span data-i18n="发送邮件等操作请前往"> 发送邮件等操作请前往 </span><a href="/business/#actions"><span data-i18n="业务管理 → 外部动作">业务管理 → 外部动作</span></a><span data-i18n="审阅并确认。"> 审阅并确认。</span></p></div>
-</div>
-<form class="assistant-composer" id="assistant-form">
-<div class="assistant-composer-heading"><label for="assistant-input"><span data-i18n="消息草稿">消息草稿</span></label><button class="text-btn" id="assistant-clear" type="button"><span data-i18n="清空草稿">清空草稿</span></button></div>
-<div class="assistant-input-box"><textarea aria-describedby="assistant-unavailable assistant-draft-note" data-i18n-placeholder="输入问题，或告诉我你想完成什么…" id="assistant-input" placeholder="输入问题，或告诉我你想完成什么…" rows="3"></textarea><div class="assistant-send-row"><span id="assistant-unavailable"><span data-i18n="通用问答 · 写作 · 计划">通用问答 · 写作 · 计划</span></span><button class="secondary" id="assistant-save" type="button"><span data-i18n="保存草稿">保存草稿</span></button><button class="primary" id="assistant-submit" type="submit"><span data-i18n="发送问题">发送问题</span></button></div></div>
-<p class="assistant-draft-note" id="assistant-draft-note" role="status"><span data-i18n="保存后可跨刷新恢复；未保存修改仅在当前页面保留。">保存后可跨刷新恢复；未保存修改仅在当前页面保留。</span></p>
-</form>
-</aside>
+
 <dialog id="qq-scope-dialog"><div class="dialog-heading"><h2><span data-i18n="选择本次 QQ 同步范围">选择本次 QQ 同步范围</span></h2><button aria-label="关闭" class="icon-btn close-dialog" data-i18n-aria-label="关闭" type="button">×</button></div><p class="muted" id="qq-scope-address"></p><form id="qq-scope-form"><label><span data-i18n="最近 N 天">最近 N 天</span><input autocomplete="off" data-i18n-placeholder="留空则不限制天数" min="1" name="recent_days" placeholder="留空则不限制天数" step="1" type="number"/></label><label><span data-i18n="最多 N 封">最多 N 封</span><input autocomplete="off" data-i18n-placeholder="留空则不限制封数" min="1" name="max_messages" placeholder="留空则不限制封数" step="1" type="number"/></label><p class="fine"><span data-i18n="至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。">至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。</span></p><p class="failure" id="qq-scope-error" role="alert"></p><button class="primary wide-button" type="submit"><span data-i18n="按此范围同步">按此范围同步</span></button></form></dialog>
 <dialog id="gmail-scope-dialog"><div class="dialog-heading"><h2><span data-i18n="选择本次 Gmail 同步范围">选择本次 Gmail 同步范围</span></h2><button aria-label="关闭" class="icon-btn close-dialog" data-i18n-aria-label="关闭" type="button">×</button></div><p class="muted" id="gmail-scope-address"></p><form id="gmail-scope-form"><label><span data-i18n="最近 N 天">最近 N 天</span><input autocomplete="off" data-i18n-placeholder="留空则不限制天数" min="1" name="recent_days" placeholder="留空则不限制天数" step="1" type="number"/></label><label><span data-i18n="最近 N 封">最近 N 封</span><input autocomplete="off" data-i18n-placeholder="留空则最多 50 封" min="1" name="max_messages" placeholder="留空则最多 50 封" step="1" type="number"/></label><p class="fine"><span data-i18n="至少填写一项，两项都填时取交集。收件箱与已发送合计；先选最近 N 封，再跳过已同步邮件，不向更早邮件补足。失败邮件请从进度中明确重试。">至少填写一项，两项都填时取交集。收件箱与已发送合计；先选最近 N 封，再跳过已同步邮件，不向更早邮件补足。失败邮件请从进度中明确重试。</span></p><p class="fine"><span data-i18n="默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。">默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。</span></p><p class="failure" id="gmail-scope-error" role="alert"></p><button class="primary wide-button" type="submit"><span data-i18n="按此范围同步">按此范围同步</span></button></form></dialog>
-<script type="module" src="/static/app.js?v=20260920-gmail-scope"></script>
+<script type="module" src="/static/app.js?v=20260920-floating"></script>
 </body></html>

@@ -2,12 +2,12 @@
  * 职责：提供通用及客户专属聊天、来源引用、持久化会话和可编辑草稿。
  * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；模式/客户/会话切换取消旧观察，窄屏保持模态焦点。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：app.js 与 assistant-entry.js 传入可空客户上下文；sales-api.js 通信；index.html 提供历史、草稿及保存控件。
+ * 关联：app.js 与 assistant-widget.js 传入可空客户上下文；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.setContext、AssistantPanel.open、
- * AssistantPanel.mount、AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
+ * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
  * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
  * AssistantPanel.stopPolling、AssistantPanel.watch、AssistantPanel.poll、AssistantPanel.refreshAnswers、AssistantPanel.pausePolling、AssistantPanel.retryAnswer。
- * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，companyId 为当前公司或通用模式的 null；inline 表示页面内挂载；
+ * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，companyId 为当前公司或通用模式的 null；background 保存窄屏背景原有 inert 状态；
  * conversations 保存当前模式会话，conversation/draft 保存所选记录及版本，epoch 防止旧请求覆盖；
  * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
  * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
@@ -21,8 +21,8 @@ import { salesRequest, allRows } from "./sales-api.js";
  * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
  * 约束：不在浏览器推理或伪造回复，失败后只允许明确重试。 */
 export class AssistantPanel {
-  /** 功能：连接静态侧栏并绑定操作。输入：无参数，读取 DOM。
-   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，文本编辑暂存于本页。
+  /** 功能：连接共享浮窗并绑定操作。输入：无参数，读取 DOM。
+   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，通用聊天按钮显式切换模式，文本编辑暂存于本页。
    * 约束：不会因输入或页面初始化调用模型与外部服务。 */
   constructor() {
     this.nodes = Object.fromEntries(
@@ -31,6 +31,7 @@ export class AssistantPanel {
         "company",
         "input",
         "close",
+        "general",
         "clear",
         "form",
         "shortcuts",
@@ -45,7 +46,7 @@ export class AssistantPanel {
     this.drafts = new Map();
     this.companyId = null;
     this.isOpen = false;
-    this.inline = false;
+    this.background = new Map();
     this.opener = null;
     this.epoch = 0;
     this.conversations = [];
@@ -61,6 +62,7 @@ export class AssistantPanel {
     this.pollCount = 0;
     this.narrow = window.matchMedia("(max-width: 1000px)");
     this.nodes.close.addEventListener("click", () => this.close());
+    this.nodes.general.addEventListener("click", () => { this.setContext(null); this.open(); });
     this.nodes.input.addEventListener("input", () => {
       this.drafts.set(
         `${this.companyId}:${this.conversation?.id || "new"}`,
@@ -130,6 +132,7 @@ export class AssistantPanel {
     }
     this.nodes.company.textContent = company?.name || t("通用聊天");
     const customer = Boolean(company);
+    this.nodes.general.hidden = !customer;
     this.nodes.panel.querySelector('.assistant-development').textContent = customer ? t('客户问答') : t('通用助手');
     document.getElementById('assistant-context-label').textContent = customer ? t('当前客户') : t('当前会话');
     document.getElementById('assistant-welcome-title').textContent = customer ? t('围绕这位客户，一起想清楚下一步。') : t('有什么想聊的？');
@@ -152,62 +155,62 @@ export class AssistantPanel {
       ?.setAttribute("aria-expanded", String(this.isOpen));
   }
 
-  /** 功能：展开或收起当前聊天界面。输入：opener 可选触发元素，默认读取详情页按钮；隐式当前上下文。
-   * 输出：无。逻辑：展开后读取持久化会话及草稿，侧栏焦点移至关闭入口，页面模式保留自然焦点。
+  /** 功能：展开或收起当前聊天界面。输入：opener 可选触发元素，默认读取悬浮按钮；隐式当前上下文。
+   * 输出：无。逻辑：展开后读取持久化会话及草稿，焦点移至收起入口，展开状态同步到悬浮按钮。
    * 约束：读取不会新建会话或触发分析。 */
   open(opener = null) {
     if (this.isOpen) {
       this.close();
       return;
     }
-    this.opener = opener || document.getElementById("assistant-toggle");
+    this.opener = opener || document.getElementById("assistant-launcher");
     this.isOpen = true;
     this.nodes.panel.hidden = false;
-    document.body.classList.toggle("assistant-open", !this.inline);
+    document.body.classList.add("assistant-open");
     document
       .getElementById("assistant-toggle")
       ?.setAttribute("aria-expanded", "true");
     this.syncLayout();
-    if (!this.inline) this.nodes.close.focus();
+    this.nodes.close.focus();
     if (this.busy) this.needsLoad = true;
     else this.run(() => this.load(this.conversation?.id));
     console.info("assistant_panel_opened");
   }
 
-  /** 功能：在独立聊天页与客户侧栏之间移动面板。输入：host 可空挂载节点。
-   * 输出：无。逻辑：页面内模式保留导航交互并隐藏关闭按钮。
-   * 约束：调用前先关闭面板；不创建第二份会话状态。 */
-  mount(host = null) {
-    this.inline = Boolean(host);
-    (host || document.body).append(this.nodes.panel);
-    this.nodes.close.hidden = this.inline;
-    this.syncLayout();
-  }
-
   /** 功能：收起并恢复背景交互。输入：restoreFocus 默认 true。
-   * 输出：无。逻辑：保留本页文本，取消状态观察，关闭模态语义；返回仍存在的原触发元素或一级聊天入口。
+   * 输出：无。逻辑：保留本页文本，取消状态观察，关闭模态语义；返回仍存在的原触发元素或悬浮入口；背景恢复原 inert 状态。
    * 约束：路由切换使用 false，避免聚焦即将移除的元素。 */
   close(restoreFocus = true) {
     this.stopPolling();
     const wasOpen = this.isOpen;
     this.isOpen = false;
-    document.getElementById("workspace").inert = false;
+    this.syncLayout();
     document.body.classList.remove("assistant-open");
     this.nodes.panel.hidden = true;
     const trigger = document.getElementById("assistant-toggle");
     trigger?.setAttribute("aria-expanded", "false");
     if (wasOpen && restoreFocus) {
-      const target = this.opener?.isConnected ? this.opener : document.querySelector('#workspace-nav a[data-assistant-entry]');
+      const target = this.opener?.isConnected ? this.opener : document.getElementById("assistant-launcher");
       (target || trigger)?.focus();
     }
   }
 
   /** 功能：同步响应式模态语义。输入：isOpen/narrow 实例状态。
-   * 输出：无。逻辑：仅窄屏客户侧栏使背景 inert，桌面仍允许浏览客户详情。
+   * 输出：无。逻辑：窄屏将面板之外的页面节点设为 inert，收起时恢复原状态；桌面允许继续操作页面。
    * 约束：不改变业务上下文或数据。 */
   syncLayout() {
-    const modal = this.isOpen && !this.inline && this.narrow.matches;
-    document.getElementById("workspace").inert = modal;
+    const modal = this.isOpen && this.narrow.matches;
+    if (modal) {
+      for (const node of document.body.children) {
+        if (node === this.nodes.panel || ['SCRIPT', 'STYLE', 'LINK'].includes(node.tagName)) continue;
+        if (!this.background.has(node)) this.background.set(node, node.inert);
+        node.inert = true;
+      }
+    } else {
+      for (const [node, inert] of this.background) node.inert = inert;
+      this.background.clear();
+    }
+    document.getElementById('assistant-launcher')?.setAttribute('aria-expanded', String(this.isOpen));
     this.nodes.panel.setAttribute("role", modal ? "dialog" : "complementary");
     if (modal) this.nodes.panel.setAttribute("aria-modal", "true");
     else this.nodes.panel.removeAttribute("aria-modal");
@@ -219,7 +222,7 @@ export class AssistantPanel {
    * 输出：无。逻辑：仅浮动侧栏展开且无其他原生 dialog 时处理。
    * 约束：不会捕获文本 Enter，不阻止正常输入。 */
   handleKeydown(event) {
-    if (!this.isOpen || this.inline || document.querySelector("dialog[open]")) return;
+    if (!this.isOpen || document.querySelector("dialog[open]")) return;
     if (event.key === "Escape") {
       event.preventDefault();
       this.close();

@@ -1,8 +1,8 @@
 /**
  * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：加载真实页面和 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
- * 关联：assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
+ * 实现：加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
+ * 关联：assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
  * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
  * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录。
  */
@@ -14,7 +14,7 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：验证真实侧栏在模拟后端状态下的行为。
+/** 功能：验证真实悬浮面板在模拟后端状态下的行为。
  * 输入：环境指定的 Playwright 和浏览器路径。输出：检查结果及截图。
  * 逻辑：完成、失败重试、错误暂停、保留编辑和切换取消均通过 DOM 验证；在状态查询时同步完成回答以复现旧消息快照竞态。
  * 约束：不调用真实模型或邮箱，所有外部网络禁止，不能代替真实后端联调。 */
@@ -94,8 +94,9 @@ async function main() {
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.evaluate(async () => {
-      const { AssistantPanel } = await import('/static/assistant.js');
-      window.chatTest = new AssistantPanel();
+      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260920-floating');
+      enableAssistant();
+      window.chatTest = getAssistant();
       window.chatTest.setContext({ id: 'company-a', name: '合成测试客户' });
       window.chatTest.open();
     });

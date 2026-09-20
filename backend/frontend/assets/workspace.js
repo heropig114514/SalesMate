@@ -1,5 +1,5 @@
 /**
- * 职责：为邮件、业务及世界消息页面提供共享导航、客户上下文和真实待办概览。
+ * 职责：为邮件、业务及世界消息页面提供共享导航、客户上下文和真实待办概览及共享悬浮聊天入口。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
@@ -9,6 +9,7 @@
 import { t, h } from './i18n.js?v=20260920-i18n';
 
 import './product-header.js';
+import { enableAssistant } from './assistant-widget.js?v=20260920-floating';
 import { request, escapeHtml as e } from './api.js';
 
 const groups = [
@@ -28,18 +29,19 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：聊天助手与世界消息为主入口，聊天链接始终进入通用会话，次级资源分组收起，保留用户展开状态和当前资源。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：聊天通过独立浮窗使用，世界消息保留导航入口，次级资源分组收起，保留用户展开状态和当前资源。约束：客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const open = new Set([...nav.querySelectorAll('details[open]')].map(node => node.dataset.group));
-  const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''} ${key === 'assistant' ? 'data-assistant-entry' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('assistant', t('聊天助手'), '/#assistant')}${link('directory', t('客户'), businessHref('directory'))}${link('inbox', t('邮件与分析'), context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', t('世界消息'), '/world/')}${link('follow-ups', t('跟进'), businessHref('follow-ups'))}${link('notifications', t('通知'), businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
+  const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('directory', t('客户'), businessHref('directory'))}${link('inbox', t('邮件与分析'), context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('world', t('世界消息'), '/world/')}${link('follow-ups', t('跟进'), businessHref('follow-ups'))}${link('notifications', t('通知'), businessHref('notifications', null))}${groups.map(([title, items]) => `<details data-group="${e(title)}" ${open.has(title) || items.some(([key]) => key === activePage) ? 'open' : ''}><summary>${e(title)}</summary>${items.map(([key, name]) => link(key, name, businessHref(key, globalResources.has(key) ? null : context?.id))).join('')}</details>`).join('')}<a href="/#gmail">邮箱连接</a>`;
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。
- * 逻辑：替换共享导航；重复点击同一聊天、复核或连接路由仍打开界面。约束：登录后调用，不提交请求。 */
+ * 逻辑：替换共享导航；启用悬浮入口，重复点击同一复核或连接路由仍打开界面。约束：业务页面登录后调用，公开世界消息仅挂载入口；会话权限由 API 校验，不提交请求。 */
 export function mountWorkspace(active = 'home') {
   activePage = active;
+  enableAssistant();
   renderWorkspaceNav();
   for (const id of ['workspace-nav', 'workspace-status', 'workspace-tasks']) {
     const node = document.getElementById(id);
@@ -47,7 +49,7 @@ export function mountWorkspace(active = 'home') {
       const link = event.target.closest('a');
       if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       const url = new URL(link.href);
-      if (url.pathname === location.pathname && url.hash === location.hash && (['#reviews', '#gmail', '#processing'].includes(url.hash) || /^#assistant(?:\/|$)/.test(url.hash))) {
+      if (url.pathname === location.pathname && url.hash === location.hash && ['#reviews', '#gmail', '#processing'].includes(url.hash)) {
         event.preventDefault();
         window.dispatchEvent(new HashChangeEvent('hashchange'));
       }
