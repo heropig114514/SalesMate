@@ -71,6 +71,71 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
           description: ''
+  /api/v1/accounts/me/reset/:
+    post:
+      operationId: v1_accounts_me_reset_create
+      description: Clear the authenticated account's internal data and caches while
+        preserving the user record, password and login. Retry the same operation with
+        the same Idempotency-Key.
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - accounts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - completed
+                  generation:
+                    type: integer
+                  owner_id:
+                    type: integer
+                  reset_id:
+                    type: string
+                    format: uuid
+                required:
+                - status
+                - generation
+                - owner_id
+                - reset_id
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+          description: ''
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+          description: ''
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+          description: ''
   /api/v1/accounts/onboarding/:
     get:
       operationId: v1_accounts_onboarding_retrieve

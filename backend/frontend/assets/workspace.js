@@ -1,6 +1,6 @@
 /**
  * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
- * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
+ * 实现：URL 保存客户身份；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
@@ -11,6 +11,8 @@ import { t, h } from './i18n.js?v=20260920-requirements';
 import './product-header.js';
 import { enableAssistant } from './assistant-widget.js?v=20260920-workspace-chat';
 import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
+import { resetAccountData } from './account-reset.js';
+import { language } from './i18n.js?v=20260920-requirements';
 
 const customerResources = [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')]];
 let context = null, activePage = 'home', refreshSequence = 0;
@@ -24,13 +26,16 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：按产品目录展示工作台、全球洞察、Channels 与客户，四类销售业务从属于客户；底部设置不携带客户身份。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：展示工作台、全球洞察、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
   nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
-  if (profile) profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Setting', '/#gmail')}`;
+  if (profile) {
+    profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Setting', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button>`;
+    profile.querySelector('#reset-account-data').onclick = event => resetAccountData(event.currentTarget);
+  }
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。

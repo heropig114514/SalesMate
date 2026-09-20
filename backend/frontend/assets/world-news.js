@@ -1,12 +1,12 @@
 /** 职责：全球洞察的活动筛选、联动详情、行程导出、邀约草稿与行业资讯。
  * 实现：URL 保存筛选/选择，金额和客户均为显式演示；资讯沿用 NewsFeed 校验与详情路由；操作只导出本地日历或可编辑草稿。
- * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.css、world-map.js；world-events.js 活动与 world-demo.js 新闻为演示数据源。
+ * 关联：导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；world.html、world-news.css、world-map.js；world-events.js 活动与 world-demo.js 新闻为演示数据源。
  * 目录：text、eventName、countryName、money、daysUntil、visibleEvents、updateURL、selectEvent、renderEvents、renderDetail、renderNews、renderRoute、foldCalendarLine、calendarText、calendarText.escape、downloadItinerary、inviteDraft、receiveWorldNews、start。
  * 变量索引：$ 为 DOM 查询；feed 为资讯快照；state 为类型/时间/地区/选择/视角；map 为地图实例；today 为实际当天日期；categories 为资讯分类；DEMO_* 为导入数据。
  */
 import { language } from "./i18n.js?v=20260920-requirements";
 import { escapeHtml as e } from "./api.js?v=20260920-requirements";
-import { mountWorkspace } from "./workspace.js?v=20260920-workspace-chat";
+import { mountWorkspace } from "./workspace.js?v=20260920-account-reset";
 import { WorldMap } from "./world-map.js?v=20260920-requirements";
 import {
   DEMO_EVENTS,

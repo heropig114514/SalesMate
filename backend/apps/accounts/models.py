@@ -1,6 +1,6 @@
 """职责：声明项目用户身份及账号隔离的本公司资料模型。
 实现：继承 AbstractUser；CompanyProfile、SalesSetup 和 SetupDocument 按账号存储公司资料、引导信息及私有文件，不参与客户评分。
-关联：由 AUTH_USER_MODEL、Admin、身份和公司资料接口及 accounts 迁移共同引用。
+关联：由 AUTH_USER_MODEL、Admin、身份和公司资料接口及 accounts 迁移共同引用；导入 reset_models 注册保留身份的重置协调状态。
 
 目录：
 - User：声明项目自定义用户类型。
@@ -83,3 +83,6 @@ class SetupDocument(models.Model):
     name = models.CharField(max_length=240)
     content_type = models.CharField(max_length=80)
     content = models.BinaryField()
+
+
+from .reset_models import AccountReset  # noqa: E402,F401

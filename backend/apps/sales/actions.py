@@ -1,12 +1,13 @@
 """职责：保存可审查的外部动作、明确审批并执行 Google 或 QQ 工具。
-实现：允许工作空间草稿用于明确指定客户的待审阅动作；冻结动作和连接版本、原子领取；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
+实现：允许工作空间草稿用于明确指定客户的待审阅动作；冻结动作和连接版本、原子领取；执行单元持有账号共享锁以隔离重置；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
 关联：integrations 提供已授权凭证，后台命令执行已批准动作，报价实际发送后才同步 Agent。
 目录：
 - validate_parameters：形成包含完整内容的可确认动作快照。
 - create_action：幂等创建待确认动作。
 - decide_action：批准或取消尚未执行的动作。
 - execute_provider：执行一次真实 Google 请求或 QQ SMTP 提交。
-- run_action：领取并执行一个已批准动作，记录明确或未知结果。
+- run_action：在账号共享锁下执行外部动作。
+- _run_action：领取并执行一个已批准动作，记录明确或未知结果。
 - reconcile_action：把已中断动作标记为未知结果。
 - verify_action：只读核对未知外部动作的真实标识。
 变量索引：
@@ -28,6 +29,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from rest_framework.exceptions import NotFound, ValidationError
 
+from apps.accounts.reset_locks import account_lock
+from apps.accounts.reset_models import AccountReset
 from apps.crm.access import Conflict, InvalidState, check_version
 from apps.crm.models import Company
 from . import models
@@ -346,12 +349,31 @@ def execute_provider(action, credentials):
     raise InvalidState("未注册的外部工具。")
 
 
+# 功能：保护外部动作执行与账户清空的互斥边界。
+# 输入：`action_id` 为现有动作 UUID。
+# 输出：原动作状态；清理未完成抛 InvalidState，已清除队列记录返回 cancelled。
+# 逻辑：查找账号后持有共享锁，重读存在性，完整覆盖领取、外部调用及回报；过时队列键不终止共享 Worker。
+# 约束：不恢复已被清空的队列任务，不重试外部请求。
+def run_action(action_id):
+    owner_id = models.ToolAction.objects.filter(pk=action_id).values_list("owner_id", flat=True).first()
+    if owner_id is None:
+        logger.info("external_action_cancelled action_id=%s reason=record_removed", action_id)
+        return "cancelled"
+    with account_lock(owner_id):
+        if not models.ToolAction.objects.filter(pk=action_id).exists():
+            logger.info("external_action_cancelled action_id=%s reason=record_removed", action_id)
+            return "cancelled"
+        if AccountReset.objects.filter(owner_id=owner_id, cleaning=True).exists():
+            raise InvalidState("账户清理未完成，请先继续清空操作。")
+        return _run_action(action_id)
+
+
 # 功能：领取并执行一个已批准动作。
 # 输入：`action_id` 为动作 UUID。
 # 输出：动作最终状态；非 approved 直接返回当前状态。
 # 逻辑：领取后核对 QQ 能力及连接版本；禁用时在网络前记为 failed，SMTP 结果不明为 uncertain。
 # 约束：SMTP 接受不代表最终送达；不自动重试；进程中断留下 running，需人工核对。
-def run_action(action_id):
+def _run_action(action_id):
     with transaction.atomic():
         owner_id = models.ToolAction.objects.values_list("owner_id", flat=True).get(
             pk=action_id

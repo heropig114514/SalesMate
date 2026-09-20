@@ -1,5 +1,5 @@
 """职责：共享 CRM 调度的员工选择与单次工作凭证生命周期。
-实现：按员工主键轮转待办，禁用时排除 QQ 同步；工作单元使用并回收临时凭证。
+实现：按员工主键轮转待办，禁用时排除 QQ 同步；工作单元持有账号共享锁，使用并回收临时凭证。
 关联：crm_worker 选择员工，worker 使用 scoped_backend；HTTP 仍由 AgentAuthentication 校验归属。
 目录：
 - next_owner：选择某通道下一位有可执行工作的有效员工。
@@ -18,6 +18,8 @@ from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from agent.clients.backend_api import django_backend_from_environment
+from apps.accounts.reset_locks import account_lock, ResetBusy
+from apps.accounts.reset_models import AccountReset
 from .jobs import claimable_jobs
 from .models import AgentCredential, ExtractionRepair, Job, MailboxSyncRun
 
@@ -58,25 +60,28 @@ def next_owner(kind, after=0):
 # 功能：为受信服务器工作单元提供单员工 HTTP 身份。
 # 输入：`owner` 为调度器从数据库选出的员工；`mailbox_id` 为同步批次的邮箱或 None。
 # 输出：上下文中产出独立客户端，正常/异常退出均关闭客户端并删除凭证；停用员工抛 DoesNotExist。
-# 逻辑：每个单元随机生成令牌，只保存 SHA-256；客户端身份显式传入，不修改全局环境。
+# 逻辑：账号共享锁覆盖身份创建到回收；清理未完成时拒绝执行；随机令牌只保存 SHA-256，不修改全局环境。
 # 约束：只有服务器内部调用；HTTP 调用方不能申请任意员工身份。进程强杀可能留下不可恢复
 # 的摘要记录，但原始令牌仅存进程内存；不删除其他 Worker 或原有 CLI 的凭证。
 @contextmanager
 def scoped_backend(owner, mailbox_id=None):
-    get_user_model().objects.get(pk=owner.pk, is_active=True)
-    token = secrets.token_urlsafe(32)
-    credential = AgentCredential.objects.create(
-        owner=owner, digest=hashlib.sha256(token.encode()).hexdigest(), name="crm-work-unit"
-    )
-    logger.info("crm_identity_created owner_id=%s credential_id=%s", owner.pk, credential.pk)
-    backend = None
-    try:
-        backend = django_backend_from_environment(mailbox_id=mailbox_id, service_token=token)
-        yield backend
-    finally:
+    with account_lock(owner.pk):
+        if AccountReset.objects.filter(owner=owner, cleaning=True).exists():
+            raise ResetBusy("账户清理未完成，请先继续清空操作。")
+        get_user_model().objects.get(pk=owner.pk, is_active=True)
+        token = secrets.token_urlsafe(32)
+        credential = AgentCredential.objects.create(
+            owner=owner, digest=hashlib.sha256(token.encode()).hexdigest(), name="crm-work-unit"
+        )
+        logger.info("crm_identity_created owner_id=%s credential_id=%s", owner.pk, credential.pk)
+        backend = None
         try:
-            if backend is not None:
-                backend.close()
+            backend = django_backend_from_environment(mailbox_id=mailbox_id, service_token=token)
+            yield backend
         finally:
-            credential.delete()
-            logger.info("crm_identity_revoked owner_id=%s", owner.pk)
+            try:
+                if backend is not None:
+                    backend.close()
+            finally:
+                credential.delete()
+                logger.info("crm_identity_revoked owner_id=%s", owner.pk)

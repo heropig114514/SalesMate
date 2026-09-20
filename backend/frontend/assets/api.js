@@ -1,12 +1,13 @@
 /**
  * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
- * 实现：fetch 发送 JSON 或 multipart 与当前语言头，写请求附 CSRF；支持调用方取消只读观察，保留失败状态并展开表单错误。
+ * 实现：fetch 禁止业务缓存，发送 JSON 或 multipart 与当前语言头，写请求附 CSRF 和账号数据版本；响应校验版本，支持幂等键及取消只读观察。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：共享语言/API 资源随需求界面统一版本；app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
  * 目录：csrfToken（读取 cookie）；errorMessage（提取错误文本）；request（执行请求）；escapeHtml（转义文本）。
  * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
  */
 import { t, language } from './i18n.js?v=20260920-requirements';
+import { accountVersion, observeAccountVersion } from './account-cache.js';
 
 const BASE = '/api/v1/';
 
@@ -26,21 +27,24 @@ function errorMessage(detail) {
   return '';
 }
 
-/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data（JSON 或 FormData）、version、signal。
- * 输出：成功 JSON 或 null；失败抛 Error。逻辑：附当前界面 Accept-Language；保持 HTTP 失败语义，展开字段错误，request_id 仅保留为诊断元数据。
+/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data（JSON 或 FormData）、version、signal、idempotencyKey。
+ * 输出：成功 JSON 或 null；失败抛 Error。逻辑：附语言、账号数据版本和可选幂等键，禁用 HTTP 缓存并拒绝旧版本响应；保持 HTTP 失败语义，展开字段错误。
  * 约束：取消保留 AbortError 交给观察者处理；无重试、无降级，不将秘密放入 URL。 */
-export async function request(path, { method = 'GET', data, version, signal } = {}) {
+export async function request(path, { method = 'GET', data, version, signal, idempotencyKey } = {}) {
   const headers = { 'Accept': 'application/json', 'Accept-Language': language };
   if (data !== undefined && !(data instanceof FormData)) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') headers['X-CSRFToken'] = csrfToken();
   if (version !== undefined) headers['If-Match'] = String(version);
+  if (accountVersion() !== null) headers['X-Account-Data-Version'] = accountVersion();
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   let response;
   try {
-    response = await fetch(BASE + path, { method, headers, signal, credentials: 'same-origin', body: data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data) });
+    response = await fetch(BASE + path, { method, headers, signal, cache: 'no-store', credentials: 'same-origin', body: data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data) });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
     throw new Error(t('无法连接后端，请检查服务是否启动。'));
   }
+  if (path !== 'accounts/me/reset/') await observeAccountVersion(response);
   if (response.status === 204) return null;
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await response.json() : null;

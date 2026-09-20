@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交。
+实现：新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交；到期提醒在账号共享锁下重读。
 国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
@@ -19,6 +19,7 @@
 - IMMUTABLE_RELATIONS：已有实体禁止变更的归属关系。
 """
 
+from contextlib import ExitStack
 import logging
 import re
 
@@ -29,6 +30,8 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 
+from apps.accounts.reset_locks import account_lock
+from apps.accounts.reset_models import AccountReset
 from apps.crm.access import Conflict, InvalidState, check_version
 from apps.crm.jobs import enqueue
 from apps.crm.models import Company
@@ -570,32 +573,38 @@ def sync_company(company):
 # 功能：为到期未完成跟进创建去重提醒。
 # 输入：无参数；读取当前时钟和数据库中的 open 跟进。
 # 输出：新增提醒条数。
-# 逻辑：仅锁跟进表以避开可空归档设置关联；排除归档客户，以负责人、跟进 ID、revision 去重。
-# 约束：只写应用内通知；不发送邮件、不变更任务状态。
-@transaction.atomic
+# 逻辑：先取得所有者与收件人的账号共享锁，再事务重读跟进；清理未完成或关系变化时本轮不生成提醒。
+# 约束：只写应用内通知，不发送邮件；先取得账号锁再取得行锁，避免与重置删除形成等待环。
 def notify_due():
     created = 0
-    for task in (
-        models.FollowUp.objects.select_for_update(of=("self",))
-        .filter(status="open", archived=False, due_at__lte=timezone.now())
-        .exclude(company__business_settings__archived=True)
-    ):
-        recipient = task.assigned_to or task.owner
-        try:
-            company_access(recipient, task.company)
-        except (PermissionDenied, NotFound):
-            logger.debug(
-                "follow_up_reminder_skipped task_id=%s reason=recipient_access_revoked",
-                task.pk,
-            )
-            continue
-        _, fresh = models.Notification.objects.get_or_create(
-            owner=recipient,
-            follow_up=task,
-            source_revision=task.revision,
-            defaults={"title": task.title},
-        )
-        created += int(fresh)
+    candidates = list(models.FollowUp.objects.filter(
+        status="open", archived=False, due_at__lte=timezone.now()
+    ).exclude(company__business_settings__archived=True).values_list("pk", "owner_id", "assigned_to_id"))
+    for task_id, owner_id, assigned_id in candidates:
+        owners = sorted({owner_id, assigned_id or owner_id})
+        with ExitStack() as stack:
+            for account_id in owners:
+                stack.enter_context(account_lock(account_id))
+            if AccountReset.objects.filter(owner_id__in=owners, cleaning=True).exists():
+                continue
+            with transaction.atomic():
+                task = models.FollowUp.objects.select_for_update(of=("self",)).filter(
+                    pk=task_id, status="open", archived=False, due_at__lte=timezone.now(),
+                    owner_id=owner_id, assigned_to_id=assigned_id,
+                ).exclude(company__business_settings__archived=True).first()
+                if task is None:
+                    continue
+                recipient = task.assigned_to or task.owner
+                try:
+                    company_access(recipient, task.company)
+                except (PermissionDenied, NotFound):
+                    logger.debug("follow_up_reminder_skipped task_id=%s reason=recipient_access_revoked", task.pk)
+                    continue
+                _, fresh = models.Notification.objects.get_or_create(
+                    owner=recipient, follow_up=task, source_revision=task.revision,
+                    defaults={"title": task.title},
+                )
+                created += int(fresh)
     if created:
         logger.info("follow_up_reminders_created count=%s", created)
     return created

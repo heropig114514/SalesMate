@@ -1,5 +1,5 @@
 # 职责：主分支提交直接触发 Lightsail 部署，隔离测试独立报告诊断结果。
-# 实现：verify 与 deploy 无依赖并行运行；诊断失败不阻断或取消部署，PR 只运行诊断；main 推送或手动运行才部署。
+# 实现：verify 与 deploy 无依赖并行运行；含账号清空浏览器诊断，失败不阻断或取消部署，PR 只运行诊断；main 推送或手动运行才部署。
 # 关联：服务器受限 SSH 入口与 root 部署脚本；只读 Git deploy key 留在服务器。
 # 目录：verify 执行非阻断诊断，deploy 独立触发并等待服务器发布。
 # 变量索引：DATABASE_URL/DJANGO_SECRET_KEY 为 CI 合成配置；RELEASE_SHA 为本次 main 提交；
@@ -122,6 +122,7 @@ jobs:
           node backend/tools/browser_chat.cjs
           node backend/tools/browser_processing.cjs
           node backend/tools/browser_workspace.cjs
+          node backend/tools/browser_account_reset.cjs
           node backend/tools/browser_world_news.cjs
           node backend/tools/browser_i18n.cjs
           python backend/manage.py test tools.chat_browser_e2e --noinput

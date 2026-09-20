@@ -4,6 +4,8 @@
 
 ## 身份
 
+账户内部数据清空使用 `POST /api/v1/accounts/me/reset/`，保留登录身份和密码；幂等键、缓存、多标签页及后台互斥约定见[账号清空接口](account-reset.md)。
+
 浏览器先用 `GET /api/v1/session/` 获取 CSRF Cookie，再用 `POST /api/v1/accounts/register/` 提交 `{"username":"...","password":"..."}`。注册仅接受这两个字段，不要求邮箱、手机号或验证码；用户名遵守现有模型规则，密码长度为 8–128 字符，不限制纯数字、常见值或用户名相似性；仍采用 Django 密码哈希。成功返回 201、`authenticated`、`username` 和轮换后的 `csrf_token`，同时建立普通用户 Session。输入错误或重名返回 400，缺少有效 CSRF 返回 403，已登录时再次注册返回 409。密码以哈希存储，不回传。
 
 新账号拥有独立的空工作空间及未完成的引导状态，不复制 demo 数据，也不自动创建 Gmail 授权或 Agent 服务令牌。退出后继续使用 `POST /api/v1/session/` 登录；`DELETE /api/v1/session/` 注销。注册页面中的确认密码仅用于浏览器一致性检查，不作为后端字段发送。

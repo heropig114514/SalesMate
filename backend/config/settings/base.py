@@ -14,7 +14,7 @@
 - ALLOWED_HOSTS：允许的 Host 列表，从 DJANGO_ALLOWED_HOSTS 读取。
 - CSRF_TRUSTED_ORIGINS：允许的 CSRF 来源列表。
 - INSTALLED_APPS：框架、API、账号、crm 邮件、sales 业务、vectors 向量、chat 聊天与 agent_tools 业务工具应用的注册顺序。
-- MIDDLEWARE：请求处理链，日志中间件位于最外层。
+- MIDDLEWARE：请求处理链，日志位于最外层；账号锁覆盖 SessionMiddleware 的会话保存阶段。
 - ROOT_URLCONF：根路由模块路径。
 - WSGI_APPLICATION：WSGI 应用导入路径。
 - ASGI_APPLICATION：ASGI 应用导入路径。
@@ -88,6 +88,7 @@ MIDDLEWARE = [
     # 最外层先生成 request_id，使后续视图、错误响应和完成日志能够关联。
     "common.middleware.RequestLoggingMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "apps.accounts.reset_middleware.AccountDataMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
