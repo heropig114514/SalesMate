@@ -1,7 +1,7 @@
 /**
  * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
+ * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
  * 关联：product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
@@ -14,7 +14,7 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
+/** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图；手机焦点断言等待背景 inert 就绪。
  * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置持久化、冲突保留、重读确认、双语、未知客户、客户/通用切换与失败。
  * 约束：所有业务请求均拦截；仅允许原有客户分析模拟 POST 及显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
@@ -137,6 +137,8 @@ async function main() {
     assert.equal(new URL(page.url()).hash, '#home');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Floating chat mobile overflow');
+    // 视口变更和媒体查询 change 回调分开调度，先等待实际状态，不依赖机器执行速度。
+    await page.waitForFunction(() => document.getElementById('workspace').inert);
     assert.equal(await page.locator('#workspace').evaluate(node => node.inert), true);
     assert.equal(await page.locator('#assistant-close').isVisible(), true);
     const mobileChat = await page.locator('#assistant-panel').boundingBox();
