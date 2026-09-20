@@ -1,6 +1,6 @@
 /**
- * 职责：提供工作空间聊天、来源引用、持久化会话和可编辑草稿。
- * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
+ * 职责：提供工作空间聊天、Markdown 回答、来源引用、持久化会话和可编辑草稿。
+ * 实现：assistant-markdown.js 安全渲染助手正文；显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.initializeView、AssistantPanel.open、
@@ -16,6 +16,7 @@ import { t, h, locale } from './i18n.js?v=20260921-product';
 
 import { escapeHtml as esc } from "./api.js?v=20260921-product";
 import { salesRequest, allRows } from "./sales-api.js?v=20260921-product";
+import { renderAssistantMarkdown } from './assistant-markdown.js?v=20260921-markdown';
 
 /** 功能：管理工作空间助手的会话和草稿交互。
  * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
@@ -352,8 +353,8 @@ export class AssistantPanel {
   }
 
   /** 功能：显示真实持久化的历史消息。输入：messages 数组。
-   * 输出：无。逻辑：消息关联本次请求状态；证据默认收起，画像来源指向可读客户页，其他来源按需展开；最后一次失败可明确重试。
-   * 约束：全部文本转义，引用不执行 HTML 或不可信 URL；不伪造回复或执行结果。 */
+   * 输出：无。逻辑：仅助手正文经 assistant-markdown.js 渲染；用户正文和来源仍为转义纯文本；消息关联状态、引用及失败重试。
+   * 约束：Markdown 禁用原始 HTML 和危险链接；证据默认收起且不执行 HTML；不改变持久化原文或生成流程。 */
   draw(messages) {
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
     const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
@@ -370,7 +371,10 @@ export class AssistantPanel {
                 : `<details class="assistant-source"><summary>[${esc(citation.position)}] ${esc(citation.title_or_label)}</summary><div class="assistant-source-content">${esc(citation.content)}</div></details>`).join("")}</div></details>`
               : "";
             const state = question ? `<p class="fine">${labels[question.status] || t("状态未知")}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? h`<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
-            return `<article class="assistant-message"><small>${message.role === "user" ? t("我") : t("助手")} · ${esc(new Date(message.created_at).toLocaleString(locale))}</small><p>${esc(message.content)}</p>${citations}${state}</article>`;
+            const body = message.role === 'assistant'
+              ? `<div class="assistant-markdown">${renderAssistantMarkdown(message.content)}</div>`
+              : `<p>${esc(message.content)}</p>`;
+            return `<article class="assistant-message"><small>${message.role === "user" ? t("我") : t("助手")} · ${esc(new Date(message.created_at).toLocaleString(locale))}</small>${body}${citations}${state}</article>`;
           })
           .join("")
       : h('<p class="fine">尚无消息。可以先保存草稿，或直接发送问题。</p>');

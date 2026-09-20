@@ -12,6 +12,7 @@
 | `assets/app.js` / `app.css` | 登录、客户邮件卡片、筛选、详情与邮箱管理 |
 | `assets/business.js` / `business.css` | 根据服务端字段契约渲染业务表格、编辑及确认表单 |
 | `assets/assistant-widget.js` / `assistant-widget.css` | 各工作空间页面共享的悬浮入口、可收起底部聊天条与移动布局 |
+| `assets/assistant-markdown.js` / `markdown-it.vendor.js` | 基于固定版本 markdown-it 的安全助手正文渲染，独立 ESM 发行包同源加载 |
 | `assets/world-news.js/css` / `world-map.js` / `world-events.js` | 全球洞察的活动列表、金额地图、联动详情与行业资讯 |
 | `assets/onboarding.js/css` / `company-settings.js` | 个人、公司、产品、方案四步引导及设置；资料通过账号接口持久化 |
 
@@ -62,3 +63,11 @@ node backend/tools/browser_onboarding.cjs
 逐项对照与实现边界见 [产品需求验收表](../docs/product-ui-0919.md)。Channel 新增会话气泡、当前客户回复草稿和 Evidence 来源预览；Dashboard/Channels/Customers 去除重复状态栏及指定统计卡。现有全局聊天、评分算法和外部发送确认保持原契约。
 
 新增验收：`node backend/tools/browser_product0919.cjs`（模拟 API、桌面/手机/英文、来源转义、缺失引用及只读交互）。
+
+## 聊天 Markdown
+
+助手的历史与新回答使用 markdown-it 15.0.2 渲染标题、粗体/斜体、删除线、嵌套列表、引用、链接、行内/围栏代码和表格。普通换行保留；长代码和宽表格独立横向滚动，样式沿用主题变量。用户输入与来源证据继续按纯文本展示，API 和存储原文不变。
+
+原始 HTML 不执行；链接仅接受 HTTP、HTTPS、mailto 或解析为这些协议的相对地址，并隔离新标签页。图片显示为描述链接，避免自动请求模型提供的远程资源。当前不提供公式、Mermaid、代码语法高亮或 token 流式修复；未闭合围栏按 CommonMark 作为代码展示。项目仍使用现有完成结果轮询，未调整算法、后端或失败重试语义。
+
+选型：Streamdown 面向 React 的 LLM 流式渲染；当前无 React 和构建链，因此使用 markdown-it 官方独立浏览器 ESM。来源、版本和完整性记录见 [第三方资源](assets/vendor/THIRD_PARTY.md)。新增验收包含在 `node backend/tools/browser_chat.cjs`：格式语义、安全链接/HTML/图片、未闭合围栏、桌面/手机溢出、纯文本用户消息与来源，以及原有聊天生命周期。

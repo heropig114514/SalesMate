@@ -1,7 +1,7 @@
 /**
  * 职责：验收账号清空按钮、错误恢复、缓存隔离与多标签页刷新。
  * 实现：真实浏览器加载工作空间导航和重置模块，模拟 HTTP 状态；缓存使用真实浏览器存储。
- * 关联：0919 界面及共享语言资源统一缓存版本；workspace.js、account-reset.js、account-cache.js、api.js；后端事务另由集成测试验证。
+ * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；workspace.js、account-reset.js、account-cache.js、api.js；后端事务另由集成测试验证。
  * 目录：main 执行忙碌、部分失败、刷新恢复及成功广播场景。
  * 变量索引：FRONTEND 为实际静态模块目录；其余导入无业务状态。
  */
@@ -28,7 +28,7 @@ async function main() {
     }
     res.setHeader('Content-Type', 'text/html');
     res.end(`<!doctype html><html><body><nav id="workspace-nav"></nav><nav id="workspace-profile"></nav><div id="workspace-context" hidden></div><script type="module">
-      import { mountWorkspace } from '/static/workspace.js?v=20260921-product';
+      import { mountWorkspace } from '/static/workspace.js?v=20260921-markdown';
       import { request } from '/static/api.js?v=20260921-product';
       await request('accounts/me/'); mountWorkspace(); window.ready = true;
     </script></body></html>`);

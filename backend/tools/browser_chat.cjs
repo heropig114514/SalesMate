@@ -1,10 +1,10 @@
 /**
- * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
+ * 职责：验证助手提问、快速完成竞态、轮询、引用折叠、重试及 Markdown 安全排版。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：仅使用无公司绑定的工作空间会话；加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
- * 关联：0919 界面及共享语言资源统一缓存版本；assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
- * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
- * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录。
+ * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
+ * 目录：verifyMarkdown 验证格式与边界；main 执行聊天生命周期；内联回调处理测试路由和断言。
+ * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录；MARKDOWN 为含格式、宽内容与注入输入的模拟回答。
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,6 +13,70 @@ const assert = require('node:assert/strict');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
+const MARKDOWN = [
+  '# 客户跟进建议', '', '**优先联系**，*确认数量*，~~旧方案~~；客户需要设备。[1]',
+  '保持普通换行。', '', '## 行动清单', '',
+  '1. 确认规格', '   - 核对尺寸', '   - 记录预算', '2. 准备报价', '',
+  '> 先确认客户实际需要。', '',
+  '| 产品 | 数量 | 交期 | 备注 |', '| :--- | ---: | :---: | --- |',
+  '| 设备 A | 100 | 30 天 | 待确认 |', '',
+  '使用 `const ok = true;`，参考 [产品资料](https://example.com/specs?q=1&view=full)、https://example.com/help 和 [邮件](mailto:sales@example.com)。', '',
+  '```javascript', 'const sample = "<img src=/markdown-probe onerror=alert(1)>";', `const long = "${'abcdef'.repeat(120)}";`, '```', '',
+  '<script>window.markdownInjected = true</script>', '<img src=/markdown-probe onerror="window.markdownInjected = true">', '',
+  '[危险](javascript:alert(1)) [编码危险](jav&#x61;script:alert(1)) [文件](file:///etc/passwd)',
+  '[数据](data:text/html;base64,PHNjcmlwdD4=) [VB](vbscript:msgbox(1))', '',
+  '![远程图片](https://example.com/markdown-probe "图片说明")', '',
+  '```html" onmouseover="alert(1)', '<svg onload=alert(1)>', '```', '',
+  '```text', '未闭合围栏仍保留文本：<script>不可执行</script>',
+].join('\n');
+
+/** 功能：验证真实助手 DOM 的 Markdown 语义、安全边界及布局。输入：page 为当前浏览器页。
+ * 输出：断言结果和桌面/手机截图。逻辑：模型回答夹带 HTML、危险协议和图片；用户消息使用 Markdown 字面量。
+ * 约束：通过真实渲染组件验证，不调用模型；宽内容只能在代码/表格内部滚动，不验证外站可用性。 */
+async function verifyMarkdown(page) {
+  const rendered = page.locator('#assistant-history .assistant-markdown');
+  assert.equal(await rendered.count(), 1);
+  assert.equal(await rendered.locator('h1').textContent(), '客户跟进建议');
+  assert.equal(await rendered.locator('h2').textContent(), '行动清单');
+  assert.equal(await rendered.locator('strong').textContent(), '优先联系');
+  assert.equal(await rendered.locator('em').textContent(), '确认数量');
+  assert.equal(await rendered.locator('s').textContent(), '旧方案');
+  assert.equal(await rendered.locator('ol > li').count(), 2);
+  assert.equal(await rendered.locator('ol ul > li').count(), 2);
+  assert.equal(await rendered.locator('blockquote').count(), 1);
+  assert.equal(await rendered.locator('table tbody tr').count(), 1);
+  assert.equal(await rendered.locator('pre code').count(), 3);
+  assert.match(await rendered.locator('pre code').last().textContent(), /未闭合围栏/);
+  assert.ok(await rendered.locator('br').count() > 0);
+  assert.match(await rendered.textContent(), /<script>window.markdownInjected/);
+  assert.equal(await page.locator('#assistant-history script, #assistant-history img, #assistant-history svg').count(), 0);
+  assert.equal(await page.evaluate(() => window.markdownInjected), undefined);
+  const links = await rendered.locator('a').evaluateAll(nodes => nodes.map(node => ({ href: node.href, target: node.target, rel: node.rel })));
+  assert.equal(links.length, 4);
+  assert.ok(links.every(link => /^(https?:|mailto:)/.test(link.href) && link.target === '_blank' && link.rel.includes('noopener') && link.rel.includes('noreferrer')));
+  assert.equal(await rendered.locator('[onmouseover], [onerror], [onload]').count(), 0);
+  assert.equal(await page.locator('#assistant-history .assistant-message').first().locator('strong, h1').count(), 0);
+  assert.match(await page.locator('#assistant-history .assistant-message').first().textContent(), /\*\*原样问题\*\*/);
+  fs.mkdirSync(OUTPUT, { recursive: true });
+  for (const [name, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
+    await page.setViewportSize({ width, height });
+    await rendered.locator('h1').evaluate(node => node.scrollIntoView({ block: 'start' }));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    assert.equal(await page.locator('.assistant-body').evaluate(node => node.scrollWidth > node.clientWidth + 1), false);
+    assert.equal(await rendered.locator('pre').first().evaluate(node => node.scrollWidth > node.clientWidth && getComputedStyle(node).overflowX === 'auto'), true);
+    assert.equal(await rendered.locator('p').first().evaluate(node => getComputedStyle(node).whiteSpace), 'normal');
+    await page.screenshot({ path: path.join(OUTPUT, `chat-markdown-${name}.png`), fullPage: true });
+    if (name === 'mobile') {
+      const table = rendered.locator('.assistant-markdown-table');
+      assert.equal(await table.evaluate(node => node.scrollWidth > node.clientWidth), true);
+      await table.focus();
+      await page.keyboard.press('End');
+      await page.screenshot({ path: path.join(OUTPUT, 'chat-markdown-table-mobile.png'), fullPage: true });
+      await rendered.locator('pre').first().evaluate(node => node.scrollIntoView({ block: 'start' }));
+      await page.screenshot({ path: path.join(OUTPUT, 'chat-markdown-code-mobile.png'), fullPage: true });
+    }
+  }
+}
 
 /** 功能：验证真实悬浮面板在模拟后端状态下的行为。
  * 输入：环境指定的 Playwright 和浏览器路径。输出：检查结果及截图。
@@ -33,9 +97,10 @@ async function main() {
   try {
     const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     await page.clock.install();
-    const errors = [], writes = [], messages = [], answers = [];
+    const errors = [], writes = [], messages = [], answers = [], imageRequests = [];
     let mode = 'completed', pollReads = 0, failPoll = false, completeOnRead = null;
     page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => { if (request.url().includes('/markdown-probe')) imageRequests.push(request.url()); });
     const conversation = { id: 'conversation-a', company: null, title: '测试会话', created_at: new Date().toISOString() };
     await page.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
@@ -86,7 +151,7 @@ async function main() {
         if (mode === 'completed') {
           answer.assistant_message_id = `assistant-${answer.request_id}`;
           answer.citations = [{ position: 1, source_id: 'email-one', title_or_label: '<script>恶意标题</script>', content: '客户需要设备。<img src=x onerror=alert(1)>' }];
-          if (!messages.some(row => row.id === answer.assistant_message_id)) messages.push({ id: answer.assistant_message_id, role: 'assistant', content: '客户需要设备。[1]', created_at: new Date().toISOString() });
+          if (!messages.some(row => row.id === answer.assistant_message_id)) messages.push({ id: answer.assistant_message_id, role: 'assistant', content: '**客户需要设备。**[1]', created_at: new Date().toISOString() });
         } else if (mode === 'failed') answer.error = { code: 'model_unavailable', message: '回答模型暂时不可用，请稍后重试。' };
         return route.fulfill({ json: answer });
       }
@@ -94,7 +159,7 @@ async function main() {
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.evaluate(async () => {
-      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260921-product');
+      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260921-markdown');
       enableAssistant();
       window.chatTest = getAssistant();
       window.chatTest.open();
@@ -108,6 +173,7 @@ async function main() {
     await page.clock.fastForward(2100);
     const sources = page.locator('#assistant-history .assistant-sources');
     await sources.waitFor();
+    assert.equal(await page.locator('#assistant-history .assistant-markdown strong').textContent(), '客户需要设备。');
     assert.equal(await sources.getAttribute('open'), null);
     assert.equal(await page.locator('#assistant-input').inputValue(), '正在编辑的下一条问题');
     assert.equal(await page.locator('#assistant-history script, #assistant-history img').count(), 0);
@@ -167,7 +233,16 @@ async function main() {
     assert.deepEqual(writes, ['chat/messages/', 'chat/messages/', 'chat/requests/request-1/retry/', 'chat/messages/']);
     fs.mkdirSync(OUTPUT, { recursive: true });
     await page.screenshot({ path: path.join(OUTPUT, 'chat-mobile.png'), fullPage: true });
-    console.log('Chat browser checks passed: submit, completion during load/refresh, evidence, retry, draft preservation, pause, bounds, close and reopen.');
+    messages.splice(0, messages.length,
+      { id: 'markdown-user', role: 'user', content: '**原样问题**\n<script>不执行</script>', created_at: new Date().toISOString() },
+      { id: 'markdown-answer', role: 'assistant', content: MARKDOWN, created_at: new Date().toISOString() });
+    answers.splice(0);
+    await page.evaluate(() => window.chatTest.refreshAnswers());
+    await verifyMarkdown(page);
+    assert.deepEqual(errors, []);
+    assert.deepEqual(imageRequests, []);
+    assert.equal(writes.length, 4);
+    console.log('Chat browser checks passed: submit, completion, evidence, retry, draft, polling, reopen, Markdown semantics, injection safety, image privacy and responsive overflow.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

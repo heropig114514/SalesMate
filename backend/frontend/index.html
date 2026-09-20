@@ -2,7 +2,7 @@
 
 <!-- 职责：提供 SalesMate 同源工作台的语义化页面骨架与对话框。
 实现：搜索禁用浏览器历史补全，密码展示明确长度要求；app.js 切换登录/注册并建立会话；workspace.js 提供工作台、Channels、客户及四类业务导航，assistant-widget.js 挂载可收起的悬浮聊天，assistant.js 管理聊天、来源与会话。
-关联：0919 界面及共享语言资源统一缓存版本；channel-detail.css 与 evidence-preview.js 提供会话布局和引用预览；0919 产品精简去除重复全局待办栏；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
+关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；channel-detail.css 与 evidence-preview.js 提供会话布局和引用预览；0919 产品精简去除重复全局待办栏；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；Django TemplateView 提供本文件；全部业务数据由 /api/v1/ 返回。
 目录：无函数或类；workspace-profile 为底部公司与邮箱设置，login-form/signup-form 为登录与账号注册，show-signup/show-login 切换表单；workspace-nav 为共享导航，workspace-overview 为待办首页，workspace-context 为当前客户，detail-live-message/detail-live-resume 显示观察状态和手动恢复；review-dialog 提供按邮箱核对原文与分类复核，sync-progress 展示批次整体进度；email-settings-page/gmail-accounts 管理已连接邮箱，gmail-dialog 仅在显式添加或重新授权时显示权限说明，gmail-scope-dialog/gmail-scope-form 要求每次选择范围，默认最多 50 封，超量由警告确认，qq-dialog/qq-form 保留独立 QQ 连接表单，入口默认隐藏并由运行时能力开关控制，qq-scope-dialog/qq-scope-form 在后续同步前要求重新选择范围，assistant-widget.js 动态挂载聊天面板，提供引用证据、失败重试和显式草稿保存，其余表单负责筛选、模拟邮件和客户建档。
 国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
 变量索引：无脚本变量；所有标识符为 DOM 定位用途；静态资源 v 查询参数标识本次界面版本，避免复用旧缓存。 -->
@@ -13,7 +13,7 @@
 <link href="/static/design-system.css?v=20260921-product" rel="stylesheet"/>
 <link href="/static/app.css?v=20260921-product" rel="stylesheet"/>
 <link href="/static/processing.css?v=20260920-i18n" rel="stylesheet"/>
-<link href="/static/assistant-widget.css?v=20260920-product" rel="stylesheet"/>
+<link href="/static/assistant-widget.css?v=20260921-markdown" rel="stylesheet"/>
 <link href="/static/workspace.css?v=20260921-product" rel="stylesheet"/>
 <script type="module" src="/static/i18n.js?v=20260921-product"></script><link href="/static/channel-detail.css?v=20260921-product" rel="stylesheet"/></head>
 <body><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
@@ -65,5 +65,5 @@
 
 <dialog id="qq-scope-dialog"><div class="dialog-heading"><h2><span data-i18n="选择本次 QQ 同步范围">选择本次 QQ 同步范围</span></h2><button aria-label="关闭" class="icon-btn close-dialog" data-i18n-aria-label="关闭" type="button">×</button></div><p class="muted" id="qq-scope-address"></p><form id="qq-scope-form"><label><span data-i18n="最近 N 天">最近 N 天</span><input autocomplete="off" data-i18n-placeholder="留空则不限制天数" min="1" name="recent_days" placeholder="留空则不限制天数" step="1" type="number"/></label><label><span data-i18n="最多 N 封">最多 N 封</span><input autocomplete="off" data-i18n-placeholder="留空则不限制封数" min="1" name="max_messages" placeholder="留空则不限制封数" step="1" type="number"/></label><p class="fine"><span data-i18n="至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。">至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。</span></p><p class="failure" id="qq-scope-error" role="alert"></p><button class="primary wide-button" type="submit"><span data-i18n="按此范围同步">按此范围同步</span></button></form></dialog>
 <dialog id="gmail-scope-dialog"><div class="dialog-heading"><h2><span data-i18n="选择本次 Gmail 同步范围">选择本次 Gmail 同步范围</span></h2><button aria-label="关闭" class="icon-btn close-dialog" data-i18n-aria-label="关闭" type="button">×</button></div><p class="muted" id="gmail-scope-address"></p><form id="gmail-scope-form"><label><span data-i18n="最近 N 天">最近 N 天</span><input autocomplete="off" data-i18n-placeholder="留空则不限制天数" min="1" name="recent_days" placeholder="留空则不限制天数" step="1" type="number"/></label><label><span data-i18n="最近 N 封">最近 N 封</span><input autocomplete="off" data-i18n-placeholder="留空则最多 50 封" min="1" name="max_messages" placeholder="留空则最多 50 封" step="1" type="number"/></label><p class="fine"><span data-i18n="至少填写一项，两项都填时取交集。收件箱与已发送合计；先选最近 N 封，再跳过已同步邮件，不向更早邮件补足。失败邮件请从进度中明确重试。">至少填写一项，两项都填时取交集。收件箱与已发送合计；先选最近 N 封，再跳过已同步邮件，不向更早邮件补足。失败邮件请从进度中明确重试。</span></p><p class="fine"><span data-i18n="默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。">默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。</span></p><p class="failure" id="gmail-scope-error" role="alert"></p><button class="primary wide-button" type="submit"><span data-i18n="按此范围同步">按此范围同步</span></button></form></dialog>
-<script type="module" src="/static/app.js?v=20260921-product"></script>
+<script type="module" src="/static/app.js?v=20260921-markdown"></script>
 </body></html>

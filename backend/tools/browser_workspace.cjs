@@ -2,7 +2,7 @@
  * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、精简首页、邮箱设置中的复核入口、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：验证所有页面仅打开工作空间会话；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
- * 关联：0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
+ * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
  */
@@ -283,7 +283,7 @@ async function main() {
     await page.locator('#workspace-load-error').filter({ hasText: '模拟业务概览不可用' }).waitFor();
     assert.match(await page.locator('.workspace-task').filter({ hasText: '待跟进' }).textContent(), /暂不可用/);
     await page.evaluate(async () => {
-      const { enableAssistant } = await import('/static/assistant-widget.js?v=20260921-product');
+      const { enableAssistant } = await import('/static/assistant-widget.js?v=20260921-markdown');
       enableAssistant(false);
     });
     assert.equal(await page.locator('#assistant-launcher').isVisible(), false);

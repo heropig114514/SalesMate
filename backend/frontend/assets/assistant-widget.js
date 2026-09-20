@@ -1,12 +1,12 @@
 /**
  * 职责：在共享工作空间挂载唯一的悬浮聊天入口与面板。
  * 实现：静态模板复用 AssistantPanel；按钮展开/收起，旧聊天链接只打开浮窗，不占用页面。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 挂载时启用，业务权限由 API 校验；app.js 处理会话退出与旧链接；assistant-widget.css 提供跨页样式。
+ * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 挂载时启用，业务权限由 API 校验；app.js 处理会话退出与旧链接；assistant-widget.css 提供跨页样式。
  * 目录：getAssistant、enableAssistant、openAssistantLink。
  * 变量索引：panel 为当前页面单例。
  */
 import { h } from './i18n.js?v=20260921-product';
-import { AssistantPanel } from './assistant.js?v=20260921-product';
+import { AssistantPanel } from './assistant.js?v=20260921-markdown';
 
 let panel = null;
 

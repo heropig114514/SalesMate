@@ -1,7 +1,7 @@
 /* 职责：定义跨页面从底部展开与收起的横向聊天条。
  * 实现：右下角入口、底部宽条、紧凑工具栏和输入区；消息独立滚动，窄屏限制高度并采用模态焦点。
  * 关联：assistant-widget.js 挂载模板；assistant.js 同步显示与无障碍状态。
- * 目录：无函数或类；样式区域为入口、面板、会话、草稿、引用及移动布局。
+ * 目录：无函数或类；样式区域为入口、面板、会话、Markdown 正文、草稿、引用及移动布局。
  * 变量索引：无新增变量，消费 design-system.css 的颜色、边界与 --sidebar-width 变量。 */
 .assistant-launcher { position: fixed; z-index: 1601; right: max(24px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 9px; border: 1px solid var(--accent); border-radius: 28px; padding: 12px 18px; background: var(--accent); color: var(--bg); box-shadow: 0 8px 30px var(--shadow-color); cursor: pointer; font: inherit; font-size: 14px; }
 .assistant-launcher > span:first-child { font-size: 24px; line-height: 1; }
@@ -283,6 +283,34 @@
   overflow-wrap: anywhere;
   margin: 8px 0 0;
 }
+
+/* Markdown 只作用于助手正文；宽代码与表格在内部滚动，用户输入和依据仍保留原始换行。 */
+.assistant-message, #assistant-history { min-width: 0; }
+.assistant-markdown { margin-top: 8px; line-height: 1.7; overflow-wrap: anywhere; }
+.assistant-markdown :is(p, ul, ol, blockquote, pre, .assistant-markdown-table) { margin: 0 0 12px; }
+.assistant-markdown p { white-space: normal; }
+.assistant-markdown :is(h1, h2, h3, h4, h5, h6) { margin: 18px 0 8px; line-height: 1.4; font-weight: 650; color: var(--ink); }
+.assistant-markdown h1 { font-size: 1.45em; }
+.assistant-markdown h2 { font-size: 1.3em; }
+.assistant-markdown :is(h3, h4, h5, h6) { font-size: 1.12em; }
+.assistant-markdown > :first-child { margin-top: 0; }
+.assistant-markdown > :last-child { margin-bottom: 0; }
+.assistant-markdown :is(ul, ol) { padding-inline-start: 24px; }
+.assistant-markdown li + li { margin-top: 4px; }
+.assistant-markdown li > :is(ul, ol) { margin: 4px 0; }
+.assistant-markdown li > p { margin-bottom: 4px; }
+.assistant-markdown blockquote { border-inline-start: 3px solid var(--accent); padding: 4px 12px; color: var(--muted); }
+.assistant-markdown blockquote > :last-child { margin-bottom: 0; }
+.assistant-markdown code { padding: 2px 5px; border-radius: 4px; background: var(--surface); font: .92em/1.6 Consolas, 'Courier New', monospace; }
+.assistant-markdown pre { max-width: 100%; overflow-x: auto; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); white-space: pre; overflow-wrap: normal; }
+.assistant-markdown pre code { padding: 0; border-radius: 0; background: transparent; white-space: pre; overflow-wrap: normal; }
+.assistant-markdown-table { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; }
+.assistant-markdown table { width: 100%; border-collapse: collapse; font-size: inherit; }
+.assistant-markdown :is(th, td) { padding: 8px 10px; border: 1px solid var(--line); text-align: start; vertical-align: top; min-width: 100px; }
+.assistant-markdown th { background: var(--surface); font-weight: 650; }
+.assistant-markdown a { text-decoration: underline; text-underline-offset: 3px; }
+.assistant-markdown hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.assistant-markdown :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .assistant-send-row {
   flex-wrap: wrap;
