@@ -1,6 +1,6 @@
 /**
  * 职责：对临时 Django 服务执行真实助手网页提问及引用验收。
- * 实现：浏览器显式使用 zh-CN 与既有中文断言一致；客户模式替换启动入口以挂载真实 AssistantPanel，通用模式使用真实主页，业务 API 全部访问测试服务器。
+ * 实现：浏览器显式使用 zh-CN 与既有中文断言一致；客户模式替换启动入口以挂载真实共享悬浮助手，通用模式使用真实主页，业务 API 全部访问测试服务器。
  * 关联：chat_browser_e2e.py 提供隔离用户/会话并执行 Agent；模型模拟发生在 Python 边界。
  * 目录：main 建立会话并验证真实完成结果。
  * 变量索引：无模块业务变量；测试 URL、模式、可空公司和临时 cookie 从环境读取且不打印。
@@ -10,7 +10,7 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 
 /** 功能：执行真实 HTTP 网页闭环。
  * 输入：CHAT_TEST_* 合成测试环境和显式浏览器路径。输出：成功标记或非零退出。
- * 逻辑：固定中文浏览器语言；登录 cookie 仅用于当前浏览器，提问后等待 Python Agent 写入并由网页自动刷新，通用模式再刷新整页验证历史恢复。
+ * 逻辑：固定中文浏览器语言；登录 cookie 仅用于当前浏览器，提问后等待 Python Agent 写入并由网页自动刷新，通用模式收起再展开，刷新整页后点击悬浮入口验证历史恢复。
  * 约束：不拦截任何业务 API；禁止连接测试服务以外的网络，不打印 cookie。 */
 async function main() {
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
@@ -25,9 +25,10 @@ async function main() {
       const url = new URL(route.request().url());
       if (url.origin !== process.env.CHAT_TEST_URL) return route.abort();
       if (!general && url.pathname === '/static/app.js') {
-        const body = `import { AssistantPanel } from '/static/assistant.js';
+        const body = `import { getAssistant, enableAssistant } from '/static/assistant-widget.js?v=20260920-floating';
           await fetch('/api/v1/session/');
-          window.chatTest = new AssistantPanel();
+          enableAssistant();
+          window.chatTest = getAssistant();
           window.chatTest.setContext({ id: ${JSON.stringify(process.env.CHAT_TEST_COMPANY)}, name: '联合验收客户' });
           window.chatTest.open();`;
         return route.fulfill({ contentType: 'text/javascript', body });
@@ -41,7 +42,11 @@ async function main() {
     await page.locator('#assistant-submit').click();
     if (general) {
       await page.locator('#assistant-history').getByText('你好，我们可以一起起草邮件。', { exact: true }).waitFor({ timeout: 30000 });
+      await page.locator('#assistant-close').click();
+      await page.locator('#assistant-launcher').click();
+      await page.locator('#assistant-history').getByText('你好，我们可以一起起草邮件。', { exact: true }).waitFor();
       await page.reload();
+      await page.locator('#assistant-launcher').click();
       await page.locator('#assistant-history').getByText('你好，我们可以一起起草邮件。', { exact: true }).waitFor();
       assert.equal(await page.locator('#assistant-company').textContent(), '通用聊天');
       assert.equal(await page.locator('#assistant-history details').count(), 0);
