@@ -2,7 +2,7 @@
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；共享悬浮入口保留当前会话，邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：workspace.js 精简共享导航；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
+ * 关联：workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
@@ -17,7 +17,7 @@ import { t, h, locale } from './i18n.js?v=20260920-i18n';
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260920-i18n';
 import { mailSourceLabel } from './mail-source.js';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260920-i18n';
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260920-product';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260920-profile';
 import { request, escapeHtml as e } from './api.js?v=20260920-i18n';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
 import { getAssistant, enableAssistant, openAssistantLink, cancelAssistantLink } from './assistant-widget.js?v=20260920-floating';
@@ -201,7 +201,7 @@ async function loadDetail(id, trigger = true) {
 }
 
 /** 功能：按哈希切换列表与详情，旧聊天链接打开浮窗。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止详情观察并取消旧链接读取；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
+ * 逻辑：切换时停止详情观察并取消旧链接读取；邮箱设置标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
  * 约束：聊天、复核和授权入口不触发分析；原客户详情的分析条件保持不变。 */
 async function navigate() {
   detailObserver.stop();
@@ -213,7 +213,8 @@ async function navigate() {
   if (chat) history.replaceState({}, '', location.pathname + location.search + '#home');
   const match = location.hash.match(/^#company\/([\w-]+)$/);
   const home = !location.hash || location.hash === '#home';
-  mountWorkspace(home ? 'home' : 'inbox');
+  const active = location.hash === '#gmail' ? 'gmail' : home ? 'home' : 'inbox';
+  mountWorkspace(active);
   $('workspace-overview').hidden = !home;
   $('list-page').querySelector('.page-heading').hidden = home;
   $('customer-list-title').textContent = home ? t('优先跟进客户') : t('邮件与客户分析');
@@ -226,7 +227,7 @@ async function navigate() {
     await loadDetail(match[1]);
   } else {
     const navigation = ++state.navigation;
-    setWorkspaceContext(null, home ? 'home' : 'inbox');
+    setWorkspaceContext(null, active);
     $('detail-crumb').textContent = '';
     await loadList();
     if (navigation !== state.navigation) return;

@@ -1,4 +1,4 @@
-"""职责：集中声明工作台、业务、世界消息、管理、健康检查和 API 文档路由。
+"""职责：集中声明工作台、业务、本公司设置、世界消息、管理、健康检查和 API 文档路由。
 实现：按 urlpatterns 分派请求；世界消息地图与详情共用展示模板，业务鉴权由被分派的视图执行。
 关联：组合 common.views、apps.accounts、apps.crm、apps.sales、apps.chat、apps.agent_tools 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
 
@@ -21,6 +21,7 @@ from common.views import LivenessView, ReadinessView
 urlpatterns = [
     path("", TemplateView.as_view(template_name="index.html"), name="workspace"),
     path("business/", TemplateView.as_view(template_name="business.html"), name="business-workspace"),
+    path("settings/company/", TemplateView.as_view(template_name="company-settings.html"), name="company-settings"),
     path("world/", TemplateView.as_view(template_name="world.html"), name="world-news"),
     path("world/news/<slug:news_id>/", TemplateView.as_view(template_name="world.html"), name="world-news-detail"),
     path("admin/", admin.site.urls),

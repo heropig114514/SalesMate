@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!-- 职责：独立本公司资料页面的语义骨架。
+实现：共享主导航和底部 Profile；认证成功后读取当前账号资料，用户显式保存。
+关联：company-settings.js/css、workspace.js/css、accounts/company-profile API 和底部助手。
+目录：无函数或类；company-form 为资料表单，company-controls 控制忙碌状态，company-fields 为字段，company-status 显示保存和错误状态。
+变量索引：无脚本变量；DOM id 由页面控制器引用。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Company Setting · SalesMate</title>
+<link rel="stylesheet" href="/static/design-system.css?v=20260920-i18n">
+<link rel="stylesheet" href="/static/business.css?v=20260920-i18n">
+<link rel="stylesheet" href="/static/workspace.css?v=20260920-profile">
+<link rel="stylesheet" href="/static/assistant-widget.css?v=20260920-product">
+<link rel="stylesheet" href="/static/company-settings.css?v=20260920-profile">
+<script type="module" src="/static/i18n.js?v=20260920-i18n"></script>
+</head>
+<body class="business-workspace">
+<div class="language-bar"><label for="interface-language" data-i18n="界面语言">界面语言</label><select id="interface-language" aria-label="界面语言" data-i18n-aria-label="界面语言"><option value="auto" data-i18n="跟随系统">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
+<salesmate-header></salesmate-header>
+<aside class="workspace-shell">
+<div class="workspace-brand-label">WORKSPACE<span data-i18n="我的工作空间">我的工作空间</span></div>
+<nav id="workspace-nav" aria-label="主导航" data-i18n-aria-label="主导航"></nav>
+<nav id="workspace-profile" class="workspace-profile" aria-label="Profile"></nav>
+<div class="account" id="account"></div>
+</aside>
+<main>
+<header class="workspace-topbar"><div><p class="eyebrow">PROFILE</p><h1>Company Setting</h1></div></header>
+<section class="company-settings-card" aria-label="Company Setting">
+<p id="company-description"></p>
+<form id="company-form"><fieldset id="company-controls" disabled><div id="company-fields"></div><div class="company-settings-actions"><button id="company-save" class="primary" type="submit" disabled>保存修改</button><button id="company-reload" type="button">重新读取</button></div></fieldset></form>
+<p id="company-status" role="status" aria-live="polite"></p>
+</section>
+</main>
+<script type="module" src="/static/company-settings.js?v=20260920-profile"></script>
+</body>
+</html>

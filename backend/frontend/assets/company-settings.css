@@ -1,0 +1,18 @@
+/* 职责：本公司资料设置的响应式表单布局。
+ * 实现：桌面双列、移动单列，状态与按钮始终在表单内可见。
+ * 关联：company-settings.html/js，共享 business.css 和 workspace.css 提供控件与导航。
+ * 目录：无函数或类；区域为表单、操作区、错误与移动布局。
+ * 变量索引：无自定义变量；消费共享设计主题。 */
+.company-settings-card { max-width: 980px; padding: 28px; margin: 24px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+#company-description { color: var(--muted); margin: 0 0 24px; line-height: 1.7; }
+#company-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+#company-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 22px; }
+#company-fields label { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+.company-wide { grid-column: 1 / -1; }
+.company-settings-actions { display: flex; gap: 12px; margin-top: 24px; }
+#company-status { min-height: 24px; margin: 20px 0 0; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; }
+#company-status.is-error { color: var(--danger); }
+@media(max-width:760px) {
+  .company-settings-card { padding: 18px; }
+  #company-fields { grid-template-columns: minmax(0,1fr); gap: 16px; }
+}

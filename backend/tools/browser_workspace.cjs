@@ -1,5 +1,5 @@
 /**
- * 职责：验证产品顶栏、产品精简导航、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证产品顶栏、主导航及底部 Profile、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
  * 关联：product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
@@ -15,12 +15,12 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
- * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验未知客户、客户/通用切换、停用清理与失败。
- * 约束：所有业务请求均拦截；除原有客户分析入口的模拟 POST 外，禁止任何写入和外部网络。 */
+ * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验公司设置持久化、冲突保留、重读确认、双语、未知客户、客户/通用切换与失败。
+ * 约束：所有业务请求均拦截；仅允许原有客户分析模拟 POST 及显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    const filename = pathname === '/' ? path.join(FRONTEND, 'index.html') : pathname === '/business/' ? path.join(FRONTEND, 'business.html') : /^\/static\/[\w.-]+$/.test(pathname) ? path.join(FRONTEND, 'assets', path.basename(pathname)) : null;
+    const filename = pathname === '/' ? path.join(FRONTEND, 'index.html') : pathname === '/settings/company/' ? path.join(FRONTEND, 'company-settings.html') : pathname === '/business/' ? path.join(FRONTEND, 'business.html') : /^\/static\/[\w.-]+$/.test(pathname) ? path.join(FRONTEND, 'assets', path.basename(pathname)) : null;
     if (!filename || !fs.existsSync(filename)) { res.writeHead(404); res.end(); return; }
     res.setHeader('Content-Type', filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html');
     res.end(fs.readFileSync(filename));
@@ -31,7 +31,8 @@ async function main() {
     const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     const errors = [], writes = [], queries = [];
     page.on('pageerror', error => errors.push(error.message));
-    let failActions = false;
+    let failActions = false, profileFailure = false, profileConflict = false;
+    let profile = { company_name: '', industry: '', website: '', email: '', phone: '', address: '', description: '', revision: 0 };
     const company = { id: 'company-a', name: 'A 公司 · 精密设备', domains: ['a.example'], contacts: [], archived: false, crm_status: 'registered', customer: {}, revision: 1 };
     const row = { company_id: company.id, company_name: company.name, domains: company.domains, contacts: [], crm_status: 'registered', industry: 'unknown', size_band: 'unknown', signal: 'inquiry_intent', score: null, provider: 'agent', email_count: 1, headline_summary: '希望采购 100 台设备，待准备报价', last_message_at: '2026-09-13T01:00:00Z' };
     const resources = ['quotes', 'orders', 'follow-ups', 'actions', 'notifications'].map(key => ({ key, model: key, label: { quotes: '报价', orders: '订单', 'follow-ups': '跟进', actions: '动作', notifications: '通知' }[key], transitions: {}, fields: [{ name: 'company', type: 'relation', relation: 'company', required: true }, { name: 'title', type: 'text' }, { name: 'status', type: 'choice', readonly: true, choices: ['open', 'completed', 'pending_confirmation', 'draft'] }] }));
@@ -43,11 +44,22 @@ async function main() {
       queries.push(url.pathname + url.search);
       if (req.method() !== 'GET') {
         writes.push(endpoint);
+        if (endpoint === 'accounts/company-profile/') {
+          assert.equal(req.method(), 'PATCH');
+          assert.equal(req.headers()['if-match'], String(profile.revision));
+          if (profileConflict) return route.fulfill({ status: 409, json: { error: { detail: 'Version conflict' } } });
+          profile = { ...profile, ...req.postDataJSON(), revision: profile.revision + 1 };
+          return route.fulfill({ json: profile });
+        }
         assert.equal(endpoint, 'companies/company-a/analyze/', 'Unexpected business mutation');
         return route.fulfill({ json: {} });
       }
       let data;
       if (endpoint === 'session/') data = { authenticated: true, username: '测试销售', debug_auto_login: true };
+      else if (endpoint === 'accounts/company-profile/') {
+        if (profileFailure) return route.fulfill({ status: 503, json: { error: { detail: '公司资料读取失败' } } });
+        data = profile;
+      }
       else if (endpoint === 'accounts/me/') data = { username: '测试销售' };
       else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'Asia/Shanghai' };
       else if (endpoint === 'mailboxes/') data = [];
@@ -70,8 +82,12 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).getByText('7', { exact: true }).waitFor();
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
-    assert.deepEqual(navLabels, ['工作台', 'Channels', '客户', '商机', '报价', '订单', '工单']);
+    assert.deepEqual(navLabels, ['工作台', 'Global Insights', 'Channels', '客户', '商机', '报价', '订单', '工单']);
     assert.equal(await page.locator('#workspace-nav .workspace-customer-nav a').count(), 4);
+    assert.deepEqual(await page.locator('#workspace-profile a').allTextContents(), ['Company Setting', 'Emails Setting']);
+    assert.equal(await page.locator('#workspace-nav a[href="/world/"]').textContent(), 'Global Insights');
+    const profileBox = await page.locator('#workspace-profile').boundingBox();
+    assert(profileBox.y > 650, 'Profile should stay near the sidebar bottom');
     assert.equal(await page.locator('#assistant-launcher').isVisible(), true);
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     const productNav = page.getByRole('navigation', { name: '产品分区' });
@@ -196,6 +212,57 @@ async function main() {
     assert(queries.some(url => url.includes('/sales/records/follow-ups/?') && url.includes('status=open')));
     await page.goto(base + '/business/?company=unavailable#quotes');
     await page.locator('#business-notice').filter({ hasText: '无权访问' }).waitFor();
+    await page.goto(base);
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#gmail-dialog[open]').waitFor();
+    assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Emails Setting');
+    await page.locator('#gmail-dialog .close-dialog').click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#gmail-dialog[open]').waitFor();
+    await page.locator('#gmail-dialog .close-dialog').click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Company Setting' }).click();
+    await page.locator('#company-save:not(:disabled)').waitFor();
+    assert.equal(new URL(page.url()).search, '', 'Company settings must not carry customer context');
+    assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Company Setting');
+    await page.locator('[name=company_name]').fill('我们的公司 <Sales>');
+    await page.locator('[name=email]').fill('sales@seller.example');
+    await page.locator('#company-save').click();
+    await page.locator('#company-status').filter({ hasText: '公司资料已保存' }).waitFor();
+    await page.reload();
+    await page.locator('#company-save:not(:disabled)').waitFor();
+    assert.equal(await page.locator('[name=company_name]').inputValue(), '我们的公司 <Sales>');
+    profileConflict = true;
+    await page.locator('[name=company_name]').fill('未保存修改');
+    await page.locator('#company-save').click();
+    await page.locator('#company-status.is-error').filter({ hasText: '其他页面更新' }).waitFor();
+    assert.equal(await page.locator('[name=company_name]').inputValue(), '未保存修改');
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.locator('#company-reload').click();
+    assert.equal(await page.locator('[name=company_name]').inputValue(), '未保存修改');
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#company-reload').click();
+    await page.locator('#company-status').filter({ hasText: '公司资料已载入' }).waitFor();
+    assert.equal(await page.locator('[name=company_name]').inputValue(), '我们的公司 <Sales>');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: path.join(OUTPUT, 'company-settings-desktop.png'), fullPage: true });
+    await page.locator('#assistant-launcher').click();
+    await page.locator('#assistant-input:not(:disabled)').waitFor();
+    await page.locator('#assistant-close').click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Settings mobile overflow');
+    await page.screenshot({ path: path.join(OUTPUT, 'company-settings-mobile.png'), fullPage: true });
+    profileFailure = true;
+    await page.reload();
+    await page.locator('#company-status.is-error').waitFor();
+    assert.equal(await page.locator('#company-save').isDisabled(), true);
+    profileFailure = false;
+    await page.locator('#company-reload').click();
+    await page.locator('#company-save:not(:disabled)').waitFor();
+    await page.context().addCookies([{ name: 'django_language', value: 'en', url: base }]);
+    await page.reload();
+    await page.getByLabel('Company name', { exact: false }).waitFor();
+    assert.equal(await page.locator('#company-save').textContent(), 'Save changes');
+    await page.context().clearCookies();
     failActions = true;
     await page.goto(base);
     await page.locator('#workspace-load-error').filter({ hasText: '模拟动作服务不可用' }).waitFor();
@@ -208,8 +275,8 @@ async function main() {
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     assert.equal(await page.locator('#assistant-input').inputValue(), '');
     assert.deepEqual(errors, []);
-    assert.deepEqual(writes, ['companies/company-a/analyze/']);
-    console.log('Workspace browser checks passed: bottom chat strip, simplified nested navigation, minimize/reopen, preserved draft/URL/layout, legacy links, mobile focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
+    assert.deepEqual(writes, ['companies/company-a/analyze/', 'accounts/company-profile/', 'accounts/company-profile/']);
+    console.log('Workspace browser checks passed: bottom chat strip, nested navigation and Profile, company profile save/reload/conflict/languages, minimize/reopen, preserved draft/URL/layout, legacy links, mobile focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

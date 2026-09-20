@@ -1,8 +1,8 @@
 /**
- * 职责：为邮件、业务及世界消息页面提供精简共享导航、客户上下文和真实待办概览及底部聊天入口。
+ * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：app.js、business.js 与 world-news.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
+ * 关联：app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
  * 变量索引：customerResources 为客户下的四类业务入口；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
@@ -24,20 +24,22 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：按产品目录展示工作台、Channels 与客户，四类销售业务从属于客户；当前资源保留选中状态。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：按产品目录展示工作台、全球洞察、Channels 与客户，四类销售业务从属于客户；底部设置不携带客户身份。约束：客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('inbox', 'Channels', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
+  const profile = document.getElementById('workspace-profile');
+  if (profile) profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Setting', '/#gmail')}`;
 }
 
 /** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。
- * 逻辑：替换共享导航；启用悬浮入口，重复点击同一复核或连接路由仍打开界面。约束：业务页面登录后调用，公开世界消息仅挂载入口；会话权限由 API 校验，不提交请求。 */
+ * 逻辑：替换主导航与 Profile；启用悬浮入口，重复点击同一复核或邮箱设置路由仍打开界面。约束：业务页面登录后调用，公开世界消息仅挂载入口；会话权限由 API 校验，不提交请求。 */
 export function mountWorkspace(active = 'home') {
   activePage = active;
   enableAssistant();
   renderWorkspaceNav();
-  for (const id of ['workspace-nav', 'workspace-status', 'workspace-tasks']) {
+  for (const id of ['workspace-nav', 'workspace-profile', 'workspace-status', 'workspace-tasks']) {
     const node = document.getElementById(id);
     if (node) node.onclick = event => {
       const link = event.target.closest('a');

@@ -1,7 +1,7 @@
 /* 职责：各页面共享的侧栏、上下文、待办和响应式外壳。
- * 实现：顶栏下方固定导航，内容区域保留独立滚动；客户下保留四类业务入口，移动端导航横向排列。
- * 关联：workspace.js、product-header.js 与三个 HTML；配色全部来自 design-system.css。
- * 目录：无函数或类；区域为导航、状态、客户、首页与移动布局。
+ * 实现：顶栏下方固定导航，内容区域保留独立滚动；客户下保留四类业务入口，Profile 固定在侧栏内容底部，移动端导航横向排列。
+ * 关联：workspace.js、product-header.js 与工作台、业务、世界洞察和设置 HTML；配色全部来自 design-system.css。
+ * 目录：无函数或类；区域为主导航、Profile、状态、客户、首页与移动布局。
  * 变量索引：消费共享主题、--header-height 与 --sidebar-width，无本地变量。 */
 [hidden] { display: none!important; }
 .workspace-shell {
@@ -14,12 +14,15 @@
 .workspace-brand-label span { display: block; font-size: 12px; letter-spacing: 0; margin-top: 7px; color: var(--ink); }
 #workspace-nav { margin: 0; }
 #workspace-nav .workspace-nav-label { display: none; }
-#workspace-nav a { display: block; padding: 10px 12px; margin: 3px 0; border: 1px solid transparent; border-radius: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
-#workspace-nav a:hover { background: var(--surface); color: var(--ink); }
-#workspace-nav a[aria-current="page"] { background: var(--soft); border-color: var(--line-strong); color: var(--accent); font-weight: 600; }
+#workspace-nav a, #workspace-profile a { display: block; padding: 10px 12px; margin: 3px 0; border: 1px solid transparent; border-radius: 6px; font-size: 12px; color: var(--muted); text-decoration: none; }
+#workspace-nav a:hover, #workspace-profile a:hover { background: var(--surface); color: var(--ink); }
+#workspace-nav a[aria-current="page"], #workspace-profile a[aria-current="page"] { background: var(--soft); border-color: var(--line-strong); color: var(--accent); font-weight: 600; }
 #workspace-nav .workspace-customer-nav { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 4px; }
 #workspace-nav .workspace-customer-nav a { padding-left: 16px; }
-.workspace-shell .sidebar-bottom, .workspace-shell .account { margin-top: auto; padding: 22px 8px 0; border-top: 1px solid var(--line); }
+.workspace-shell .world-sidebar-note { margin-top: 20px; }
+.workspace-profile { margin-top: auto; padding-top: 20px; }
+.workspace-profile-label { display: block; margin: 0 12px 8px; font-size: 12px; font-weight: 600; color: var(--ink); }
+.workspace-shell .sidebar-bottom, .workspace-shell .account { margin-top: 14px; padding: 22px 8px 0; border-top: 1px solid var(--line); }
 body main { margin-left: var(--sidebar-width); min-width: 0; }
 body.business-workspace main { padding: 0 28px 28px; max-width: none; }
 .workspace-topbar { min-height: 70px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--bg); }
@@ -62,7 +65,9 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
   #workspace-nav > a { padding: 6px 8px; margin: 0; font-size: 11px; }
   #workspace-nav .workspace-customer-nav { display: flex; flex-wrap: wrap; width: 100%; margin-left: 0; border-left: 0; border-top: 1px solid var(--line); padding-left: 0; }
   #workspace-nav .workspace-customer-nav a { padding: 8px 12px; }
-  #workspace-nav summary { padding: 7px 8px; font-size: 10px; }
+  .workspace-profile { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .workspace-profile-label { display: block; margin: 0 8px 0 0; }
+  #workspace-profile a { padding: 8px; font-size: 11px; }
   .workspace-shell .sidebar-bottom, .workspace-shell .account { margin: 10px 0 0; padding: 10px 0 0; }
   body main, body.business-workspace main { margin-left: 0; padding: 0; }
   .business-workspace main > header, .business-workspace main > section:not(.workspace-context), .business-workspace .footnote { margin: 16px; }
