@@ -1,5 +1,5 @@
 """职责：为聊天请求提供只读工具发现、执行及稳定证据登记。
-实现：员工与请求锁保护 processing 边界；复用原工具 Schema、处理器和权限，独立保存每次成功结果。
+实现：员工与请求锁保护工作空间 processing 边界，拒绝继续执行旧公司请求；复用原工具 Schema、处理器和权限，独立保存每次成功结果。
 关联：tool_views 暴露 Agent HTTP；services.save_answer 仅从本请求上下文和 ToolRead 附加引用正文。
 目录：
 - processing_request：授权并锁定处理中的请求。
@@ -29,7 +29,7 @@ from apps.agent_tools.schemas import PAGE, UUID, object_schema, validate
 from apps.crm.access import InvalidState, plain
 
 from .models import ToolRead
-from .services import lock_owner, request_for
+from .services import lock_owner, request_for, require_workspace
 
 ALLOWED_READ_TOOLS = frozenset({"customers.search", "customers.context"})
 CONTRACT_VERSION = "chat-tools-v1"
@@ -48,11 +48,12 @@ logger = logging.getLogger("salesmate.chat.tools")
 # 功能：取得当前员工正在处理的聊天请求。
 # 输入：`owner` 为已认证员工，`request_id` 为已验证 UUID。
 # 输出：带行锁的 AnswerRequest；越权为 404，非 processing 为 409。
-# 逻辑：沿用聊天员工锁与全链路归属校验，不要求 company_id 非空。
+# 逻辑：沿用聊天员工锁与全链路归属校验，仅执行无预选公司的工作空间请求。
 # 约束：调用方必须处于事务中，锁顺序与保存回答一致。
 def processing_request(owner, request_id):
     lock_owner(owner)
     request = request_for(owner, request_id, lock=True)
+    require_workspace(request.conversation)
     if request.status != "processing":
         raise InvalidState("只能为处理中的聊天请求读取工具。")
     return request

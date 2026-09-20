@@ -1,12 +1,14 @@
 """职责：提供聊天事务、员工隔离、幂等保存与显式恢复。
-实现：按员工锁串行化状态写入；回报只验结构，已知引用附本请求上下文或工具正文，终态结果精确比较。
+实现：按员工锁串行化工作空间任务；旧公司会话仅保留历史，回报只验结构，终态结果精确比较。
 关联：chat.views/Worker 调用，复用 sales Conversation/Message 与 crm 认证。
 目录：
 - lock_owner：取得既有员工锁。
 - conversation_for：读取员工自有通用或客户会话。
 - request_for：核验请求及全部绑定。
+- require_workspace：拒绝在旧公司会话中新建或继续执行聊天任务。
 - submit：事务内保存问题与待回答任务。
 - retry：为失败任务创建唯一新尝试。
+- retire_legacy_requests：按员工锁结束旧公司活动任务，保留历史。
 - claim：原子领取并冻结历史。
 - context_for：保存并返回一次性证据快照。
 - save_answer：校验结构后幂等写入回答和引用，未登记来源只存元数据。
@@ -25,7 +27,6 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.crm.access import Conflict, InvalidState
-from apps.crm.models import Company
 from apps.sales.models import Conversation, Message, CompanySettings
 from . import contracts
 from .context import build_context
@@ -101,10 +102,20 @@ def request_for(owner, request_id, lock=False):
     return request
 
 
+# 功能：确保执行路径只使用无预选公司的工作空间会话。
+# 输入：`conversation` 已通过员工权限检查的会话。
+# 输出：无；旧公司绑定会话抛 InvalidState。
+# 逻辑：保留历史读取能力，但要求用户在工作空间重新明确提交问题。
+# 约束：不把依赖旧客户语境的问题静默改写为全工作空间问题。
+def require_workspace(conversation):
+    if conversation.company_id is not None:
+        raise InvalidState("客户绑定聊天已停用，请在工作空间新建会话并重新提问。")
+
+
 # 功能：创建一次用户提问及回答请求。
 # 输入：`owner` 认证用户，`data` 含 conversation_id/content/client_key。
 # 输出：AnswerRequest 与是否首次创建的布尔值。
-# 逻辑：客户端幂等键先于活动任务检查，同内容重传返回原请求；事务写入消息及任务。
+# 逻辑：仅工作空间接受新任务；客户端幂等键先于活动任务检查，同内容重传返回原请求。
 # 约束：普通历史消息不会被自动升级为模型请求；活动会话拒绝第二个新问题。
 @transaction.atomic
 def submit(owner, data):
@@ -114,6 +125,7 @@ def submit(owner, data):
     content = contracts.text(data["content"], "content")
     lock_owner(owner)
     conversation = conversation_for(owner, conversation_id)
+    require_workspace(conversation)
     existing = Message.objects.filter(
         conversation=conversation, client_key=client_key
     ).first()
@@ -141,7 +153,6 @@ def submit(owner, data):
     )
     request = AnswerRequest.objects.create(
         owner=owner,
-        company=conversation.company,
         conversation=conversation,
         user_message=message,
     )
@@ -152,12 +163,13 @@ def submit(owner, data):
 # 功能：为失败回答创建可追踪的新尝试。
 # 输入：`owner` 当前员工，`request_id` 原请求 UUID。
 # 输出：新请求与首次创建标志；重复点击返回原后继。
-# 逻辑：保留原用户消息及失败记录，拒绝会话有活动任务或已有后续问题时重试旧问题。
+# 逻辑：仅工作空间允许重试；保留原用户消息及失败记录，拒绝活动任务或已有后续问题。
 # 约束：不自动重试，不复活原 request_id，不覆盖历史回答。
 @transaction.atomic
 def retry(owner, request_id):
     lock_owner(owner)
     old = request_for(owner, request_id, lock=True)
+    require_workspace(old.conversation)
     successor = AnswerRequest.objects.filter(retry_of=old).first()
     if successor:
         return successor, False
@@ -178,7 +190,6 @@ def retry(owner, request_id):
         raise Conflict("会话已有后续问题，请重新提交需要回答的问题。")
     request = AnswerRequest.objects.create(
         owner=owner,
-        company=old.company,
         conversation=old.conversation,
         user_message=old.user_message,
         retry_of=old,
@@ -192,14 +203,46 @@ def retry(owner, request_id):
     return request, True
 
 
+# 功能：结束工作空间 Agent 无法继续执行的旧公司聊天任务。
+# 输入：`owner` 可选已认证员工；省略时由 Worker 启动阶段检查所有员工。
+# 输出：实际结束的请求数量，并记录不含正文的退役日志。
+# 逻辑：按员工逐个事务锁定，再仅更新公司绑定的 pending/processing，保留消息、证据和终态历史。
+# 约束：不重派、不改写原问题；启动前必须停止旧 Worker，普通工作空间 processing 不受影响。
+def retire_legacy_requests(owner=None):
+    candidates = AnswerRequest.objects.filter(
+        status__in=["pending", "processing"]
+    ).filter(Q(company__isnull=False) | Q(conversation__company__isnull=False))
+    if owner is not None:
+        candidates = candidates.filter(owner=owner)
+    owner_ids = list(
+        candidates.order_by("owner_id").values_list("owner_id", flat=True).distinct()
+    )
+    total = 0
+    for owner_id in owner_ids:
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=owner_id)
+            count = candidates.filter(owner_id=owner_id).update(
+                status="failed",
+                finished_at=timezone.now(),
+                error={
+                    "code": "workspace_chat_required",
+                    "message": "客户绑定聊天已停用，请在工作空间新建会话并重新提问。",
+                },
+            )
+            total += count
+            logger.info("chat_legacy_retired owner_id=%s requests=%s", owner_id, count)
+    return total
+
+
 # 功能：原子领取当前员工的一条任务并冻结历史。
 # 输入：`owner` Agent 服务令牌绑定员工。
-# 输出：严格六字段请求或 None；通用会话 company_id 为 JSON null，客户会话为 UUID 字符串。
-# 逻辑：员工锁保证并发领取不重复；历史截止于原问题之前，最近 20 条恢复时间正序。
-# 约束：撤销/归档请求显式失败，不阻挡后续有效任务；模型不在事务内调用。
+# 输出：工作空间五字段请求或 None，不输出 company_id。
+# 逻辑：员工锁防止重复领取；旧公司任务显式结束，历史截止于原问题之前，最近 20 条恢复时间正序。
+# 约束：旧公司及撤销/归档请求不阻挡后续任务，不隐式重派；模型不在事务内调用。
 @transaction.atomic
 def claim(owner):
     lock_owner(owner)
+    retire_legacy_requests(owner)
     for candidate in AnswerRequest.objects.filter(
         owner=owner, status="pending"
     ).order_by("created_at", "id"):
@@ -245,7 +288,6 @@ def claim(owner):
         return {
             "request_id": str(request.pk),
             "conversation_id": str(request.conversation_id),
-            "company_id": str(request.company_id) if request.company_id else None,
             "user_message_id": str(message.pk),
             "question": message.content,
             "recent_history": request.recent_history,
@@ -256,7 +298,7 @@ def claim(owner):
 # 功能：返回请求绑定的稳定证据。
 # 输入：`owner` 当前 Agent 员工，`request_id` 请求 UUID，`scope` internal/external。
 # 输出：首次生成并持久化的 internal AnswerContext。
-# 逻辑：只对 processing 提供上下文；有客户时取得公司锁，通用聊天仅冻结本人知识，后续返回同一快照。
+# 逻辑：只对 processing 工作空间请求冻结本人知识，后续返回同一快照；客户资料由只读工具查询。
 # 约束：external 尚未启用时明确拒绝；不吞数据库错误或伪装空资料。
 @transaction.atomic
 def context_for(owner, request_id, scope):
@@ -264,21 +306,17 @@ def context_for(owner, request_id, scope):
         raise ValidationError("scope 必须为 internal 或 external。")
     lock_owner(owner)
     request = request_for(owner, request_id, lock=True)
+    require_workspace(request.conversation)
     if request.status != "processing":
         raise InvalidState("只能读取处理中的请求上下文。")
     if scope == "external":
         raise InvalidState("当前未启用外部知识。")
     if request.context_snapshot is None:
-        if request.company_id:
-            request.company = Company.objects.select_for_update().get(
-                pk=request.company_id, owner=owner
-            )
         request.context_snapshot = build_context(request)
         request.save(update_fields=["context_snapshot"])
         logger.info(
-            "chat_context_frozen request_id=%s revision=%s customer_items=%s knowledge_items=%s",
+            "chat_context_frozen request_id=%s customer_items=%s knowledge_items=%s",
             request.pk,
-            request.company.revision if request.company_id else None,
             len(request.context_snapshot["customer_context"]),
             len(request.context_snapshot["context_items"]),
         )

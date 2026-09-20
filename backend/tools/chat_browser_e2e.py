@@ -3,9 +3,10 @@
 关联：browser_chat_live.cjs、tests.integration.test_chat 夹具；模型输出仅在调用边界模拟。
 目录：
 - ChatBrowserTests：需要显式 Playwright 环境的联合验收。
-- ChatBrowserTests.test_browser_agent_round_trip：客户聊天到引用展示完整链路。
+- ChatBrowserTests.test_browser_agent_round_trip：工作空间查询客户到引用展示完整链路。
 - ChatBrowserTests.test_general_browser_round_trip：零客户账户通用聊天、收起展开与刷新恢复。
-- ChatBrowserTests.run_round_trip：两种模式的真实 HTTP 和模型边界协作。
+- ChatBrowserTests.run_round_trip：有客户数据与空账号的工作空间 HTTP 联合测试。
+- ChatBrowserTests.run_round_trip.decide：根据真实工具证据生成模拟模型决策。
 变量索引：
 - 无
 """
@@ -31,7 +32,7 @@ from tests.integration.test_chat import fixture
 
 
 # 功能：联合验证网页浮窗与真实后端。
-# 逻辑：测试静态根目录指向真实前端资源，客户模式替换启动脚本挂载共享浮窗，通用模式使用完整主页及悬浮入口，不拦截业务 API。
+# 逻辑：测试静态根目录指向真实前端资源，有客户数据的工作空间替换启动脚本挂载共享浮窗，通用模式使用完整主页及悬浮入口，不拦截业务 API。
 # 约束：单独通过 manage.py test tools.chat_browser_e2e 运行，必须配置 Playwright；不模拟数据库。
 @override_settings(
     STATIC_ROOT=Path(__file__).resolve().parents[1] / "frontend" / "assets"
@@ -40,7 +41,7 @@ class ChatBrowserTests(LiveServerTestCase):
     # 功能：从网页提交问题并自动显示真实落库回答与来源。
     # 输入：无外部参数，环境提供浏览器运行时，夹具提供合成员工和证据。
     # 输出：浏览器成功退出、数据库 completed 且一条引用。
-    # 逻辑：委托共享 run_round_trip 使用客户模式；浏览器写入 pending 后由原 Agent 读取并回报，页面自行轮询显示。
+    # 逻辑：委托共享 run_round_trip 使用有客户数据的工作空间；浏览器写入 pending 后由原 Agent 读取并回报，页面自行轮询显示。
     # 约束：仅模型函数使用 Mock；测试会话 cookie 只经子进程环境传递，不打印或写入仓库。
     @override_settings(
         ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"],
@@ -64,7 +65,7 @@ class ChatBrowserTests(LiveServerTestCase):
     # 功能：协调浏览器提交和真实 Agent 消费。
     # 输入：`general` 决定空客户账号或客户证据夹具。
     # 输出：断言持久化回答、引用数量与浏览器结果。
-    # 逻辑：等待 pending 后通过 HTTP 领取与回报，浏览器观察完成。
+    # 逻辑：等待 pending 后经 HTTP 领取、按需搜索客户并回报，浏览器观察完成。
     # 约束：模型仅调用 Mock，cookie 只通过子进程环境传递，不打印。
     def run_round_trip(self, general):
         self.assertTrue(
@@ -78,14 +79,13 @@ class ChatBrowserTests(LiveServerTestCase):
             owner = get_user_model().objects.create_user(
                 username="general-browser-owner"
             )
-            company = None
             AgentCredential.objects.create(
                 owner=owner,
                 name="chat-test",
                 digest=hashlib.sha256(b"chat-test-token").hexdigest(),
             )
         else:
-            owner, _, company, _ = fixture()
+            owner, _, _, _ = fixture()
         browser_session = APIClient()
         browser_session.force_login(owner)
         environment = {
@@ -95,7 +95,6 @@ class ChatBrowserTests(LiveServerTestCase):
                 settings.SESSION_COOKIE_NAME
             ].value,
             "CHAT_TEST_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
-            "CHAT_TEST_COMPANY": str(company.pk) if company else "",
             "CHAT_TEST_GENERAL": "1" if general else "0",
         }
         process = subprocess.Popen(
@@ -121,34 +120,58 @@ class ChatBrowserTests(LiveServerTestCase):
             backend = DjangoBackendClient(
                 self.live_server_url + "/api/v1/agent/", "chat-test-token"
             )
-            citation = {
-                "source_id": "email:seller@chat.example:one:review:0",
-                "source_type": "customer_email",
-                "title_or_label": "采购需求",
-            }
-            provider = Mock(
-                return_value=json.dumps(
-                    {
-                        "assistant_text": (
-                            "你好，我们可以一起起草邮件。"
-                            if general
-                            else "客户需要设备。[1]"
-                        ),
-                        "citations": [] if general else [citation],
-                    },
-                    ensure_ascii=False,
+
+            # 功能：模拟工作空间模型的回答或查询决策。
+            # 输入：`messages` 为真实提示，`max_tokens` 为原模型预算。
+            # 输出：action=tool 或 action=answer JSON。
+            # 逻辑：空账号直接回答，有客户数据则搜索后引用真实登记证据。
+            # 约束：只模拟模型；所有工具读取和回答保存通过真实 HTTP。
+            def decide(messages, *, max_tokens):
+                payload = json.loads(messages[-1]["content"])
+                if general:
+                    return json.dumps(
+                        {
+                            "action": "answer",
+                            "assistant_text": "你好，我们可以一起起草邮件。",
+                            "citations": [],
+                        }
+                    )
+                if not payload["tool_results"]:
+                    return json.dumps(
+                        {
+                            "action": "tool",
+                            "name": "customers.search",
+                            "arguments": {"q": "测试客户"},
+                        }
+                    )
+                evidence = next(
+                    row
+                    for row in payload["authorized_evidence"]
+                    if row["source_type"] == "customer_search"
                 )
-            )
+                citation = {
+                    key: evidence[key]
+                    for key in ("source_id", "source_type", "title_or_label")
+                }
+                return json.dumps(
+                    {
+                        "action": "answer",
+                        "assistant_text": "找到测试客户。[1]",
+                        "citations": [citation],
+                    }
+                )
+
+            provider = Mock(side_effect=decide)
             result = process_chat_once(backend=backend, chat_provider=provider)
             self.assertEqual(result["status"], "completed", result)
             output, _ = process.communicate(timeout=30)
             self.assertEqual(process.returncode, 0, output)
             self.assertIn("Live chat browser round trip passed", output)
-            provider.assert_called_once()
+            self.assertEqual(provider.call_count, 1 if general else 2)
             request = AnswerRequest.objects.get(owner=owner)
             self.assertEqual(request.status, "completed")
             self.assertEqual(request.citations.count(), 0 if general else 1)
-            self.assertEqual(request.company_id, None if general else company.pk)
+            self.assertIsNone(request.company_id)
         finally:
             if process.poll() is None:
                 process.terminate()

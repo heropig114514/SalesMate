@@ -1,9 +1,9 @@
 /**
  * 职责：对临时 Django 服务执行真实助手网页提问及引用验收。
- * 实现：浏览器显式使用 zh-CN 与既有中文断言一致；客户模式替换启动入口以挂载真实共享悬浮助手，通用模式使用真实主页，业务 API 全部访问测试服务器。
+ * 实现：浏览器显式使用 zh-CN 与既有中文断言一致；有客户数据的测试替换启动入口以挂载工作空间助手，通用模式使用真实主页，业务 API 全部访问测试服务器。
  * 关联：chat_browser_e2e.py 提供隔离用户/会话并执行 Agent；模型模拟发生在 Python 边界。
  * 目录：main 建立会话并验证真实完成结果。
- * 变量索引：无模块业务变量；测试 URL、模式、可空公司和临时 cookie 从环境读取且不打印。
+ * 变量索引：无模块业务变量；测试 URL、模式、临时 cookie 从环境读取且不打印。
  */
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
@@ -25,11 +25,10 @@ async function main() {
       const url = new URL(route.request().url());
       if (url.origin !== process.env.CHAT_TEST_URL) return route.abort();
       if (!general && url.pathname === '/static/app.js') {
-        const body = `import { getAssistant, enableAssistant } from '/static/assistant-widget.js?v=20260920-floating';
+        const body = `import { getAssistant, enableAssistant } from '/static/assistant-widget.js?v=20260920-workspace-chat';
           await fetch('/api/v1/session/');
           enableAssistant();
           window.chatTest = getAssistant();
-          window.chatTest.setContext({ id: ${JSON.stringify(process.env.CHAT_TEST_COMPANY)}, name: '联合验收客户' });
           window.chatTest.open();`;
         return route.fulfill({ contentType: 'text/javascript', body });
       }
@@ -38,7 +37,7 @@ async function main() {
     await page.goto(process.env.CHAT_TEST_URL + (general ? '/#assistant' : '/'));
     if (!general) await page.waitForFunction(() => window.chatTest && !window.chatTest.busy && window.chatTest.conversation, null, { timeout: 20000 });
     else await page.locator('#assistant-input:not(:disabled)').waitFor();
-    await page.locator('#assistant-input').fill(general ? '你好' : '客户需要什么？');
+    await page.locator('#assistant-input').fill(general ? '你好' : '查找测试客户');
     await page.locator('#assistant-submit').click();
     if (general) {
       await page.locator('#assistant-history').getByText('你好，我们可以一起起草邮件。', { exact: true }).waitFor({ timeout: 30000 });
@@ -53,10 +52,10 @@ async function main() {
     } else {
       const sources = page.locator('#assistant-history .assistant-sources');
       await sources.locator(':scope > summary').waitFor({ timeout: 30000 });
-      assert.match(await page.locator('#assistant-history').textContent(), /客户需要设备。\[1\]/);
+      assert.match(await page.locator('#assistant-history').textContent(), /找到测试客户。\[1\]/);
       await sources.locator(':scope > summary').click();
       await sources.locator('.assistant-source > summary').click();
-      assert.match(await sources.locator('.assistant-source-content').textContent(), /客户需要设备/);
+      assert.match(await sources.locator('.assistant-source-content').textContent(), /测试客户/);
     }
     assert.equal(await page.locator('#assistant-submit').isEnabled(), true);
     assert.deepEqual(errors, []);

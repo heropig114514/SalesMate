@@ -1,5 +1,5 @@
 """职责：验证销售关系模型、权限、业务状态和外部动作边界。
-实现：隔离测试数据库驱动真实 HTTP 及事务，Google 调用仅在指定测试边界模拟。
+实现：邮件草稿使用无预选公司的工作空间会话；隔离测试数据库驱动真实 HTTP 及事务，Google 调用仅在指定测试边界模拟。
 关联：覆盖 apps.sales，并验证 crm 原邮件投影兼容性；不证明真实外部授权可用。
 目录：
 - SalesTests：销售业务集成测试。
@@ -117,7 +117,7 @@ class SalesTests(TestCase):
     # 功能：建立包含完整邮件快照的待确认动作。
     # 输入：`quote` 可选已审核报价响应。
     # 输出：动作响应。
-    # 逻辑：连接凭证为不可用占位，实际执行测试必须 patch 凭证边界。
+    # 逻辑：草稿使用工作空间会话；连接凭证为不可用占位，实际执行测试必须 patch 凭证边界。
     # 约束：创建不意味着批准或发送。
     def action(self, quote=None):
         connection = models.Connection.objects.create(
@@ -126,7 +126,7 @@ class SalesTests(TestCase):
             account="seller@example.com",
             encrypted_credentials="test-not-a-token",
         )
-        conversation = self.create("conversations", {"company": str(self.company.pk)})
+        conversation = self.create("conversations", {"title": "工作空间"})
         draft = self.create(
             "drafts",
             {
@@ -204,7 +204,7 @@ class SalesTests(TestCase):
     # 功能：验证共享客户编辑与个人会话隔离。
     # 输入：editor 团队、editor 公司授权和私人会话。
     # 输出：同事可编辑工单，但看不到私人会话和 crm 邮件上下文。
-    # 逻辑：分别调用新业务 API 与原 crm 私有 API。
+    # 逻辑：使用无公司会话，分别调用业务 API 与原 crm 私有 API。
     # 约束：共享不代表邮箱授权。
     def test_team_sharing_and_private_records(self):
         team = self.create("teams", {"name": "销售团队"})
@@ -215,7 +215,7 @@ class SalesTests(TestCase):
             "grants",
             {"company": str(self.company.pk), "team": team["id"], "role": "editor"},
         )
-        self.create("conversations", {"company": str(self.company.pk)})
+        self.create("conversations", {"title": "工作空间"})
         self.client.force_authenticate(self.other)
         self.create("tickets", {"company": str(self.company.pk), "title": "协作工单"})
         self.assertEqual(
@@ -354,10 +354,10 @@ class SalesTests(TestCase):
     # 功能：验证消息提交幂等、角色不可伪造和不可修改。
     # 输入：会话及相同 client_key 消息。
     # 输出：相同内容返回同 ID，不同内容冲突，编辑与角色伪造失败。
-    # 逻辑：事务唯一性与载荷一致性共同保证。
+    # 逻辑：工作空间会话内通过事务唯一性与载荷一致性共同保证。
     # 约束：没有模拟或生成助手回复。
     def test_messages_idempotent_and_immutable(self):
-        conversation = self.create("conversations", {"company": str(self.company.pk)})
+        conversation = self.create("conversations", {"title": "工作空间"})
         data = {
             "conversation": conversation["id"],
             "content": "请整理需求",

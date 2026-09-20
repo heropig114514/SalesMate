@@ -1,7 +1,7 @@
 /**
  * 职责：验证 LLM 分阶段结果在当前详情及时可见，且不会破坏阅读和未保存内容。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：真实浏览器加载静态前端，模拟邮件、画像、评分的独立完成和慢响应/读取失败。
+ * 实现：通过共享工作空间入口打开助手；真实浏览器加载静态前端，模拟邮件、画像、评分的独立完成和慢响应/读取失败。
  * 关联：app.js、live-detail.js、assistant.js；使用显式 Playwright 和 Chrome 路径。
  * 目录：main 执行浏览器验收。
  * 变量索引：FRONTEND 为页面根目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
@@ -68,7 +68,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${server.address().port}/#company/company-a`);
     await page.locator('#detail-live-message').filter({ hasText: '自动更新已开启' }).waitFor();
     await page.locator('[data-direction=inbound]').click();
-    await page.locator('#assistant-toggle').click();
+    await page.locator('#assistant-launcher').click();
     await page.locator('#assistant-input').fill('这份草稿尚未保存，请保留。');
     await page.evaluate(() => {
       window.originalEmailNode = document.querySelector('[data-email-ref="sales@example.com:original"]');

@@ -17,10 +17,10 @@ import { t, h, locale, language } from './i18n.js?v=20260920-i18n';
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260920-i18n';
 import { mailSourceLabel } from './mail-source.js';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260920-i18n';
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260920-profile';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260920-workspace-chat';
 import { request, escapeHtml as e } from './api.js?v=20260920-i18n';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
-import { getAssistant, enableAssistant, openAssistantLink, cancelAssistantLink } from './assistant-widget.js?v=20260920-floating';
+import { getAssistant, enableAssistant, openAssistantLink } from './assistant-widget.js?v=20260920-workspace-chat';
 import { Notice } from './notice.js';
 
 const assistant = getAssistant();
@@ -153,7 +153,7 @@ function renderDimension(key, value) {
 }
 
 /** 功能：渲染客户详情三栏。输入：data 为完整客户响应。输出：无。
- * 逻辑：比较完整响应（不只 revision）；复用未变化节点并校正阅读位置，客户身份变化才重建共享上下文；只有点击客户助手才切换聊天上下文。
+ * 逻辑：比较完整响应（不只 revision）；复用未变化节点并校正阅读位置，客户身份变化才重建共享上下文；聊天始终保留工作空间会话。
  * 约束：独立助手和编辑表单不在局部更新范围，未保存草稿、焦点和邮件方向保留；不等待整批结束。 */
 function renderDetail(data) {
   const previous = state.detail;
@@ -164,10 +164,9 @@ function renderDetail(data) {
     const name = companyName(data), analysis = data.analysis;
     if (!previous || previous.company_id !== data.company_id || companyName(previous) !== name) setWorkspaceContext({ id: data.company_id, name }, 'inbox');
     $('detail-crumb').textContent = ' / ' + name;
-    patchHTML($('detail-header'), h`<a href="#" class="back-link">← 返回工作台</a><div class="detail-title"><div class="avatar large">${e(name.slice(0, 1))}</div><div class="detail-identity"><h1>${e(name)}</h1><p>${e(data.domains.join(' · ') || t('公共邮箱 · 按联系人独立归组'))} ${pill(data.crm_status === 'registered' ? t('已建档') : t('未建档'), 'subtle')}</p></div><div class="actions"><button id="register" class="secondary">${data.crm_status === 'registered' ? t('编辑客户档案') : t('建立客户档案')}</button><button id="reanalyze" class="primary">↻ 更新分析</button><button id="assistant-toggle" type="button" class="secondary assistant-toggle" aria-controls="assistant-panel" aria-expanded="${assistant.isOpen}">✧ AI 助手</button></div></div><div class="analysis-status">${pill(data.provider === 'rules' ? t('规则占位结果') : data.provider === 'agent' ? t('Agent 分析') : t('尚无分析'), 'green')}<span>${e(jobNames[data.job_status] || t('未创建任务'))} · ${e(date(data.generated_at))}</span>${data.stale ? pill(t('上下文已变化，当前展示旧分析'), 'warning') : ''}${data.job_error ? `<span class="failure">${e(data.job_error.message)}</span>` : ''}<button id="detail-refresh" class="text-btn">刷新状态</button></div><div class="workspace-customer-actions"><a href="${e(businessHref('quotes', data.company_id, { create: '1' }))}">＋ 创建报价</a><a href="${e(businessHref('follow-ups', data.company_id, { create: '1' }))}">＋ 安排跟进</a><a href="${e(businessHref('actions', data.company_id))}">准备沟通动作 →</a></div>`);
+    patchHTML($('detail-header'), h`<a href="#" class="back-link">← 返回工作台</a><div class="detail-title"><div class="avatar large">${e(name.slice(0, 1))}</div><div class="detail-identity"><h1>${e(name)}</h1><p>${e(data.domains.join(' · ') || t('公共邮箱 · 按联系人独立归组'))} ${pill(data.crm_status === 'registered' ? t('已建档') : t('未建档'), 'subtle')}</p></div><div class="actions"><button id="register" class="secondary">${data.crm_status === 'registered' ? t('编辑客户档案') : t('建立客户档案')}</button><button id="reanalyze" class="primary">↻ 更新分析</button></div></div><div class="analysis-status">${pill(data.provider === 'rules' ? t('规则占位结果') : data.provider === 'agent' ? t('Agent 分析') : t('尚无分析'), 'green')}<span>${e(jobNames[data.job_status] || t('未创建任务'))} · ${e(date(data.generated_at))}</span>${data.stale ? pill(t('上下文已变化，当前展示旧分析'), 'warning') : ''}${data.job_error ? `<span class="failure">${e(data.job_error.message)}</span>` : ''}<button id="detail-refresh" class="text-btn">刷新状态</button></div><div class="workspace-customer-actions"><a href="${e(businessHref('quotes', data.company_id, { create: '1' }))}">＋ 创建报价</a><a href="${e(businessHref('follow-ups', data.company_id, { create: '1' }))}">＋ 安排跟进</a><a href="${e(businessHref('actions', data.company_id))}">准备沟通动作 →</a></div>`);
     patchHTML($('detail-content'), h`<div class="detail-grid"><section class="mail-panel"><div class="section-title"><h2>邮件往来 <span class="count-pill">${data.email_count}</span></h2></div><div class="tabs" role="group" aria-label="邮件方向">${[['all', t('全部')], ['inbound', t('收件')], ['outbound', t('发件')]].map(([key, label]) => `<button data-direction="${key}" class="${state.direction === key ? 'selected' : ''}">${label}</button>`).join('')}</div><div id="emails" data-live-preserve></div></section><section class="analysis-panel"><div class="section-title"><h2>客户画像</h2><span class="muted">基于已有业务事实</span></div>${analysis ? ['industry_context', 'company_ops', 'intent'].map(key => renderDimension(key, analysis.detail_view.profile[key])).join('') : h('<div class="empty">分析尚未生成，请更新分析或等待 Agent。</div>')}<div class="section-title analysis-divider"><h2>客户分析</h2></div>${analysis ? ['timeline', 'opportunity', 'risk', 'guidance'].map(key => renderDimension(key, analysis.detail_view.analysis[key])).join('') : ''}${analysis?.detail_view.conflicts.length ? h`<div class="missing">事实变化与冲突：${analysis.detail_view.conflicts.map(item => e(item.summary)).join('；')}</div>` : ''}</section><aside class="context-panel"><article class="context-card" data-live-key="score"><p class="eyebrow">FOLLOW-UP PRIORITY</p><h3>跟进优先级</h3><div class="priority-number">${data.score === null ? '—' : data.score}<span>${data.score === null ? t('资料不足，未评分') : '/ 100'}</span></div><p class="fine">${data.provider === 'rules' ? t('当前为规则占位分数，用于前后端联调。') : t('该分数表示处理优先级。')} 不代表成交概率。</p>${data.score_reasons.map(item => `<p class="score-reason">${e(item.note)}<strong>${item.feature === 'insufficient_data' ? '—' : e(item.contribution)}</strong></p>`).join('')}</article><article class="context-card" data-live-key="missing"><h3>待补充信息</h3><div class="missing-tags">${(analysis?.detail_view?.missing_fields || []).map(text => pill(text, 'warning')).join('') || (analysis ? h('<p class="muted">当前分析未列出缺失项</p>') : h('<p class="muted">暂未生成缺失项清单</p>'))}</div><p class="fine">${e(analysis?.detail_view?.context_completeness?.note || t('可从左侧邮件查看原始依据。'))}</p></article><article class="context-card" data-live-key="contacts"><h3>联系人</h3>${data.contacts.map(contact => h`<div class="contact"><strong>${e(contact.contact_name || t('姓名待确认'))}${contact.is_primary ? t(' · 主要联系人') : ''}</strong><span>${e(contact.contact_email)}</span><small>${contact.interaction_count} 封往来</small></div>`).join('')}</article><article class="context-card" data-live-key="business-context"><h3>业务记录</h3><p class="muted">工单 ${data.context.tickets.length} · 报价 ${data.context.quotes.length} · 订单 ${data.context.orders.length}</p><p class="fine">只展示后端已有记录。邮件中提到报价，不代表实际已发送报价。</p></article></aside></div>`);
     renderEmails();
-    $('assistant-toggle').onclick = event => { cancelAssistantLink(); assistant.setContext({ id: data.company_id, name }); assistant.open(event.currentTarget); };
     $('register').onclick = openRegister;
     $('reanalyze').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, true));
     $('detail-refresh').onclick = event => busy(event.currentTarget, () => loadDetail(data.company_id, false));
@@ -212,11 +211,10 @@ async function loadDetail(id, trigger = true) {
 }
 
 /** 功能：按哈希切换列表与详情，旧聊天链接打开浮窗。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止详情观察并取消旧链接读取；邮箱设置显示独立账号管理页面并标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
+ * 逻辑：切换时停止详情观察并保留工作空间聊天；邮箱设置显示独立账号管理页面并标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
  * 约束：聊天、复核和授权入口不触发分析；原客户详情的分析条件保持不变。 */
 async function navigate() {
   detailObserver.stop();
-  cancelAssistantLink();
   ++state.navigation;
   state.detail = null;
   $('notice').hidden = true;
@@ -252,7 +250,7 @@ async function navigate() {
       $('sync-progress').scrollIntoView({ block: 'center' });
     }
   }
-  if (chat) await openAssistantLink(chat[1] || null);
+  if (chat) openAssistantLink();
 }
 
 
@@ -483,11 +481,10 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：先取消旧详情和聊天链接读取，再核验会话；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名清理浮窗并恢复登录表单。
+ * 逻辑：先取消旧详情读取，再核验会话；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名清理浮窗并恢复登录表单。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
   detailObserver.stop();
-  cancelAssistantLink();
   ++state.navigation;
   const session = await request('session/');
   $('login-screen').hidden = session.authenticated;
@@ -586,7 +583,7 @@ function bindEvents() {
       else notice(t('该依据来自已保存的 CRM 业务记录，来源 ID：') + reference.dataset.ref, false);
     }
   });
-  window.addEventListener('pagehide', () => { detailObserver.stop(); cancelAssistantLink(); ++state.navigation; });
+  window.addEventListener('pagehide', () => { detailObserver.stop(); ++state.navigation; });
   window.addEventListener('pageshow', event => {
     const match = location.hash.match(/^#company\/([\w-]+)$/);
     if (event.persisted && match && !$('workspace').hidden) busy(null, () => loadDetail(match[1], false));

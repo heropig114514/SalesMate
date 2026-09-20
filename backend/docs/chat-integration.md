@@ -1,14 +1,16 @@
 # 销售聊天：后端适配与运行说明
 
-更新：2026-09-20。此文档描述后端主导的 Agent 适配。聊天回报现仅校验 Schema，另保留权限、请求状态和幂等校验。代码已提供会话提问、任务状态、Agent 领取/上下文/回报、证据快照、引用、消费者与网页展示，以及新增的请求绑定只读工具接口。新接口、工具错误、证据存储和发布步骤见[工作空间聊天对接契约](workspace-chat-tools.md)；代码交付不等于生产迁移、服务安装或真实模型验收已经完成。
+更新：2026-09-20。此文档描述后端对当前工作空间 Agent 契约的适配。聊天回报现仅校验 Schema，另保留权限、请求状态和幂等校验。代码已提供会话提问、任务状态、Agent 领取/上下文/回报、证据快照、引用、消费者与网页展示，以及新增的请求绑定只读工具接口。新接口、工具错误、证据存储和发布步骤见[工作空间聊天对接契约](workspace-chat-tools.md)；代码交付不等于生产迁移、服务安装或真实模型验收已经完成。
 
 ## 1. 边界和复用
 
 - 复用 `sales.Conversation`、`sales.Message`、消息 `client_key` 和员工绑定的 `AgentAuthentication`。不重建会话，不回填旧消息任务。
 - 新应用 `apps.chat` 维护 `AnswerRequest`、`Citation`、`KnowledgeEntry`；初始结构为 `chat.0001_initial`；通用聊天新增 `sales.0005_general_conversation` 与 `chat.0002_general_answer_request`，解除两处 company 非空约束，不修改 L1–L4 的协议、参数或数据。
 - 普通 `sales/records/messages/` 仍只保存用户消息；只有受保护的聊天回报服务能创建 assistant。草稿保存不会触发模型。
-- 聊天支持无客户绑定的通用私有会话，以及员工自己公司的客户私有会话。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
+- 新聊天只支持无预选公司的工作空间私有会话，旧客户会话保留历史读取。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
 - 外部知识关闭；后端支持请求绑定的 customers.search/customers.context 只读调用，模型工具编排由 Agent 接入。聊天不执行发信、日历、CRM/文件写操作，不引入向量库或分布式队列。
+
+新 Worker 启动时按员工锁结束旧公司绑定的 pending/processing，领取时也清理该员工遗留任务。已完成/失败历史、消息和证据保持不变，不重派、不将旧问题静默转换为工作空间问题。升级前停止旧 Worker；仓库部署脚本已先排空聊天再启动新 Worker。本次无新数据库迁移。
 
 ## 2. 数据与状态不变量
 
@@ -18,6 +20,7 @@
 pending → processing → completed
                      → failed
 pending → failed（领取时确认权限已失效）
+pending/processing → failed（仅旧公司绑定任务，错误码 workspace_chat_required）
 failed --用户明确重试--> 新 request_id 的 pending
 ```
 
@@ -35,9 +38,9 @@ failed --用户明确重试--> 新 request_id 的 pending
 
 工作台、业务管理和世界消息页面右下角提供“聊天助手”悬浮按钮，点击后在页面底部展开横向聊天条，使用面板收起按钮 / Esc 收起，无需跳转独立页面或选择客户。支持一般问答、写作、翻译及计划；历史与草稿只属于当前员工。展开浮窗只读取历史，显式提问、保存草稿或新建会话时才写入。手机端保持底部展开及受限高度，采用模态焦点，收起后恢复背景交互；同一页面收起/展开及工作台内导航保留未保存草稿，跨页面或刷新需先保存草稿。
 
-客户详情的 AI 助手仍使用当前客户的授权资料；已有 `/#assistant/<company_id>` 链接可继续恢复该客户会话，旧链接仅在工作台上打开浮窗；`/#assistant` 打开通用会话。客户证据不足不会自动切换为通用模式。
+客户详情已移除专属 AI 助手按钮，统一使用工作空间悬浮入口。`/#assistant` 及历史 `/#assistant/<company_id>` 链接均打开工作空间，不读取链接里的公司或恢复旧公司任务。Agent 根据问题主动搜索和查询客户。
 
-通过 `POST /api/v1/sales/records/conversations/` 创建通用会话时，company 可省略或为 null；客户会话继续传 UUID。列表新增 `conversation_scope=general|customer` 筛选，通用页使用 general；`?company=<uuid>` 继续用于客户会话。绑定创建后不可修改。MCP/CLI 的 `conversations.list` 也暴露此筛选。
+通过 `POST /api/v1/sales/records/conversations/` 创建通用会话时，company 可省略或为 null；非空公司不再允许创建新会话。列表新增 `conversation_scope=general|customer` 筛选，通用页使用 general；`?company=<uuid>` 仅用于查询既有客户会话历史。绑定创建后不可修改。MCP/CLI 的 `conversations.list` 也暴露此筛选。
 
 前缀 `/api/v1/sales/chat/`，使用既有 SessionAuthentication、CSRF 和统一错误响应。
 
@@ -58,7 +61,7 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-不接收 employee_id/company_id/role。可空公司由既有会话解析，员工从登录身份取得。新建返回 201，同内容重传返回 200。
+不接收 employee_id/company_id/role。会话必须是无预选公司的工作空间；员工从登录身份取得。新建返回 201，同内容重传返回 200。
 
 状态响应包含 `request_id`、`conversation_id`、`user_message_id`、`assistant_message_id`、`status`、`error`、`created_at`、`processing_started_at`、`finished_at`、`chat_prompt_version`、`citations`。浏览器引用包含 position、三元组及后端保存的 content，供展开证据；这些额外字段不发送给 Agent。
 
@@ -77,7 +80,6 @@ failed --用户明确重试--> 新 request_id 的 pending
   "request": {
     "request_id": "<uuid>",
     "conversation_id": "<uuid>",
-    "company_id": "<uuid>",
     "user_message_id": "<uuid>",
     "question": "客户目前最关心什么？",
     "recent_history": []
@@ -85,7 +87,7 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-后端领取响应继续保持同样六字段，无客户绑定时输出 `company_id: null`，供当前 Agent 选择 `general_chat.answer` 或原客户工作流。浏览器创建通用会话可省略 company，提问和 Agent 回报均无需传 company_id。仓库内当前 Agent 解析器仍要求领取响应显式包含 company_id；这是 Agent 侧契约，本次后端回报校验调整未改变它。
+领取响应固定为上述五字段，完全省略 company_id；新 Agent 解析器直接消费此结构。模型输出为 action=tool 或 action=answer，由 Agent 编排工具循环；最终 answers 回报仍是六字段结构。
 
 历史只包含同员工同会话、原问题之前的最近 20 条非空 user/assistant 消息，恢复为时间正序；不含当前问题和后来问题。领取时冻结，不改动 Agent 的 6000 字符历史预算。
 
@@ -110,15 +112,10 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 
 首次 internal 请求在事务内读取并保存快照；同请求后续读取返回同样内容。后端不接收任意 company 或 query 覆盖。
 
-通用模式只提供当前员工的内部知识，customer_context 为空；没有知识也可调用模型进行一般交流，知识读取失败仍明确失败。通用模式不读取或搜索任何客户的邮件、交易或画像。
+初始上下文只提供当前员工的内部知识，customer_context 为空；没有知识也可调用模型进行一般交流，知识读取失败仍明确失败。初始上下文不读取或搜索任何客户的邮件、交易或画像。
 
-客户模式的证据选择策略：最近最多 4 封员工自有邮箱的业务邮件、1 份当前有效模型画像、工单/报价/订单各至多 1 条现有投影记录、最多 4 条内部知识，共不超过原 Agent 12 条预算。邮件按 sent_at 倒序；业务取现有投影末条；知识按问题空白分隔词段的直接包含匹配数优先，再按导入时间倒序。该策略是 Demo 的确定性选择，不声称实现语义检索或完整历史检索。
+工作空间初始上下文仅返回至多 4 条本人知识，按问题词段匹配优先、再按版本时间排序。单条至多 2000 字符并明确标记节选，沿用既定预算。客户目录、邮件及画像由 Agent 按需调用请求绑定工具，返回的完整资料和来源单独存入 ToolRead。
 
-- 邮件正文提供明确节选，包含时间、方向和主题，排除非业务/隐藏邮件；来源 ID 包含数据库邮件身份与复核版本，兼容 Gmail/QQ。
-- 模型画像必须 `provider=agent`、成功、当前 company revision、快照未失效。不会把页面可展示的 stale 画像或 rules 占位当作当前模型结论。
-- 工单、报价、订单沿用后端既有业务投影：保留状态、币种和真实外发语义，不把草拟报价冒充已发报价。
-- 结构化记录用带字段名的可读投影，保留事实与判断区别；不调用额外模型生成摘要。每条最多 2000 字符，节选明确标记。
-- 客户没有有效画像属于资料缺失，通过 retrieval_gaps 表达，仍可使用其他客户证据。查询成功但资料为空仍是 completed，Agent 可返回资料不足。
 - 内部知识只使用维护者导入的真实资料，没有默认制度。当前没有独立远程知识源；数据库读取异常正常失败，不隐式变为空知识。
 - `external_available=false`；请求 external 返回 409，其他非法 scope 为 400。未来启用 external 需补充版本契约及测试，本次不预置备用实现。
 - 引用回报只检查三元组结构。匹配本请求的原上下文或成功 ToolRead 证据时复制正文；未匹配时只保存 Agent 声明的三元组，content 为空，不根据 source_id 查询其他请求或业务记录，不接受 Agent 自报正文。空正文表示后端没有附加可验证证据，不能当作已经验证的来源。工具记录独立保存，原 chat/context 响应不增加字段。
@@ -130,7 +127,7 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 ```json
 {
   "request_id": "<uuid>",
-  "chat_prompt_version": "chat-v2",
+  "chat_prompt_version": "workspace-chat-v1",
   "assistant_text": "现有资料不足，无法回答该问题。",
   "citations": [],
   "status": "completed",
@@ -145,7 +142,7 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 ```json
 {
   "request_id": "<uuid>",
-  "chat_prompt_version": "chat-v2",
+  "chat_prompt_version": "workspace-chat-v1",
   "assistant_text": "",
   "citations": [],
   "status": "failed",
@@ -248,11 +245,11 @@ python tools/check_doc_changes.py
 - Python 文档结构与变更检查覆盖 141 个文件，0 错误、0 待复核；检查器测试 12 + 9 项通过。另人工复核前端、部署文件和第三方资源说明。
 - 以上记录为发布前验证，不等同真实模型质量或生产部署成功；最终以对应提交的 GitHub Actions 结果和服务器版本、健康检查为准。
 
-## 通用模式发布顺序
+## 历史通用模式迁移说明
 
-先应用新增的两条数据库迁移，再启动同时支持两种模式的 Web 与 chat_worker。旧 Worker 不接受空 company_id，不能与通用聊天混用。回滚为非空字段前须先处理通用会话及回答记录，迁移不会自动删除历史。保守在线迁移门禁会要求对 AlterField 单独审核；本次未修改门禁策略。
+以下两条为已存在的可空公司迁移，适用于尚未安装通用聊天的旧环境；当前工作空间升级不新增迁移。旧版本消费者不能与当前工作空间请求混用。回滚为非空字段前须先处理通用会话及回答记录，迁移不会自动删除历史。保守在线迁移门禁会要求对 AlterField 单独审核；本次未修改门禁策略。
 
-这两条 AlterField 已按结构审阅：仅将 `sales_conversation.company_id` 与 `chat_answerrequest.company_id` 改为可空，保留列类型、外键、索引和 PROTECT 语义，不删除或改写历史记录。生产发布先在部署锁内备份数据库，使用待发布提交的迁移检查实际 SQL 与计划，再显式应用这两条迁移；保守自动迁移门禁保持不变。旧 Web 仍要求客户字段，因此过渡期间不会从旧界面创建通用任务。随后按既有蓝绿流程排空旧聊天 Worker、切换 Web 并启动新 Worker，防止旧消费者领取通用任务。
+这两条 AlterField 已按结构审阅：仅将 `sales_conversation.company_id` 与 `chat_answerrequest.company_id` 改为可空，保留列类型、外键、索引和 PROTECT 语义，不删除或改写历史记录。生产发布先在部署锁内备份数据库，使用待发布提交的迁移检查实际 SQL 与计划，再显式应用这两条迁移；保守自动迁移门禁保持不变。旧 Web 仍要求客户字段，因此过渡期间不会从旧界面创建通用任务。当前发布继续按既有蓝绿流程排空旧聊天 Worker、切换 Web 并启动新 Worker；新 Worker 会结束遗留的公司绑定活动任务。
 
 ## 多用户排队故障回归
 

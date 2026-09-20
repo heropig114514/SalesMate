@@ -1,5 +1,5 @@
-"""职责：串行消费所有有效员工的客户与通用聊天请求。
-实现：从 pending 队列轮转员工，以单次临时身份通过 HTTP 领取、读取和回报；退出信号在任务边界生效。
+"""职责：串行消费所有有效员工的工作空间聊天请求。
+实现：启动时显式结束旧公司活动任务，再从 pending 队列轮转员工，以单次临时身份通过 HTTP 领取、读取和回报；退出信号在任务边界生效。
 关联：Agent process_chat_once、crm.dispatch.scoped_backend 和 common.shutdown；HTTP 权限及原子领取保持不变。
 目录：
 - next_owner：选择下一位有 pending 聊天请求的有效员工。
@@ -23,6 +23,7 @@ from agent.config import load_environment
 from agent.workflows.chat import process_chat_once
 from apps.crm.dispatch import scoped_backend
 from apps.chat.models import AnswerRequest
+from apps.chat.services import retire_legacy_requests
 from common.shutdown import graceful_shutdown
 
 logger = logging.getLogger("salesmate.chat_worker")
@@ -63,12 +64,14 @@ class Command(BaseCommand):
     # 功能：串行执行并记录安全结果。
     # 输入：`args` 位置参数，`options` 含 once/poll。
     # 输出：无；领取或回报失败时非零退出。
-    # 逻辑：每次选择有 pending 请求的员工，用临时身份处理至多一条并撤销凭证；空队列才等待，SIGTERM 不中断当前回报。
+    # 逻辑：启动时结束旧公司任务并保留历史；每次选择 pending 员工，用临时身份处理至多一条并撤销凭证；空队列才等待，SIGTERM 不中断当前回报。
     # 约束：report_failed 保持待核对现场并停止，不记录模型正文或异常原文。
     def handle(self, *args, **options):
         if not 0 < options["poll"] <= 60:
             raise CommandError("poll 必须在 (0,60]。")
         load_environment()
+        retired = retire_legacy_requests()
+        logger.info("chat_worker_legacy_cleanup retired=%s", retired)
         last_owner = 0
         logger.info("chat_worker_started scope=all_active_owners")
         try:

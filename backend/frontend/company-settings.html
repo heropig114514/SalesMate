@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- 职责：独立本公司资料页面的语义骨架。
 实现：共享主导航和底部 Profile；认证成功后读取当前账号资料，用户显式保存。
-关联：company-settings.js/css、workspace.js/css、accounts/company-profile API 和底部助手。
+关联：入口脚本版本随工作空间聊天升级；company-settings.js/css、workspace.js/css、accounts/company-profile API 和底部助手。
 目录：无函数或类；company-form 为资料表单，company-controls 控制忙碌状态，company-fields 为字段，company-status 显示保存和错误状态。
 变量索引：无脚本变量；DOM id 由页面控制器引用。 -->
 <html lang="zh-CN">
@@ -32,6 +32,6 @@
 <p id="company-status" role="status" aria-live="polite"></p>
 </section>
 </main>
-<script type="module" src="/static/company-settings.js?v=20260920-profile"></script>
+<script type="module" src="/static/company-settings.js?v=20260920-workspace-chat"></script>
 </body>
 </html>

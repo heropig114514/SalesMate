@@ -1,12 +1,12 @@
 /** 职责：独立本公司资料设置页，按账号读取、编辑和保存。
  * 实现：共享导航和底部助手；显式保存附版本，失败保留输入；冲突要求用户重新读取。
- * 关联：company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
+ * 关联：工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
  * 目录：text、showStatus、renderForm、loadProfile、saveProfile、boot。
  * 变量索引：fields 为字段及中英文名称；revision 为当前已读取版本；busy 防止重叠操作；$ 查询 DOM。
  */
 import { language } from './i18n.js?v=20260920-i18n';
 import { request, escapeHtml as e } from './api.js';
-import { mountWorkspace } from './workspace.js?v=20260920-profile';
+import { mountWorkspace } from './workspace.js?v=20260920-workspace-chat';
 
 const $ = id => document.getElementById(id);
 const fields = [

@@ -4,7 +4,7 @@
 
 ## 1. 范围与身份
 
-工作空间聊天不要求预选公司。新建会话时 `company` 可省略或为 null；提交问题、领取任务、回报回答沿用现有聊天协议。领取响应为保持旧 Worker 兼容，仍返回 `company_id: null`。
+工作空间聊天不要求预选公司。新建会话时 `company` 可省略或为 null；提交问题和回报回答保持原结构；领取响应只返回 request_id/conversation_id/user_message_id/question/recent_history 五字段，完全省略 company_id。非空 company 不允许创建新会话，旧会话保留历史。
 
 以下接口统一使用 `Authorization: Agent <员工绑定服务令牌>`，不接受普通 Tool token 或浏览器 Session 替代。令牌确定员工；输入不允许 owner_id、employee_id 或其他身份覆盖。Agent 凭证本身标识员工，不区分调用进程是否命名为聊天 Worker。工具目录和工具执行同时检查本人请求处于 processing，且会话仍可访问。
 
@@ -165,3 +165,11 @@ python backend/manage.py spectacular --file backend/contracts/openapi.yaml --val
 ```
 
 注释与目录检查在 backend/ 执行 `python tools/check_docs.py`。数据库测试采用真实 PostgreSQL、隔离数据库和合成记录，旧聊天 HTTP/Worker 测试模拟模型输出，不证明真实模型工具编排或生产部署已完成。
+
+## 工作空间契约升级
+
+本次无需新增数据库迁移。停止旧聊天 Worker 后启动新版本；新 Worker 启动时自动将旧公司绑定的 pending/processing 明确结束为 failed，错误码 workspace_chat_required，原消息、已完成结果和证据保留。领取也会处理该员工遗留旧任务，不能重新提交或重试旧公司会话；用户需在工作空间明确重新提问。普通工作空间 processing 不会被重置或重派。
+
+前端移除客户专属聊天入口，旧客户聊天链接只打开工作空间。邮件草稿可以来自本人工作空间；发信动作仍必须明确选择客户并另行审阅批准，其他员工或另一客户历史草稿不可使用。
+
+CI 保留并更新工作空间契约测试：直接解析五字段领取、action:tool → 真实 HTTP 查询 → action:answer、共享 Worker 多员工隔离，以及网页实际提问和引用回读。后端不验证模型内容含义、提示词版本枚举或引用真实性；继续验证 Schema、身份、权限、请求状态与幂等。

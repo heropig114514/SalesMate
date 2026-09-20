@@ -2,7 +2,7 @@
 实现：使用隔离 PostgreSQL 与真实 Django API，覆盖结构校验与来源元数据保存；模型和 Worker 环境使用确定性模拟。
 关联：apps.chat、既有 sales 消息及 agent.workflows.chat；不调用真实邮箱或百炼。
 目录：
-- fixture：建立两员工及自有客户会话。
+- fixture：建立两员工、自有客户及独立工作空间会话。
 - result_for：构造合法 Agent 回报。
 - ChatTests：接口及状态不变量测试。
 - ChatTests.setUp：创建隔离夹具与客户端。
@@ -12,7 +12,7 @@
 - ChatTests.test_claim_history_boundary：领取历史截止和一次性领取。
 - ChatTests.test_agent_auth_and_employee_isolation：服务与用户权限隔离。
 - ChatTests.test_shared_company_does_not_grant_mail_access：共享业务不升级邮件权限。
-- ChatTests.test_context_frozen_budget_and_current_analysis：上下文冻结、容量和画像有效性。
+- ChatTests.test_context_frozen_budget_and_isolation：知识上下文冻结、容量和公司隔离。
 - ChatTests.test_report_idempotency_and_citations：引用快照及终态去重。
 - ChatTests.test_invalid_report_rolls_back：Schema 反例不产生消息。
 - ChatTests.test_report_accepts_metadata_without_reading_other_snapshots：来源不在快照仍可保存，但不能读取其他请求正文。
@@ -24,7 +24,7 @@
 - ChatTests.test_browser_cannot_forge_assistant：原消息写入口仍禁止助手伪造。
 - ChatTests.test_browser_csrf_and_bad_input：会话写入保留 CSRF 和严格字段。
 - ChatTests.test_knowledge_import_versions：知识版本不可覆盖与原子回滚。
-- ChatTests.test_current_analysis_and_business_sources：有效画像和三类业务证据可引用。
+- ChatTests.test_workspace_does_not_preselect_company：初始上下文不隐式选取客户资料。
 - ChatTests.test_answer_transaction_rollback：引用保存失败回滚助手消息。
 - ChatTests.test_worker_report_failure_stops：回报失败停止消费者且不重试。
 - ChatTests.test_processing_access_revoked：领取后撤销权限不能读证据或保存结果。
@@ -37,7 +37,8 @@
 - ChatConcurrencyTests.test_concurrent_report：重复并发回报只有一条助手消息。
 - ChatConcurrencyTests.test_concurrent_report.send：独立连接回报函数。
 - ChatHTTPTests：跨真实 HTTP 的 Agent 完整流程。
-- ChatHTTPTests.test_agent_real_http_round_trip：真实传输、持久化与引用回读。
+- ChatHTTPTests.test_agent_real_http_round_trip：真实传输、工具循环、持久化与引用回读。
+- ChatHTTPTests.test_agent_real_http_round_trip.decide：在模型边界根据真实工具证据作出决策。
 变量索引：
 - BROWSER：聊天浏览器接口前缀。
 - AGENT：固定 Agent 聊天接口前缀。
@@ -79,10 +80,7 @@ from apps.crm.models import (
     Company,
     Mailbox,
     Email,
-    AnalysisInput,
-    Analysis,
 )
-from apps.crm.durable_models import SnapshotInvalidation
 from apps.sales.models import Conversation, Message, Team, Membership, CompanyGrant
 
 BROWSER = "/api/v1/sales/chat/"
@@ -92,7 +90,7 @@ AGENT = "/api/v1/agent/chat/"
 # 功能：建立独立聊天测试实体。
 # 输入：无外部参数，使用当前测试数据库。
 # 输出：员工、另一员工、公司及会话。
-# 逻辑：只使用合成账号和邮件，凭证为测试固定值。
+# 逻辑：只使用合成账号和邮件；工作空间会话不绑定公司，凭证为测试固定值。
 # 约束：不读取运行环境凭证，不触发邮箱或模型调用。
 def fixture():
     owner = get_user_model().objects.create_user(username="chat-owner")
@@ -100,7 +98,7 @@ def fixture():
     company = Company.objects.create(
         owner=owner, name="测试客户", group_key="domain:chat.example"
     )
-    conversation = Conversation.objects.create(owner=owner, company=company)
+    conversation = Conversation.objects.create(owner=owner)
     AgentCredential.objects.create(
         owner=owner,
         name="chat-test",
@@ -220,7 +218,7 @@ class ChatTests(TestCase):
     # 功能：验证领取时不会把未来问题混入历史。
     # 输入：无外部参数，建立过去、当前和之后的消息。
     # 输出：严格请求可被 Agent 解析，历史仅包含过去消息。
-    # 逻辑：第二次领取为空，recent_history 冻结在数据库。
+    # 逻辑：五字段工作空间请求由真实新解析器验证，第二次领取为空且历史冻结。
     # 约束：并发领取另用 TransactionTestCase 验证。
     def test_claim_history_boundary(self):
         Message.objects.create(
@@ -239,6 +237,16 @@ class ChatTests(TestCase):
             content="之后的问题",
         )
         response = self.agent.post(AGENT + "requests/claim/", {}, format="json")
+        self.assertEqual(
+            set(response.data["request"]),
+            {
+                "request_id",
+                "conversation_id",
+                "user_message_id",
+                "question",
+                "recent_history",
+            },
+        )
         parsed = parse_conversation_request(response.data["request"])
         self.assertEqual(
             parsed["recent_history"], [{"role": "user", "content": "之前的问题"}]
@@ -321,23 +329,12 @@ class ChatTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    # 功能：验证证据快照、知识预算与画像版本。
-    # 输入：无外部参数，创建陈旧画像、隐藏邮件和真实版本知识。
-    # 输出：不含陈旧画像/隐藏正文，后续变更不会修改本请求证据。
-    # 逻辑：当前 revision 不匹配的画像缺口明确，知识仍有预算。
-    # 约束：使用人工数据库夹具，不证明真实 L3 生成效果。
-    def test_context_frozen_budget_and_current_analysis(self):
-        snapshot = AnalysisInput.objects.create(
-            company=self.company, revision=0, input_version="test", payload={}
-        )
-        Analysis.objects.create(
-            snapshot=snapshot,
-            provider="agent",
-            prompt_version="test",
-            payload={"status": "completed", "detail_view": {"profile": "陈旧画像"}},
-        )
-        self.company.revision = 1
-        self.company.save(update_fields=["revision"])
+    # 功能：验证工作空间知识快照、预算与公司隔离。
+    # 输入：无外部参数，创建本人知识和公司邮件。
+    # 输出：初始上下文不含客户邮件，后续知识变更不改变已有快照。
+    # 逻辑：真实 API 领取后冻结本人知识，并检查未启用外部上下文的响应。
+    # 约束：客户查询通过 ToolRead 单独测试，不调用模型。
+    def test_context_frozen_budget_and_isolation(self):
         KnowledgeEntry.objects.create(
             owner=self.owner,
             source_key="manual",
@@ -360,14 +357,13 @@ class ChatTests(TestCase):
         services.claim(self.owner)
         first = services.context_for(self.owner, uuid.UUID(request_id), "internal")
         parse_answer_context(first)
-        self.assertNotIn("陈旧画像", json.dumps(first, ensure_ascii=False))
+        self.assertEqual(first["customer_context"], [])
         self.assertNotIn("隐藏正文", json.dumps(first, ensure_ascii=False))
         self.assertEqual(len(first["context_items"]), 1)
         self.assertLessEqual(
             len(first["customer_context"]) + len(first["context_items"]), 12
         )
-        email.payload["body_text"] = "更新后的正文"
-        email.save(update_fields=["payload"])
+        KnowledgeEntry.objects.filter(owner=self.owner).update(content="更新后的知识")
         self.assertEqual(
             first, services.context_for(self.owner, uuid.UUID(request_id), "internal")
         )
@@ -380,17 +376,24 @@ class ChatTests(TestCase):
         self.assertEqual(response.status_code, 409)
 
     # 功能：验证完成结果精确幂等及引用正文来源。
-    # 输入：无外部参数，使用真实冻结邮件引用。
+    # 输入：无外部参数，使用真实冻结知识引用。
     # 输出：唯一助手消息、唯一引用和冲突保护。
-    # 逻辑：相同回报重复保存成功，不同正文拒绝；浏览器可读证据。
+    # 逻辑：相同知识引用回报重复保存成功，不同正文拒绝；浏览器可读证据。
     # 约束：Agent 不能自报引用正文。
     def test_report_idempotency_and_citations(self):
         self.submit()
         services.claim(self.owner)
         request = AnswerRequest.objects.get()
+        KnowledgeEntry.objects.create(
+            owner=self.owner,
+            source_key="citation-test",
+            version="1",
+            title="测试知识",
+            content="客户需要设备。",
+        )
         context = services.context_for(self.owner, request.pk, "internal")
         citation = {
-            key: context["customer_context"][0][key]
+            key: context["context_items"][0][key]
             for key in ("source_id", "source_type", "title_or_label")
         }
         payload = result_for(request, citation)
@@ -403,7 +406,7 @@ class ChatTests(TestCase):
         )
         self.assertEqual(Message.objects.filter(role="assistant").count(), 1)
         self.assertEqual(
-            Citation.objects.get().content, context["customer_context"][0]["content"]
+            Citation.objects.get().content, context["context_items"][0]["content"]
         )
         payload["assistant_text"] = "其他内容。[1]"
         self.assertEqual(
@@ -745,79 +748,41 @@ class ChatTests(TestCase):
                 ["2"],
             )
 
-    # 功能：验证非空业务资料确实进入独立引用条目。
-    # 输入：无外部参数，当前画像、真实业务投影和规则占位反例。
-    # 输出：包含邮件、模型画像、工单、报价、订单，规则占位及失效画像排除。
-    # 逻辑：新请求首次读取有效版本，后续请求不会重新使用被失效的画像。
-    # 约束：不更改 L3 生成参数或交易投影规则。
-    def test_current_analysis_and_business_sources(self):
-        snapshot = AnalysisInput.objects.create(
-            company=self.company, revision=0, input_version="current", payload={}
-        )
-        Analysis.objects.create(
-            snapshot=snapshot,
-            provider="agent",
-            prompt_version="test",
-            payload={
-                "status": "completed",
-                "detail_view": {"profile": {"facts": "客户需要设备"}},
-            },
-        )
-        Analysis.objects.create(
-            snapshot=snapshot,
-            provider="rules",
-            prompt_version="rules",
-            payload={"status": "completed", "detail_view": {"profile": "规则占位"}},
-        )
+    # 功能：验证工作空间初始上下文不隐式选中任何客户。
+    # 输入：无外部参数，员工已有客户、邮件及业务投影。
+    # 输出：customer_context 和 retrieval_gaps 均为空。
+    # 逻辑：即使只有一个客户，后端也只返回知识，资料由 Agent 工具查询。
+    # 约束：不更改客户业务数据或模型生成参数。
+    def test_workspace_does_not_preselect_company(self):
         self.company.tickets = [{"ticket_id": "ticket-one", "status": "open"}]
-        self.company.quotes = [
-            {
-                "quote_id": "quote-one",
-                "status": "sent",
-                "currency": "SGD",
-                "amount": "100",
-            }
-        ]
-        self.company.orders = [
-            {
-                "order_id": "order-one",
-                "status": "confirmed",
-                "currency": "SGD",
-                "amount": "80",
-            }
-        ]
-        self.company.save(update_fields=["tickets", "quotes", "orders"])
+        self.company.save(update_fields=["tickets"])
         self.submit()
-        services.claim(self.owner)
-        request = AnswerRequest.objects.get()
-        context = services.context_for(self.owner, request.pk, "internal")
-        self.assertEqual(
-            {row["source_type"] for row in context["customer_context"]},
-            {"customer_email", "customer_analysis", "ticket", "quote", "order"},
-        )
-        self.assertNotIn("规则占位", json.dumps(context, ensure_ascii=False))
-        services.save_answer(self.owner, result_for(request))
-        SnapshotInvalidation.objects.create(snapshot=snapshot, reason="test")
-        second = self.submit().data["request_id"]
-        services.claim(self.owner)
-        context = services.context_for(self.owner, uuid.UUID(second), "internal")
-        self.assertNotIn(
-            "customer_analysis",
-            [row["source_type"] for row in context["customer_context"]],
-        )
+        claimed = services.claim(self.owner)
+        self.assertNotIn("company_id", claimed)
+        context = services.context_for(self.owner, claimed["request_id"], "internal")
+        self.assertEqual(context["customer_context"], [])
+        self.assertEqual(context["retrieval_gaps"], [])
+        self.assertNotIn("客户需要设备", json.dumps(context, ensure_ascii=False))
 
     # 功能：验证助手消息、引用与终态同事务。
     # 输入：无外部参数，模拟引用写入异常。
     # 输出：没有助手消息，请求仍 processing。
-    # 逻辑：异常冒泡且数据库回滚先创建的消息。
+    # 逻辑：使用本人知识引用；异常冒泡且数据库回滚先创建的消息。
     # 约束：模拟仅限写入失败，不替换事务机制。
     def test_answer_transaction_rollback(self):
         self.submit()
         services.claim(self.owner)
         request = AnswerRequest.objects.get()
+        KnowledgeEntry.objects.create(
+            owner=self.owner,
+            source_key="citation-test",
+            version="1",
+            title="测试知识",
+            content="客户需要设备。",
+        )
         context = services.context_for(self.owner, request.pk, "internal")
         citation = {
-            key: context["customer_context"][0][key]
+            key: context["context_items"][0][key]
             for key in ("source_id", "source_type", "title_or_label")
         }
         with patch(
@@ -1010,7 +975,7 @@ class ChatHTTPTests(LiveServerTestCase):
     # 功能：验证领取、上下文、回答和浏览器回读闭环。
     # 输入：无外部参数，临时服务及固定合成证据。
     # 输出：完成状态、真实助手消息及引用；重复回报幂等。
-    # 逻辑：原 DjangoBackendClient 和 process_chat_once 经真实 HTTP 执行，模型仅被调用一次。
+    # 逻辑：原客户端经 HTTP 领取、查询目录、搜索客户及保存回答；模型先返回 tool 再返回 answer。
     # 约束：不连接外部邮件、知识或模型服务。
     @override_settings(
         ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"],
@@ -1029,22 +994,48 @@ class ChatHTTPTests(LiveServerTestCase):
         backend = DjangoBackendClient(
             self.live_server_url + "/api/v1/agent/", "chat-test-token"
         )
-        citation = {
-            "source_id": "email:seller@chat.example:one:review:0",
-            "source_type": "customer_email",
-            "title_or_label": "采购需求",
-        }
-        provider = Mock(
-            return_value=json.dumps(
-                {"assistant_text": "客户需要设备。[1]", "citations": [citation]},
+
+        # 功能：根据真实后端工具返回的证据生成合成模型决策。
+        # 输入：`messages` 为工作空间提示，`max_tokens` 为既定模型预算。
+        # 输出：首次搜索工具决策，收到证据后输出带 action 的最终回答。
+        # 逻辑：引用来自当前提示的授权来源，绝不伪造 source_id。
+        # 约束：仅替换模型边界；目录、只读查询和保存全部经过真实 HTTP。
+        def decide(messages, *, max_tokens):
+            payload = json.loads(messages[-1]["content"])
+            if not payload["tool_results"]:
+                return json.dumps(
+                    {
+                        "action": "tool",
+                        "name": "customers.search",
+                        "arguments": {"q": "测试客户"},
+                    }
+                )
+            evidence = next(
+                row
+                for row in payload["authorized_evidence"]
+                if row["source_type"] == "customer_search"
+            )
+            citation = {
+                key: evidence[key]
+                for key in ("source_id", "source_type", "title_or_label")
+            }
+            return json.dumps(
+                {
+                    "action": "answer",
+                    "assistant_text": "找到测试客户。[1]",
+                    "citations": [citation],
+                },
                 ensure_ascii=False,
             )
-        )
+
+        provider = Mock(side_effect=decide)
         result = process_chat_once(backend=backend, chat_provider=provider)
         self.assertEqual(result["status"], "completed", result)
-        provider.assert_called_once()
+        self.assertEqual(provider.call_count, 2)
+        self.assertEqual(request.tool_reads.count(), 1)
+        citation = result["citations"][0]
         request.refresh_from_db()
-        self.assertEqual(request.assistant_message.content, "客户需要设备。[1]")
+        self.assertEqual(request.assistant_message.content, "找到测试客户。[1]")
         self.assertTrue(backend.report_answer(result)["duplicate"])
         browser = APIClient()
         browser.force_authenticate(owner)

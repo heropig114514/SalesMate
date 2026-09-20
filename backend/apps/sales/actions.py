@@ -1,5 +1,5 @@
 """职责：保存可审查的外部动作、明确审批并执行 Google 或 QQ 工具。
-实现：冻结动作和连接版本、原子领取；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
+实现：允许工作空间草稿用于明确指定客户的待审阅动作；冻结动作和连接版本、原子领取；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
 关联：integrations 提供已授权凭证，后台命令执行已批准动作，报价实际发送后才同步 Agent。
 目录：
 - validate_parameters：形成包含完整内容的可确认动作快照。
@@ -21,6 +21,7 @@ from email.message import EmailMessage
 from django.contrib.auth import get_user_model
 from django.core.validators import validate_email
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from googleapiclient.discovery import build
@@ -42,13 +43,17 @@ logger = logging.getLogger("salesmate.actions")
 # 输入：`actor`、`company`、`tool`、`parameters`。
 # 输出：普通 JSON 参数，包括连接身份和明确发送内容。
 # 逻辑：检查 QQ 能力后读取草稿及报价，QQ 冻结连接版本与 ASCII 信封；日历验证时间与通知方式。
-# 约束：不执行外部调用；未知参数拒绝，来源必须与公司和员工一致。
+# 约束：不执行外部调用；未知参数拒绝，来源必须属于员工，旧客户草稿必须与明确指定公司一致。
 def validate_parameters(actor, company, tool, parameters):
     if tool == "qq.send":
         require_qq_enabled("prepare_send")
     if not isinstance(parameters, dict):
         raise ValidationError("parameters 必须是对象。")
-    provider = {"gmail.send": "gmail", "qq.send": "qq", "calendar.create": "calendar"}.get(tool)
+    provider = {
+        "gmail.send": "gmail",
+        "qq.send": "qq",
+        "calendar.create": "calendar",
+    }.get(tool)
     if provider is None:
         raise ValidationError("未注册的外部工具。")
     connection = models.Connection.objects.filter(
@@ -63,25 +68,36 @@ def validate_parameters(actor, company, tool, parameters):
     if tool in {"gmail.send", "qq.send"}:
         if set(parameters) - {"connection_id", "draft_id", "quote_id"}:
             raise ValidationError("发信只接受 connection_id、draft_id、quote_id。")
-        draft = models.Draft.objects.filter(
-            pk=parameters.get("draft_id"),
-            owner=actor,
-            kind="email",
-            archived=False,
-            conversation__company=company,
-            conversation__archived=False,
-        ).first()
+        draft = (
+            models.Draft.objects.filter(
+                pk=parameters.get("draft_id"),
+                owner=actor,
+                kind="email",
+                archived=False,
+                conversation__owner=actor,
+                conversation__archived=False,
+            )
+            .filter(
+                Q(conversation__company__isnull=True) | Q(conversation__company=company)
+            )
+            .first()
+        )
         if (
             draft is None
             or not draft.recipients
             or not draft.content.strip()
             or not draft.subject.strip()
         ):
-            raise ValidationError("需要同客户、含主题正文和收件人的有效邮件草稿。")
+            raise ValidationError(
+                "需要本人工作空间或同客户会话中含主题正文和收件人的有效邮件草稿。"
+            )
         if "\r" in draft.subject or "\n" in draft.subject:
             raise ValidationError("邮件主题不能包含换行。")
         if tool == "qq.send":
-            if not isinstance(draft.recipients, list) or not all(isinstance(address, str) and address.isascii() for address in draft.recipients):
+            if not isinstance(draft.recipients, list) or not all(
+                isinstance(address, str) and address.isascii()
+                for address in draft.recipients
+            ):
                 raise ValidationError("QQ 发信收件地址须为普通 ASCII 邮箱地址。")
             if len(set(draft.recipients)) != len(draft.recipients):
                 raise ValidationError("QQ 发信收件地址不能重复。")
@@ -170,7 +186,7 @@ def validate_parameters(actor, company, tool, parameters):
 # 功能：幂等创建待确认动作。
 # 输入：`actor`、`data` 含 company、tool、parameters、idempotency_key 和可选 conversation。
 # 输出：ToolAction。
-# 逻辑：按员工串行化创建，相同键只接受相同语义的请求。
+# 逻辑：按员工串行化创建；允许工作空间或当前客户历史会话，相同键只接受相同语义。
 # 约束：仅保存计划；用户必须另行批准，不从聊天文本推断批准。
 @transaction.atomic
 def create_action(actor, data):
@@ -189,11 +205,17 @@ def create_action(actor, data):
     key = uuid.UUID(str(data.get("idempotency_key")))
     conversation = None
     if data.get("conversation"):
-        conversation = models.Conversation.objects.filter(
-            pk=data["conversation"], owner=actor, company=company, archived=False
-        ).first()
+        conversation = (
+            models.Conversation.objects.filter(
+                pk=data["conversation"], owner=actor, archived=False
+            )
+            .filter(Q(company__isnull=True) | Q(company=company))
+            .first()
+        )
         if conversation is None:
-            raise ValidationError("会话必须属于当前员工和客户。")
+            raise ValidationError(
+                "会话必须属于当前员工，且为工作空间或当前客户的历史会话。"
+            )
     existing = models.ToolAction.objects.filter(
         owner=actor, idempotency_key=key
     ).first()
@@ -353,7 +375,14 @@ def run_action(action_id):
         if (
             not action.owner.is_active
             or connection.account != action.parameters["account"]
-            or (action.tool == "qq.send" and (connection.provider != "qq" or connection.revision != action.parameters.get("connection_revision")))
+            or (
+                action.tool == "qq.send"
+                and (
+                    connection.provider != "qq"
+                    or connection.revision
+                    != action.parameters.get("connection_revision")
+                )
+            )
         ):
             raise InvalidState("账号已停用或外部连接身份已变化。")
         if models.CompanySettings.objects.filter(
@@ -378,7 +407,13 @@ def run_action(action_id):
         status = "succeeded"
     except qq_smtp.QQSMTPError as exception:
         status = "uncertain" if exception.uncertain else "failed"
-        error = {"code": "qq_smtp_result_unknown" if exception.uncertain else "qq_smtp_rejected", "stage": exception.stage, "message": str(exception)}
+        error = {
+            "code": "qq_smtp_result_unknown"
+            if exception.uncertain
+            else "qq_smtp_rejected",
+            "stage": exception.stage,
+            "message": str(exception),
+        }
     except HttpError as exception:
         code = int(exception.resp.status)
         status = "uncertain" if sent and (code >= 500 or code == 408) else "failed"
@@ -454,7 +489,10 @@ def verify_action(action, actor, expected):
     connection = models.Connection.objects.get(
         pk=action.parameters["connection_id"], owner=actor, archived=False
     )
-    if action.tool == "qq.send" and (connection.account != action.parameters["account"] or connection.provider != "qq"):
+    if action.tool == "qq.send" and (
+        connection.account != action.parameters["account"]
+        or connection.provider != "qq"
+    ):
         raise InvalidState("外部连接身份已变化，无法核对原动作。")
     credentials = credentials_for(connection)
     try:

@@ -1,14 +1,14 @@
 /**
- * 职责：提供通用及客户专属聊天、来源引用、持久化会话和可编辑草稿。
- * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；模式/客户/会话切换取消旧观察，窄屏保持模态焦点。
+ * 职责：提供工作空间聊天、来源引用、持久化会话和可编辑草稿。
+ * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：app.js 与 assistant-widget.js 传入可空客户上下文；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
- * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.setContext、AssistantPanel.open、
+ * 关联：assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
+ * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.initializeView、AssistantPanel.open、
  * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
  * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
  * AssistantPanel.stopPolling、AssistantPanel.watch、AssistantPanel.poll、AssistantPanel.refreshAnswers、AssistantPanel.pausePolling、AssistantPanel.retryAnswer。
- * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，companyId 为当前公司或通用模式的 null；background 保存窄屏背景原有 inert 状态；
- * conversations 保存当前模式会话，conversation/draft 保存所选记录及版本，epoch 防止旧请求覆盖；
+ * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，background 保存窄屏背景原有 inert 状态；
+ * conversations 保存工作空间会话，conversation/draft 保存所选记录及版本，epoch 防止旧请求覆盖；
  * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
  * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
  */
@@ -17,12 +17,12 @@ import { t, h, locale } from './i18n.js?v=20260920-i18n';
 import { escapeHtml as esc } from "./api.js";
 import { salesRequest, allRows } from "./sales-api.js";
 
-/** 功能：管理通用及客户助手的会话和草稿交互。
+/** 功能：管理工作空间助手的会话和草稿交互。
  * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
  * 约束：不在浏览器推理或伪造回复，失败后只允许明确重试。 */
 export class AssistantPanel {
   /** 功能：连接共享浮窗并绑定操作。输入：无参数，读取 DOM。
-   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，通用聊天按钮显式切换模式，文本编辑暂存于本页。
+   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，文本编辑暂存于本页。
    * 约束：不会因输入或页面初始化调用模型与外部服务。 */
   constructor() {
     this.nodes = Object.fromEntries(
@@ -31,7 +31,6 @@ export class AssistantPanel {
         "company",
         "input",
         "close",
-        "general",
         "clear",
         "form",
         "shortcuts",
@@ -44,7 +43,6 @@ export class AssistantPanel {
       ].map((name) => [name, document.getElementById(`assistant-${name}`)]),
     );
     this.drafts = new Map();
-    this.companyId = null;
     this.isOpen = false;
     this.background = new Map();
     this.opener = null;
@@ -62,10 +60,9 @@ export class AssistantPanel {
     this.pollCount = 0;
     this.narrow = window.matchMedia("(max-width: 1000px)");
     this.nodes.close.addEventListener("click", () => this.close());
-    this.nodes.general.addEventListener("click", () => { this.setContext(null); this.open(); });
     this.nodes.input.addEventListener("input", () => {
       this.drafts.set(
-        `${this.companyId}:${this.conversation?.id || "new"}`,
+        this.conversation?.id || "new",
         this.nodes.input.value,
       );
       this.messageKey = crypto.randomUUID();
@@ -114,45 +111,24 @@ export class AssistantPanel {
     this.narrow.addEventListener("change", () => this.syncLayout());
   }
 
-  /** 功能：绑定当前会话模式。输入：company 含 id/name，null 表示通用会话。
-   * 输出：无。逻辑：切换时取消旧响应的展示资格，清空旧历史并恢复本页输入。
-   * 约束：客户名称以 textContent 展示，不读取邮件正文。 */
-  setContext(company) {
-    if (this.companyId !== (company?.id || null)) {
-      this.close(false);
-      this.epoch += 1;
-      this.companyId = company?.id || null;
-      this.conversation = null;
-      this.draft = null;
-      this.conversations = [];
-      this.answers = [];
-      this.nodes.input.value = this.drafts.get(`${this.companyId}:new`) || "";
-      this.nodes.history.textContent = "";
-      this.nodes.sessions.innerHTML = h('<option value="">尚未选择会话</option>');
-    }
-    this.nodes.company.textContent = company?.name || t("通用聊天");
-    const customer = Boolean(company);
-    this.nodes.general.hidden = !customer;
-    this.nodes.panel.querySelector('.assistant-development').textContent = customer ? t('客户问答') : t('通用助手');
-    document.getElementById('assistant-context-label').textContent = customer ? t('当前客户') : t('当前会话');
-    document.getElementById('assistant-welcome-title').textContent = customer ? t('围绕这位客户，一起想清楚下一步。') : t('有什么想聊的？');
-    document.getElementById('assistant-welcome-copy').textContent = customer ? t('基于当前客户资料提问，查看回答与来源依据。') : t('讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。');
-    document.getElementById('assistant-unavailable').textContent = customer ? t('基于当前客户资料回答') : t('通用问答 · 写作 · 计划');
-    document.getElementById('assistant-availability-copy').textContent = customer ? t('回答标注可用来源，资料不足时会明确说明。') : t('可协助讨论与起草；当前聊天不会自动发送邮件或修改业务记录。');
-    this.nodes.input.placeholder = customer ? t('想为这位客户做些什么？') : t('输入问题，或告诉我你想完成什么…');
-    const prompts = customer ? [
-      [t('总结客户需求'), t('请总结这位客户的需求，并列出需要进一步确认的信息。')],
-      [t('起草回复'), t('请结合这位客户的邮件，起草一封供我审核的回复。')],
-      [t('建议下一步'), t('请分析这位客户的跟进风险，并建议下一步行动。')],
-    ] : [
+  /** 功能：初始化工作空间聊天文案。输入：无参数，读取共享浮窗 DOM。
+   * 输出：无。逻辑：所有页面使用同一会话范围，客户由 Agent 根据问题查询。
+   * 约束：不读取客户资料、不创建会话、不覆盖已保存历史。 */
+  initializeView() {
+    this.nodes.company.textContent = t("通用聊天");
+    this.nodes.panel.querySelector('.assistant-development').textContent = t('通用助手');
+    document.getElementById('assistant-context-label').textContent = t('当前会话');
+    document.getElementById('assistant-welcome-title').textContent = t('有什么想聊的？');
+    document.getElementById('assistant-welcome-copy').textContent = t('讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。');
+    document.getElementById('assistant-unavailable').textContent = t('通用问答 · 写作 · 计划');
+    document.getElementById('assistant-availability-copy').textContent = t('可协助讨论与起草；当前聊天不会自动发送邮件或修改业务记录。');
+    this.nodes.input.placeholder = t('输入问题，或告诉我你想完成什么…');
+    const prompts = [
       [t('起草一封邮件'), t('帮我起草一封专业的商务邮件，请先问我需要哪些信息。')],
       [t('梳理工作计划'), t('帮我梳理今天的工作计划，请先了解我的目标和待办。')],
       [t('解释一个概念'), t('我想了解一个新概念，请用容易理解的方式与我讨论。')],
     ];
     this.nodes.shortcuts.innerHTML = prompts.map(([title, prompt]) => h`<button type="button" data-assistant-prompt="${esc(prompt)}"><span class="assistant-task-icon" aria-hidden="true">✧</span><span><strong>${esc(title)}</strong><small>点击填入草稿</small></span><span aria-hidden="true">↗</span></button>`).join('');
-    document
-      .getElementById("assistant-toggle")
-      ?.setAttribute("aria-expanded", String(this.isOpen));
   }
 
   /** 功能：展开或收起当前聊天界面。输入：opener 可选触发元素，默认读取悬浮按钮；隐式当前上下文。
@@ -167,9 +143,6 @@ export class AssistantPanel {
     this.isOpen = true;
     this.nodes.panel.hidden = false;
     document.body.classList.add("assistant-open");
-    document
-      .getElementById("assistant-toggle")
-      ?.setAttribute("aria-expanded", "true");
     this.syncLayout();
     this.nodes.close.focus();
     if (this.busy) this.needsLoad = true;
@@ -187,11 +160,9 @@ export class AssistantPanel {
     this.syncLayout();
     document.body.classList.remove("assistant-open");
     this.nodes.panel.hidden = true;
-    const trigger = document.getElementById("assistant-toggle");
-    trigger?.setAttribute("aria-expanded", "false");
     if (wasOpen && restoreFocus) {
       const target = this.opener?.isConnected ? this.opener : document.getElementById("assistant-launcher");
-      (target || trigger)?.focus();
+      target?.focus();
     }
   }
 
@@ -253,21 +224,26 @@ export class AssistantPanel {
     this.epoch += 1;
     this.drafts.clear();
     this.close(false);
-    this.companyId = undefined;
-    this.setContext(null);
+    this.conversation = null;
+    this.draft = null;
+    this.conversations = [];
+    this.answers = [];
+    this.nodes.input.value = "";
+    this.nodes.history.textContent = "";
+    this.nodes.sessions.innerHTML = h('<option value="">尚未选择会话</option>');
+    this.initializeView();
   }
 
-  /** 功能：加载指定或最近的当前模式会话。输入：selected 可选会话标识。
+  /** 功能：加载指定或最近的工作空间会话。输入：selected 可选会话标识。
    * 输出：无。逻辑：完整分页读取会话与草稿；先取回答状态再取消息，确保已完成状态对应的消息可见；旧 epoch 响应不更新视图。
    * 约束：当前页未保存文本优先展示，并明确标记未保存。 */
   async load(selected) {
     this.stopPolling();
     this.answers = [];
-    const company = this.companyId,
-      epoch = ++this.epoch;
+    const epoch = ++this.epoch;
     const conversations = (
       await allRows(
-        company ? `records/conversations/?company=${encodeURIComponent(company)}` : "records/conversations/?conversation_scope=general",
+        "records/conversations/?conversation_scope=general",
       )
     ).reverse();
     if (epoch !== this.epoch) return;
@@ -303,7 +279,7 @@ export class AssistantPanel {
     }
     if (epoch !== this.epoch) return;
     this.draft = draft;
-    const key = `${company}:${this.conversation?.id || "new"}`;
+    const key = this.conversation?.id || "new";
     const previousContent = this.nodes.input.value;
     this.nodes.input.value = this.drafts.has(key)
       ? this.drafts.get(key)
@@ -317,18 +293,17 @@ export class AssistantPanel {
     this.watch();
   }
 
-  /** 功能：在显式保存或新建操作中建立会话。输入：当前公司及会话状态。
+  /** 功能：在显式保存或新建操作中建立会话。输入：当前工作空间会话状态。
    * 输出：当前会话。逻辑：没有选中会话才调用创建接口，保留原输入。
-   * 约束：上下文切换导致操作过期时抛错，不把旧会话写到新客户界面。 */
+   * 约束：会话或账号切换导致操作过期时抛错，不覆盖新界面。 */
   async ensureConversation() {
     if (this.conversation) return this.conversation;
-    const company = this.companyId,
-      epoch = this.epoch;
+    const epoch = this.epoch;
     const conversation = await salesRequest("records/conversations/", {
       method: "POST",
-      data: { company, title: company ? t("客户工作会话") : t("通用会话") },
+      data: { title: t("通用会话") },
     });
-    if (epoch !== this.epoch || company !== this.companyId)
+    if (epoch !== this.epoch)
       throw new Error(t("会话上下文已切换；原会话已保存，可重新打开查看。"));
     this.conversation = conversation;
     return conversation;
@@ -340,7 +315,6 @@ export class AssistantPanel {
   async save(asMessage) {
     const content = this.nodes.input.value;
     if (asMessage && !content.trim()) throw new Error(t("请先输入消息内容。"));
-    const company = this.companyId;
     const conversation = await this.ensureConversation();
     const epoch = this.epoch;
     if (asMessage)
@@ -366,11 +340,11 @@ export class AssistantPanel {
       );
       if (epoch === this.epoch) this.draft = saved;
     }
-    if (company !== this.companyId || epoch !== this.epoch) return;
-    this.drafts.delete(`${company}:new`);
-    this.drafts.delete(`${company}:${conversation.id}`);
+    if (epoch !== this.epoch) return;
+    this.drafts.delete("new");
+    this.drafts.delete(conversation.id);
     if (asMessage) {
-      this.drafts.set(`${company}:${conversation.id}`, "");
+      this.drafts.set(conversation.id, "");
       this.messageKey = crypto.randomUUID();
     }
     await this.load(conversation.id);
@@ -392,7 +366,7 @@ export class AssistantPanel {
             const sources = answer?.citations || [];
             const citations = sources.length
               ? h`<details class="assistant-sources"><summary>查看依据（${sources.length}）</summary><div class="assistant-source-list">${sources.map((citation) => citation.source_type === "customer_analysis"
-                ? h`<div class="assistant-source"><strong>[${esc(citation.position)}] ${esc(citation.title_or_label)}</strong><p class="assistant-source-note">依据来自客户画像与分析，可在客户页面按维度查看。</p>${this.companyId ? h`<a href="/#company/${encodeURIComponent(this.companyId)}">查看当前客户画像 →</a>` : ""}</div>`
+                ? h`<div class="assistant-source"><strong>[${esc(citation.position)}] ${esc(citation.title_or_label)}</strong><p class="assistant-source-note">依据来自客户画像与分析，可在客户页面按维度查看。</p></div>`
                 : `<details class="assistant-source"><summary>[${esc(citation.position)}] ${esc(citation.title_or_label)}</summary><div class="assistant-source-content">${esc(citation.content)}</div></details>`).join("")}</div></details>`
               : "";
             const state = question ? `<p class="fine">${labels[question.status] || t("状态未知")}${question.error ? `：${esc(question.error.message)}` : ""}</p>${question.status === "failed" ? h`<button type="button" class="text-btn" data-chat-retry="${esc(question.request_id)}">重新回答</button>` : ""}` : "";
@@ -496,17 +470,16 @@ export class AssistantPanel {
 
   /** 功能：串行化当前侧栏操作并显示错误。输入：task 异步回调。
    * 输出：无。逻辑：禁用保存、输入及会话切换；完成后活动任务继续禁止新提问，错误进入状态区域。
-   * 约束：不重试；不记录正文。切换客户后仍可关闭面板。 */
+   * 约束：不重试；不记录正文。切换会话后仍可关闭面板。 */
   async run(task) {
     if (this.busy) return;
-    const company = this.companyId;
     this.busy = true;
     for (const name of ["submit", "save", "sessions", "new", "input", "clear"])
       this.nodes[name].disabled = true;
     try {
       await task();
     } catch (error) {
-      if (company === this.companyId) this.nodes["draft-note"].textContent = error.message;
+      this.nodes["draft-note"].textContent = error.message;
       console.warn("assistant_operation_failed");
     } finally {
       this.busy = false;

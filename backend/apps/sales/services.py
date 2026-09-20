@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交。
+实现：新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交。
 国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
@@ -143,9 +143,11 @@ def company_of(instance):
 # 功能：验证跨实体关系、金额、草稿和负责人约束。
 # 输入：`instance` 为待保存的模型，`actor` 为用户，`changed` 为本次字段集合，`creating` 为是否新增。
 # 输出：无；业务约束不满足抛 ValidationError/PermissionDenied，参数化金额错误使用当前语言。
-# 逻辑：验证公司共享编辑权、个人会话归属、冻结单据、同币种及折扣边界。
+# 逻辑：验证公司共享编辑权、个人会话归属、冻结单据、同币种及折扣边界；新会话必须无预选公司。
 # 约束：仅在授权事务内调用；不自动改价、换汇或推断交易事实。
 def validate_record(instance, actor, changed, creating):
+    if creating and isinstance(instance, models.Conversation) and instance.company_id is not None:
+        raise ValidationError("客户绑定聊天已停用，请创建无预选公司的工作空间会话。")
     company = company_of(instance)
     if company is not None:
         company_access(

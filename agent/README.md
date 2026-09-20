@@ -32,7 +32,7 @@ Agent 目录包含工作空间聊天的 Skill、模型适配、工作流、一�
 
 ### 1.1 工作空间聊天（唯一聊天流程）
 
-`workflows/chat.py` 只执行 `skills/workspace-chat/SKILL.md`（`workspace-chat-v1`），不再按客户绑定或环境变量切换聊天模式。员工从工作空间发起问题，Agent 内部请求不包含预选 `company_id`；HTTP 适配层暂时接受后端返回的 `company_id: null` 并移除该字段，也接受后端直接省略它，非空值会被拒绝。普通问题可直接回答；需要客户资料时，模型选择 `customers.search` 与 `customers.context`，后者的 `company_id` 仅用于本次客户查询。Agent 从本次请求发布的工具目录核对参数，最多执行 6 次只读查询。后端按员工和请求验证权限，并登记每次读取的证据。Agent 只引用本轮实际展示的授权来源；较长客户详情以标记过的节选进入模型，完整来源仍由后端保存。
+`workflows/chat.py` 只执行 `skills/workspace-chat/SKILL.md`（`workspace-chat-v1`），不再按客户绑定或环境变量切换聊天模式。员工从工作空间发起问题，Agent 内部请求不包含预选 `company_id`；当前后端直接省略该字段；HTTP 适配层仍接受过渡期的 `company_id: null` 并移除它，非空值会被拒绝。普通问题可直接回答；需要客户资料时，模型选择 `customers.search` 与 `customers.context`，后者的 `company_id` 仅用于本次客户查询。Agent 从本次请求发布的工具目录核对参数，最多执行 6 次只读查询。后端按员工和请求验证权限，并登记每次读取的证据。Agent 只引用本轮实际展示的授权来源；较长客户详情以标记过的节选进入模型，完整来源仍由后端保存。
 
 `llm/bailian.py` 的 `generate_chat_json()` 请求 JSON Object。模型输出可选择下一次只读查询或最终回答；引用须对应本轮授权来源，正文编号与引用列表须一致。无证据时可以进行普通对话、澄清或明确说明资料不足。直接要求发送邮件、安排日历或写入业务数据时返回未执行说明。工具级参数错误或详情不可用可以在同一请求内修正或回答；请求级错误结束本轮。
 
@@ -67,7 +67,7 @@ python -m agent.main --process-chat-once
 
 Agent 本目录的单元测试继续使用 fake session/backend，不代表真实模型或生产网页验收。后端新增集成测试使用真实 PostgreSQL 和临时 Django HTTP 服务运行原 Agent HTTP 客户端/工作流，模型输出模拟；浏览器测试使用真实页面与模拟 API。
 
-Web Demo 仍需部署对应后端迁移、配置模型与后端地址、启动 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。Agent 只产出 `workspace-chat-v1` 结果；既有绑定客户会话如需迁移或隐藏，应由后端与前端处理。失败请求不能重置后复用原 `request_id`。
+Web Demo 仍需部署对应后端迁移、配置模型与后端地址、启动 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。Agent 只产出 `workspace-chat-v1` 结果；前端已移除客户专属聊天入口；新后端 Worker 启动时明确结束旧公司活动任务并保留历史，不转换或重派旧问题。失败请求不能重置后复用原 `request_id`。
 
 ### 1.5 聊天离线测试
 

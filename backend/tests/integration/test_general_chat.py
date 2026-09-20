@@ -41,7 +41,7 @@ class GeneralChatTests(TestCase):
     # 功能：验证零客户账户的完整持久化及权限边界。
     # 输入：无外部参数；本人和其他员工的知识夹具。
     # 输出：成功回答、草稿可回读，越权不可读取或提问。
-    # 逻辑：省略 company 创建会话并保存草稿；领取后只冻结本人知识，回报版本仅检查类型与长度。
+    # 逻辑：省略 company 创建会话并保存草稿；领取后只冻结本人知识，领取响应不含公司字段，回报版本仅检查类型与长度。
     # 约束：模型输出为显式合成回执，不验证外部服务。
     def test_general_round_trip_and_isolation(self):
         created = self.client.post(
@@ -80,7 +80,7 @@ class GeneralChatTests(TestCase):
             },
         )
         claimed = services.claim(self.owner)
-        self.assertIsNone(claimed["company_id"])
+        self.assertNotIn("company_id", claimed)
         context = services.context_for(self.owner, request.pk, "internal")
         self.assertEqual(context["customer_context"], [])
         self.assertEqual(len(context["context_items"]), 1)

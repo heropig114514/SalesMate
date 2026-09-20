@@ -1,5 +1,5 @@
 """职责：验证业务工具端到端授权、写入、确认和外部动作边界。
-实现：工具全目录用例显式启用 QQ；真实隔离 PostgreSQL 与 HTTP 请求；只在外部发送边界模拟 provider。
+实现：邮件草稿使用无预选公司的工作空间会话；工具全目录用例显式启用 QQ；真实隔离 PostgreSQL 与 HTTP 请求；只在外部发送边界模拟 provider。
 关联：agent_tools 包及原 crm/sales/chat 服务；不验证真实邮箱授权或发信。
 目录：
 - AgentToolTests：工具集成验证。
@@ -349,12 +349,12 @@ class AgentToolTests(TestCase):
     # 功能：验证 Gmail、QQ、日历均只准备。
     # 输入：合成不可用连接和真实草稿。
     # 输出：冻结待确认动作，无 provider 执行。
-    # 逻辑：精确字段走原动作服务；重复调用重用回执。
+    # 逻辑：工作空间草稿按明确客户走原动作服务；重复调用重用回执。
     # 约束：模拟发送函数只是断言未调用，不证明发送可用。
     def test_external_actions_prepare_only(self):
         conversation = self.call(
             "conversations.create",
-            {"data": {"company": str(self.company.pk)}},
+            {"data": {"title": "工作空间"}},
             str(uuid.uuid4()),
         )["data"]
         draft = self.call(

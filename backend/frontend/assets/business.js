@@ -2,7 +2,7 @@
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
  * 实现：读取后端字段契约渲染表单，写请求携带版本；外部动作先展示冻结内容再单独确认。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
+ * 关联：工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
@@ -14,7 +14,7 @@
 import { t, h, locale } from './i18n.js?v=20260920-i18n';
 
 import { request, escapeHtml as esc } from "./api.js";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260920-profile";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260920-workspace-chat";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js";
 
 const $ = (id) => document.getElementById(id);

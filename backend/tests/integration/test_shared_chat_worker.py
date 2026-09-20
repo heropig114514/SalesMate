@@ -88,11 +88,11 @@ class SharedChatWorkerTests(LiveServerTestCase):
     # 功能：验证真实命令为不同员工各处理一次问题。
     # 输入：两条 pending 请求、模拟模型和真实 HTTP。
     # 输出：两条 completed、答案正确、无临时凭证残留，旧环境身份不变。
-    # 逻辑：两次 --once 保持每轮最多一个任务；第三次空队列不调用模型。
+    # 逻辑：模型返回工作空间 action=answer；两次 --once 各处理一个任务，第三次空队列不调用模型。
     # 约束：模型之外的领取、上下文、保存和认证均执行真实实现。
     def test_command_answers_both_owners(self):
         provider = Mock(
-            return_value=json.dumps({"assistant_text": "pong", "citations": []})
+            return_value=json.dumps({"action": "answer", "assistant_text": "pong", "citations": []})
         )
 
         # 功能：仅替换模型调用以保持测试确定性。

@@ -1,7 +1,7 @@
 /**
  * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
+ * 实现：仅使用无公司绑定的工作空间会话；加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
  * 关联：assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
  * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
  * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录。
@@ -36,7 +36,7 @@ async function main() {
     const errors = [], writes = [], messages = [], answers = [];
     let mode = 'completed', pollReads = 0, failPoll = false, completeOnRead = null;
     page.on('pageerror', error => errors.push(error.message));
-    const conversation = { id: 'conversation-a', company: 'company-a', title: '测试会话', created_at: new Date().toISOString() };
+    const conversation = { id: 'conversation-a', company: null, title: '测试会话', created_at: new Date().toISOString() };
     await page.route('**/*', async route => {
       const req = route.request(), url = new URL(req.url());
       if (url.hostname !== '127.0.0.1') return route.abort();
@@ -64,7 +64,7 @@ async function main() {
         }
         throw new Error('Unexpected write: ' + endpoint);
       }
-      if (endpoint === 'records/conversations/') return route.fulfill({ json: list(url.searchParams.get('company') === 'company-a' ? [conversation] : []) });
+      if (endpoint === 'records/conversations/') return route.fulfill({ json: list(url.searchParams.get('conversation_scope') === 'general' ? [conversation] : []) });
       if (endpoint === 'records/messages/') return route.fulfill({ json: list(messages) });
       if (endpoint === 'records/drafts/') return route.fulfill({ json: list([]) });
       if (endpoint === 'chat/requests/') {
@@ -94,10 +94,9 @@ async function main() {
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.evaluate(async () => {
-      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260920-floating');
+      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260920-workspace-chat');
       enableAssistant();
       window.chatTest = getAssistant();
-      window.chatTest.setContext({ id: 'company-a', name: '合成测试客户' });
       window.chatTest.open();
     });
     await page.waitForFunction(() => !window.chatTest.busy && window.chatTest.conversation);
@@ -152,11 +151,8 @@ async function main() {
     const closedReads = pollReads;
     await page.clock.fastForward(10000);
     assert.equal(pollReads, closedReads);
-    await page.evaluate(() => { window.chatTest.setContext({ id: 'company-b', name: '另一客户' }); window.chatTest.open(); });
-    await page.waitForFunction(() => !window.chatTest.busy);
-    assert.doesNotMatch(await page.locator('#assistant-history').textContent(), /客户需要设备/);
     completeOnRead = '即时回答-load';
-    await page.evaluate(() => { window.chatTest.setContext({ id: 'company-a', name: '合成测试客户' }); window.chatTest.open(); });
+    await page.evaluate(() => window.chatTest.open());
     await page.waitForFunction(() => !window.chatTest.busy);
     assert.match(await page.locator('#assistant-history').textContent(), /即时回答-load/);
     const fastQuestion = { id: 'fast-user', role: 'user', content: '快速问题', created_at: new Date().toISOString() };
@@ -171,7 +167,7 @@ async function main() {
     assert.deepEqual(writes, ['chat/messages/', 'chat/messages/', 'chat/requests/request-1/retry/', 'chat/messages/']);
     fs.mkdirSync(OUTPUT, { recursive: true });
     await page.screenshot({ path: path.join(OUTPUT, 'chat-mobile.png'), fullPage: true });
-    console.log('Chat browser checks passed: submit, completion during load/refresh, evidence, retry, draft preservation, pause, bounds, close and switch.');
+    console.log('Chat browser checks passed: submit, completion during load/refresh, evidence, retry, draft preservation, pause, bounds, close and reopen.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

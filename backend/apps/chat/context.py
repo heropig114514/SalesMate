@@ -1,16 +1,13 @@
-"""职责：把本人知识及可选授权客户记录投影为有限、可追溯的聊天证据。
-实现：仅读取员工自有业务邮件、当前有效画像和业务投影；知识由显式导入提供。
-关联：chat.services 在公司锁内首次调用并冻结结果；不执行模型或外部网络。
+"""职责：把本人知识投影为工作空间聊天的有限、可追溯初始证据。
+实现：仅读取员工显式导入的知识；客户资料由请求绑定的只读工具按需查询。
+关联：chat.services 在员工锁内首次调用并冻结结果；不执行模型或外部网络。
 目录：
 - item：生成严格四字段证据条目。
-- readable：把已存储结构转换成带字段标签的文本。
 - build_context：组装当前请求的 internal 上下文。
-- customer_items：读取明确绑定客户的证据。
 变量索引：
 - 无
 """
 
-from apps.crm.models import Analysis
 from .models import KnowledgeEntry
 
 
@@ -32,38 +29,12 @@ def item(source_id, source_type, title, content):
     }
 
 
-# 功能：格式化已有业务结构。
-# 输入：`value` JSON 值，`prefix` 当前字段路径。
-# 输出：带原字段标签的可读文本。
-# 逻辑：递归展开标量，省略空值，不调用 LLM 生成摘要。
-# 约束：保留状态、币种及事实/推断字段区别，禁止把缺失值补成确定事实。
-def readable(value, prefix=""):
-    if isinstance(value, dict):
-        return "\n".join(
-            filter(
-                None,
-                (
-                    readable(part, f"{prefix}.{key}".strip("."))
-                    for key, part in value.items()
-                ),
-            )
-        )
-    if isinstance(value, list):
-        return "\n".join(filter(None, (readable(part, prefix) for part in value)))
-    return f"{prefix}: {value}" if value is not None and value != "" else ""
-
-
 # 功能：组装有界、员工隔离的本次证据。
-# 输入：`request` 为已授权 AnswerRequest；绑定客户时持有公司锁。
+# 输入：`request` 为已授权工作空间 AnswerRequest；调用方持有员工锁。
 # 输出：严格 internal AnswerContext，不可用资料以缺口描述。
-# 逻辑：通用会话只读取本人知识；客户会话至多 4 封邮件、1 份画像、每类 1 条业务记录及 4 条知识，合计不超过 Agent 的 12 条。
-# 约束：仅自有邮箱业务邮件；画像须当前 revision、未失效且 provider=agent；无外部检索。
+# 逻辑：只读取本人知识，沿用至多 4 条知识的既定预算；初始客户证据始终为空。
+# 约束：不自动选择公司或读取邮件，不执行外部检索，工具查询的来源另行持久化。
 def build_context(request):
-    company = request.company
-    customer = []
-    gaps = []
-    if company is not None:
-        customer, gaps = customer_items(company, request.owner)
     entries = KnowledgeEntry.objects.filter(owner=request.owner, active=True).order_by(
         "-created_at", "id"
     )
@@ -88,81 +59,10 @@ def build_context(request):
     return {
         "request_id": str(request.pk),
         "scope": "internal",
-        "customer_context": customer,
+        "customer_context": [],
         "context_items": knowledge,
         "customer_context_status": "completed",
         "knowledge_status": "completed",
-        "retrieval_gaps": gaps,
+        "retrieval_gaps": [],
         "external_available": False,
     }
-
-
-# 功能：读取明确绑定客户的证据。
-# 输入：`company` 自有客户、`owner` 员工。
-# 输出：客户证据和资料缺口。
-# 逻辑：沿用邮件、有效画像及交易投影的既定数量与顺序。
-# 约束：通用会话不调用本函数，不跨客户搜索。
-def customer_items(company, owner):
-    customer, gaps = [], []
-    emails = company.emails.filter(
-        mailbox__owner=owner, business_classification="business"
-    ).order_by("-sent_at", "dedupe_key")[:4]
-    for email in emails:
-        payload = email.payload
-        body = payload.get("body_text", "")
-        if isinstance(body, str) and body.strip():
-            customer.append(
-                item(
-                    f"email:{email.pk}:review:{email.review_revision}",
-                    "customer_email",
-                    payload.get("subject") or "客户邮件",
-                    f"时间：{email.sent_at.isoformat()}\n方向：{email.direction}\n主题：{payload.get('subject', '')}\n正文节选：\n{body}",
-                )
-            )
-    analysis = (
-        Analysis.objects.filter(
-            snapshot__company=company,
-            snapshot__revision=company.revision,
-            snapshot__invalidation__isnull=True,
-            payload__status="completed",
-            provider="agent",
-        )
-        .order_by("-created_at", "-id")
-        .first()
-    )
-    if analysis:
-        customer.append(
-            item(
-                f"analysis:{analysis.pk}",
-                "customer_analysis",
-                "当前有效客户画像与分析",
-                readable(analysis.payload.get("detail_view", {})),
-            )
-        )
-    else:
-        gaps.append(
-            {
-                "scope": "customer_context",
-                "code": "analysis_missing",
-                "message": "当前没有与客户数据版本一致的有效模型画像。",
-            }
-        )
-    for plural, singular, key, label in (
-        ("tickets", "ticket", "ticket_id", "工单"),
-        ("quotes", "quote", "quote_id", "报价"),
-        ("orders", "order", "order_id", "订单"),
-    ):
-        # 业务投影保留既有交易语义，特别是未发送报价不冒充真实外发记录。
-        records = getattr(company, plural)
-        if records:
-            record = records[-1]
-            if isinstance(record, dict) and record.get(key):
-                customer.append(
-                    item(
-                        f"{singular}:{record[key]}:revision:{company.revision}",
-                        singular,
-                        f"{label}：{record.get('number') or record[key]}",
-                        readable(record),
-                    )
-                )
-    return customer, gaps
