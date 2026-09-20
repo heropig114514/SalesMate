@@ -292,6 +292,8 @@ DATABASE_URL=postgresql://salesmate:password@127.0.0.1:5432/salesmate?connect_ti
 
 ## 7. 首次安装和初始化
 
+Windows 一键入口见[仓库 README](../README.md#windows-本地一键启动)：`start-local.ps1` 自动准备虚拟环境和依赖，检查并迁移既有本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、数据库（PostgreSQL 需要 pgvector），配置根 `.env` 和本地普通账号；脚本不会覆盖已有配置或替换数据库。下列命令用于手动初始化。
+
 以下命令从项目根目录执行：
 
 ```powershell
@@ -330,6 +332,8 @@ python backend/manage.py check
 ## 8. 启动与真实完整测试
 
 ### 第一步：启动 Django 和前端
+
+使用一键入口时，无需重复执行本节的手动 Web 和 Worker 启动命令。状态查询、停止、日志位置与新电脑前提见[本地开发与联调](docs/local-development.md#一键启动windows)。
 
 打开第一个 PyCharm Terminal，在项目根目录执行：
 

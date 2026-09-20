@@ -1,6 +1,39 @@
 # 本地开发与联调
 
-更新：2026-09-13。完整步骤以项目根目录的 [README](../README.md) 为准。本页只记录本地运行边界，避免维护第二套启动说明。
+更新：2026-09-20。完整初始化步骤见[软件 README](../README.md)。本页记录一键入口及本地运行边界。
+
+## 一键启动（Windows）
+
+在 `SalesMate` 仓库根目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -WslDistro Ubuntu-24.04
+```
+
+当前电脑的 PostgreSQL 16/pgvector 在上述 WSL 发行版中，根 `.env` 使用原 `127.0.0.1:5432` 数据库。一键入口在缺少 `.venv` 时创建环境，按原四份 requirements 清单安装依赖并运行 `pip check`；清单未变时跳过重复安装。安装器显式采用 UTF-8，PowerShell 文件保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1 的中文注释。可通过 `-Python '解释器绝对路径'` 指定首次创建环境的 Python，通过 `-NoBrowser` 禁止自动打开浏览器。
+
+启动顺序：独占运行锁与 8000 端口检查 → 保持指定 WSL 的 stdin 会话并启动 PostgreSQL → 校验既有本地配置、数据库与 pgvector → Django `check` 和 `migrate --noinput` → Web 就绪检查 → 启动适用的 Worker → 打开工作台。WSL 的 systemd 服务不能单独保证发行版保持运行，所持会话会持续到所有应用进程退出。首次 WSL 转发与 Web 就绪允许有界等待；不重试业务操作、不自动重启失败进程。
+
+`ANALYSIS_PROVIDER=agent` 时启动原 `crm_worker`、`chat_worker`、`sales_worker`；`rules` 时仅启动 Web 和销售 Worker，不宣称模型聊天可用。Worker 使用原有默认参数，可能处理数据库中已经排队或批准的工作；启动器不创建邮箱同步、发信、聊天或样例导入任务。只允许 DEBUG、`TASK_EXECUTION_MODE=local` 和回环 PostgreSQL/明确配置的 SQLite，避免误用生产配置。
+
+```powershell
+# 查看监督器、各服务 PID 和 Web/数据库/静态资源健康状态
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action status
+# 先排空 Worker，再停止 Web，并释放本次持有的 WSL 会话
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action stop
+```
+
+服务在后台运行，关闭启动终端不会主动停止它们。重复启动会复用当前受管服务；8000 被其他进程占用时明确失败，不杀进程或改端口。`stop` 等待最多 30 秒，长任务尚未结束会提示继续查看状态；不会强杀或重发任务。不会调用 PostgreSQL 停止命令，但释放最后一个 WSL 会话后发行版可能自行休眠。修改代码后执行 stop 再 start；此入口不启用热更新，避免 Web 与 Worker 使用不同代码版本。
+
+日志位于被忽略的 `artifacts/local-server/`：`launcher.log` 记录环境、迁移及生命周期，`web.log`、`crm.log`、`chat.log`、`sales.log` 分别记录各进程。`state.json` 保存运行状态及退出码。每次冷启动覆盖上一轮同名日志，排查失败时先保留所需日志。依赖安装日志位于 `.venv/salesmate-install.log` 和 `.venv/salesmate-install-error.log`。
+
+新电脑前提：已安装 Python 3.11+ 和数据库；使用 `-WslDistro` 时该发行版及 PostgreSQL/pgvector 必须已经安装。入口不会下载 WSL 或修改系统网络。无根 `.env` 时生成带随机 Django 密钥的模板并停止，需填写数据库和所选模式需要的凭据；已有 `.env` 从不覆盖。自动登录用户缺失时明确提示按下方 `provision_local` 初始化，或由用户明确关闭自动登录并使用网页注册。Google OAuth 和真实模型密钥必须由使用者提供。
+
+启动器的隔离测试（Windows，不访问数据库或真实外部服务）：
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 backend/tools/test_local_server.py
+```
 
 ## 环境
 

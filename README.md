@@ -20,6 +20,7 @@ SalesMate/
 ├── integrations/     # 面向用户协作的业务工具 HTTP SDK、CLI 与 MCP 客户端
 ├── test_tools/       # 开发和测试人员可独立使用的全流程测试数据工具
 ├── .env.example      # 软件与 Agent 共用的配置模板
+├── start-local.ps1   # Windows 一键准备 Python 环境、启动系统、查看状态与停止
 ├── requirements.txt  # 两侧依赖的安装入口
 └── .gitignore        # 仓库级凭证、缓存及运行产物排除规则
 ```
@@ -46,7 +47,42 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 - [Agent 业务工具接入](backend/docs/agent-business-tools.md)：123 个工具、独立用户委托、版本/幂等保护及人工确认，供 Agent 开发侧接入。
 - [世界消息地图与后续推送契约](backend/docs/world-news.md)：`/world/` 提供行业消息地图、摘要侧栏和详情页；当前使用明确标注的虚构演示数据。
 
-在仓库根目录启动本地工作台：
+## Windows 本地一键启动
+
+**在已安装 Python、配置好本地数据库及 `.env` 的电脑上，一条命令即可自动准备项目 Python 环境并运行系统。新电脑首次使用仍有下表中的人工准备项。** 以下命令从包含本 README 的 `SalesMate` 仓库根目录执行。
+
+| 项目 | 启动器自动处理 | 首次使用者准备 |
+| --- | --- | --- |
+| Python 环境 | 缺少时创建 `.venv`；按原清单安装依赖并检查兼容性 | 安装 Python 3.11+；需要时用 `-Python` 指定解释器 |
+| 数据库 | 启动指定 WSL 中已安装的 PostgreSQL；检查连接及 pgvector；应用迁移 | 安装并创建本地数据库，PostgreSQL 需安装 pgvector；填写 `DATABASE_URL` |
+| 应用配置 | 缺少 `.env` 时生成模板和随机 Django 密钥，然后提示配置；已有文件不覆盖 | 填写所选模式的配置；初始化本地普通账号，或明确关闭自动登录后网页注册 |
+| 真实外部服务 | 按现有 `ANALYSIS_PROVIDER` 启动对应 Worker | 自行提供模型密钥和模型名；使用 Gmail 时配置 Google OAuth 并完成授权 |
+| 网页与进程 | 后台启动、健康检查、打开浏览器、状态查询、协作停止 | 无需 npm、前端编译或手工双击 HTML |
+
+如果 PostgreSQL 位于已配置的 WSL `Ubuntu-24.04`（本机采用此方式）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -WslDistro Ubuntu-24.04
+```
+
+脚本会保持 WSL 数据库会话，验证就绪后打开 [本地工作台](http://127.0.0.1:8000/)。复用已有 `.env`、账号和数据；不更改模型模式，不自动导入样例。发行版名称不同时替换 `Ubuntu-24.04`；使用 Windows 本地数据库时省略 `-WslDistro`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1
+```
+
+查看状态或停止：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action stop
+```
+
+启动成功后服务在后台运行，关闭启动终端不会主动停止服务。重复启动复用受管进程；8000 端口冲突或依赖缺失会明确报错，不改端口、不自动切换数据库或模型模式。日志在 `artifacts/local-server/`；首次依赖安装日志在 `.venv/salesmate-install*.log`。更新代码后先 stop 再 start。完整前提、日志与停止语义见[本地一键启动](backend/docs/local-development.md#一键启动windows)。
+
+### 手动启动与热更新
+
+如需手动启动并启用代码热更新，在仓库根目录运行：
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -57,7 +93,7 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 
 所有软件修改须遵循 `backend/README.md` 中的开发原则，代码、注释、目录与文档同步维护。在 `backend/` 执行 `python tools/check_docs.py`；修改检查器时同时执行 `python tools/test_check_docs.py`。
 
-Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent`；分析版本由对应 `agent/skills/*/SKILL.md` 管理。HTTP 后端启动后另开终端运行 `python backend/manage.py crm_worker`。
+Django 与 Agent 共同读取仓库根目录 `.env`。数据库须显式设置 `DATABASE_URL`，不自动改用 SQLite。真实模型联调使用 `ANALYSIS_PROVIDER=agent`；分析版本由对应 `agent/skills/*/SKILL.md` 管理。一键入口在该模式下已启动 CRM、聊天和销售 Worker，无需再手动启动；采用上述手动 Web 命令时，需按软件开发说明另开终端运行所需 Worker。
 
 同步批次和逐封状态持久化到数据库，独立 Worker 并行调度邮箱同步与公司画像。后端已提供非业务隐藏、人工复核、进度和明确重试接口；执行中断保留失败记录。
 
