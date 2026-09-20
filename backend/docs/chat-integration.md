@@ -1,6 +1,6 @@
 # 销售聊天：后端适配与运行说明
 
-更新：2026-09-19。此文档描述后端主导的 Agent 适配。代码已提供会话提问、任务状态、固定 Agent 三接口、证据快照、引用、消费者与网页展示；代码交付不等于生产迁移、服务安装或真实模型验收已经完成。
+更新：2026-09-20。此文档描述后端主导的 Agent 适配。聊天回报现仅校验 Schema，另保留权限、请求状态和幂等校验。代码已提供会话提问、任务状态、Agent 领取/上下文/回报、证据快照、引用、消费者与网页展示，以及新增的请求绑定只读工具接口。新接口、工具错误、证据存储和发布步骤见[工作空间聊天对接契约](workspace-chat-tools.md)；代码交付不等于生产迁移、服务安装或真实模型验收已经完成。
 
 ## 1. 边界和复用
 
@@ -8,11 +8,11 @@
 - 新应用 `apps.chat` 维护 `AnswerRequest`、`Citation`、`KnowledgeEntry`；初始结构为 `chat.0001_initial`；通用聊天新增 `sales.0005_general_conversation` 与 `chat.0002_general_answer_request`，解除两处 company 非空约束，不修改 L1–L4 的协议、参数或数据。
 - 普通 `sales/records/messages/` 仍只保存用户消息；只有受保护的聊天回报服务能创建 assistant。草稿保存不会触发模型。
 - 聊天支持无客户绑定的通用私有会话，以及员工自己公司的客户私有会话。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
-- 外部知识关闭；不执行 Function Calling、发信、日历、CRM/文件写操作，不引入向量库或分布式队列。
+- 外部知识关闭；后端支持请求绑定的 customers.search/customers.context 只读调用，模型工具编排由 Agent 接入。聊天不执行发信、日历、CRM/文件写操作，不引入向量库或分布式队列。
 
 ## 2. 数据与状态不变量
 
-`AnswerRequest` 保存 owner、company、conversation、user_message、可空且唯一的 assistant_message、状态、时间、冻结历史、上下文快照、结果、提示词版本及安全错误。`retry_of` 关联原失败请求，每个原请求最多一个后继。
+`AnswerRequest` 保存 owner、company、conversation、user_message、可空且唯一的 assistant_message、状态、时间、冻结历史、上下文快照、结果、提示词版本及 Agent 错误。`retry_of` 关联原失败请求，每个原请求最多一个后继。
 
 ```text
 pending → processing → completed
@@ -26,7 +26,7 @@ failed --用户明确重试--> 新 request_id 的 pending
 - 原问题可对应多次明确尝试，每个请求最多一个助手消息。旧结果不能被新尝试覆盖。
 - 相同 client_key、相同正文重传返回原任务；异内容返回 409。显式重试另走 retry，不依赖重新提交。
 - 相同终态完整 JSON 结果重复回报返回 duplicate=true；不同结果 409。提示词版本、引用顺序、正文和错误均参与比较。
-- completed 可以没有引用，例如澄清、资料不足或拒绝执行动作；这些情况允许没有上下文快照。
+- completed 可以没有引用；任何结构合法的回报均不要求预先读取上下文快照，后端不按正文含义判断是否必须引用。
 - failed 的 assistant_text 必须为空、citations 必须为空，不创建助手消息。
 - 管理员确认进程中断后可将 processing 终止为 failed；不自动超时、不把旧请求重置为 pending。迟到回报被拒绝。
 - 浏览器对旧问题重新回答时，若会话已有之后的用户问题，返回 409，要求在当前对话末尾重新提问，避免破坏历史顺序。
@@ -85,7 +85,7 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-通用领取结构保持同样六字段，但 `company_id` 必须显式为 null；缺字段或空字符串不是通用模式。Agent 按此字段选择 `general_chat.answer` 或原客户工作流。
+后端领取响应继续保持同样六字段，无客户绑定时输出 `company_id: null`，供当前 Agent 选择 `general_chat.answer` 或原客户工作流。浏览器创建通用会话可省略 company，提问和 Agent 回报均无需传 company_id。仓库内当前 Agent 解析器仍要求领取响应显式包含 company_id；这是 Agent 侧契约，本次后端回报校验调整未改变它。
 
 历史只包含同员工同会话、原问题之前的最近 20 条非空 user/assistant 消息，恢复为时间正序；不含当前问题和后来问题。领取时冻结，不改动 Agent 的 6000 字符历史预算。
 
@@ -121,7 +121,7 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 - 客户没有有效画像属于资料缺失，通过 retrieval_gaps 表达，仍可使用其他客户证据。查询成功但资料为空仍是 completed，Agent 可返回资料不足。
 - 内部知识只使用维护者导入的真实资料，没有默认制度。当前没有独立远程知识源；数据库读取异常正常失败，不隐式变为空知识。
 - `external_available=false`；请求 external 返回 409，其他非法 scope 为 400。未来启用 external 需补充版本契约及测试，本次不预置备用实现。
-- 引用回报必须匹配本请求快照的三元组，引用正文由后端快照复制，不能由 Agent 自报。
+- 引用回报只检查三元组结构。匹配本请求的原上下文或成功 ToolRead 证据时复制正文；未匹配时只保存 Agent 声明的三元组，content 为空，不根据 source_id 查询其他请求或业务记录，不接受 Agent 自报正文。空正文表示后端没有附加可验证证据，不能当作已经验证的来源。工具记录独立保存，原 chat/context 响应不增加字段。
 
 ### report
 
@@ -138,7 +138,7 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 }
 ```
 
-`chat_prompt_version` 是实际 Agent 必传字段。客户会话必须使用 `chat-v2`，通用会话必须使用 `general-chat-v1`，后端按会话绑定拒绝错配版本。通用回答允许一般知识和创作不附引用；引用内部知识时仍须满足快照白名单。新版本需同步适配，不自动接受未知行为版本。
+`chat_prompt_version` 是非空字符串，最长 100 字符；后端不设版本白名单，也不与 company 绑定。例如 workspace-chat-v1 可直接回报。版本接受不表示新工具编排已经实现，Agent 仍需自行完成工作流适配。后端不判定回答语义、正文引用编号、引用是否重复或是否属于本请求快照；引用准确性与事实支持由 Agent 负责。
 
 失败示例：
 
@@ -153,9 +153,9 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 }
 ```
 
-允许的 Agent 安全错误由 `apps/chat/contracts.py` 定义：invalid_request、context_unavailable、knowledge_unavailable、model_unavailable、invalid_model_output，文案与当前 Agent 稳定文案一致。report_failed 是 Agent 本地“未确认保存”，不通过该失败请求再次回报。
+error 在 failed 时必须是恰含 code/message 的对象，两个值均为非空字符串；不再限制具体错误码和固定文案。Agent 负责输出可对用户展示且已脱敏的错误，后端原样保存。当前 Worker 的 report_failed 仍代表本地“未确认保存”，不会自动通过该失败请求再次回报。
 
-保存响应固定含 `request_id`、`saved=true`、布尔 `duplicate`、`assistant_message_id`；completed 必须有消息 ID，failed 为 null。引用严格三个字段，正文 `[1]` 等编号须覆盖有序引用；重复或越界引用拒绝。
+保存响应固定含 `request_id`、`saved=true`、布尔 `duplicate`、`assistant_message_id`；completed 必须有消息 ID，failed 为 null。每条引用恰含 source_id/source_type/title_or_label 三个非空字符串，source_type 最长 80 字符；引用数组按原顺序保存，不去重、不校验正文中的 `[1]` 等编号。顶层仍要求 request_id/chat_prompt_version/assistant_text/citations/status/error 六字段；request_id 为 UUID。completed 要求非空 assistant_text 和 error=null，failed 要求 assistant_text=""、citations=[] 及错误对象。未知字段、错误类型和非法状态继续返回 400。
 
 401 表示服务认证缺失/无效；越权与不存在统一 404；格式错误 400；状态、版本结果冲突 409。沿用既有 `error.code/error.detail` 和 HTTP request_id 包装，不另建错误体系。
 

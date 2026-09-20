@@ -1,5 +1,5 @@
 """职责：验证通用会话的持久化、范围隔离和回答协议。
-实现：真实数据库与 APIClient，覆盖空客户创建、私有访问、草稿和结果回报。
+实现：真实数据库与 APIClient，覆盖省略客户创建、私有访问、草稿和任意合法版本回报。
 关联：sales 记录接口、chat 事务与通用 Agent 模式；不调用外部模型。
 目录：
 - GeneralChatTests：无客户聊天的集成测试。
@@ -41,12 +41,12 @@ class GeneralChatTests(TestCase):
     # 功能：验证零客户账户的完整持久化及权限边界。
     # 输入：无外部参数；本人和其他员工的知识夹具。
     # 输出：成功回答、草稿可回读，越权不可读取或提问。
-    # 逻辑：真实接口创建空客户会话并保存草稿；领取后只冻结本人知识，版本错配被拒绝。
+    # 逻辑：省略 company 创建会话并保存草稿；领取后只冻结本人知识，回报版本仅检查类型与长度。
     # 约束：模型输出为显式合成回执，不验证外部服务。
     def test_general_round_trip_and_isolation(self):
         created = self.client.post(
             RECORDS + "conversations/",
-            {"title": "通用会话", "company": None},
+            {"title": "通用会话"},
             format="json",
         )
         self.assertEqual(created.status_code, 201, created.data)
@@ -87,13 +87,13 @@ class GeneralChatTests(TestCase):
         self.assertNotIn("不可见", str(context))
         result = {
             "request_id": str(request.pk),
-            "chat_prompt_version": "general-chat-v1",
+            "chat_prompt_version": "workspace-chat-v1",
             "status": "completed",
             "error": None,
             "assistant_text": "你好，可以一起起草邮件。",
             "citations": [],
         }
-        for version in ("chat-v2", [], {}):
+        for version in (None, [], {}, "", "v" * 101):
             with self.assertRaises(ValidationError):
                 services.save_answer(
                     self.owner, {**result, "chat_prompt_version": version}

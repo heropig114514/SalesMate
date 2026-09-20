@@ -1,11 +1,12 @@
 """职责：持久化回答任务、证据快照和员工维护的内部知识。
-实现：复用 sales 会话与消息；数据库约束保证会话单任务和每请求唯一回答。
+实现：复用 sales 会话与消息；独立保存每次工具读取的结果和证据，数据库约束保证会话单任务及唯一回答。
 关联：chat.services 维护状态；Agent 仅通过 HTTP 读写本模块。
 目录：
 - AnswerRequest：一次不可覆盖的回答尝试。
 - AnswerRequest.Meta：任务唯一及状态约束。
 - Citation：与助手消息对应的有序证据。
 - Citation.Meta：引用位置唯一约束。
+- ToolRead：请求绑定的不可覆盖工具读取记录。
 - KnowledgeEntry：有明确版本的内部知识。
 - KnowledgeEntry.Meta：员工知识版本唯一约束。
 变量索引：
@@ -24,14 +25,21 @@
 - AnswerRequest.context_snapshot：首次读取时冻结的完整 internal 响应。
 - AnswerRequest.result：已接收的规范结果，用于精确幂等比较。
 - AnswerRequest.chat_prompt_version：实际执行的提示词版本。
-- AnswerRequest.error：对浏览器安全的错误码和提示。
+- AnswerRequest.error：Agent 提供的错误码和提示，仅检查结构，由生产方负责脱敏。
 - AnswerRequest.Meta.constraints：单活动任务和合法状态数据库约束。
 - Citation.request：所属回答请求。
-- Citation.position：正文引用编号，自 1 开始。
-- Citation.source_id：请求快照内的稳定来源标识。
+- Citation.position：引用数组位置，自 1 开始，不验证正文编号。
+- Citation.source_id：Agent 声明的来源标识，不保证已登记到本请求快照。
 - Citation.source_type：来源类别。
-- Citation.title_or_label：冻结展示标题。
-- Citation.content：本次提供给 Agent 的证据正文。
+- Citation.title_or_label：Agent 回报的来源标题。
+- Citation.content：匹配本请求上下文或工具记录的证据正文；未匹配时为空。
+- ToolRead.id：单次成功读取 UUID，也是来源命名空间。
+- ToolRead.request：所属回答请求，员工身份从请求继承。
+- ToolRead.tool：实际执行的只读工具名称。
+- ToolRead.arguments：实际经过 Schema 校验的参数快照。
+- ToolRead.result：原业务工具回执，保留分页、状态、版本与数据。
+- ToolRead.evidence_items：本次返回的四字段证据数组，不覆盖旧来源。
+- ToolRead.created_at：成功读取记录的创建时间。
 - Citation.Meta.constraints：请求内引用位置唯一。
 - KnowledgeEntry.id：知识记录标识。
 - KnowledgeEntry.owner：可消费本条知识的员工。
@@ -98,8 +106,8 @@ class AnswerRequest(models.Model):
         ]
 
 
-# 功能：保存回答引用及实际证据。
-# 逻辑：引用内容从请求快照读取，不接受 Agent 自报正文。
+# 功能：保存回答声明的引用及可匹配的证据。
+# 逻辑：仅从本请求上下文或工具记录附加正文；未登记来源保留元数据与空正文，不接受 Agent 自报正文。
 # 约束：与助手消息和请求终态在同一事务创建。
 class Citation(models.Model):
     request = models.ForeignKey(
@@ -120,6 +128,21 @@ class Citation(models.Model):
                 fields=["request", "position"], name="chat_citation_position"
             )
         ]
+
+
+# 功能：保存一次成功工具读取及本次实际返回的来源正文。
+# 逻辑：每次读取创建新 UUID，不覆盖已有行；与请求状态锁处于同一事务，失败不登记。
+# 约束：只由聊天只读服务创建，浏览器不能直接读取；公司后续修改不会刷新本记录。
+class ToolRead(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(
+        AnswerRequest, on_delete=models.PROTECT, related_name="tool_reads"
+    )
+    tool = models.CharField(max_length=120)
+    arguments = models.JSONField()
+    result = models.JSONField()
+    evidence_items = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 # 功能：保存明确导入的内部知识版本。

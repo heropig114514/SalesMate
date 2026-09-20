@@ -1,5 +1,5 @@
 """职责：验证聊天任务事务、证据、隔离和真实 HTTP Agent 适配。
-实现：使用隔离 PostgreSQL 与真实 Django API；模型输出和 Worker 环境边界使用确定性模拟。
+实现：使用隔离 PostgreSQL 与真实 Django API，覆盖结构校验与来源元数据保存；模型和 Worker 环境使用确定性模拟。
 关联：apps.chat、既有 sales 消息及 agent.workflows.chat；不调用真实邮箱或百炼。
 目录：
 - fixture：建立两员工及自有客户会话。
@@ -14,7 +14,9 @@
 - ChatTests.test_shared_company_does_not_grant_mail_access：共享业务不升级邮件权限。
 - ChatTests.test_context_frozen_budget_and_current_analysis：上下文冻结、容量和画像有效性。
 - ChatTests.test_report_idempotency_and_citations：引用快照及终态去重。
-- ChatTests.test_invalid_report_rolls_back：契约和引用反例不产生消息。
+- ChatTests.test_invalid_report_rolls_back：Schema 反例不产生消息。
+- ChatTests.test_report_accepts_metadata_without_reading_other_snapshots：来源不在快照仍可保存，但不能读取其他请求正文。
+- ChatTests.test_report_accepts_arbitrary_error_text：合法错误结构不受固定文案限制。
 - ChatTests.test_failure_retry_and_late_report：显式新尝试与迟到结果拒绝。
 - ChatTests.test_interrupted_request_recovery：人工恢复确认及旧结果隔离。
 - ChatTests.test_no_context_required_for_zero_citation_answer：零引用澄清可完成。
@@ -412,10 +414,10 @@ class ChatTests(TestCase):
         self.assertEqual(state.data["citations"][0]["position"], 1)
 
     # 功能：验证非法回报不会产生部分成功记录。
-    # 输入：无外部参数，构造缺版本、非法字段、外来引用和失败正文。
+    # 输入：无外部参数，构造缺版本、非法字段、引用类型或长度错误和失败正文。
     # 输出：全部 400 且请求仍 processing。
     # 逻辑：对各反例经真实 HTTP 验证。
-    # 约束：不把模型文本伪装为可信来源。
+    # 约束：只验证 Schema 反例，不把内容限制混入结构测试。
     def test_invalid_report_rolls_back(self):
         self.submit()
         services.claim(self.owner)
@@ -428,7 +430,7 @@ class ChatTests(TestCase):
             result_for(
                 request,
                 {
-                    "source_id": "foreign",
+                    "source_id": [],
                     "source_type": "customer_email",
                     "title_or_label": "其他员工",
                 },
@@ -439,6 +441,21 @@ class ChatTests(TestCase):
                 "error": {"code": "model_unavailable", "message": "unsafe"},
             },
         ]
+        cases.extend(
+            [
+                {**result_for(request), "assistant_text": 123},
+                {**result_for(request), "citations": {}},
+                {**result_for(request), "status": "pending"},
+                result_for(
+                    request,
+                    {
+                        "source_id": "source",
+                        "source_type": "x" * 81,
+                        "title_or_label": "过长来源类型",
+                    },
+                ),
+            ]
+        )
         for payload in cases:
             self.assertEqual(
                 self.agent.post(AGENT + "answers/", payload, format="json").status_code,
@@ -448,6 +465,98 @@ class ChatTests(TestCase):
         self.assertFalse(Citation.objects.exists())
         request.refresh_from_db()
         self.assertEqual(request.status, "processing")
+
+    # 功能：验证内容校验放宽后仍不会跨请求或员工读取证据正文。
+    # 输入：无外部参数；本请求、同员工另一请求和其他员工请求各有独立快照。
+    # 输出：重复及未登记来源按原顺序保存，仅本请求匹配来源附有正文。
+    # 逻辑：使用新版本和不匹配的正文编号经真实认证接口回报，再核对浏览器投影与幂等。
+    # 约束：快照为显式测试数据，不代表资料真实性或模型引用质量已验证。
+    def test_report_accepts_metadata_without_reading_other_snapshots(self):
+        self.submit()
+        services.claim(self.owner)
+        request = AnswerRequest.objects.get()
+        known = {
+            "source_id": "known",
+            "source_type": "customer_email",
+            "title_or_label": "本次来源",
+            "content": "本次已提供正文",
+        }
+        request.context_snapshot = {"customer_context": [known], "context_items": []}
+        request.save(update_fields=["context_snapshot"])
+        citations = [
+            {key: known[key] for key in ("source_id", "source_type", "title_or_label")}
+        ]
+        for index, owner in enumerate((self.owner, self.other)):
+            conversation = Conversation.objects.create(owner=owner)
+            other_request, _ = services.submit(
+                owner,
+                {
+                    "conversation_id": str(conversation.pk),
+                    "content": "其他问题",
+                    "client_key": str(uuid.uuid4()),
+                },
+            )
+            item = {
+                "source_id": f"other-request:{index}",
+                "source_type": "internal_knowledge",
+                "title_or_label": "其他请求来源",
+                "content": "不得从其他请求读取的正文",
+            }
+            other_request.context_snapshot = {"context_items": [item]}
+            other_request.save(update_fields=["context_snapshot"])
+            citations.append(
+                {
+                    key: item[key]
+                    for key in ("source_id", "source_type", "title_or_label")
+                }
+            )
+        citations.append(citations[0].copy())
+        payload = {
+            **result_for(request),
+            "chat_prompt_version": "workspace-chat-v1",
+            "assistant_text": "回答可使用普通方括号 [99]，后端不校验编号或语义。",
+            "citations": citations,
+        }
+        response = self.agent.post(AGENT + "answers/", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(
+            self.agent.post(AGENT + "answers/", payload, format="json").data[
+                "duplicate"
+            ]
+        )
+        state = self.browser.get(BROWSER + f"requests/{request.pk}/")
+        self.assertEqual(
+            [row["content"] for row in state.data["citations"]],
+            [known["content"], "", "", known["content"]],
+        )
+        self.assertEqual(
+            [row["position"] for row in state.data["citations"]], [1, 2, 3, 4]
+        )
+        request.refresh_from_db()
+        self.assertEqual(request.result, payload)
+        self.assertEqual(request.chat_prompt_version, "workspace-chat-v1")
+
+    # 功能：验证错误码和文案只检查结构，合法新错误可持久化。
+    # 输入：无外部参数；已领取请求及测试专用错误对象。
+    # 输出：失败回报成功且错误按原值回读，不创建助手消息。
+    # 逻辑：经 Agent 认证接口提交未知错误码与自定义文案，再核对请求状态。
+    # 约束：错误文案由生产方负责脱敏，测试不发送真实服务异常。
+    def test_report_accepts_arbitrary_error_text(self):
+        self.submit()
+        services.claim(self.owner)
+        request = AnswerRequest.objects.get()
+        payload = {
+            **result_for(request),
+            "status": "failed",
+            "assistant_text": "",
+            "error": {"code": "tool_unavailable", "message": "客户工具暂时不可用。"},
+        }
+        response = self.agent.post(AGENT + "answers/", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        request.refresh_from_db()
+        self.assertEqual(request.error, payload["error"])
+        self.assertEqual(request.status, "failed")
+        self.assertIsNone(request.assistant_message_id)
 
     # 功能：验证失败尝试保留且重试有新身份。
     # 输入：无外部参数，标准模型失败回报。

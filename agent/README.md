@@ -70,7 +70,7 @@ python -m agent.main --process-chat-once
 
 Agent 本目录的单元测试继续使用 fake session/backend，不代表真实模型或生产网页验收。后端新增集成测试使用真实 PostgreSQL 和临时 Django HTTP 服务运行原 Agent HTTP 客户端/工作流，模型输出模拟；浏览器测试使用真实页面与模拟 API。
 
-后端代码适配已交付，但 Web Demo 上线仍需应用迁移、配置模型与后端地址、启动共享 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。聊天不执行发信、日历或业务写入。当前完整契约、恢复和部署步骤以 [后端聊天适配说明](../backend/docs/chat-integration.md) 为准；尤其 report 必须匹配会话模式：客户使用 `chat-v2`，通用使用 `general-chat-v1`，失败请求不能重置后复用原 request_id。
+后端代码适配已交付，但 Web Demo 上线仍需应用迁移、配置模型与后端地址、启动共享 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。聊天不执行发信、日历或业务写入。当前完整契约、恢复和部署步骤以 [后端聊天适配说明](../backend/docs/chat-integration.md) 为准。Agent 当前仍按客户/通用模式产出 `chat-v2` / `general-chat-v1` 并执行自身引用校验；后端回报入口已改为仅校验 Schema，不再强制版本与会话模式一致，也不拒绝未登记来源。未登记引用只有元数据，没有后端附加的证据正文。后端新增了 Agent 凭证可调用的请求绑定工具目录、只读执行和状态查询，接入见[工作空间聊天对接契约](../backend/docs/workspace-chat-tools.md)；工具选择循环仍由 Agent 侧实现。失败请求不能重置后复用原 request_id。
 
 ### 1.5 聊天离线测试
 

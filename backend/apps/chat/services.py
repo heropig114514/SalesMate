@@ -1,5 +1,5 @@
 """职责：提供聊天事务、员工隔离、幂等保存与显式恢复。
-实现：按员工锁串行化状态写入；上下文按请求冻结，终态结果精确比较。
+实现：按员工锁串行化状态写入；回报只验结构，已知引用附本请求上下文或工具正文，终态结果精确比较。
 关联：chat.views/Worker 调用，复用 sales Conversation/Message 与 crm 认证。
 目录：
 - lock_owner：取得既有员工锁。
@@ -9,8 +9,8 @@
 - retry：为失败任务创建唯一新尝试。
 - claim：原子领取并冻结历史。
 - context_for：保存并返回一次性证据快照。
-- save_answer：幂等写入助手消息与引用。
-- request_data：输出浏览器安全状态和引用。
+- save_answer：校验结构后幂等写入回答和引用，未登记来源只存元数据。
+- request_data：输出已授权请求的状态和引用。
 - interrupt：显式终止中断请求。
 变量索引：
 - logger：仅记录任务标识、员工与状态的日志。
@@ -288,39 +288,48 @@ def context_for(owner, request_id, scope):
 # 功能：保存 Agent 的一次最终结果。
 # 输入：`owner` 令牌绑定员工，`data` 严格回报对象。
 # 输出：request_id/saved/duplicate/assistant_message_id。
-# 逻辑：校验会话对应提示版本，终态精确去重，引用仅从本请求快照匹配；消息、引用和状态同事务写入。
-# 约束：不要求零引用回答预先读取上下文；不创建失败助手正文；拒绝迟到或异值结果。
+# 逻辑：回报只校验 Schema，终态精确去重；引用匹配本请求上下文或工具记录时附正文，否则仅存元数据。
+# 约束：不根据来源标识查询其他记录，不判断正文含义或版本绑定；权限、状态和幂等仍强制，失败不创建助手消息。
 @transaction.atomic
 def save_answer(owner, data):
     result = contracts.report(data)
     lock_owner(owner)
     request = request_for(owner, contracts.identifier(result["request_id"]), lock=True)
-    expected_prompt = "chat-v2" if request.company_id else "general-chat-v1"
-    if result["chat_prompt_version"] != expected_prompt:
-        raise ValidationError("回答版本与会话类型不一致。")
     duplicate = request.status in ("completed", "failed") and request.result == result
     if not duplicate:
         if request.status != "processing":
             raise Conflict("请求已结束或尚未领取，不能保存其他结果。")
         snapshot = request.context_snapshot or {}
-        allowed = {
+        tool_evidence = [
+            item
+            for items in request.tool_reads.order_by("created_at", "id").values_list(
+                "evidence_items", flat=True
+            )
+            for item in items
+        ]
+        snapshot_items = {
             tuple(
                 row[key] for key in ("source_id", "source_type", "title_or_label")
             ): row
             for row in [
                 *snapshot.get("customer_context", []),
                 *snapshot.get("context_items", []),
+                *tool_evidence,
             ]
         }
         cited = []
+        metadata_only = 0
         for citation in result["citations"]:
             key = tuple(
                 citation[field]
                 for field in ("source_id", "source_type", "title_or_label")
             )
-            if key not in allowed:
-                raise ValidationError("引用不属于本请求实际提供的证据。")
-            cited.append(allowed[key])
+            if key in snapshot_items:
+                cited.append(snapshot_items[key])
+            else:
+                # 未登记来源是 Agent 声明的元数据，不赋予资料读取权，也不伪造证据正文。
+                cited.append({**citation, "content": ""})
+                metadata_only += 1
         if result["status"] == "completed":
             request.assistant_message = Message.objects.create(
                 owner=owner,
@@ -350,6 +359,13 @@ def save_answer(owner, data):
                 "finished_at",
             ]
         )
+        logger.info(
+            "chat_citations_saved request_id=%s owner_id=%s citations=%s metadata_only=%s",
+            request.pk,
+            owner.pk,
+            len(cited),
+            metadata_only,
+        )
     logger.info(
         "chat_reported request_id=%s owner_id=%s status=%s duplicate=%s",
         request.pk,
@@ -369,9 +385,9 @@ def save_answer(owner, data):
 
 # 功能：投影已授权请求的浏览器状态。
 # 输入：`request` 已由权限服务校验的 AnswerRequest。
-# 输出：安全字段、时间、助手消息标识及有序引用证据。
-# 逻辑：失败不回传未经验证的文本，引用内容来自后端快照。
-# 约束：不输出内部历史、完整 context_snapshot、凭证或原始异常。
+# 输出：状态、时间、助手消息标识、有序引用与 Agent 错误文本。
+# 逻辑：失败不返回助手正文；引用内容来自本请求上下文或工具记录，未登记来源的 content 为空。
+# 约束：不输出内部历史、完整快照、工具历史或凭证；Agent error 原样返回，其脱敏由 Agent 负责。
 def request_data(request):
     return {
         "request_id": str(request.pk),

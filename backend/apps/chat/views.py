@@ -1,5 +1,5 @@
 """职责：暴露浏览器聊天操作和固定 Agent 三接口。
-实现：Session/CSRF 与 Agent 凭证分离，视图只负责校验、分页及事务服务分派。
+实现：Session/CSRF 与 Agent 凭证分离，视图只负责结构校验、分页及事务服务分派。
 关联：config.urls 注册独立路径，复用既有统一异常与 OpenAPI。
 目录：
 - SubmitView：显式提交聊天问题。
@@ -177,7 +177,7 @@ class AnswerView(APIView):
     # 功能：幂等持久化最终回答。
     # 输入：`request` 严格 completed/failed 回报。
     # 输出：saved/duplicate/assistant_message_id。
-    # 逻辑：校验版本、引用白名单和状态后原子保存。
+    # 逻辑：校验回报 Schema、权限和状态后原子保存，不判断正文和引用真实性。
     # 约束：成功重复回报仍返回 saved=true。
     @extend_schema(
         request=OpenApiTypes.OBJECT,
