@@ -1,0 +1,31 @@
+/* 职责：布局实验数据表目录、只读记录列表与详情。
+ * 实现：宽屏双栏、窄屏单栏，长 JSON 与主键在容器内换行。
+ * 关联：experiments.html；复用 design-system.css 的色彩与顶栏。
+ * 目录：无函数或类声明；选择器按页面、表格、弹窗、移动端组织。
+ * 变量索引：无新增 CSS 变量。 */
+body { margin: 0; background: #101218; color: #e5e7ed; font: 14px/1.6 system-ui, sans-serif; }
+a { color: #a6bcff; } button, input { font: inherit; }
+button, #export-batch, #record-download { padding: 8px 14px; border: 1px solid #414859; border-radius: 8px; background: #222736; color: #edf0ff; cursor: pointer; text-decoration: none; }
+button:disabled { opacity: .4; cursor: default; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #9eb9ff; outline-offset: 3px; }
+.experiment-shell { max-width: 1440px; padding: 32px; margin: auto; }
+.experiment-heading, .panel-heading, .experiment-pagination { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+h1 { font-size: 30px; margin: 4px 0; } h2 { font-size: 18px; margin: 0; } p { margin: 8px 0 16px; }
+.eyebrow, .muted { color: #a5aec1; } .eyebrow { letter-spacing: .14em; font-size: 11px; }
+.experiment-banner { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 18px; background: #1a263a; border: 1px solid #354767; border-radius: 10px; }
+.experiment-layout { display: grid; grid-template-columns: 245px minmax(0, 1fr); gap: 24px; margin-top: 22px; }
+.experiment-layout aside { border-right: 1px solid #343948; padding-right: 16px; }
+#experiment-tables { display: flex; flex-direction: column; gap: 3px; max-height: 75vh; overflow: auto; margin-top: 15px; }
+#experiment-tables a { padding: 8px 10px; text-decoration: none; display: flex; justify-content: space-between; border-radius: 7px; color: #c2c9d9; }
+#experiment-tables a[aria-current] { background: #2a3754; color: #fff; }
+.experiment-panel { min-width: 0; } #experiment-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 16px 0; }
+label { display: flex; flex-direction: column; gap: 4px; color: #bdc5d5; } input { background: #161a23; color: #eee; border: 1px solid #454c5d; border-radius: 7px; padding: 8px 10px; }
+.table-scroll { overflow: auto; border: 1px solid #343948; border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; text-align: left; } th, td { padding: 12px; border-bottom: 1px solid #2a303e; vertical-align: top; }
+th { color: #aab5c9; background: #1b202c; white-space: nowrap; } td:first-child { min-width: 210px; max-width: 370px; overflow-wrap: anywhere; }
+td:nth-child(3) { max-width: 230px; overflow-wrap: anywhere; font-family: monospace; font-size: 11px; color: #a5aec1; }
+.experiment-pagination { justify-content: center; margin: 18px 0; } pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: #11151e; border-radius: 8px; font: 12px/1.7 monospace; }
+dialog { color: #e5e7ed; background: #1a1f2a; border: 1px solid #4c5870; border-radius: 14px; max-width: 960px; width: 85vw; max-height: 85vh; padding: 24px; }
+dialog::backdrop { background: #0009; } #record-links { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; } #record-links a { border: 1px solid #3a4964; border-radius: 6px; padding: 5px 9px; }
+#experiment-status[data-error] { color: #ffb7a8; } [hidden] { display: none !important; }
+@media (max-width: 760px) { .experiment-shell { padding: 18px 12px; } .experiment-layout { grid-template-columns: 1fr; } #experiment-tables { max-height: 220px; } .experiment-layout aside { border-right: 0; } .experiment-heading { align-items: start; flex-direction: column; } }

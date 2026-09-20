@@ -1,6 +1,6 @@
 /**
  * 职责：复用产品顶栏及跨页面分区导航，不获取或伪造账户与同步状态。
- * 实现：原生 Web Component 输出品牌及同源分区链接，移除无交互的工作空间角标；监听 hashchange 更新当前分区。
+ * 实现：原生 Web Component 输出品牌及同源分区链接，包括登录后读取的实验数据入口；监听 hashchange 更新当前分区。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 注册组件，三个 HTML 入口声明 salesmate-header，design-system.css 定义样式。
  * 目录：SalesMateHeader、SalesMateHeader.connectedCallback、SalesMateHeader.disconnectedCallback、SalesMateHeader.updateSection。
@@ -22,6 +22,7 @@ class SalesMateHeader extends HTMLElement {
         <a href="/world/" data-section="world">全球洞察</a>
         <a href="/#inbox" data-section="inbox">社媒情报</a>
         <a href="/business/#directory" data-section="business">销售业务</a>
+        <a href="/experiments/" data-section="experiments">实验数据</a>
       </nav>
     </header>`;
     this.onRoute = () => this.updateSection();
@@ -34,10 +35,11 @@ class SalesMateHeader extends HTMLElement {
     if (this.onRoute) window.removeEventListener('hashchange', this.onRoute);
   }
   /** 功能：更新当前分区语义。输入：location.pathname/hash。输出：无。
-   * 逻辑：全球及销售按路径匹配，邮件及客户分析按 hash 匹配；首页和聊天不误标。
+   * 逻辑：全球、销售及实验按路径匹配，邮件及客户分析按 hash 匹配；首页和聊天不误标。
    * 约束：仅设置 aria-current，不重建页面、不改变浏览历史。 */
   updateSection() {
-    const section = location.pathname.startsWith('/world/') ? 'world'
+    const section = location.pathname.startsWith('/experiments/') ? 'experiments'
+      : location.pathname.startsWith('/world/') ? 'world'
       : location.pathname.startsWith('/business/') ? 'business'
       : /^#(?:inbox|company\/)/.test(location.hash) ? 'inbox' : null;
     for (const link of this.querySelectorAll('[data-section]')) {

@@ -1460,6 +1460,119 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/experiments/:
+    get:
+      operationId: experiments_catalog
+      tags:
+      - experiments
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/experiments/{batch}/{label}/:
+    get:
+      operationId: experiments_table
+      parameters:
+      - in: path
+        name: batch
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: label
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: owner
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: string
+      - in: query
+        name: page_size
+        schema:
+          type: string
+      - in: query
+        name: pk
+        schema:
+          type: string
+      - in: query
+        name: q
+        schema:
+          type: string
+      tags:
+      - experiments
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/experiments/{batch}/{label}/{id}/download/:
+    get:
+      operationId: experiments_file
+      parameters:
+      - in: path
+        name: batch
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: label
+        schema:
+          type: string
+        required: true
+      tags:
+      - experiments
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          description: ''
+  /api/v1/experiments/{batch}/export/:
+    get:
+      operationId: experiments_export
+      parameters:
+      - in: path
+        name: batch
+        schema:
+          type: string
+        required: true
+      tags:
+      - experiments
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/health/live/:
     get:
       operationId: v1_health_live_retrieve
