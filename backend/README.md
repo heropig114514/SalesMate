@@ -28,7 +28,7 @@ SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取
 - L4 可复现的 0–100 跟进优先级计算。
 - Django 持久化、Agent 服务认证、分析缓存和任务状态。
 - 参考 MVP 文档实现的员工 Gmail 收件箱、Google 授权管理和客户详情页面。
-- 使用必填 `DATABASE_URL` 显式选择数据库；本机与模板使用 PostgreSQL，SQLite 仅作为显式选择。
+- 使用必填 `DATABASE_URL` 显式选择数据库；完整业务使用 PostgreSQL，SQLite 可显式用于[本地预览](docs/local-development.md#sqlite-本地预览)，仍有 JSON 查询、向量与并发限制。
 
 销售扩展已提供客户/联系人/归组、产品、工单、商机、报价和订单明细、跟进、团队授权、审计、私有附件、会话草稿，以及独立销售 Worker。Gmail 发信和 Google 日历的适配器与明确确认流程已实现，真实执行需要新写权限授权和加密密钥。当前已增加有来源依据的只读聊天和显式导入的内部知识；不包含 WhatsApp、会议纪要、外部知识检索或行业新闻。页面中的分数表示处理优先级，不表示成交概率。
 
@@ -292,7 +292,7 @@ DATABASE_URL=postgresql://salesmate:password@127.0.0.1:5432/salesmate?connect_ti
 
 ## 7. 首次安装和初始化
 
-Windows/macOS 一键入口见[仓库 README](../README.md#本地一键启动)：Windows 使用 `start-local.ps1`，macOS 使用 `bash start-local.sh`；自动准备虚拟环境和依赖，检查并迁移既有本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、数据库（PostgreSQL 需要 pgvector），配置根 `.env` 和本地普通账号；脚本不会覆盖已有配置或替换数据库。下列命令用于 Windows 手动初始化，macOS 的环境路径和步骤见[本地开发说明](docs/local-development.md#一键启动macos)。
+Windows/macOS 一键入口见[仓库 README](../README.md#本地一键启动)：Windows 使用 `start-local.ps1`，macOS 使用 `bash start-local.sh`；自动准备虚拟环境和依赖，检查并迁移本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、配置根 `.env`；完整业务需 PostgreSQL/pgvector，本地轻量预览可选择 [SQLite 并从网页注册](docs/local-development.md#sqlite-本地预览)，无需安装数据库服务或预建账号。脚本不会覆盖已有配置或替换数据库。下列命令用于 Windows 手动初始化，macOS 的环境路径和步骤见[本地开发说明](docs/local-development.md#一键启动macos)。
 
 以下命令从项目根目录执行：
 

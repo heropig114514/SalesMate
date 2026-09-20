@@ -15,6 +15,7 @@
 - LocalServerTests.test_brew_run_existing_service：模拟验证显式 Homebrew 运行方式，保持迁移调用与现有配置。
 - LocalServerTests.test_shell_setup_and_actions：用空依赖及受控入口验证 Bash 3.2 兼容脚本的初始化、复用与动作转发。
 - LocalServerTests.test_shell_rejects_foreign_venv：验证 shell 不覆盖其他平台虚拟环境。
+- LocalServerTests.test_start_reports_current_failure：验证启动失败直接显示本轮诊断，同时排除历史错误。
 
 变量索引：
 - 无
@@ -27,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, MagicMock, patch
 
@@ -37,6 +39,25 @@ import local_server
 # 逻辑：对 Django/Homebrew 使用模拟，锁、停止信号、会话分离及 shell 入口通过真实 OS 行为验证。
 # 约束：不启动业务服务、不读取仓库 .env；空依赖 shell 测试不能证明完整依赖在该平台可安装。
 class LocalServerTests(unittest.TestCase):
+    # 功能：验证后台启动失败时终端能显示本次安全原因，且不会误报旧状态。
+    # 输入：无外部参数；模拟退出的监督器、本轮与历史状态及固定时间。
+    # 输出：断言当前失败说明可见，历史说明不会出现在终端异常中。
+    # 逻辑：使用真实 control 路径，模拟进程退出而不启动实际服务。
+    # 约束：不读取日志或 .env，不访问数据库；本测试仅验证诊断传递。
+    def test_start_reports_current_failure(self):
+        args = SimpleNamespace(action='start', wsl_distro=None, brew_service=None, no_browser=True)
+        process = Mock()
+        process.poll.return_value = 1
+        for timestamp, expected in ((101, 'Configure DATABASE_URL'), (99, 'before a current diagnostic')):
+            state = {'status': 'failed', 'updated_at': timestamp, 'detail': 'Configure DATABASE_URL'}
+            with self.subTest(timestamp=timestamp), patch('local_server.running', return_value=False), \
+                    patch('local_server.spawn', return_value=process), patch('local_server.read_state', return_value=state), \
+                    patch('local_server.time.time', return_value=100):
+                with self.assertRaisesRegex(RuntimeError, expected) as caught:
+                    local_server.control(args)
+                if timestamp < 100:
+                    self.assertNotIn('Configure DATABASE_URL', str(caught.exception))
+
     # 功能：验证并发启动保护能在句柄关闭后解除。
     # 输入：无外部参数；创建独立临时运行目录。
     # 输出：断言锁持有与释放状态。

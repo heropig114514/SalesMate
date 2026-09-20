@@ -144,10 +144,10 @@ def read_state():
 # 功能：发布启动或停止阶段及子进程身份。
 # 输入：`status` 阶段字符串；`processes` 名称到 Popen 对象的映射；`detail` 脱敏诊断文本。
 # 输出：无；原子替换状态文件。
-# 逻辑：PID 和退出码仅供诊断，控制通过停止文件与进程句柄执行。
+# 逻辑：PID 和退出码仅供诊断；写入更新时间以便启动端拒绝引用历史失败，控制仍通过停止文件与进程句柄执行。
 # 约束：不记录命令环境或业务数据；仅监督器写状态。
 def write_state(status, processes, detail=''):
-    data = {'status': status, 'url': URL, 'detail': detail,
+    data = {'status': status, 'url': URL, 'detail': detail, 'updated_at': time.time(),
             'processes': {name: {'pid': process.pid, 'exit_code': process.poll()}
                           for name, process in processes.items()}}
     temporary = RUNTIME / 'state.tmp'
@@ -371,8 +371,8 @@ def supervise(distro, brew_service=None):
 # 功能：执行面向用户的启动、状态或停止命令。
 # 输入：`args` 含 action、wsl_distro、brew_service、no_browser；读取运行锁与状态。
 # 输出：返回命令退出码；启动可打开浏览器。
-# 逻辑：重复启动复用受管服务；冷启动转交显式 WSL/Homebrew 选项；停止仅创建控制文件并等待有界时间。
-# 约束：等待超时报告尚未完成，不暗中取消或强杀；启动与状态探测不修改业务数据。
+# 逻辑：重复启动复用受管服务；冷启动转交数据库选项，并在子进程失败时显示本轮状态中的脱敏原因；停止使用有界等待。
+# 约束：不读取或打印完整日志、凭据或历史失败原因；等待超时不暗中取消或强杀，状态探测不修改业务数据。
 def control(args):
     active = running()
     if args.action == 'status':
@@ -405,11 +405,15 @@ def control(args):
             arguments += ['--wsl-distro', args.wsl_distro]
         if args.brew_service:
             arguments += ['--brew-service', args.brew_service]
+        started_at = time.time()
         process = spawn(arguments, 'launcher')
         deadline = time.monotonic() + 180
         while True:
             if process.poll() is not None:
-                raise RuntimeError(f'Start failed. Inspect {RUNTIME / "launcher.log"}.')
+                state = read_state()
+                reason = state.get('detail', '') if state.get('status') == 'failed' and state.get('updated_at', 0) >= started_at else ''
+                message = f'Start failed: {reason}' if reason else 'Start failed before a current diagnostic was recorded.'
+                raise RuntimeError(f'{message} Inspect {RUNTIME / "launcher.log"}.')
             if running() and read_state()['status'] == 'running' and healthy():
                 break
             if time.monotonic() >= deadline:

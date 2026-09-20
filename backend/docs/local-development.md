@@ -37,7 +37,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action st
 
 ## 一键启动（macOS）
 
-先安装 Python 3.11+，准备本地 PostgreSQL/pgvector、数据库账号及根 `.env`。脚本兼容系统 Bash 3.2，不自动安装 Homebrew 或数据库，不要求 PowerShell/WSL；共享后端拒绝在 Mac 上传入 `--wsl-distro`。在仓库根目录运行：
+完整业务先安装 Python 3.11+，准备本地 PostgreSQL/pgvector、数据库账号及根 `.env`；仅预览可直接使用下方 [SQLite 配置](#sqlite-本地预览)。脚本兼容系统 Bash 3.2，不自动安装 Homebrew 或数据库，不要求 PowerShell/WSL；共享后端拒绝在 Mac 上传入 `--wsl-distro`。在仓库根目录运行：
 
 ```bash
 bash start-local.sh
@@ -64,6 +64,14 @@ bash start-local.sh
 
 依赖摘要保存在 `.venv/salesmate-unix-requirements.sha256`，清单变化才重新安装，安装日志为 `.venv/salesmate-install.log`；Web/Worker 日志与状态仍在 `artifacts/local-server/`。工作台地址为 `http://127.0.0.1:8000/`。停止超时、端口冲突、重复启动及无自动重试语义与 Windows 一致。
 
+出现 `No broken requirements found` 只表示 Python 依赖检查通过，不代表数据库或应用已就绪。启动失败时终端会显示本轮已记录的脱敏原因；没有本轮诊断时仍指向日志，不复用历史错误。旧版本若只显示 `Start failed. Inspect ...`，请先读取下面的日志，不要直接重装 Python 或覆盖 `.env`：
+
+```bash
+tail -n 80 artifacts/local-server/launcher.log
+```
+
+`Created .env ... Configure DATABASE_URL` 表示首次仅生成了模板，需要填写真实数据库配置；`OperationalError` 需要核查本地数据库连接；缺少 `vector` 或本地账号时按明确提示补齐。必须根据本次日志判断，不能仅凭终端摘要认定故障原因。向他人提供诊断时不要附上 `.env`、密钥或完整连接字符串。
+
 跨平台验证：
 
 ```bash
@@ -73,12 +81,34 @@ python3 -X utf8 backend/tools/test_local_server.py
 
 测试只依赖 Python 标准库；测试中的 Django/Homebrew 使用明确模拟，shell 初始化只安装空依赖清单。CI 的 `Local launcher` 工作流在 Windows、macOS、Linux 与 Python 3.11/3.12 组合运行；POSIX 用 `/bin/bash` 验证宿主系统 shell。只有对应任务实际通过才算该平台验证完成，不能据此声称真实 Homebrew 服务、完整业务依赖、数据库、邮箱或模型链路已验证。Windows 现有真实服务另做回归检查。
 
+## SQLite 本地预览
+
+已明确选择轻量本地预览时，可以使用 Python 自带的 SQLite。缺少 `.env` 时先运行平台启动脚本生成模板；这次退出是等待配置，不是依赖安装失败。在根 `.env` 中替换下列已有项，保留其他配置和随机密钥：
+
+```dotenv
+DATABASE_URL=sqlite:///backend/db.sqlite3
+LOCAL_DEBUG_AUTO_LOGIN=False
+ANALYSIS_PROVIDER=rules
+```
+
+从仓库根目录运行 `bash start-local.sh`（macOS）或 `powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1`（Windows）；不要传入 PostgreSQL 启动选项。启动器执行全部迁移，首次创建被 Git 忽略的 `backend/db.sqlite3`，然后启动 Web 和 rules 模式原有的 sales Worker。打开 `http://127.0.0.1:8000/` 后，从登录窗口注册普通账号，不需要预建 demo、配置邮箱或运行 `provision_local`。无自动导入的样例数据，空列表属于正常情况。
+
+这是显式选择的规则预览模式；不会调用真实模型。已有服务须先 stop 再 start 才会读取新配置。切换文件库不迁移 PostgreSQL 的数据、账号或授权；切回原数据库需恢复原配置。不要共享 `.env`、凭证或包含业务数据的 SQLite 文件。
+
+已知限制保留原失败语义，不引入替代算法、重试或降低并发参数：
+
+- pgvector 余弦相似度 SQL 仅适用于 PostgreSQL，SQLite 不能执行向量检索。
+- 邮件人工纠错、失败抽取更新和历史版本升级中的血缘失效查询使用 JSON 数组包含操作，SQLite 尚未适配。
+- SQLite 不提供项目依赖的 PostgreSQL 行锁语义；并发任务领取、共享 Worker 及多进程写入可能报数据库锁冲突。不要用此模式验证多人/并发执行或真实外部动作。
+
+2026-09-20 在 Windows 隔离 SQLite 文件库上验证：全部数据库迁移成功；真实 Uvicorn HTTP 验证通过健康检查、首页/业务/公司设置/世界消息页面、JavaScript 资源、CSRF 注册及客户创建/列表读取。使用临时端口隔离现有服务，未修改默认启动端口。完整后端测试运行 265 项，其中 22 项错误、3 项失败，问题涉及上述 JSON、向量和并发路径。此记录说明完整业务尚不兼容，不能把启动成功当作全功能验收。测试不读取或修改实际 PostgreSQL 业务数据，外部模型和邮件使用既有测试边界；未在用户的 Mac 上完成真实应用验证。
+
 ## 环境
 
 - Python 3.11 或更高版本。
 - 依赖统一从根目录 `requirements.txt` 安装。
 - Django 和 Agent 只读取根目录 `.env`。
-- `DATABASE_URL` 必填，本机和模板使用 PostgreSQL；若明确选择 SQLite，可设置 `DATABASE_URL=sqlite:///backend/db.sqlite3`。
+- `DATABASE_URL` 必填，本机和模板使用 PostgreSQL；SQLite 仅按上方说明用于明确选择的本地预览。
 - 前端是 Django 同源提供的原生 HTML、CSS 和 JavaScript，无需单独安装或构建。
 
 从项目根目录首次初始化：

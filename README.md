@@ -55,10 +55,40 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 | 项目 | 启动器自动处理 | 首次使用者准备 |
 | --- | --- | --- |
 | Python 环境 | 缺少时创建 `.venv`；按原清单安装依赖并检查兼容性 | 安装 Python 3.11+；Windows 用 `-Python`、macOS 用 `--python` 指定解释器 |
-| 数据库 | 可显式启动 Windows WSL 或 macOS Homebrew 中已安装的 PostgreSQL；检查连接及 pgvector；应用迁移 | 安装并创建本地数据库，PostgreSQL 需安装 pgvector；填写 `DATABASE_URL` |
+| 数据库 | SQLite 预览模式自动创建文件库并迁移；PostgreSQL 可显式启动已安装的 WSL/Homebrew 服务并检查 pgvector | 预览按下方选择 SQLite，无需安装数据库；完整业务需准备 PostgreSQL/pgvector 并填写 `DATABASE_URL` |
 | 应用配置 | 缺少 `.env` 时生成模板和随机 Django 密钥，然后提示配置；已有文件不覆盖 | 填写所选模式的配置；初始化本地普通账号，或明确关闭自动登录后网页注册 |
 | 真实外部服务 | 按现有 `ANALYSIS_PROVIDER` 启动对应 Worker | 自行提供模型密钥和模型名；使用 Gmail 时配置 Google OAuth 并完成授权 |
 | 网页与进程 | 后台启动、健康检查、打开浏览器、状态查询、协作停止 | 无需 npm、前端编译或手工双击 HTML |
+
+### SQLite 本地预览（Windows / macOS）
+
+**只看前端、注册登录和体验基础业务，可以使用 SQLite，不需要 PostgreSQL、Homebrew 或 WSL。此方式不代表完整业务已兼容 SQLite。**
+
+首次运行启动脚本会创建 `.venv`、安装依赖并生成 `.env`；如果提示 `Created .env ... Configure DATABASE_URL`，依赖已准备好，继续编辑仓库根目录生成的 `.env` 即可。将下列已有配置项改为这些值（不要重复追加同名项），保留生成的 Django 密钥和其他配置：
+
+```dotenv
+DATABASE_URL=sqlite:///backend/db.sqlite3
+LOCAL_DEBUG_AUTO_LOGIN=False
+ANALYSIS_PROVIDER=rules
+```
+
+这里明确选择规则预览模式，不调用真实模型；关闭自动登录是为了首次从网页注册自己的普通账号，无需预建 `demo` 或执行 `provision_local`。已经有真实模型配置时，仅在决定使用此预览模式后修改 provider。
+
+macOS 在项目目录执行：
+
+```bash
+bash start-local.sh
+```
+
+Windows 执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1
+```
+
+不要附加 `--brew-service` 或 `-WslDistro`。启动器自动创建 `backend/db.sqlite3`、应用迁移并打开 [本地工作台](http://127.0.0.1:8000/)，在登录窗口注册账号即可。之后每次都用同一条启动命令。若已有受管服务，修改配置后先 stop 再 start；SQLite 是独立数据文件，不会导入原 PostgreSQL 的账号或业务数据。
+
+**限制：** pgvector 相似度检索不可用；邮件纠错、历史抽取升级涉及未适配的 JSON 查询；并发任务领取和多个 Worker 写入存在 SQLite 锁冲突。预览时不要依赖这些功能，真实 Gmail/模型链路及多人并发仍使用 PostgreSQL。注册、登录、页面与部分基础业务已有 SQLite 测试覆盖，但不能据此承诺全部业务可用。验证结果和适用范围见 [SQLite 预览说明](backend/docs/local-development.md#sqlite-本地预览)。
 
 ### Windows
 
