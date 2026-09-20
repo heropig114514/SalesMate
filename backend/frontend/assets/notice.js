@@ -2,12 +2,12 @@
  * 职责：管理页面操作提示的显示、阅读暂停与关闭生命周期。
  * 实现：只显示最新提示，替换时取消旧计时器；悬停、焦点和后台页面暂停倒计时。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：app.js 调用 Notice.show，app.css 控制底部紧凑布局；不改变请求或业务失败状态。
+ * 关联：共享语言/API 资源随需求界面统一版本；app.js 调用 Notice.show，app.css 控制底部紧凑布局；不改变请求或业务失败状态。
  * 目录：Notice、Notice.constructor、Notice.show、Notice.dismiss、Notice.pause、Notice.resume。
  * 变量索引：DURATION 为成功/错误提示阅读时长；实例 box/message/close 保存 DOM，
  * timer/deadline/remaining 管理当前提示的剩余显示时间，单位为毫秒。
  */
-import { t } from './i18n.js?v=20260920-i18n';
+import { t } from './i18n.js?v=20260920-requirements';
 
 const DURATION = { success: 4000, error: 8000 };
 

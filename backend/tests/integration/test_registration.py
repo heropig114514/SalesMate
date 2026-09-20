@@ -7,7 +7,7 @@
 - RegistrationTests.submit：通过真实 HTTP 视图提交注册载荷。
 - RegistrationTests.test_register_login_logout_and_empty_workspace：验证注册后登录、空工作空间和重新登录。
 - RegistrationTests.test_csrf_and_privileged_fields_rejected：验证 CSRF 与权限字段不能绕过。
-- RegistrationTests.test_invalid_username_and_password_rejected：验证既有用户名及密码规则。
+- RegistrationTests.test_invalid_username_and_password_rejected：验证用户名及 8–128 位密码长度规则。
 - RegistrationTests.test_duplicate_and_normalized_username_rejected：验证规范化重名不覆盖旧账号。
 - RegistrationTests.test_database_duplicate_is_validation_error：模拟预检查竞争后验证真实唯一约束处理。
 - RegistrationTests.test_authenticated_registration_keeps_identity：验证已登录身份不会被注册请求替换。
@@ -89,12 +89,12 @@ class RegistrationTests(TestCase):
         self.assertEqual(get_user_model().objects.count(), 0)
 
     # 功能：验证注册输入采用已有账号规则。
-    # 输入：非对象载荷、缺失字段、非法用户名、弱密码及超长密码场景。
+    # 输入：非对象载荷、缺失字段、非法用户名、长度不合规密码及超长密码场景。
     # 输出：每个场景返回 400 且无账号写入。
     # 逻辑：通过完整接口执行模型用户名与 Django 密码校验。
     # 约束：没有添加邮箱、手机或验证码校验；不改变全局密码规则。
     def test_invalid_username_and_password_rejected(self):
-        for changes in [{"username": ""}, {"username": "bad name"}, {"password": "12345678"}, {"password": "short"}, {"password": "x" * 129}]:
+        for changes in [{"username": ""}, {"username": "bad name"}, {"password": "short"}, {"password": "x" * 129}]:
             with self.subTest(changes=changes):
                 self.assertEqual(self.submit({**self.payload, **changes}).status_code, 400)
         self.assertEqual(self.submit({"username": "missing-password"}).status_code, 400)

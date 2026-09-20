@@ -1,11 +1,45 @@
 /**
  * 职责：保存简体中文界面文案对应的英文目录。
- * 实现：精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
- * 关联：i18n.js 的 t/h 读取；静态页面 data-i18n 及显式标记的 JS 字面量调用。
+ * 实现：新增活动/引导文案及简化密码提示；精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
+ * 关联：共享语言/API 资源随需求界面统一版本；i18n.js 的 t/h 读取；静态页面 data-i18n 及显式标记的 JS 字面量调用。
  * 目录：无函数或类。
  * 变量索引：EN 为中文源文案到英文翻译的只读映射。
  */
 export const EN = Object.freeze({
+  "非洲": "Africa",
+  "中东": "Middle East",
+  "南美": "South America",
+  "北美": "North America",
+  "基础信息": "Basic information",
+  "这个季度，该去哪里见客户？": "Where should you meet customers this quarter?",
+  "演示数据 · 活动、客户与金额均为虚构": "Demo data \u00b7 Fictional events, customers and amounts",
+  "活动类型": "Event type",
+  "全部类型": "All types",
+  "展会": "Exhibition",
+  "销售活动": "Sales event",
+  "时间窗": "Date range",
+  "全部时间": "All dates",
+  "30 天内": "Next 30 days",
+  "本季度": "This quarter",
+  "商机在哪，下一次对话就在哪。": "See where your next customer conversation could happen.",
+  "值得见面的地方": "Places to meet",
+  "地区": "Region",
+  "活动地图": "Event map",
+  "地图视角": "Map view",
+  "全球": "Global",
+  "亚太": "Asia Pacific",
+  "欧洲": "Europe",
+  "可缩放的活动地图": "Zoomable event map",
+  "圆点大小 = 当地在手商机金额": "Bubble size = local pipeline value",
+  "高亮 = 有在跟客户": "Highlighted = active customers",
+  "真实地理底图 · 示例商机以 SGD 表示 · 同城活动共用气泡": "Real geography \u00b7 Demo pipeline in SGD \u00b7 Events share city bubbles",
+  "活动详情": "Event details",
+  "行业资讯": "Industry news",
+  "近 14 天 · 演示资讯": "Last 14 days \u00b7 Demo news",
+  "客户邀约草稿": "Customer invitation draft",
+  "请核对并修改后自行发送，不会自动发出邮件。": "Review and edit before sending. No email is sent automatically.",
+  "复制草稿": "Copy draft",
+
   "留空则最多 50 封": "Leave blank for up to 50 messages",
   "默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。": "Sync up to 50 messages by default, including when only days are specified. More than 50 requires confirmation and may keep the worker busy for a long time.",
   "本次选择最多 {0} 封邮件，超过默认的 50 封上限，可能长时间占用处理进程并增加分析费用。是否批准本次超量同步？取消后可修改数量。": "This sync selects up to {0} messages, exceeding the default limit of 50. It may keep the worker busy for a long time and increase analysis costs. Approve this larger sync? Cancel to change the count.",
@@ -663,7 +697,7 @@ export const EN = Object.freeze({
   "联系人资料": "Contact profiles",
   "自动更新已开启 · 约每 3 秒检查新邮件、画像与评分": "Automatic updates on · Checking emails, profiles and scores about every 3 seconds",
   "自动更新已暂停：{0} 当前内容可能已过时。": "Automatic updates paused: {0} The displayed content may be outdated.",
-  "至少 8 位，避免纯数字、常见密码或与用户名过于相似。": "At least 8 characters. Avoid numeric-only or common passwords and passwords similar to your username.",
+  "8–128 位即可，不要求特定字符组合。": "Use 8–128 characters. No specific character combination is required.",
   "至少填写一项；两项都填时同时生效。收件箱与已发送合计，按内部日期从新到旧选择待处理邮件；已完成邮件不占封数。": "Enter at least one limit; both apply when provided. Inbox and sent emails are counted together, newest internal date first. Completed emails do not count toward the limit.",
   "至少选择一封邮件。": "Select at least one email.",
   "草稿": "Drafts",

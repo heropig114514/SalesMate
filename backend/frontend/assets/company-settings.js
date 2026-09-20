@@ -1,17 +1,20 @@
-/** 职责：独立本公司资料设置页，按账号读取、编辑和保存。
+/** 职责：四步资料设置的公司步骤，按账号读取、编辑和保存。
  * 实现：共享导航和底部助手；显式保存附版本，失败保留输入；冲突要求用户重新读取。
- * 关联：工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
+ * 关联：共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
  * 目录：text、showStatus、renderForm、loadProfile、saveProfile、boot。
- * 变量索引：fields 为字段及中英文名称；revision 为当前已读取版本；busy 防止重叠操作；$ 查询 DOM。
+ * 变量索引：choices 为行业和规模选项；fields 为字段及中英文名称；revision 为当前已读取版本；busy 防止重叠操作；$ 查询 DOM。
  */
-import { language } from './i18n.js?v=20260920-i18n';
-import { request, escapeHtml as e } from './api.js';
+import { mountOnboarding } from './onboarding.js?v=20260920-requirements';
+import { language } from './i18n.js?v=20260920-requirements';
+import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
 import { mountWorkspace } from './workspace.js?v=20260920-workspace-chat';
 
 const $ = id => document.getElementById(id);
+const choices = { industry: [['半导体检测','半导体检测','Semiconductor inspection'],['精密量测','精密量测','Precision metrology'],['光学检测','光学检测','Optical inspection'],['工业检测','工业检测','Industrial inspection']], size_band: [['lt_50','少于 50 人','Under 50'],['50_100','50–99 人','50–99'],['100_200','100–199 人','100–199'],['200_500','200–499 人','200–499'],['gte_500','500 人及以上','500+']] };
 const fields = [
   ['company_name', '公司名称', 'Company name', 'text', 240],
-  ['industry', '行业', 'Industry', 'text', 100],
+  ['industry', '行业', 'Industry', 'select', 100],
+  ['size_band', '公司规模', 'Company size', 'select', 30],
   ['website', '公司网站', 'Website', 'url', 500],
   ['email', '联系邮箱', 'Contact email', 'email', 254],
   ['phone', '联系电话', 'Phone', 'tel', 80],
@@ -32,10 +35,15 @@ function showStatus(message, error = false) {
 }
 
 /** 功能：呈现固定字段并填入资料。输入：profile 授权 API 结果。输出：无。
- * 逻辑：值转义，保留后端长度与必填约束；读取成功后才允许保存。约束：不保存数据，不填业务默认值。 */
+ * 逻辑：值转义，行业与收件箱对齐，规模使用明确选项；保留历史自定义值及后端长度与必填约束；读取成功后才允许保存。约束：不保存数据，不填业务默认值。 */
 function renderForm(profile) {
   $('company-fields').innerHTML = fields.map(([key, zh, en, type, limit]) => {
     const value = e(profile[key] || '');
+    if (type === 'select') {
+      const options = [...choices[key]];
+      if (profile[key] && !options.some(([v]) => v === profile[key])) options.push([profile[key], profile[key], profile[key]]);
+      return `<label for="company-${key}">${e(text(zh,en))}<select id="company-${key}" name="${key}"><option value="">${text('尚未填写','Not specified')}</option>${options.map(([v,zh,en]) => `<option value="${e(v)}" ${v === profile[key] ? 'selected' : ''}>${e(text(zh,en))}</option>`).join('')}</select></label>`;
+    }
     return `<label class="${type === 'textarea' ? 'company-wide' : ''}" for="company-${key}">${e(text(zh, en))}${key === 'company_name' ? ' *' : ''}${type === 'textarea'
       ? `<textarea id="company-${key}" name="${key}" maxlength="${limit}" rows="5">${value}</textarea>`
       : `<input id="company-${key}" name="${key}" type="${type}" maxlength="${limit}" value="${value}" ${key === 'company_name' ? 'required' : ''}>`}</label>`;
@@ -65,7 +73,7 @@ async function loadProfile() {
 }
 
 /** 功能：保存用户明确编辑的资料。输入：event 为表单提交。输出：异步完成。
- * 逻辑：带已读版本 PATCH；成功更新版本并清除草稿标记；冲突保留输入并要求重新读取。
+ * 逻辑：带已读版本 PATCH；成功更新版本并清除草稿标记、通知引导进入下一步；冲突保留输入并要求重新读取。
  * 约束：无自动覆盖、无重试；日志仅含状态码，不记录用户资料。 */
 async function saveProfile(event) {
   event.preventDefault();
@@ -77,6 +85,7 @@ async function saveProfile(event) {
   try {
     renderForm(await request('accounts/company-profile/', { method: 'PATCH', data, version: revision }));
     showStatus(text('公司资料已保存。', 'Company profile saved.'));
+    window.dispatchEvent(new Event('company-profile-saved'));
   } catch (error) {
     console.error('company_profile_save_failed', { status: error.status });
     showStatus(error.status === 409 ? text('资料已在其他页面更新。请先保留你的修改，再点击“重新读取”后编辑。', 'This profile changed in another page. Keep a copy of your edits, then reload before saving.') : error.message, true);
@@ -87,7 +96,7 @@ async function saveProfile(event) {
 }
 
 /** 功能：认证并挂载独立设置页。输入：当前会话与页面 DOM。输出：异步完成。
- * 逻辑：未登录跳转登录页；已登录显示账号、共享导航、双语表单并读取资料。
+ * 逻辑：未登录跳转登录页；已登录显示账号、共享导航、双语表单并读取资料，再挂载四步引导。
  * 约束：仅显式提交时写 API；会话错误显示诊断，不假定已登录。 */
 async function boot() {
   $('company-description').textContent = text('管理本公司的基本资料。资料保存在当前账号的工作空间中。', 'Manage your company details, saved in your current account workspace.');
@@ -101,6 +110,7 @@ async function boot() {
     $('company-form').addEventListener('submit', saveProfile);
     $('company-reload').addEventListener('click', loadProfile);
     await loadProfile();
+    await mountOnboarding();
   } catch (error) {
     console.error('company_settings_boot_failed', { status: error.status });
     showStatus(error.message, true);

@@ -2,7 +2,7 @@
  * 职责：提供工作空间聊天、来源引用、持久化会话和可编辑草稿。
  * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
+ * 关联：共享语言/API 资源随需求界面统一版本；assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.initializeView、AssistantPanel.open、
  * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
  * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
@@ -12,10 +12,10 @@
  * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
  * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
  */
-import { t, h, locale } from './i18n.js?v=20260920-i18n';
+import { t, h, locale } from './i18n.js?v=20260920-requirements';
 
-import { escapeHtml as esc } from "./api.js";
-import { salesRequest, allRows } from "./sales-api.js";
+import { escapeHtml as esc } from "./api.js?v=20260920-requirements";
+import { salesRequest, allRows } from "./sales-api.js?v=20260920-requirements";
 
 /** 功能：管理工作空间助手的会话和草稿交互。
  * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。

@@ -1,6 +1,6 @@
 /**
  * 职责：覆盖邮箱设置中英文文案、无自动授权及共享 Global Insights 入口；验证真实页面的英文界面、浏览器语言协商、偏好保存和内容隔离。
- * 实现：隔离静态服务器与 GET 夹具，使用真实 Chrome 加载三个入口；业务写入一律拒绝。
+ * 实现：世界页使用活动地图和类型筛选契约；隔离静态服务器与 GET 夹具，使用真实 Chrome 加载三个入口；业务写入一律拒绝。
  * 关联：i18n.js/translations.js、页面语言控件、业务表单和精简导航和跨页面底部聊天条；后端语言由 test_i18n.py 独立验证。
  * 目录：main 执行浏览器验收；main.serve 提供受限静态资源。
  * 变量索引：FRONTEND 为页面根，OUTPUT 为忽略的截图目录；其他状态限于 main。
@@ -127,17 +127,17 @@ async function main() {
     assert.equal(await page.locator('#interface-language').inputValue(), 'auto');
     await page.screenshot({ path: path.join(OUTPUT, 'chat-en.png'), fullPage: true });
     await page.goto(base + '/world/');
-    await page.locator('#map-loading').waitFor({ state: 'hidden' });
+    await page.locator('.event-pin').first().waitFor();
     assert.equal(await page.locator('#world-error').isVisible(), false);
     await page.locator('#assistant-launcher').click();
     await page.locator('#assistant-input:not(:disabled)').waitFor();
     assert.equal(new URL(page.url()).pathname, '/world/');
     assert.equal(await page.locator('#assistant-company').textContent(), 'General chat');
     await page.locator('#assistant-close').click();
-    await page.getByRole('button', { name: 'All industries', exact: true }).waitFor();
+    assert.equal(await page.locator('#event-type option[value=all]').textContent(), 'All types');
     await page.screenshot({ path: path.join(OUTPUT, 'world-en.png'), fullPage: true });
     await page.locator('#interface-language').selectOption('en');
-    await page.locator('#map-loading').waitFor({ state: 'hidden' });
+    await page.locator('.event-pin').first().waitFor();
     await page.goto(base + '/business/');
     assert.equal(await page.locator('#interface-language').inputValue(), 'en');
     await page.setViewportSize({ width: 390, height: 844 });

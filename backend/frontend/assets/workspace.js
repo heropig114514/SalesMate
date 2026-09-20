@@ -2,15 +2,15 @@
  * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
  * 实现：URL 保存客户身份；所有概览来自授权 GET，独立失败显示未知，链接不提交业务操作。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
+ * 关联：共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
  * 变量索引：customerResources 为客户下的四类业务入口；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
-import { t, h } from './i18n.js?v=20260920-i18n';
+import { t, h } from './i18n.js?v=20260920-requirements';
 
 import './product-header.js';
 import { enableAssistant } from './assistant-widget.js?v=20260920-workspace-chat';
-import { request, escapeHtml as e } from './api.js';
+import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
 
 const customerResources = [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')]];
 let context = null, activePage = 'home', refreshSequence = 0;

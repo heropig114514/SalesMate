@@ -4,9 +4,9 @@
 
 ## 身份
 
-浏览器先用 `GET /api/v1/session/` 获取 CSRF Cookie，再用 `POST /api/v1/accounts/register/` 提交 `{"username":"...","password":"..."}`。注册仅接受这两个字段，不要求邮箱、手机号或验证码；用户名遵守现有模型规则，密码复用 Django 已配置的校验器。成功返回 201、`authenticated`、`username` 和轮换后的 `csrf_token`，同时建立普通用户 Session。输入错误或重名返回 400，缺少有效 CSRF 返回 403，已登录时再次注册返回 409。密码以哈希存储，不回传。
+浏览器先用 `GET /api/v1/session/` 获取 CSRF Cookie，再用 `POST /api/v1/accounts/register/` 提交 `{"username":"...","password":"..."}`。注册仅接受这两个字段，不要求邮箱、手机号或验证码；用户名遵守现有模型规则，密码长度为 8–128 字符，不限制纯数字、常见值或用户名相似性；仍采用 Django 密码哈希。成功返回 201、`authenticated`、`username` 和轮换后的 `csrf_token`，同时建立普通用户 Session。输入错误或重名返回 400，缺少有效 CSRF 返回 403，已登录时再次注册返回 409。密码以哈希存储，不回传。
 
-新账号拥有独立的空工作空间，不复制 demo 数据，也不自动创建 Gmail 授权或 Agent 服务令牌。退出后继续使用 `POST /api/v1/session/` 登录；`DELETE /api/v1/session/` 注销。注册页面中的确认密码仅用于浏览器一致性检查，不作为后端字段发送。
+新账号拥有独立的空工作空间及未完成的引导状态，不复制 demo 数据，也不自动创建 Gmail 授权或 Agent 服务令牌。退出后继续使用 `POST /api/v1/session/` 登录；`DELETE /api/v1/session/` 注销。注册页面中的确认密码仅用于浏览器一致性检查，不作为后端字段发送。
 
 浏览器使用 Django Session 和 CSRF。Agent 路由只接受：
 
@@ -15,6 +15,10 @@ Authorization: Agent <service-token>
 ```
 
 服务令牌绑定一个后端用户，不能用浏览器 Session 或 Gmail access token 替代。`mailbox_id` 和 `company_id` 由后端创建，均为 UUID。错误响应保留 `error.code`、`error.detail` 和 `request_id`。
+
+## 基础信息与首次引导
+
+`GET session/` 增加 `onboarding_required`；四步资料、公司规模及私有附件接口见 [onboarding.md](onboarding.md)。请求编号仍保留在 API 错误响应中，前端只将其作为诊断元数据。
 
 ## Agent 路由
 

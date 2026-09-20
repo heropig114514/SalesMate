@@ -1,18 +1,12 @@
-/**
- * 职责：提供世界消息交互使用的虚构示例，不代表真实新闻或 Agent 输出。
- * 实现：固定时间与地点，所有记录 demo=true、无真实来源；按钮推送使用独立的固定 ID。
- * 关联：world-news.js 显式选择演示模式；所有记录经 world-feed.js 校验。
+/** 职责：提供四条固定日期行业资讯和推送契约测试夹具，均为虚构。
+ * 实现：覆盖监管、产业、竞争、价格示例；不把固定发布时间改成当前时间。
+ * 关联：共享语言/API 资源随需求界面统一版本；world-news.js 在近十四天窗口中展示，world-feed.js 校验字段与版本。
  * 目录：无函数或类。
- * 变量索引：DEMO_NEWS 为初始八条示例；DEMO_PUSH 为模拟推送，重复接收不新增记录。
- */
+ * 变量索引：DEMO_NEWS 为四条演示资讯；DEMO_PUSH 仅用于推送契约测试，不自动发送。 */
 export const DEMO_NEWS = [
-  { id: 'singapore-packaging', version: 1, demo: true, industry: 'semiconductor', location: { name: '新加坡', latitude: 1.35, longitude: 103.82 }, published_at: '2026-09-19T09:20:00+08:00', title: '先进封装扩产，检测环节迎来新需求', summary: '演示情景：一家新加坡半导体企业计划扩充先进封装产线，在线缺陷检测与精密量测将进入设备评估阶段。', body: ['这是一条用于展示产品交互的虚构消息。示例假设一家企业正在评估先进封装扩产项目，关注产线良率与检测效率。', '可关注的业务线索包括检测精度、节拍要求、试样验证安排和采购时间窗口。实际跟进前，需要核对企业公告、项目地点和采购主体。', '后续 Agent 可将原始报道、发布时间与证据链接一起推送到此位置；当前页面不执行检索或自动联系客户。'], sources: [] },
-  { id: 'singapore-optics', version: 1, demo: true, industry: 'optics', location: { name: '新加坡', latitude: 1.35, longitude: 103.82 }, published_at: '2026-09-19T08:30:00+08:00', title: '光学实验室开放联合验证窗口', summary: '演示情景：光学检测实验室拟启动工业样件联合验证，可关注成像稳定性和缺陷识别的测试要求。', body: ['这是一条虚构的实验室合作情景，不对应真实机构。', '示例关注光学成像、样件测试与联合验证。消息详情未来可以保留原始来源、验证条件和 Agent 摘要。'], sources: [] },
-  { id: 'eindhoven-metrology', version: 1, demo: true, industry: 'metrology', location: { name: '埃因霍温 · 荷兰', latitude: 51.44, longitude: 5.47 }, published_at: '2026-09-19T08:10:00+08:00', title: '精密制造升级，量测一致性成为重点', summary: '演示情景：精密制造园区启动质量体系升级，跨设备测量一致性和校准追溯成为讨论重点。', body: ['本条为虚构行业情景，用于预览欧洲地区的地图消息。', '可关注跨设备量测一致性、校准周期与数据追溯。未核对实际项目之前，不应将该情景作为销售事实。'], sources: [] },
-  { id: 'austin-semiconductor', version: 1, demo: true, industry: 'semiconductor', location: { name: '奥斯汀 · 美国', latitude: 30.27, longitude: -97.74 }, published_at: '2026-09-19T07:45:00+08:00', title: '晶圆产线验证进入设备评估阶段', summary: '演示情景：晶圆制造项目在试产前评估检测设备，供应商验证与良率数据成为关键材料。', body: ['本条为虚构的北美晶圆制造情景，不对应实际企业公告。', '设备评估可涉及工艺兼容性、缺陷检出能力与现场服务。真实消息接入后，应保留可核对的项目来源。'], sources: [] },
-  { id: 'tokyo-optics', version: 1, demo: true, industry: 'optics', location: { name: '东京 · 日本', latitude: 35.68, longitude: 139.69 }, published_at: '2026-09-19T07:15:00+08:00', title: '高速视觉检测聚焦微小表面缺陷', summary: '演示情景：工业视觉应用交流将关注高速成像和微小缺陷识别，适合观察光源及相机配套需求。', body: ['这是一条用于展示日本地区标记的虚构消息。', '示例讨论高速成像条件下的表面缺陷检测。当前没有真实会议、企业或产品发布与之对应。'], sources: [] },
-  { id: 'sydney-industrial', version: 1, demo: true, industry: 'industrial', location: { name: '悉尼 · 澳大利亚', latitude: -33.87, longitude: 151.21 }, published_at: '2026-09-19T06:50:00+08:00', title: '工业维护项目关注无损检测', summary: '演示情景：工业设备维护团队拟评估无损检测方案，关注现场适用性与报告可追溯性。', body: ['本条是虚构工业维护消息，用于展示南半球地点。', '实际消息可以附检测对象、工作环境、供应商要求和原文链接。当前不构成真实采购信息。'], sources: [] },
-  { id: 'saopaulo-industrial', version: 1, demo: true, industry: 'industrial', location: { name: '圣保罗 · 巴西', latitude: -23.55, longitude: -46.63 }, published_at: '2026-09-19T06:20:00+08:00', title: '制造产线改造带动在线质检讨论', summary: '演示情景：制造企业计划改善产线质检流程，在线检测与人工复核协同成为潜在切入点。', body: ['本条为虚构的南美制造业示例，用于验证地图跨区域浏览。', '真实跟进需要确认产品类型、工位空间、节拍和检测标准；当前未采集任何实际企业数据。'], sources: [] },
-  { id: 'seoul-metrology', version: 1, demo: true, industry: 'metrology', location: { name: '首尔 · 韩国', latitude: 37.57, longitude: 126.98 }, published_at: '2026-09-19T06:00:00+08:00', title: '微结构量测探索更稳定的重复精度', summary: '演示情景：微结构制造团队拟比较不同量测方案，重点观察重复精度和环境漂移。', body: ['这是一条虚构的精密量测情景，不对应真实招标。', '未来 Agent 摘要可区分已确认的技术要求和推断出的业务机会，并链接原始证据。'], sources: [] },
+ {id:'singapore-packaging',version:1,demo:true,industry:'semiconductor',location:{name:'新加坡',latitude:1.35,longitude:103.82},published_at:'2026-09-19T09:20:00+08:00',title:'检测设备合规资料：出口前应核对的清单',summary:'演示情景：客户要求补充设备合规与技术资料。',body:['这是一条虚构的监管类资讯示例，不对应真实法规更新。','向客户提供资料前，应根据实际销售地区核对适用要求和官方来源。'],sources:[]},
+ {id:'tokyo-optics',version:1,demo:true,industry:'optics',location:{name:'东京',latitude:35.68,longitude:139.69},published_at:'2026-09-18T08:00:00+08:00',title:'先进封装扩产，光学检测应用需求进入讨论',summary:'演示情景：制造企业计划评估新的检测产线。',body:['本条为虚构产业资讯。','示例客户关注产线节拍、微小缺陷检出与设备集成要求，真实判断需要核实企业公告。'],sources:[]},
+ {id:'frankfurt-metrology',version:1,demo:true,industry:'metrology',location:{name:'法兰克福',latitude:50.11,longitude:8.68},published_at:'2026-09-16T09:00:00+08:00',title:'量测设备方案竞争：客户更关注交付与服务',summary:'演示情景：客户同时比较多个供应商的量测方案。',body:['本条为虚构竞争资讯，不指向真实企业。','可准备技术能力与服务范围对照表，所有参数应来自经核对的产品资料。'],sources:[]},
+ {id:'sydney-industrial',version:1,demo:true,industry:'industrial',location:{name:'悉尼',latitude:-33.87,longitude:151.21},published_at:'2026-09-12T08:00:00+08:00',title:'关键零部件价格变化，报价前需重新确认成本',summary:'演示情景：供应商更新关键零部件的参考价格。',body:['本条为虚构价格资讯，不提供真实市场报价。','正式报价前应取得有效供应商报价，确认币种、交期与适用数量。'],sources:[]},
 ];
-export const DEMO_PUSH = { id: 'rotterdam-push-demo', version: 1, demo: true, industry: 'industrial', location: { name: '鹿特丹 · 荷兰', latitude: 51.92, longitude: 4.48 }, published_at: '2026-09-19T10:00:00+08:00', title: '新消息抵达：港口设备检测需求', summary: '模拟推送：港口设备维护情景新增一条无损检测线索。地图标记与列表已同步更新，重复推送不会重复计数。', body: ['你刚刚触发了一条本地模拟推送。该消息不来自实时新闻或真实 Agent。', '页面通过统一的 news.upsert 事件接收消息。后期授权推送可使用相同的数据结构，保留位置、行业、摘要、正文和来源。'], sources: [] };
+export const DEMO_PUSH = { ...DEMO_NEWS[3], id:'rotterdam-push-demo', version:1, title:'新的演示行业资讯', published_at:'2026-09-20T09:00:00+08:00' };

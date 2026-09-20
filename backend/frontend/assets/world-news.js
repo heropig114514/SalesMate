@@ -1,147 +1,351 @@
-/**
- * 职责：协调世界消息筛选、地图气泡、摘要侧栏和详情页。
- * 实现：显式 demo 数据源；URL 保存筛选和选择，History API 支持详情刷新/返回，统一消息事件更新列表与地图。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；world.html/world-news.css 展示；NewsFeed 校验消息；WorldMap 聚合标记；workspace.js 统一导航；地图、行业色和外壳按相同静态资源版本加载。
- * 目录：date、mapHref、detailHref、tag、card、visibleNews、showError、renderPanel、renderDetail、renderOverview、selectNews、selectGroup、closePanel、navigate、renderRoute、receiveWorldNews、start。
- * 变量索引：$ 为 DOM 查询，feed 为演示快照；mapView 地图，industry 筛选，selectedId 选择，groupIds 聚合列表，highlightId 最新到达消息，originButton 返回焦点目标。
+/** 职责：全球洞察的活动筛选、联动详情、行程导出、邀约草稿与行业资讯。
+ * 实现：URL 保存筛选/选择，金额和客户均为显式演示；资讯沿用 NewsFeed 校验与详情路由；操作只导出本地日历或可编辑草稿。
+ * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.css、world-map.js；world-events.js 活动与 world-demo.js 新闻为演示数据源。
+ * 目录：text、eventName、countryName、money、daysUntil、visibleEvents、updateURL、selectEvent、renderEvents、renderDetail、renderNews、renderRoute、foldCalendarLine、calendarText、calendarText.escape、downloadItinerary、inviteDraft、receiveWorldNews、start。
+ * 变量索引：$ 为 DOM 查询；feed 为资讯快照；state 为类型/时间/地区/选择/视角；map 为地图实例；today 为实际当天日期；categories 为资讯分类；DEMO_* 为导入数据。
  */
-import { t, h, locale } from './i18n.js?v=20260920-i18n';
-
-import { escapeHtml as e } from './api.js';
-import { mountWorkspace } from './workspace.js?v=20260920-workspace-chat';
-import { INDUSTRIES, NewsFeed } from './world-feed.js?v=20260920-i18n';
-import { DEMO_NEWS, DEMO_PUSH } from './world-demo.js';
-import { WorldMap } from './world-map.js?v=20260920-i18n';
-
-const $ = id => document.getElementById(id);
-const feed = new NewsFeed('demo', DEMO_NEWS);
-let mapView = null, industry = 'all', selectedId = null, groupIds = null, highlightId = null, originButton = null;
-
-/** 功能：显示明确时间。输入：value ISO 时间。输出：按当前界面语言显示的上海时区月日时分。
- * 逻辑：保留消息时间，不伪装刚刚抓取。约束：仅接收已校验值。 */
-function date(value) { return new Intl.DateTimeFormat(locale, { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)); }
-/** 功能：生成可分享的地图状态。输入：id 可空消息标识，隐式 industry。输出：相对 URL。
- * 逻辑：查询参数编码选择。约束：不传递员工、凭证或客户信息。 */
-function mapHref(id = null) { const query = new URLSearchParams(); if (industry !== 'all') query.set('industry', industry); if (id) query.set('news', id); return '/world/' + (query.size ? '?' + query : ''); }
-/** 功能：生成独立详情地址。输入：id。输出：同源路径。
- * 逻辑：编码消息标识。约束：未找到消息时页面明确显示不存在。 */
-function detailHref(id) { return `/world/news/${encodeURIComponent(id)}/`; }
-/** 功能：构造行业标签。输入：item 已校验消息。输出：安全 HTML。
- * 逻辑：样式颜色只来自固定字典。约束：新闻文本均转义。 */
-function tag(item) { const kind = INDUSTRIES[item.industry]; return `<span class="industry-tag" style="--tag-color:${kind.color}"><i></i>${e(kind.label)}</span>`; }
-/** 功能：生成摘要列表卡片。输入：item。输出：带消息 ID 的按钮 HTML。
- * 逻辑：文本转义并标记演示与发布时间。约束：不直接执行来源内容。 */
-function card(item) { return `<button type="button" class="news-card ${item.id === highlightId ? 'is-new' : ''}" data-select="${e(item.id)}">${tag(item)}<span class="card-arrow" aria-hidden="true">↗</span><h3>${e(item.title)}</h3><p>${e(item.summary)}</p><div class="card-meta"><span>${e(item.location.name)}</span><time datetime="${e(item.published_at)}">${e(date(item.published_at))}</time></div></button>`; }
-/** 功能：读取当前行业消息。输入：feed 与 industry。输出：已排序数组。
- * 逻辑：all 保留全部。约束：不修改消息或其他筛选状态。 */
-function visibleNews() { return feed.list().filter(item => industry === 'all' || item.industry === industry); }
-/** 功能：显示可操作的失败。输入：error 与 stage。输出：可见错误及安全日志。
- * 逻辑：保留页面已有状态。约束：不记录消息正文、凭证或自动重试。 */
-function showError(error, stage) { console.error('world_news_failed', { stage, errorType: error.name }); $('world-error').textContent = t`世界消息：${error.message}`; $('world-error').hidden = false; }
-/** 功能：渲染侧栏。输入：selectedId/groupIds 与当前可见数据。输出：无。
- * 逻辑：单条摘要、聚合列表、全量速览三态；空筛选明确展示。
- * 约束：正文与摘要不使用模型 HTML；移动端选择后成为非模态底部面板。 */
-function renderPanel() {
-  const item = selectedId ? feed.get(selectedId) : null;
-  const panel = $('news-panel'); panel.classList.toggle('is-open', Boolean(item || groupIds));
-  if (item) {
-    panel.innerHTML = h`<div class="panel-top"><span class="eyebrow">消息摘要</span><button type="button" data-close aria-label="关闭消息摘要">×</button></div><div class="summary-body">${tag(item)}<p class="summary-place">⊕ ${e(item.location.name)}</p><h2 id="summary-title" tabindex="-1">${e(item.title)}</h2><div class="summary-time">${e(date(item.published_at))} · UTC+8 <span class="demo-label">演示消息</span></div><div class="summary-divider"></div><p class="summary-text">${e(item.summary)}</p><div class="summary-source"><span>来源状态</span><strong>${item.sources.length ? t`${item.sources.length} 个来源` : t('虚构示例 · 无真实报道')}</strong></div><a class="detail-button" data-navigate href="${detailHref(item.id)}">阅读完整消息 <span aria-hidden="true">↗</span></a><p class="summary-hint">也可以再次点击该消息的地图气泡进入详情。</p></div>`;
-  } else {
-    const items = visibleNews().filter(value => !groupIds || groupIds.includes(value.id));
-    panel.innerHTML = `<div class="panel-top"><div><span class="eyebrow">${groupIds ? t('此区域的消息') : 'NEWS BRIEFING'}</span><h2>${groupIds ? t('附近动态') : t('消息速览')} <span>${items.length}</span></h2></div>${groupIds ? h('<button type="button" data-close aria-label="关闭区域摘要">×</button>') : '<span class="panel-star" aria-hidden="true">✳</span>'}</div><p class="panel-intro">${groupIds ? t('选择一条消息，查看摘要与完整内容。') : t('点击地图气泡或下方消息，展开摘要。')}</p>${groupIds ? h('<button class="group-zoom" data-zoom-group type="button">放大此区域 ↗</button>') : ''}<div class="news-card-list">${items.length ? items.map(card).join('') : h('<div class="world-empty"><span aria-hidden="true">◎</span><h3>这个行业暂时没有消息</h3><p>切换其他行业，或等待新的消息到达。</p></div>')}</div>`;
+import { language } from "./i18n.js?v=20260920-requirements";
+import { escapeHtml as e } from "./api.js?v=20260920-requirements";
+import { mountWorkspace } from "./workspace.js?v=20260920-workspace-chat";
+import { WorldMap } from "./world-map.js?v=20260920-requirements";
+import {
+  DEMO_EVENTS,
+  DEMO_COUNTRIES,
+  NEWS_CATEGORIES,
+} from "./world-events.js?v=20260920-requirements";
+import { NewsFeed } from "./world-feed.js?v=20260920-i18n";
+import { DEMO_NEWS } from "./world-demo.js?v=20260920-requirements";
+const $ = (id) => document.getElementById(id);
+const feed = new NewsFeed("demo", DEMO_NEWS);
+const today = new Date();
+today.setHours(0, 0, 0, 0);
+const categories = NEWS_CATEGORIES;
+let map = null;
+const state = {
+  type: "all",
+  time: "all",
+  country: "all",
+  selected: null,
+  view: "global",
+};
+/** 功能：选择文案。输入：zh/en。输出：文本。逻辑：沿用语言设置。约束：不翻译用户内容。 */
+function text(zh, en) {
+  return language === "en" ? en : zh;
+}
+/** 功能：活动名称。输入：item。输出：文本。逻辑：使用演示数据双语标题。约束：无修改。 */
+function eventName(item) {
+  return text(item.title, item.en);
+}
+/** 功能：地区名称。输入：code。输出：名称。逻辑：固定白名单映射。约束：未知保持标识。 */
+function countryName(code) {
+  const country = DEMO_COUNTRIES.find((v) => v.code === code);
+  return country ? text(country.name, country.en) : code;
+}
+/** 功能：展示金额。输入：amount。输出：明确 SGD 金额。逻辑：国际化格式。约束：仅用于演示快照，不换汇。 */
+function money(amount) {
+  return (
+    "SGD " +
+    new Intl.NumberFormat(language === "en" ? "en-SG" : "zh-CN", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(amount)
+  );
+}
+/** 功能：计算自然日倒计时。输入：date 为 ISO 日期。输出：整数。逻辑：日期按本地日历读取。约束：负值表示过去。 */
+function daysUntil(date) {
+  return Math.round((new Date(date + "T00:00:00") - today) / 86400000);
+}
+/** 功能：筛选活动。输入：includeCountry 是否启用国家条件。输出：数组。逻辑：类型与时间交集，季度包含起止边界且排除已结束活动。约束：不评分、不排名。 */
+function visibleEvents(includeCountry = true) {
+  const quarterEnd = new Date(
+    today.getFullYear(),
+    Math.floor(today.getMonth() / 3) * 3 + 3,
+    0,
+    23,
+    59,
+    59,
+  );
+  return DEMO_EVENTS.filter(
+    (item) =>
+      (state.type === "all" || item.type === state.type) &&
+      (!includeCountry ||
+        state.country === "all" ||
+        item.country === state.country) &&
+      (state.time === "all" ||
+        (new Date(item.end + "T23:59:59") >= today &&
+          (state.time === "30"
+            ? daysUntil(item.date) <= 30
+            : new Date(item.date + "T00:00:00") <= quarterEnd))),
+  );
+}
+/** 功能：保存筛选 URL。输入：当前 state。输出：无。逻辑：白名单状态写入查询项。约束：不包含私人资料。 */
+function updateURL() {
+  const query = new URLSearchParams();
+  for (const key of ["type", "time", "country", "view"])
+    if (state[key] !== "all" && state[key] !== "global")
+      query.set(key, state[key]);
+  if (state.selected) query.set("event", state.selected);
+  history.replaceState(null, "", "/world/" + (query.size ? "?" + query : ""));
+}
+/** 功能：选择活动。输入：id。输出：无。逻辑：限当前筛选结果，地图/列表/详情同步。约束：不创建行程或发送邀请。 */
+function selectEvent(id) {
+  if (!visibleEvents().some((v) => v.id === id)) return;
+  state.selected = id;
+  updateURL();
+  renderEvents();
+}
+/** 功能：刷新联动界面。输入：state。输出：无。逻辑：失效选择移至当前第一项；空列表清空详情，地区数基于类型和时间条件。约束：筛选不改变地图视角。 */
+function renderEvents() {
+  const items = visibleEvents();
+  if (!items.some((v) => v.id === state.selected))
+    state.selected = items[0]?.id || null;
+  $("event-count").textContent = items.length;
+  $("map-count").textContent = text(
+    `${items.length} 场活动 · 演示商机`,
+    `${items.length} events · Demo pipeline`,
+  );
+  $("region-filters").innerHTML =
+    `<button data-country="all" aria-pressed="${state.country === "all"}">${text("全部地区", "All regions")}<span>${visibleEvents(false).length}</span></button>` +
+    DEMO_COUNTRIES.map(
+      (country) =>
+        `<button data-country="${country.code}" aria-pressed="${state.country === country.code}">${e(countryName(country.code))}<span>${visibleEvents(false).filter((v) => v.country === country.code).length}</span></button>`,
+    ).join("");
+  $("event-list").innerHTML = items.length
+    ? items
+        .map(
+          (item) =>
+            `<button class="event-card" type="button" data-select="${item.id}" aria-pressed="${state.selected === item.id}"><span class="event-date"><b>${item.date.slice(8)}</b><small>${item.date.slice(5, 7)} / ${item.date.slice(0, 4)}</small></span><span class="event-card-main"><span class="event-type">${item.type === "exhibition" ? text("展会", "Exhibition") : text("销售活动", "Sales event")}</span><strong>${e(eventName(item))}</strong><span>${e(item.city)} · ${e(money(item.amount))}</span></span><span aria-hidden="true">↗</span></button>`,
+        )
+        .join("")
+    : `<div class="insights-empty"><h3>${text("当前筛选下暂无活动", "No events match these filters")}</h3><p>${text("可以切换时间窗或地区继续查看。", "Try a different date range or region.")}</p><button id="reset-filters" class="secondary">${text("清除筛选", "Clear filters")}</button></div>`;
+  $("reset-filters")?.addEventListener("click", () => {
+    state.type = "all";
+    state.time = "all";
+    state.country = "all";
+    $("event-type").value = "all";
+    $("event-time").value = "all";
+    renderEvents();
+    updateURL();
+  });
+  renderDetail(items.find((v) => v.id === state.selected));
+  map?.setItems(items, state.selected);
+  updateURL();
+}
+/** 功能：展示活动完整判断。输入：item 或 undefined。输出：无。逻辑：标题、倒计时、金额、原因、现场和建议动作分区。约束：所有业务信息明确是演示，空筛选不保留旧详情。 */
+function renderDetail(item) {
+  if (!item) {
+    $("event-detail").innerHTML =
+      `<div class="insights-empty">${text("选择一个活动，查看详情。", "Select an event to see details.")}</div>`;
+    return;
   }
+  const days = daysUntil(item.date),
+    countdown =
+      days < 0
+        ? text("已开始 / 已结束", "Started / past")
+        : days === 0
+          ? text("今天", "Today")
+          : text(`${days} 天后`, `In ${days} days`);
+  $("event-detail").innerHTML =
+    `<div class="event-detail-head"><span class="event-type">${item.type === "exhibition" ? text("展会", "Exhibition") : text("销售活动", "Sales event")}</span><span class="event-countdown">${countdown}</span></div><h2>${e(eventName(item))}</h2><p class="event-location">⊕ ${e(item.city)}</p><p class="event-period">${item.date} — ${item.end}</p><div class="event-value"><span>${text("关联在手商机 · 演示", "Related pipeline · Demo")}</span><strong>${e(money(item.amount))}</strong><small>${e(item.customers.join(" · "))}</small></div><section><h3><span>01</span>${text("为什么值得去", "Why attend")}</h3><p>${e(language === "en" ? `Meet ${item.customers.join(" and ")} to review their demo inspection projects and confirm requirements.` : item.why)}</p></section><section><h3><span>02</span>${text("现场情况", "On site")}</h3><ul>${(language === "en" ? ["Customer purchasing and engineering teams in this demo scenario.", "Technical discussions and application demonstrations."] : item.onsite).map((v) => `<li>${e(v)}</li>`).join("")}<li>${text("报名截止", "Registration closes")}: ${item.deadline}</li></ul></section><section><h3><span>03</span>${text("建议动作", "Suggested actions")}</h3><ul>${(language === "en" ? [`Arrange a meeting with ${item.customers[0]}.`, "Prepare specifications and a validation plan."] : item.actions).map((v) => `<li>${e(v)}</li>`).join("")}</ul></section><div class="event-actions"><button id="add-itinerary" class="primary" type="button">${text("＋ 加入行程", "＋ Add to itinerary")}</button><button id="create-invite" class="secondary" type="button">${text("生成客户邀约邮件", "Draft customer invitation")}</button></div><p class="event-action-note">${text("行程导出为日历文件；邀约生成后由你审阅。", "Export a calendar file or review an invitation draft.")}</p>`;
+  $("add-itinerary").onclick = () => downloadItinerary(item);
+  $("create-invite").onclick = () => inviteDraft(item);
 }
-/** 功能：渲染独立消息详情。输入：id。输出：完整正文或缺失状态。
- * 逻辑：只显示已接收记录；所有外链已在数据层校验并使用安全新窗口属性。
- * 约束：演示明确标记；不声称实时来源已接通，不将未知 ID 映射到其他消息。 */
-function renderDetail(id) {
-  const item = feed.get(id);
-  document.title = item ? t`${item.title} · 世界消息` : t('消息未找到 · SalesMate');
-  $('news-detail').innerHTML = item ? h`<a class="detail-back" data-navigate href="${mapHref(id)}">← 返回地图与摘要</a><article class="news-article"><div class="article-meta">${tag(item)}<span class="demo-label">演示消息</span></div><h1 tabindex="-1">${e(item.title)}</h1><div class="article-byline"><span>⊕ ${e(item.location.name)}</span><time datetime="${e(item.published_at)}">${e(date(item.published_at))} · UTC+8</time></div><p class="article-lead">${e(item.summary)}</p><div class="article-content">${item.body.map(paragraph => `<p>${e(paragraph)}</p>`).join('')}</div><section class="article-sources"><h2>来源与核对</h2>${item.sources.length ? item.sources.map(source => `<a href="${e(source.url)}" target="_blank" rel="noopener noreferrer">${e(source.label)} ↗</a>`).join('') : h('<p>本消息为虚构演示，没有对应的真实报道，请勿据此作业务判断。</p>')}</section><footer class="article-footer">消息编号 ${e(item.id)} · 版本 ${item.version}</footer></article>` : h('<a class="detail-back" data-navigate href="/world/">← 返回世界地图</a><div class="world-empty"><h1 tabindex="-1">消息未找到</h1><p>该消息未在当前数据源中，可能尚未接入或仅存在于另一页面会话。</p></div>');
+/** 功能：显示近十四天资讯。输入：feed 快照及真实 today。输出：无。逻辑：只取真实日期范围内前四条并标记分类/发布时间。约束：演示日期不随刷新伪装成新消息。 */
+function renderNews() {
+  const items = feed
+    .list()
+    .filter((item) => {
+      const days = daysUntil(item.published_at.slice(0, 10));
+      return days <= 0 && days >= -14;
+    })
+    .slice(0, 4);
+  $("industry-news").innerHTML = items.length
+    ? items
+        .map(
+          (item) =>
+            `<a class="industry-news-card" href="/world/news/${encodeURIComponent(item.id)}/"><span class="news-category">${e((categories[item.industry] || ["行业", "Industry"])[language === "en" ? 1 : 0])}</span><h3>${e(item.title)}</h3><time datetime="${e(item.published_at)}">${e(item.published_at.slice(0, 10))}</time><span class="news-arrow" aria-hidden="true">↗</span></a>`,
+        )
+        .join("")
+    : `<p class="muted">${text("当前演示快照在近 14 天内没有资讯。", "No demo news within the last 14 days.")}</p>`;
 }
-/** 功能：刷新列表、统计和地图。输入：当前 feed、筛选与选择。输出：无。
- * 逻辑：统计反映当前筛选，推送不改变地图视角；详情打开时同步当前版本。
- * 约束：不创建定时模拟推送，不隐式改变用户筛选。 */
-function renderOverview() {
-  const items = visibleNews();
-  $('news-total').textContent = items.length;
-  $('location-total').textContent = new Set(items.map(item => item.location.name)).size;
-  $('industry-total').textContent = new Set(items.map(item => item.industry)).size;
-  $('map-count').textContent = t`${items.length} 条消息 · ${new Set(items.map(item => item.location.name)).size} 个地点`;
-  $('industry-filters').innerHTML = [['all', { label: t('全部行业') }], ...Object.entries(INDUSTRIES)].map(([key, kind]) => `<button type="button" data-industry="${key}" aria-pressed="${industry === key}">${kind.color ? `<i style="background:${kind.color}"></i>` : '<span aria-hidden="true">⊞</span>'}${kind.label}</button>`).join('');
-  renderPanel();
-  mapView?.setItems(items, selectedId, highlightId);
-}
-/** 功能：选择消息或再次点击进入详情。输入：id、button 触发元素。
- * 输出：无。逻辑：首次打开摘要并保存 URL；同一消息再次选择进入详情。
- * 约束：仅选择当前存在消息，键盘焦点移至摘要标题。 */
-function selectNews(id, button) {
-  if (!feed.get(id)) return;
-  if (selectedId === id) { navigate(detailHref(id)); return; }
-  originButton = button; selectedId = id; groupIds = null;
-  history.replaceState(null, '', mapHref(id)); renderOverview(); $('summary-title')?.focus({ preventScroll: true });
-}
-/** 功能：处理地图消息组。输入：items、button。输出：无。
- * 逻辑：单条直接摘要；已选消息所在组再次点击进入该条详情；其余展示组内列表。
- * 约束：聚合不任意选择代表消息作为事实详情。 */
-function selectGroup(items, button) {
-  if (items.length === 1) { selectNews(items[0].id, button); return; }
-  if (selectedId && items.some(item => item.id === selectedId)) { navigate(detailHref(selectedId)); return; }
-  originButton = button; selectedId = null; groupIds = items.map(item => item.id);
-  history.replaceState(null, '', mapHref()); renderOverview(); $('news-panel').querySelector('[data-close]')?.focus({ preventScroll: true });
-}
-/** 功能：关闭当前摘要。输入：模块选择与焦点状态。输出：无。
- * 逻辑：恢复速览并清理 URL；优先返回原触发按钮，否则回到地图。
- * 约束：Escape 与显式关闭使用同一流程，不丢弃消息。 */
-function closePanel() { selectedId = null; groupIds = null; history.replaceState(null, '', mapHref()); renderOverview(); if (originButton?.isConnected) originButton.focus(); else $('world-map').focus({ preventScroll: true }); }
-/** 功能：同源地图/详情导航。输入：href。输出：无。
- * 逻辑：记录浏览历史并渲染路由。约束：保留浏览器返回；外链不经过此函数。 */
-function navigate(href) { history.pushState(null, '', href); renderRoute(); window.scrollTo({ top: 0, behavior: 'instant' }); }
-/** 功能：按 URL 恢复页面。输入：location。输出：无。
- * 逻辑：详情路径显示文章，地图查询参数恢复筛选和消息；无效行业显示全部。
- * 约束：返回地图后更新 Leaflet 尺寸，已知消息可刷新直达。 */
+/** 功能：恢复地图查询或新闻详情。输入：location。输出：无。逻辑：同源详情沿用 NewsFeed 记录；地图恢复白名单筛选。约束：未知消息明确显示缺失。 */
 function renderRoute() {
   const match = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
-  $('world-explorer').hidden = Boolean(match); $('news-detail').hidden = !match;
-  if (match) { renderDetail(match[1]); $('news-detail').querySelector('h1')?.focus({ preventScroll: true }); return; }
-  const query = new URLSearchParams(location.search), requested = query.get('industry');
-  industry = Object.hasOwn(INDUSTRIES, requested) ? requested : 'all';
-  selectedId = query.get('news'); groupIds = null;
-  if (selectedId && !visibleNews().some(item => item.id === selectedId)) selectedId = null;
-  document.title = t('世界消息 · SalesMate'); renderOverview(); mapView?.map.invalidateSize();
+  $("world-explorer").hidden = Boolean(match);
+  $("news-detail").hidden = !match;
+  if (match) {
+    const item = feed.get(match[1]);
+    $("news-detail").innerHTML =
+      `<a href="/world/">← ${text("返回全球洞察", "Back to Global Insights")}</a>` +
+      (item
+        ? `<article><p class="eyebrow">${text("演示资讯", "DEMO NEWS")} · ${item.published_at.slice(0, 10)}</p><h1>${e(item.title)}</h1><p class="article-lead">${e(item.summary)}</p>${item.body.map((v) => `<p>${e(v)}</p>`).join("")}<p class="muted">${text("虚构演示，没有真实报道来源。", "Fictional example, without a real reporting source.")}</p></article>`
+        : `<h1>${text("消息未找到", "News not found")}</h1>`);
+    return;
+  }
+  const query = new URLSearchParams(location.search);
+  state.type = ["exhibition", "sales"].includes(query.get("type"))
+    ? query.get("type")
+    : "all";
+  state.time = ["30", "quarter"].includes(query.get("time"))
+    ? query.get("time")
+    : "all";
+  state.country = DEMO_COUNTRIES.some((c) => c.code === query.get("country"))
+    ? query.get("country")
+    : "all";
+  state.view = ["apac", "europe"].includes(query.get("view"))
+    ? query.get("view")
+    : "global";
+  state.selected = query.get("event");
+  $("event-type").value = state.type;
+  $("event-time").value = state.time;
+  renderEvents();
+  renderNews();
 }
-/** 功能：预留后续推送的页面入口。输入：event 标准 news.upsert 事件。
- * 输出：数据源的布尔结果；失败展示错误并抛回调用者。逻辑：全部更新经同一校验与幂等路径。
- * 约束：当前数据源明确为 demo，只接受演示消息；未来 live 数据源须独立初始化，不连接虚构接口。 */
-export function receiveWorldNews(event) { try { return feed.receive(event); } catch (error) { showError(error, 'receive'); throw error; } }
-/** 功能：初始化页面交互。输入：页面 DOM 与本地资源。输出：Promise。
- * 逻辑：挂载导航，绑定筛选/历史/键盘/模拟事件，再读取底图；资源失败单独显示。
- * 约束：不会启动真实推送、调用模型或业务写 API；未接入状态常显。 */
+/** 功能：折叠日历内容行。输入：line 为已转义字符串。输出：带 CRLF 空格续行的文本。
+ * 逻辑：按 Unicode 字符累计 UTF-8 字节，不切断多字节字符；续行空格计入 75 字节。
+ * 约束：仅生成导出格式，不改变活动字段。 */
+function foldCalendarLine(line) {
+  const encoder = new TextEncoder(); let result = '', length = 0;
+  for (const character of line) {
+    const size = encoder.encode(character).length;
+    if (length + size > 75) { result += '\r\n '; length = 1; }
+    result += character; length += size;
+  }
+  return result;
+}
+/** 功能：构造标准 iCalendar 全天活动。输入：item。输出：ICS 字符串。逻辑：结束日使用排他次日，文本转义防止注入额外行，UTF-8 按 75 字节折行。约束：导出不代表已加入远程日历。 */
+export function calendarText(item) {
+  /** 功能：转义日历文本。输入：value。输出：安全字段文本。逻辑：转义换行和分隔符。约束：不用于日期字段。 */
+  const escape = (value) =>
+    String(value)
+      .replace(/\\/g, "\\\\")
+      .replace(/\r?\n/g, "\\n")
+      .replace(/[,;]/g, "\\$&");
+  const end = new Date(item.end + "T00:00:00Z");
+  end.setUTCDate(end.getUTCDate() + 1);
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//SalesMate//Demo Events//EN",
+    "BEGIN:VEVENT",
+    `UID:${item.id}@salesmate.example`,
+    "DTSTAMP:" +
+      new Date()
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d+Z$/, "Z"),
+    "DTSTART;VALUE=DATE:" + item.date.replace(/-/g, ""),
+    "DTEND;VALUE=DATE:" + end.toISOString().slice(0, 10).replace(/-/g, ""),
+    "SUMMARY:" + escape("[Demo] " + eventName(item)),
+    "LOCATION:" + escape(item.city),
+    "DESCRIPTION:" +
+      escape("Fictional demo event. Verify before arranging travel."),
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].map(foldCalendarLine).join("\r\n");
+}
+/** 功能：导出行程文件。输入：item。输出：浏览器下载。逻辑：临时 Blob URL 下载后释放。约束：不调用外部日历、不发送邀请。 */
+function downloadItinerary(item) {
+  const url = URL.createObjectURL(
+    new Blob([calendarText(item)], { type: "text/calendar;charset=utf-8" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = item.id + ".ics";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $("world-status").textContent = text(
+    "日历文件已导出，请导入你的日历。",
+    "Calendar file exported. Import it into your calendar.",
+  );
+}
+/** 功能：打开可编辑邀约。输入：item。输出：无。逻辑：根据活动信息生成模板草稿并标明演示，用户可复制。约束：不调用模型、不发送邮件或猜测客户邮箱。 */
+function inviteDraft(item) {
+  $("invite-subject").value = text(
+    `邀约交流：${item.title}`,
+    `Invitation: ${item.en}`,
+  );
+  $("invite-body").value = text(
+    `您好，\n\n我们计划于 ${item.date} 在${item.city}参加“${item.title}”，希望与您预约一次交流，了解贵方当前需求并讨论产品方案。\n\n请问您是否方便参加？也欢迎告知合适的时间。\n\n期待您的回复。\n\n（此草稿基于演示活动，发送前请核对活动与客户信息。）`,
+    `Hello,\n\nWe plan to attend ${item.en} in ${item.city} on ${item.date}. Would you be available to discuss your requirements and our solutions?\n\nPlease let us know a suitable time.\n\nBest regards\n\n(Draft based on a fictional demo event. Verify before sending.)`,
+  );
+  $("invite-status").textContent = "";
+  $("invite-dialog").showModal();
+}
+/** 功能：接收已有资讯推送契约。输入：event。输出：feed 接收结果。逻辑：校验、版本幂等后更新近十四天列表。约束：不模拟自动推送、不改变活动筛选。 */
+export function receiveWorldNews(event) {
+  const result = feed.receive(event);
+  renderNews();
+  return result;
+}
+/** 功能：挂载全球洞察。输入：DOM 和 URL。输出：Promise。逻辑：绑定控件，读取本地底图，失败显示明确提示。约束：未接入真实活动服务，全部金额、客户和活动明确标为演示。 */
 async function start() {
-  mountWorkspace('world');
-  feed.addEventListener('change', event => {
-    highlightId = event.detail.id;
-    $('world-status').textContent = t`${event.detail.inserted ? t('收到一条演示消息') : t('消息已更新')}：${feed.get(highlightId).title}。当前行业筛选保持不变。`;
-    renderOverview(); const match = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/); if (match) renderDetail(match[1]);
-  });
-  document.addEventListener('click', event => {
-    const button = event.target.closest('button'), link = event.target.closest('a[data-navigate]');
-    if (link && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) { event.preventDefault(); navigate(link.getAttribute('href')); return; }
+  mountWorkspace("world");
+  renderRoute();
+  $("event-type").onchange = (event) => {
+    state.type = event.target.value;
+    renderEvents();
+  };
+  $("event-time").onchange = (event) => {
+    state.time = event.target.value;
+    renderEvents();
+  };
+  $("region-filters").onclick = (event) => {
+    const button = event.target.closest("[data-country]");
+    if (button) {
+      state.country = button.dataset.country;
+      renderEvents();
+    }
+  };
+  $("event-list").onclick = (event) => {
+    const button = event.target.closest("[data-select]");
+    if (button) selectEvent(button.dataset.select);
+  };
+  $("map-views").onclick = (event) => {
+    const button = event.target.closest("[data-view]");
     if (!button) return;
-    if (button.hasAttribute('data-industry')) { industry = button.dataset.industry; selectedId = null; groupIds = null; history.replaceState(null, '', mapHref()); renderOverview(); $('industry-filters').querySelector(`[data-industry="${industry}"]`).focus(); }
-    if (button.dataset.select) selectNews(button.dataset.select, button);
-    if (button.hasAttribute('data-close')) closePanel();
-    if (button.hasAttribute('data-zoom-group')) mapView?.focusGroup(groupIds.map(id => feed.get(id)).filter(Boolean));
-  });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('world-explorer').hidden && (selectedId || groupIds)) closePanel(); });
-  window.addEventListener('popstate', renderRoute);
-  $('demo-push').onclick = () => { receiveWorldNews({ type: 'news.upsert', item: DEMO_PUSH }); $('demo-push').disabled = true; $('demo-push').textContent = t('演示消息已到达 ✓'); };
-  $('reset-map').onclick = () => mapView?.reset();
-  renderOverview();
-  // 先在可见容器建立全球视角，再应用详情路由；直接打开详情后返回不会留下零尺寸地图。
-  try { mapView = new WorldMap($('world-map'), selectGroup); renderRoute(); await mapView.load(); renderOverview(); console.info('world_news_initialized', { mode: feed.mode, count: feed.list().length }); }
-  catch (error) { renderRoute(); showError(error, 'map'); $('map-count').textContent = t('地图加载失败'); }
-  finally { $('map-loading').hidden = true; }
+    state.view = button.dataset.view;
+    map?.setView(state.view);
+    document
+      .querySelectorAll("[data-view]")
+      .forEach((v) => v.setAttribute("aria-pressed", String(v === button)));
+    updateURL();
+  };
+  $("invite-close").onclick = () => $("invite-dialog").close();
+  $("invite-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        $("invite-subject").value + "\n\n" + $("invite-body").value,
+      );
+      $("invite-status").textContent = text("已复制草稿。", "Draft copied.");
+    } catch (error) {
+      console.error("invite_copy_failed", { name: error.name });
+      $("invite-status").textContent = text(
+        "复制失败，请选中文本手动复制。",
+        "Copy failed. Select the text and copy it manually.",
+      );
+    }
+  };
+  window.addEventListener("popstate", renderRoute);
+  if (location.pathname === "/world/")
+    try {
+      map = new WorldMap($("world-map"), selectEvent);
+      await map.load();
+      map.setView(state.view);
+      map.setItems(visibleEvents(), state.selected);
+      document
+        .querySelectorAll("[data-view]")
+        .forEach((v) =>
+          v.setAttribute("aria-pressed", String(v.dataset.view === state.view)),
+        );
+    } catch (error) {
+      console.error("insights_map_failed", { name: error.name });
+      $("world-error").hidden = false;
+      $("world-error").textContent = text(
+        "地图加载失败。请刷新；活动列表仍可查看。",
+        "Map failed to load. Refresh to try again; the event list remains available.",
+      );
+    }
 }
-start().catch(error => showError(error, 'initialize'));
+void start();

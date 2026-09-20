@@ -2,13 +2,13 @@
  * 职责：显示同步批次进度、按邮箱核对原文及邮件人工复核。
  * 实现：按邮箱查询全部已保存邮件并标明来源、时间与分类；请求代次隔离旧响应；复核保持人工确认与版本约束。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：app.js 提供列表刷新和轮询入口；api.js 管理 Session/CSRF；index.html 提供对话框。
+ * 关联：共享语言/API 资源随需求界面统一版本；app.js 提供列表刷新和轮询入口；api.js 管理 Session/CSRF；index.html 提供对话框。
  * 目录：refreshReviewBadge、openMailboxEmails、loadReviews、updateRunProgress、initProcessingUI。
  * 变量索引：reviewState 保存邮箱范围、请求代次、页码与当前记录；runLabels 为批次状态的当前语言映射；classificationLabels 为分类展示说明。
  */
-import { t, h, locale } from './i18n.js?v=20260920-i18n';
+import { t, h, locale } from './i18n.js?v=20260920-requirements';
 
-import { request, escapeHtml as e } from './api.js';
+import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
 import { mailSourceLabel } from './mail-source.js';
 
 const reviewState = { page: 1, records: [], changed: null, retry: null, mailboxId: null, sequence: 0 };

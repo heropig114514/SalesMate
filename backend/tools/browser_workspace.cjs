@@ -15,7 +15,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图；手机焦点断言等待背景 inert 就绪。
- * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
+ * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
  * 约束：所有业务请求均拦截；仅允许原有客户分析模拟 POST 及显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -60,6 +60,7 @@ async function main() {
         if (profileFailure) return route.fulfill({ status: 503, json: { error: { detail: '公司资料读取失败' } } });
         data = profile;
       }
+      else if (endpoint === 'accounts/onboarding/') data = { personal: {}, products: [], solutions: [], completed: true, revision: 0, documents: [] };
       else if (endpoint === 'accounts/me/') data = { username: '测试销售' };
       else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'Asia/Shanghai' };
       else if (endpoint === 'mailboxes/') data = [];
@@ -237,7 +238,7 @@ async function main() {
     assert.equal(new URL(page.url()).search, '', 'Company settings must not carry customer context');
     assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Company Setting');
     await page.locator('[name=company_name]').fill('我们的公司 <Sales>');
-    await page.locator('[name=email]').fill('sales@seller.example');
+    await page.locator('#company-form [name=email]').fill('sales@seller.example');
     await page.locator('#company-save').click();
     await page.locator('#company-status').filter({ hasText: '公司资料已保存' }).waitFor();
     await page.reload();

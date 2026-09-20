@@ -1,5 +1,5 @@
 """职责：提供当前账号工作空间的本公司资料接口。
-实现：显式字段验证、会话权限、owner 行锁和 If-Match 防止越权及并发覆盖；读取不创建记录。
+实现：公司规模及显式字段验证、会话权限、owner 行锁和 If-Match 防止越权及并发覆盖；读取不创建记录。
 关联：CompanyProfile 独立于 CRM 客户及销售目标画像；前端 company-settings.js 调用。
 目录：
 - CompanyProfileSerializer：验证并输出公司资料。
@@ -33,16 +33,16 @@ logger = logging.getLogger(__name__)
 
 # 功能：验证并输出公司资料。
 # 逻辑：复用严格字段拒绝规则和模型长度、邮箱与 URL 校验；未建档时间显式允许 null。
-# 约束：不允许 owner、revision 或未知字段写入；公司名称必填，其他字段可清空。
+# 约束：不允许 owner、revision 或未知字段写入；公司名称必填，规模 size_band 和其他字段可清空。
 class CompanyProfileSerializer(StrictModelSerializer):
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
     # 功能：声明字段白名单。
-    # 逻辑：排除 owner，服务端版本及时间只读。
+    # 逻辑：包含公司规模，排除 owner，服务端版本及时间只读。
     # 约束：不暴露邮箱授权、团队信息或客户资料。
     class Meta:
         model = CompanyProfile
-        fields = ["company_name", "industry", "website", "email", "phone", "address", "description", "revision", "updated_at"]
+        fields = ["company_name", "industry", "size_band", "website", "email", "phone", "address", "description", "revision", "updated_at"]
         read_only_fields = ["revision", "updated_at"]
 
 

@@ -21,7 +21,7 @@
 - TEMPLATES：Admin 与软件根目录内 frontend/index.html 共用的模板后端及上下文处理器。
 - DATABASES：由必填 DATABASE_URL 生成的数据库连接；缺失或非法配置直接失败，不自动切换数据库。
 - AUTH_USER_MODEL：项目用户模型 accounts.User。
-- AUTH_PASSWORD_VALIDATORS：Django 密码校验器集合。
+- AUTH_PASSWORD_VALIDATORS：仅保留最少 8 字符长度要求，不限制字符组合、常见值或用户名相似性；Django 密码校验器集合。
 - LANGUAGES：界面支持简体中文和英文；LocaleMiddleware 优先使用语言 cookie，再匹配请求头。
 - LOCALE_PATHS：项目 gettext 目录位置。
 - LANGUAGE_CODE：默认界面语言 zh-hans。
@@ -120,10 +120,7 @@ DATABASES = {
 }
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 LANGUAGE_CODE = "zh-hans"
 LANGUAGES = [("zh-hans", "简体中文"), ("en", "English")]

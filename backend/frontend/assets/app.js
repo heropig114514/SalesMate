@@ -2,23 +2,23 @@
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；共享悬浮入口保留当前会话，邮箱设置使用独立页面，只有显式连接操作打开授权弹窗；邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
+ * 关联：共享语言/API 资源随需求界面统一版本；workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openEmailSettings、showGmailAuthorization、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
  * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
- * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
+ * 变量索引：$ 为元素定位函数；state 保存分页、账号身份、会话能力、当前详情、方向和列表响应签名；
  * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的当前语言展示映射；assistant 管理聊天，notices 管理页面提示生命周期；emailSettingsLabels 保存邮箱设置的中英文静态文案。
  */
 import { chooseGmailScope } from './gmail-scope.js?v=20260920-gmail-scope';
-import { t, h, locale, language } from './i18n.js?v=20260920-i18n';
+import { t, h, locale, language } from './i18n.js?v=20260920-requirements';
 
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260920-i18n';
 import { mailSourceLabel } from './mail-source.js';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260920-i18n';
 import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260920-workspace-chat';
-import { request, escapeHtml as e } from './api.js?v=20260920-i18n';
+import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js';
 import { getAssistant, enableAssistant, openAssistantLink } from './assistant-widget.js?v=20260920-workspace-chat';
 import { Notice } from './notice.js';
@@ -28,7 +28,7 @@ const assistant = getAssistant();
 /** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
 const $ = id => document.getElementById(id);
 const notices = new Notice($('notice'));
-const state = { page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0, listSignature: null };
+const state = { account: null, page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0, listSignature: null };
 const signals = { unknown: t('待确认'), inquiry_intent: t('询盘'), new_lead_no_profile: t('新线索未建档'), quoted_not_closed: t('已报价未成交'), repeat_purchase: t('复购') };
 const sizes = { unknown: t('规模未知'), lt_50: t('少于 50 人'), '50_100': t('50–99 人'), '100_200': t('100–199 人'), '200_500': t('200–499 人'), gte_500: t('500 人及以上') };
 const dimensions = { industry_context: t('行业情况'), company_ops: t('公司经营分析'), intent: t('意向分析'), timeline: t('时间轴'), opportunity: t('商机分析'), risk: t('风险分析'), guidance: t('下一步引导') };
@@ -118,8 +118,9 @@ function renderRow(row) {
 }
 
 /** 功能：加载列表及分页状态。输入：表单、state.page 和是否显示加载占位。输出：列表响应。
- * 逻辑：以查询参数调用后端；后台轮询时保留现有列表，避免每三秒清空并重建造成闪烁。约束：普通加载失败时不保留看似最新的旧列表。 */
+ * 逻辑：捕获账号身份拒绝旧账号响应；以查询参数调用后端；后台轮询时保留现有列表，避免每三秒清空并重建造成闪烁。约束：普通加载失败时不保留看似最新的旧列表。 */
 async function loadList({ showLoading = true } = {}) {
+  const account = state.account;
   if (showLoading) {
     $('company-list').innerHTML = h('<div class="empty">正在读取当前员工的客户列表…</div>');
   }
@@ -127,6 +128,7 @@ async function loadList({ showLoading = true } = {}) {
   params.set('page', state.page); params.set('page_size', 20);
   try {
     const data = await request('companies/?' + params);
+    if (account !== state.account) return;
     const signature = JSON.stringify(data);
     if (!showLoading && signature === state.listSignature) return data;
     state.listSignature = signature;
@@ -139,6 +141,7 @@ async function loadList({ showLoading = true } = {}) {
     $('next').disabled = state.page * 20 >= data.count;
     return data;
   } catch (error) {
+    if (account !== state.account) return;
     if (showLoading) {
       $('company-list').innerHTML = h('<div class="empty">加载失败，请检查上方提示后点击刷新。</div>');
     }
@@ -481,7 +484,7 @@ async function registerSubmit(event) {
 }
 
 /** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：先取消旧详情读取，再核验会话；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名清理浮窗并恢复登录表单。
+ * 逻辑：先取消旧详情读取，再核验会话；账号变化时清空搜索、聊天和客户内容，新注册用户进入持久化引导；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名清理浮窗并恢复登录表单。
  * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
 async function initialize() {
   detailObserver.stop();
@@ -490,7 +493,17 @@ async function initialize() {
   $('login-screen').hidden = session.authenticated;
   $('workspace').hidden = !session.authenticated;
   $('logout').hidden = session.debug_auto_login;
-  if (!session.authenticated) { enableAssistant(false); showAuthForm(false); return; }
+  if (!session.authenticated) { state.account = null; enableAssistant(false); showAuthForm(false); return; }
+  if (state.account !== session.username) {
+    enableAssistant(false);
+    $('filters').reset();
+    $('company-list').textContent = '';
+    $('detail-content').textContent = '';
+    state.detail = null; state.page = 1; state.listSignature = null;
+    state.account = session.username;
+    setWorkspaceContext(null);
+  }
+  if (session.onboarding_required) { location.replace('/settings/company/?onboarding=1'); return; }
   $('username').textContent = session.username;
   mountWorkspace();
   void refreshWorkspace();
@@ -527,7 +540,7 @@ async function initialize() {
 }
 
 /** 功能：注册静态表单与动态内容事件。输入：现有 DOM。输出：无。
- * 逻辑：绑定账号注册和业务表单；邮箱设置导航与显式授权按钮分离；浮窗独立保留当前会话，恢复按钮只读观察，pagehide 取消旧响应。
+ * 逻辑：绑定账号注册和业务表单；退出清理客户路由，账号切换清理客户导航上下文；邮箱设置导航与显式授权按钮分离；浮窗独立保留当前会话，恢复按钮只读观察，pagehide 取消旧响应。
  * 约束：只绑定一次，不通过 eval 或字符串内联事件执行代码。 */
 function bindEvents() {
   initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
@@ -542,7 +555,7 @@ function bindEvents() {
   $('show-login').onclick = () => showAuthForm(false);
   $('mail-form').addEventListener('submit', mailSubmit);
   $('register-form').addEventListener('submit', registerSubmit);
-  $('logout').onclick = event => busy(event.currentTarget, async () => { await request('session/', { method: 'DELETE' }); state.detail = null; await initialize(); });
+  $('logout').onclick = event => busy(event.currentTarget, async () => { await request('session/', { method: 'DELETE' }); state.detail = null; history.replaceState({}, '', location.pathname + '#home'); await initialize(); });
   $('filters').onsubmit = event => { event.preventDefault(); state.page = 1; busy(event.submitter, loadList); };
   $('filters').onreset = () => { state.page = 1; setTimeout(() => busy(null, loadList), 0); };
   $('refresh').onclick = event => busy(event.currentTarget, refreshInbox);

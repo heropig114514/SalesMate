@@ -1,11 +1,11 @@
 """职责：提供无需邮箱或手机验证的普通账号注册接口。
-实现：错误响应按请求语言展示；验证用户名与既有密码规则，事务创建账号后建立 Session；数据库唯一约束处理并发重名。
+实现：错误响应按请求语言展示；验证用户名与最少 8 字符的密码长度规则，事务创建账号后建立 Session；数据库唯一约束处理并发重名。
 关联：accounts.urls 注册路由；前端复用 session/ 获取 CSRF；新用户数据由既有 owner 权限隔离。
 目录：
 - RegistrationSerializer：限制注册可写字段并校验账号信息。
 - RegistrationSerializer.to_internal_value：拒绝额外字段及非对象载荷。
 - RegistrationSerializer.validate_username：规范化并验证用户名和重名。
-- RegistrationSerializer.validate：使用既有 Django 密码校验器。
+- RegistrationSerializer.validate：使用仅要求最少长度的 Django 密码校验器。
 - RegistrationView：承载带 CSRF 保护的匿名注册入口。
 - RegistrationView.post：创建普通用户并登录当前浏览器。
 变量索引：
@@ -32,7 +32,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import User
+from .models import User, SalesSetup
 
 logger = logging.getLogger("salesmate.accounts")
 
@@ -69,10 +69,10 @@ class RegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError("用户名已被使用，请换一个。")
         return value
 
-    # 功能：验证密码是否符合项目既有策略。
+    # 功能：验证密码是否达到项目长度要求。
     # 输入：`attrs` 含已验证用户名和原始密码。
     # 输出：通过校验的字段字典；错误以 password 字段报告。
-    # 逻辑：构造未保存的用户交给 Django validate_password，不修改全局校验器配置。
+    # 逻辑：构造未保存的用户交给 Django validate_password，全局校验器仅保留最少 8 字符，不限制字符组合。
     # 约束：不要求邮箱、手机号、验证码或实名信息；不记录密码。
     def validate(self, attrs):
         try:
@@ -92,7 +92,7 @@ class RegistrationView(APIView):
     # 功能：提交账号注册并返回已认证会话。
     # 输入：`request` 含 username/password JSON 及有效 CSRF Cookie/请求头。
     # 输出：成功返回 201 和身份、轮换后的 CSRF；已登录返回按请求语言显示的 409，输入错误返回 400。
-    # 逻辑：事务创建经哈希存储密码的普通用户，提交后登录；仅将已确认的重名冲突转换为输入错误。
+    # 逻辑：事务创建经哈希存储密码的普通用户及未完成引导记录，提交后登录；仅将已确认的重名冲突转换为输入错误。
     # 约束：非重名的 IntegrityError 记录错误类型并继续抛出；不泄露秘密、不重试、不生成虚构邮箱。
     @extend_schema(request=RegistrationSerializer, responses={201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT}, tags=["accounts"])
     def post(self, request):
@@ -105,6 +105,7 @@ class RegistrationView(APIView):
         try:
             with transaction.atomic():
                 user = User.objects.create_user(**serializer.validated_data)
+                SalesSetup.objects.create(owner=user)
         except IntegrityError:
             if User.objects.filter(username=serializer.validated_data["username"]).exists():
                 logger.info("registration_rejected reason=duplicate_username")

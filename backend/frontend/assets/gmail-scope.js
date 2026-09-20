@@ -1,11 +1,11 @@
 /**
  * 职责：让员工每次明确选择 Gmail 同步范围。
  * 实现：天数与封数取交集，未填封数默认 50；超量提交逐次警告，明确批准后才携带批准字段。
- * 关联：app.js 在首次授权、单邮箱同步和刷新入口调用；index.html 提供独立 Gmail 范围弹窗。
+ * 关联：共享语言/API 资源随需求界面统一版本；app.js 在首次授权、单邮箱同步和刷新入口调用；index.html 提供独立 Gmail 范围弹窗。
  * 目录：readGmailScope 校验范围；chooseGmailScope 返回选择或取消结果。
  * 变量索引：GMAIL_MESSAGE_LIMIT 为普通同步的 50 封上限；选择和批准只保存在本次弹窗 Promise 中。
  */
-import { t } from './i18n.js?v=20260920-i18n';
+import { t } from './i18n.js?v=20260920-requirements';
 
 const GMAIL_MESSAGE_LIMIT = 50;
 

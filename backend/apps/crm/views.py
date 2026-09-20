@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离。
+实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
 关联：sync_scope 要求 Gmail/QQ 同步范围；urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -63,6 +63,7 @@
 import logging
 from urllib.parse import urlencode
 
+from apps.accounts.models import SalesSetup
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout
 from django.db import transaction
@@ -135,7 +136,7 @@ class SessionView(APIView):
 
     # 功能：返回会话身份和 CSRF token。
     # 输入：`request` 为浏览器请求。
-    # 输出：登录状态、用户名、CSRF 令牌和 debug_auto_login 标志。
+    # 输出：登录状态、用户名、CSRF 令牌、debug_auto_login 及 onboarding_required 标志。
     # 逻辑：DEBUG 与显式开关开启且直连来自回环地址时，为匿名请求建立指定普通用户会话。
     # 约束：保留已有身份；不创建用户，不接受停用或管理员账号；配置错误返回 409 并记录诊断。
     @extend_schema(responses=OBJECT, tags=["session"])
@@ -154,6 +155,7 @@ class SessionView(APIView):
         return Response({"authenticated": request.user.is_authenticated,
                          "username": request.user.get_username() if request.user.is_authenticated else None,
                          "debug_auto_login": debug_auto_login,
+                         "onboarding_required": bool(request.user.is_authenticated and SalesSetup.objects.filter(owner=request.user, completed=False).exists()),
                          "csrf_token": get_token(request)})
 
     # 功能：创建已认证用户会话。

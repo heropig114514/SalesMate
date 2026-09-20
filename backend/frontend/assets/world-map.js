@@ -1,99 +1,156 @@
-/**
- * 职责：将世界消息坐标绘制为可访问的 Leaflet 气泡。
- * 实现：共享主题控制的本地 GeoJSON 底图、经纬线和按当前屏幕距离聚合的 HTML 标记；缩放后重新分组。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：world-news.js 提供筛选后快照与点击回调；不读取业务 API、不请求在线瓦片。
- * 目录：clusterNews、WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.reset、WorldMap.setItems、WorldMap.draw、WorldMap.focusGroup。
- * 变量索引：WorldMap.map 为 Leaflet 实例，layer 为标记层，items 为快照，selectedId/highlightId 为视觉状态，onSelect 为页面回调。
+/** 职责：将活动与商机金额投影到真实世界地图。
+ * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，按钮支持键盘选择。
+ * 关联：共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；world-events.js 提供显式演示国家；不请求在线瓦片。
+ * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
+ * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
  */
-import { t } from './i18n.js?v=20260920-i18n';
-
-import { INDUSTRIES } from './world-feed.js?v=20260920-i18n';
-
-/** 功能：按当前屏幕空间聚合邻近消息。输入：items 快照、map 地图。
- * 输出：数组，每组保留消息列表与代表坐标。逻辑：稳定输入顺序，112×56 像素邻域避免文字相互覆盖。
- * 约束：仅影响展示，不去重/删改消息；同坐标消息始终可通过分组列表逐条访问。 */
-export function clusterNews(items, map) {
-  const groups = [];
-  for (const item of items) {
-    const latlng = [item.location.latitude, item.location.longitude];
-    const point = map.latLngToContainerPoint(latlng);
-    const group = groups.find(entry => Math.abs(entry.point.x - point.x) < 112 && Math.abs(entry.point.y - point.y) < 56);
-    if (group) group.items.push(item);
-    else groups.push({ point, latlng, items: [item] });
-  }
-  return groups;
-}
-
-/** 功能：管理世界地图与消息标记。
- * 逻辑：固定本地底图并按缩放聚合，页面更新消息不重置当前视角。
- * 约束：需要本地 Leaflet；资源失败由调用者显示，不替换成其他地图源。 */
+import { DEMO_COUNTRIES } from "./world-events.js?v=20260920-requirements";
+import { language } from "./i18n.js?v=20260920-requirements";
+/** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：仅展示演示业务，不定位用户。 */
 export class WorldMap {
-  /** 功能：初始化地图。输入：element 地图容器、onSelect 消息组回调。
-   * 输出：实例。逻辑：使用经纬度投影和有界拖动，小屏可缩小至全世界。
-   * 约束：不启用自动定位；点击回调不会发起业务写操作。 */
+  /** 功能：初始化地图。输入：element 与 onSelect 回调。输出：实例。逻辑：真实地理投影及本地底图。约束：Leaflet 缺失明确报错。 */
   constructor(element, onSelect) {
-    if (!window.L) throw new Error(t('地图组件未能加载，请刷新页面。'));
+    if (!window.L) throw new Error("Map library unavailable");
     this.onSelect = onSelect;
     this.items = [];
     this.selectedId = null;
-    this.highlightId = null;
-    this.map = L.map(element, { crs: L.CRS.EPSG4326, minZoom: -1, maxZoom: 5, zoomSnap: 0.25, zoomDelta: 0.5,
-      zoomControl: false, attributionControl: true, maxBounds: [[-85, -190], [85, 190]], maxBoundsViscosity: 0.8 });
-    L.control.zoom({ position: 'bottomright' }).addTo(this.map);
-    this.map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener noreferrer">Leaflet</a>');
-    this.map.attributionControl.addAttribution('<a href="https://www.naturalearthdata.com" target="_blank" rel="noopener noreferrer">Natural Earth</a>');
+    this.countries = new Set(DEMO_COUNTRIES.map((c) => c.map));
+    this.map = L.map(element, {
+      crs: L.CRS.EPSG4326,
+      minZoom: -1,
+      maxZoom: 7,
+      zoomSnap: 0.25,
+      zoomControl: false,
+      scrollWheelZoom: false,
+    });
+    L.control.zoom({ position: "bottomright" }).addTo(this.map);
+    this.map.attributionControl.setPrefix("Leaflet");
+    this.map.attributionControl.addAttribution("Natural Earth");
     this.layer = L.layerGroup().addTo(this.map);
-    this.map.on('zoomend', () => this.draw());
-    this.map.on('resize', () => this.draw());
-    this.reset();
+    this.view = "global";
+    this.setView(this.view);
+    this.resizeObserver = new ResizeObserver(() => {
+      this.map.invalidateSize({ pan: false });
+      this.setView(this.view);
+    });
+    this.resizeObserver.observe(element);
+    window.addEventListener("pagehide", event => { if (!event.persisted) this.destroy(); });
   }
-  /** 功能：读取并绘制地图资源。输入：固定同源资源。
-   * 输出：Promise；HTTP、解析或超时失败抛 Error。逻辑：先加载国界，再绘制经纬网，颜色读取共享 CSS 变量。
-   * 约束：无在线瓦片、无重试；底图不代表业务消息覆盖范围。 */
+  /** 功能：加载国界。输入：固定同源 GeoJSON。输出：Promise。逻辑：匹配演示客户国家，使用主题色；新加坡在低精度底图中以实际位置标记。约束：失败不换数据源、不重试。 */
   async load() {
-    const response = await fetch('/static/world-countries.geojson', { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) throw new Error(t`地图资源加载失败（HTTP ${response.status}）。`);
-    const data = await response.json();
-    if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error(t('地图资源格式无效。'));
-    L.geoJSON(data, { interactive: false, style: { color: getComputedStyle(document.documentElement).getPropertyValue('--map-border').trim(), weight: 0.7, fillColor: getComputedStyle(document.documentElement).getPropertyValue('--map-land').trim(), fillOpacity: 1 } }).addTo(this.map);
-    for (let lat = -60; lat <= 60; lat += 30) L.polyline([[lat, -180], [lat, 180]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
-    for (let lng = -180; lng <= 180; lng += 30) L.polyline([[-80, lng], [80, lng]], { interactive: false, color: getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(), opacity: 0.12, weight: 1, dashArray: '2 7' }).addTo(this.map);
-    console.info('world_map_ready', { features: data.features.length });
+    const response = await fetch("/static/world-countries.geojson", {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`Map HTTP ${response.status}`);
+    const data = await response.json(),
+      theme = getComputedStyle(document.documentElement);
+    const accent = theme.getPropertyValue("--accent").trim(),
+      land = theme.getPropertyValue("--map-land").trim(),
+      border = theme.getPropertyValue("--map-border").trim();
+    if (data.type !== "FeatureCollection") throw new Error("Invalid map data");
+    L.geoJSON(data, {
+      interactive: false,
+      style: (feature) => ({
+        color: border,
+        weight: 0.8,
+        fillColor: this.countries.has(feature.properties.name) ? accent : land,
+        fillOpacity: this.countries.has(feature.properties.name) ? 0.5 : 1,
+      }),
+    }).addTo(this.map);
+    L.circleMarker([1.352, 103.819], {
+      radius: 3,
+      color: accent,
+      fillOpacity: 0.8,
+      interactive: false,
+    }).addTo(this.map);
+    for (let lat = -60; lat <= 60; lat += 30)
+      L.polyline(
+        [
+          [lat, -180],
+          [lat, 180],
+        ],
+        { color: border, weight: 0.5, opacity: 0.5, interactive: false },
+      ).addTo(this.map);
+    this.layer.bringToFront?.();
+    this.draw();
+    console.info("insights_map_ready", { features: data.features.length });
   }
-  /** 功能：恢复全球视角。输入：当前容器尺寸。输出：无。
-   * 逻辑：按固定世界范围适配尺寸。约束：仅显式按钮/初始化调用，不因推送打断视角。 */
-  reset() { this.map.invalidateSize(); this.map.fitBounds([[-58, -168], [78, 180]], { padding: [24, 36], animate: false }); }
-  /** 功能：更新标记数据。输入：items、selectedId、highlightId。
-   * 输出：无。逻辑：记录当前可见快照后重绘。约束：不移动地图、不读取来源链接。 */
-  setItems(items, selectedId = null, highlightId = null) {
-    this.items = items; this.selectedId = selectedId; this.highlightId = highlightId; this.draw();
+  /** 功能：切换世界/亚太/欧洲视角。输入：view。输出：无。逻辑：fitBounds 同时控制中心及缩放。约束：只改变显示。 */
+  setView(view) {
+    this.view = view;
+    const bounds = {
+      global: [
+        [-55, -165],
+        [75, 175],
+      ],
+      apac: [
+        [-15, 75],
+        [55, 155],
+      ],
+      europe: [
+        [35, -12],
+        [62, 40],
+      ],
+    };
+    this.map.fitBounds(bounds[view] || bounds.global, {
+      padding: [20, 20],
+      animate: false,
+    });
   }
-  /** 功能：绘制可键盘操作的气泡。输入：实例快照和地图缩放。
-   * 输出：无。逻辑：纯文本构造 DOM，聚合展示计数，点击把完整组交回页面。
-   * 约束：不插入新闻 HTML；缩放只重绘标记，不改变消息选择。 */
+  /** 功能：释放地图资源。输入：实例观察器与地图。输出：无。逻辑：不进入往返缓存时退出页面断开尺寸观察与地图事件。约束：不修改数据。 */
+  destroy() {
+    this.resizeObserver.disconnect();
+    this.map.remove();
+  }
+  /** 功能：更新筛选后的活动。输入：items 和 selectedId。输出：无。逻辑：重绘图层，保持视角。约束：不修改数据。 */
+  setItems(items, selectedId) {
+    this.items = items;
+    this.selectedId = selectedId;
+    this.draw();
+  }
+  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同城市共享金额，取最大额避免重复相加；点开显示该城市第一项或已选项，其他活动仍可从列表选择。约束：无业务评分或排名。 */
   draw() {
     this.layer.clearLayers();
-    for (const group of clusterNews(this.items, this.map)) {
-      const first = group.items[0], places = new Set(group.items.map(item => item.location.name));
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'news-pin';
-      button.style.setProperty('--pin-color', INDUSTRIES[first.industry].color);
-      button.classList.toggle('selected', group.items.some(item => item.id === this.selectedId));
-      button.classList.toggle('incoming', group.items.some(item => item.id === this.highlightId));
-      button.dataset.newsIds = group.items.map(item => item.id).join(' ');
-      button.setAttribute('aria-label', t`${[...places].join('、')}，${group.items.length} 条消息，查看摘要`);
-      const dot = document.createElement('span'); dot.className = 'pin-dot'; dot.setAttribute('aria-hidden', 'true');
-      const label = document.createElement('span'); label.textContent = places.size > 1 ? t`${places.size} 地动态` : first.location.name.split(' · ')[0];
-      const count = document.createElement('b'); count.textContent = group.items.length;
-      button.append(dot, label, count);
-      const marker = L.marker(group.latlng, { keyboard: false, icon: L.divIcon({ html: button, className: 'news-marker', iconSize: [130, 40], iconAnchor: [65, 48] }) });
-      marker.on('click', () => this.onSelect(group.items, button));
-      marker.addTo(this.layer);
+    const groups = new Map();
+    for (const item of this.items) {
+      if (!groups.has(item.city)) groups.set(item.city, []);
+      groups.get(item.city).push(item);
+    }
+    for (const items of groups.values()) {
+      const item = items.find((v) => v.id === this.selectedId) || items[0],
+        amount = Math.max(...items.map((v) => v.amount)),
+        size = Math.sqrt(amount / 810000) * 62;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "event-pin";
+      button.dataset.eventId = item.id;
+      button.style.setProperty("--bubble-size", `${size}px`);
+      button.classList.toggle(
+        "selected",
+        items.some((v) => v.id === this.selectedId),
+      );
+      const name = language === "en" ? item.en : item.title;
+      button.setAttribute(
+        "aria-label",
+        `${name}, SGD ${amount.toLocaleString()}, ${items.length}`,
+      );
+      const bubble = document.createElement("span");
+      bubble.className = "event-bubble";
+      bubble.textContent = items.length > 1 ? String(items.length) : "";
+      const label = document.createElement("span");
+      label.className = "event-pin-label";
+      label.textContent = item.city.split(" ")[language === "en" ? 1 : 0];
+      button.append(bubble, label);
+      button.addEventListener("click", () => this.onSelect(item.id));
+      L.marker([item.lat, item.lng], {
+        keyboard: false,
+        icon: L.divIcon({
+          html: button,
+          className: "event-marker",
+          iconSize: [100, 80],
+          iconAnchor: [50, 40],
+        }),
+      }).addTo(this.layer);
     }
   }
-  /** 功能：放大消息组。输入：items 组内消息。输出：无。
-   * 逻辑：多坐标适配范围，同坐标聚合仍保留逐条列表。
-   * 约束：由用户显式触发，不自动打开其中任一详情。 */
-  focusGroup(items) { this.map.fitBounds(items.map(item => [item.location.latitude, item.location.longitude]), { padding: [90, 90], maxZoom: 3, animate: false }); }
 }

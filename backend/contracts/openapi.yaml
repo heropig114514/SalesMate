@@ -71,6 +71,95 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiError'
           description: ''
+  /api/v1/accounts/onboarding/:
+    get:
+      operationId: v1_accounts_onboarding_retrieve
+      tags:
+      - accounts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    patch:
+      operationId: v1_accounts_onboarding_partial_update
+      parameters:
+      - in: header
+        name: If-Match
+        schema:
+          type: integer
+        required: true
+      tags:
+      - accounts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedSetup'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedSetup'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedSetup'
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/accounts/onboarding/documents/:
+    post:
+      operationId: v1_accounts_onboarding_documents_create
+      tags:
+      - accounts
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/accounts/onboarding/documents/{document_id}/:
+    get:
+      operationId: v1_accounts_onboarding_documents_retrieve
+      parameters:
+      - in: path
+        name: document_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - accounts
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+          description: ''
   /api/v1/accounts/register/:
     post:
       operationId: v1_accounts_register_create
@@ -2455,6 +2544,9 @@ components:
         industry:
           type: string
           maxLength: 100
+        size_band:
+          type: string
+          maxLength: 30
         website:
           oneOf:
           - type: string
@@ -2567,6 +2659,20 @@ components:
       description: |-
         * `registered` - registered
         * `unregistered` - unregistered
+    CurrencyEnum:
+      enum:
+      - SGD
+      - USD
+      - CNY
+      - EUR
+      - JPY
+      type: string
+      description: |-
+        * `SGD` - SGD
+        * `USD` - USD
+        * `CNY` - CNY
+        * `EUR` - EUR
+        * `JPY` - JPY
     CurrentUser:
       type: object
       properties:
@@ -3182,6 +3288,9 @@ components:
         industry:
           type: string
           maxLength: 100
+        size_band:
+          type: string
+          maxLength: 30
         website:
           oneOf:
           - type: string
@@ -3239,6 +3348,104 @@ components:
           type: string
           nullable: true
           maxLength: 100
+    PatchedSetup:
+      type: object
+      properties:
+        personal:
+          $ref: '#/components/schemas/Personal'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        solutions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Solution'
+        completed:
+          type: boolean
+    Personal:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 150
+        title:
+          type: string
+          maxLength: 150
+        email:
+          oneOf:
+          - type: string
+            format: email
+          - type: string
+            maxLength: 0
+        phone:
+          type: string
+          maxLength: 80
+        regions:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 30
+        industries:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 30
+      required:
+      - email
+      - industries
+      - name
+      - phone
+      - regions
+      - title
+    Product:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 240
+        category:
+          type: string
+          maxLength: 150
+        specifications:
+          type: array
+          items:
+            type: string
+            maxLength: 500
+          maxItems: 50
+        price_min:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,16}(?:\.\d{0,2})?$
+          nullable: true
+        price_max:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,16}(?:\.\d{0,2})?$
+          nullable: true
+        currency:
+          $ref: '#/components/schemas/CurrencyEnum'
+        scenarios:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 30
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - category
+      - currency
+      - document_id
+      - name
+      - price_max
+      - price_min
+      - scenarios
+      - specifications
     Profile:
       type: object
       properties:
@@ -3484,6 +3691,18 @@ components:
       required:
       - max
       - min
+    Solution:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 240
+        document_id:
+          type: string
+          format: uuid
+      required:
+      - document_id
+      - name
     SourceEnum:
       enum:
       - gmail_real

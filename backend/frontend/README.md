@@ -12,7 +12,8 @@
 | `assets/app.js` / `app.css` | 登录、客户邮件卡片、筛选、详情与邮箱管理 |
 | `assets/business.js` / `business.css` | 根据服务端字段契约渲染业务表格、编辑及确认表单 |
 | `assets/assistant-widget.js` / `assistant-widget.css` | 各工作空间页面共享的悬浮入口、可收起底部聊天条与移动布局 |
-| `assets/world-news.css` / `world-map.js` | 全球洞察、本地地图及消息摘要；行业色来自共享 CSS 变量 |
+| `assets/world-news.js/css` / `world-map.js` / `world-events.js` | 全球洞察的活动列表、金额地图、联动详情与行业资讯 |
+| `assets/onboarding.js/css` / `company-settings.js` | 个人、公司、产品、方案四步引导及设置；资料通过账号接口持久化 |
 
 顶栏使用 light DOM，沿用全局设计变量和原生链接，不另建路由系统、不查询账户、不产生写入。首页不标记为“社媒情报”；聊天浮窗保持当前页面和产品分区。社媒情报入口对应现有邮件与客户分析；没有增加未接入的社交渠道。
 
@@ -38,8 +39,19 @@ node backend/tools/browser_chat.cjs
 node backend/tools/browser_processing.cjs
 node backend/tools/browser_qq_send.cjs
 node backend/tools/browser_world_news.cjs
+node backend/tools/browser_onboarding.cjs
 ```
 
 这些检查使用本地静态资源和模拟 API；QQ 检查显式模拟开关，不能据此声称真实邮箱外部收发已验证。桌面及手机截图写入忽略的 `backend/artifacts` 目录。
 
 在 `backend` 目录运行 `python tools/check_docs.py` 和 `python tools/check_doc_changes.py --base HEAD --fail-on-review`。现有检查器覆盖 Python；JS、CSS、HTML 的顶部说明与实现一致性需人工核对。
+
+## 2026-09-20 需求界面
+
+注册密码为 8–128 字符，不要求特定字符组合。请求编号保留在错误对象和诊断日志，普通提示不显示。搜索框禁用浏览器历史补全；登录身份变化时清空搜索和列表/聊天内存，旧账号列表响应不再渲染。
+
+新注册账号在下次读取 Session 时进入 `/settings/company/?onboarding=1`。个人、公司、产品、方案各步都可跳过；完成或跳过最后一步后进入社媒情报收件箱。已有账号从 Company Setting 进入编辑，不在迁移时强制引导。公司资料沿用独立版本接口；其他步骤使用 `accounts/onboarding/`，版本冲突保留本页草稿。
+
+产品支持逐条添加/编辑/移除及 UTF-8 CSV 批量导入（下载模板），规格与场景多项用 `|` 分隔。CSV 最多 1 MiB，产品总数最多 200；解析失败不部分导入。规格书和方案支持 PDF / UTF-8 TXT（每份最多 5 MiB），通过登录鉴权的私有 URL 在线阅读或下载。产品和方案行需显式保存；上传成功的文件已经保存到当前账号。
+
+这些资料是独立的用户提供背景信息；本次不把它们注入评分输入、不改变评分算法，不自动创建交易报价、授权 Gmail、调用模型或发送邮件。详情和接口见 [引导资料契约](../docs/onboarding.md)。
