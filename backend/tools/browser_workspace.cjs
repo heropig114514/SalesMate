@@ -1,5 +1,5 @@
 /**
- * 职责：验证产品顶栏、主导航及底部 Profile、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局。
  * 关联：product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
@@ -15,7 +15,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图。
- * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验公司设置持久化、冲突保留、重读确认、双语、未知客户、客户/通用切换与失败。
+ * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置持久化、冲突保留、重读确认、双语、未知客户、客户/通用切换与失败。
  * 约束：所有业务请求均拦截；仅允许原有客户分析模拟 POST 及显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -214,12 +214,22 @@ async function main() {
     await page.locator('#business-notice').filter({ hasText: '无权访问' }).waitFor();
     await page.goto(base);
     await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
-    await page.locator('#gmail-dialog[open]').waitFor();
+    await page.locator('#email-settings-page').waitFor();
     assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Emails Setting');
-    await page.locator('#gmail-dialog .close-dialog').click();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    assert.equal(await page.locator('#list-page').isVisible(), false);
+    await page.locator('#gmail-accounts').filter({ hasText: '尚未连接 Google 邮箱' }).waitFor();
     await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#email-settings-page').waitFor();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    await page.reload();
+    await page.locator('#email-settings-page').waitFor();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    await page.locator('#gmail-add').click();
     await page.locator('#gmail-dialog[open]').waitFor();
+    assert.equal(await page.locator('#gmail-authorization-account').isVisible(), false);
     await page.locator('#gmail-dialog .close-dialog').click();
+    assert.deepEqual(writes, ['companies/company-a/analyze/'], 'Empty settings and cancelled authorization must remain read-only');
     await page.locator('#workspace-profile a').filter({ hasText: 'Company Setting' }).click();
     await page.locator('#company-save:not(:disabled)').waitFor();
     assert.equal(new URL(page.url()).search, '', 'Company settings must not carry customer context');

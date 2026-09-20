@@ -1,6 +1,6 @@
 /**
  * 职责：保存简体中文界面文案对应的英文目录。
- * 实现：精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端。
+ * 实现：精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
  * 关联：i18n.js 的 t/h 读取；静态页面 data-i18n 及显式标记的 JS 字面量调用。
  * 目录：无函数或类。
  * 变量索引：EN 为中文源文案到英文翻译的只读映射。
@@ -598,7 +598,6 @@ export const EN = Object.freeze({
   "演示模式 · 实时推送尚未接入": "Demo mode · Live updates not connected",
   "演示消息": "Demo story",
   "演示消息已到达 ✓": "Demo story received ✓",
-  "点击下方按钮，选择当前业务员使用的 Gmail 账号。": "Click below and choose the Gmail account used by the current employee.",
   "点击地图气泡或下方消息，展开摘要。": "Click a map bubble or story below to open its summary.",
   "点击填入草稿": "Click to fill the draft",
   "点击气泡查看摘要 · 再次点击进入详情": "Click a bubble for a summary · Click again for details",

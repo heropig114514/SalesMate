@@ -1,5 +1,5 @@
 /**
- * 职责：隔离验证 QQ/Gmail 共存、来源标识、原文入口、同步进度、人工复核及移动端布局。
+ * 职责：隔离验证 QQ/Gmail 共存、邮箱设置与授权分离、来源标识、原文入口、同步进度、人工复核及移动端布局。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 Gmail/QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
  * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
@@ -16,7 +16,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：验证真实浏览器交互与文本安全。输入：显式模块/浏览器环境变量。输出：成功说明与截图。
- * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；验证 Gmail 首次授权不自动排队、默认 50 封、超量警告拒绝/批准及批准不复用、刷新及移动布局，再回归进度和人工复核。
+ * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；验证已连接邮箱设置、刷新和同步失败不触发授权，仅显式确认调用 OAuth；验证 Gmail 首次授权不自动排队、默认 50 封、超量警告拒绝/批准及批准不复用、刷新及移动布局，再回归进度和人工复核。
  * 约束：拒绝非本地网络，测试独立静态服务在 finally 关闭，不写实际业务记录。 */
 async function main() {
   const server = http.createServer((request, response) => {
@@ -35,7 +35,7 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     let qqEnabled = false;
     let approveLarge = false;
-    const warnings = [], gmailRequests = [];
+    const warnings = [], gmailRequests = [], authorizationRequests = [];
     page.on('dialog', async dialog => {
       assert.equal(dialog.type(), 'confirm');
       warnings.push(dialog.message());
@@ -55,6 +55,11 @@ async function main() {
       else if (endpoint === 'demo/runtime/') data = { provider: 'agent', timezone: 'UTC', qq_enabled: qqEnabled };
       else if (endpoint === 'companies/') data = { results: [{ company_id: 'sample-company', company_name: '演示客户', domains: ['demo.example'], contacts: [], crm_status: 'unregistered', email_count: 1, email_sources: ['synthetic_sample'], headline_summary: '演示样例摘要', industry: 'unknown', size_band: 'unknown', signal: 'unknown', score: null }], count: 1, page: 1, page_size: 20, stats: { companies: 1, unregistered: 1, new_emails_today: 0 } };
       else if (endpoint === 'mailboxes/') data = [{ mailbox_id: 'mb1', address: 'sales@example.com', gmail_authorized: true, qq_authorized: false, sync_state: { status: runId ? 'sync_running' : 'completed', run_id: runId } }, ...(qqConnected ? [{ mailbox_id: 'qq1', address: 'demo@qq.com', qq_authorized: true, gmail_authorized: false, sync_state: { status: 'completed', run_id: qqSyncs ? 'qq-run-2' : 'qq-run' } }] : [])];
+      else if (endpoint === 'mailboxes/gmail-authorize/') {
+        assert.equal(request.method(), 'POST');
+        authorizationRequests.push(endpoint);
+        return route.fulfill({ status: 503, json: { error: { detail: '模拟授权服务不可用' } } });
+      }
       else if (endpoint === 'mailboxes/qq-connect/') {
         assert.equal(request.method(), 'POST');
         assert.deepEqual(request.postDataJSON(), { address: 'demo@qq.com', authorization_code: 'abcdefghijklmnop', sync_options: { recent_days: 7, max_messages: 20 } });
@@ -206,6 +211,29 @@ async function main() {
     await page.locator('#review-dialog .close-dialog').click();
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('#gmail-manage-top').click();
+    await page.locator('#email-settings-page').waitFor();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    assert.match(await page.locator('#gmail-accounts').textContent(), /sales@example.com/);
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#gmail-settings-refresh').click();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    assert.equal(authorizationRequests.length, 0);
+    await page.screenshot({ path: path.join(OUTPUT, 'email-settings-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Email settings mobile overflow');
+    await page.screenshot({ path: path.join(OUTPUT, 'email-settings-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('[data-gmail-reconnect]').click();
+    await page.locator('#gmail-dialog[open]').waitFor();
+    assert.match(await page.locator('#gmail-authorization-account').textContent(), /sales@example.com/);
+    assert.equal(authorizationRequests.length, 0, 'Opening permission details is not authorization');
+    await page.locator('#gmail-dialog .close-dialog').click();
+    await page.locator('#gmail-add').click();
+    assert.equal(await page.locator('#gmail-authorization-account').isVisible(), false);
+    await page.locator('#gmail-authorize').click();
+    await page.locator('#notice').filter({ hasText: '模拟授权服务不可用' }).waitFor();
+    assert.equal(authorizationRequests.length, 1, 'Only explicit authorization may call OAuth');
+    await page.locator('#gmail-dialog .close-dialog').click();
     await page.locator('[data-gmail-sync]').click();
     await page.locator('#gmail-scope-form [name=recent_days]').fill('7');
     await page.locator('#gmail-scope-form [name=max_messages]').fill('75');
@@ -219,8 +247,9 @@ async function main() {
     assert.equal(warnings.length, 2);
     assert.match(warnings[1], /75.*50.*长时间/);
     await page.locator('#gmail-scope-dialog').waitFor({ state: 'hidden' });
-    await page.locator('#gmail-dialog .close-dialog').click();
+    await page.locator('#gmail-progress-link').click();
     await page.locator('[data-retry-run]').waitFor();
+    assert.equal(authorizationRequests.length, 1, 'Partial sync must not automatically reauthorize');
     assert.match(await page.locator('#sync-progress').textContent(), /失败 1/);
     await page.screenshot({ path: path.join(OUTPUT, 'processing-partial-desktop.png') });
     await page.locator('[data-retry-run]').click();

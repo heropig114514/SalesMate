@@ -1,7 +1,7 @@
 /* 职责：定义轻量销售工作台的布局、状态与响应式样式。
-实现：邮件卡片、三栏详情、登录及助手消费共享深色变量；悬浮聊天样式由 assistant-widget.css 管理；详情自动更新状态独立显示，主导航与跨页外壳由 workspace.css 统一。
+实现：邮箱设置独立呈现连接账号，邮件卡片、三栏详情、登录及助手消费共享深色变量；悬浮聊天样式由 assistant-widget.css 管理；详情自动更新状态独立显示，主导航与跨页外壳由 workspace.css 统一。
 关联：index.html 与 app.js 使用相同语义类名；notice.js 管理底部提示计时，提示支持悬停阅读与手动关闭，避免遮挡顶部邮箱入口。
-目录：无函数或类声明；样式区域为基础、账号、列表、详情、登录与对话框、响应式和智能筛选。
+目录：无函数或类声明；样式区域为基础、账号、邮箱设置、列表、详情、登录与对话框、响应式和智能筛选。
 变量索引：消费 design-system.css 的正文、边界、强调及语义色，无本地变量。 */
 * {
   box-sizing: border-box;
@@ -1626,4 +1626,18 @@ dialog .fine {
     display: none;
   }
 
+}
+
+/* 设置与授权分离：账号管理始终在正常页面内，窄屏操作按钮换行。 */
+.email-settings-page { max-width: 1250px; }
+.email-settings-page .page-heading { align-items: flex-start; flex-wrap: wrap; gap: 18px; }
+.email-settings-page .page-heading .muted { max-width: 650px; line-height: 1.7; }
+.email-settings-page .actions, .email-settings-page .account-actions { flex-wrap: wrap; }
+.email-settings-card { padding: 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.email-settings-card h2 { font-size: 16px; }
+.email-settings-card > a { display: inline-block; margin-top: 14px; font-size: 12px; color: var(--accent); }
+#gmail-authorization-account { overflow-wrap: anywhere; }
+@media(max-width:760px) {
+  .email-settings-card { padding: 14px; }
+  .email-settings-page .actions { width: 100%; }
 }

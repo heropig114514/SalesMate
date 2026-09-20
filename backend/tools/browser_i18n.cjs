@@ -1,5 +1,5 @@
 /**
- * 职责：覆盖共享 Global Insights 入口；验证真实页面的英文界面、浏览器语言协商、偏好保存和内容隔离。
+ * 职责：覆盖邮箱设置中英文文案、无自动授权及共享 Global Insights 入口；验证真实页面的英文界面、浏览器语言协商、偏好保存和内容隔离。
  * 实现：隔离静态服务器与 GET 夹具，使用真实 Chrome 加载三个入口；业务写入一律拒绝。
  * 关联：i18n.js/translations.js、页面语言控件、业务表单和精简导航和跨页面底部聊天条；后端语言由 test_i18n.py 独立验证。
  * 目录：main 执行浏览器验收；main.serve 提供受限静态资源。
@@ -14,7 +14,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/i18n');
 
 /** 功能：执行语言与业务隔离场景。输入：环境中的 Playwright/Chrome 路径。
- * 输出：断言、英文桌面/移动截图。逻辑：覆盖自动语言、手动覆盖、取消草稿丢弃、跨页及刷新、动态文案与字段值，并验证世界消息中的悬浮入口。
+ * 输出：断言、英文桌面/移动截图。逻辑：覆盖自动语言、手动覆盖、取消草稿丢弃、跨页及刷新、动态文案与字段值，并验证邮箱设置不会自动弹授权框及世界消息中的悬浮入口。
  * 约束：所有 API 均模拟，不调用邮箱或模型，不将模拟通过解释为外部服务已验证。 */
 async function main() {
   /** 功能：提供实际页面和本地资源。输入：req/res。输出：HTTP 静态响应。
@@ -103,6 +103,12 @@ async function main() {
     assert.equal(result.html, '<button>Save</button><p>保存</p>');
     assert.equal(result.text, 'Current employee: 用户名');
     assert.deepEqual(result.languages, ['zh-hans', 'en', 'zh-hans', 'en']);
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#email-settings-page').waitFor();
+    assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
+    assert.equal(await page.locator('#gmail-add').textContent(), 'Add Google mailbox');
+    assert.match(await page.locator('#email-settings-description').textContent(), /does not require Google authorization/);
+    assert.match(await page.locator('#gmail-accounts').textContent(), /No Google mailbox connected/);
     await page.goto(base + '/business/?company=company-a#follow-ups');
     await page.getByRole('heading', { name: 'Follow-ups', exact: true }).first().waitFor();
     await page.locator('#create-business').click();

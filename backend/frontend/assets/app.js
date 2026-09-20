@@ -1,18 +1,18 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；共享悬浮入口保留当前会话，邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
+ * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；共享悬浮入口保留当前会话，邮箱设置使用独立页面，只有显式连接操作打开授权弹窗；邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
- * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
+ * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openEmailSettings、showGmailAuthorization、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
  * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
  * mailSubmit、registerSubmit、initialize、bindEvents。
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
- * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的当前语言展示映射；assistant 管理聊天，notices 管理页面提示生命周期。
+ * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的当前语言展示映射；assistant 管理聊天，notices 管理页面提示生命周期；emailSettingsLabels 保存邮箱设置的中英文静态文案。
  */
 import { chooseGmailScope } from './gmail-scope.js?v=20260920-gmail-scope';
-import { t, h, locale } from './i18n.js?v=20260920-i18n';
+import { t, h, locale, language } from './i18n.js?v=20260920-i18n';
 
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260920-i18n';
 import { mailSourceLabel } from './mail-source.js';
@@ -33,6 +33,17 @@ const signals = { unknown: t('待确认'), inquiry_intent: t('询盘'), new_lead
 const sizes = { unknown: t('规模未知'), lt_50: t('少于 50 人'), '50_100': t('50–99 人'), '100_200': t('100–199 人'), '200_500': t('200–499 人'), gte_500: t('500 人及以上') };
 const dimensions = { industry_context: t('行业情况'), company_ops: t('公司经营分析'), intent: t('意向分析'), timeline: t('时间轴'), opportunity: t('商机分析'), risk: t('风险分析'), guidance: t('下一步引导') };
 const jobNames = { pending: t('等待处理'), running: t('正在分析'), completed: t('分析完成'), skipped: t('已复用缓存'), failed: t('处理失败') };
+const emailSettingsLabels = language === 'en' ? {
+  description: 'Manage connected mailboxes and choose when to sync. Opening settings does not require Google authorization.',
+  add: 'Add Google mailbox', reconnect: 'Reconnect', progress: 'View sync progress',
+  empty: 'Use “Add Google mailbox” to connect an account. Authorization starts only after you confirm.',
+  selectAccount: 'Select this account on Google: ',
+} : {
+  description: '管理已连接的邮箱，自行选择同步时间和范围。进入设置无需再次进行 Google 授权。',
+  add: '添加 Google 邮箱', reconnect: '重新授权', progress: '查看同步进度',
+  empty: '点击“添加 Google 邮箱”连接账号，确认后才会进入 Google 授权。',
+  selectAccount: '请在 Google 授权页选择此账号：',
+};
 const gmailStates = { connected: t('已连接，待选择同步范围'), authorization_required: t('未授权'), sync_requested: t('等待 Agent 同步'), sync_running: t('正在同步'), completed: t('同步完成'), failed: t('同步失败'), partial: t('部分完成'), ok: t('同步完成') };
 const detailObserver = new DetailObserver({
   read: id => request(`companies/${encodeURIComponent(id)}/`),
@@ -201,7 +212,7 @@ async function loadDetail(id, trigger = true) {
 }
 
 /** 功能：按哈希切换列表与详情，旧聊天链接打开浮窗。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止详情观察并取消旧链接读取；邮箱设置标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
+ * 逻辑：切换时停止详情观察并取消旧链接读取；邮箱设置显示独立账号管理页面并标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
  * 约束：聊天、复核和授权入口不触发分析；原客户详情的分析条件保持不变。 */
 async function navigate() {
   detailObserver.stop();
@@ -213,13 +224,15 @@ async function navigate() {
   if (chat) history.replaceState({}, '', location.pathname + location.search + '#home');
   const match = location.hash.match(/^#company\/([\w-]+)$/);
   const home = !location.hash || location.hash === '#home';
-  const active = location.hash === '#gmail' ? 'gmail' : home ? 'home' : 'inbox';
+  const emailSettings = location.hash === '#gmail';
+  const active = emailSettings ? 'gmail' : home ? 'home' : 'inbox';
   mountWorkspace(active);
   $('workspace-overview').hidden = !home;
   $('list-page').querySelector('.page-heading').hidden = home;
   $('customer-list-title').textContent = home ? t('优先跟进客户') : t('邮件与客户分析');
-  $('workspace-crumb').textContent = home ? t('工作台') : t('邮件与分析');
-  $('list-page').hidden = Boolean(match); $('detail-page').hidden = !match;
+  $('workspace-crumb').textContent = emailSettings ? 'Emails Setting' : home ? t('工作台') : t('邮件与分析');
+  $('email-settings-page').hidden = !emailSettings;
+  $('list-page').hidden = Boolean(match) || emailSettings; $('detail-page').hidden = !match;
   if (match) {
     $('detail-header').innerHTML = h('<p class="muted">正在读取客户资料…</p>');
     $('detail-content').innerHTML = '';
@@ -229,10 +242,9 @@ async function navigate() {
     const navigation = ++state.navigation;
     setWorkspaceContext(null, active);
     $('detail-crumb').textContent = '';
-    await loadList();
+    if (emailSettings) await openEmailSettings(); else await loadList();
     if (navigation !== state.navigation) return;
     if (location.hash === '#reviews') $('email-reviews-open').click();
-    if (location.hash === '#gmail') await openGmail();
     if (location.hash === '#processing') {
       const mailboxIds = state.mailboxes.filter(item => item.sync_state?.run_id && (!item.qq_authorized || state.runtime.qq_enabled)).map(item => item.mailbox_id);
       if (mailboxIds.length) void pollGmailSync(mailboxIds).catch(error => notice(error.message));
@@ -262,29 +274,41 @@ async function loadMailboxes() {
   return state.mailboxes;
 }
 
-/** 功能：渲染 Gmail 授权弹窗中的员工账号。输入：state.mailboxes。输出：无。
- * 逻辑：只给已授权账号显示同步和移除操作。约束：令牌不进入 DOM。 */
+/** 功能：渲染邮箱设置页面中的已连接 Gmail 账号。输入：state.mailboxes。输出：无。
+ * 逻辑：只给已授权账号显示同步、显式重新授权和移除操作，不按普通同步失败猜测授权失效。约束：令牌不进入 DOM。 */
 function renderGmailAccounts() {
   const authorized = state.mailboxes.filter(item => item.gmail_authorized);
   $('gmail-accounts').innerHTML = authorized.length
     ? authorized.map(item => {
         const status = item.sync_state?.status || 'authorization_required';
         const lastSync = item.sync_state?.last_synced_at;
-        return h`<article class="gmail-account"><div><strong>${e(item.address)}</strong><p>${e(gmailStates[status] || status)}${lastSync ? t` · 上次完成 ${e(date(lastSync))}` : ''}</p>${item.sync_state?.error ? `<small class="failure">${e(item.sync_state.error)}</small>` : ''}</div><div class="account-actions"><button class="secondary" data-gmail-sync="${e(item.mailbox_id)}" ${['sync_requested', 'sync_running'].includes(status) ? 'disabled' : ''}>${['sync_requested', 'sync_running'].includes(status) ? t('同步中…') : t('同步 Gmail')}</button><button class="text-btn" data-gmail-disconnect="${e(item.mailbox_id)}">移除授权</button></div></article>`;
+        return h`<article class="gmail-account"><div><strong>${e(item.address)}</strong><p>${e(gmailStates[status] || status)}${lastSync ? t` · 上次完成 ${e(date(lastSync))}` : ''}</p>${item.sync_state?.error ? `<small class="failure">${e(item.sync_state.error)}</small>` : ''}</div><div class="account-actions"><button class="secondary" data-gmail-sync="${e(item.mailbox_id)}" ${['sync_requested', 'sync_running'].includes(status) ? 'disabled' : ''}>${['sync_requested', 'sync_running'].includes(status) ? t('同步中…') : t('同步 Gmail')}</button><button class="text-btn" data-gmail-reconnect="${e(item.mailbox_id)}">${e(emailSettingsLabels.reconnect)}</button><button class="text-btn" data-gmail-disconnect="${e(item.mailbox_id)}">移除授权</button></div></article>`;
       }).join('')
-    : h('<div class="gmail-empty"><strong>尚未连接 Google 邮箱</strong><p>点击下方按钮，选择当前业务员使用的 Gmail 账号。</p></div>');
+    : h`<div class="gmail-empty"><strong>尚未连接 Google 邮箱</strong><p>${e(emailSettingsLabels.empty)}</p></div>`;
 }
 
-/** 功能：打开当前员工 Gmail 授权管理。输入：浏览器会话。输出：无。
- * 逻辑：先刷新邮箱状态再显示弹窗。约束：不会创建占位邮箱。 */
-async function openGmail() {
+/** 功能：打开邮箱设置并读取连接状态。输入：浏览器当前路由和会话。输出：异步完成。
+ * 逻辑：其他页面先切换到 #gmail，由路由统一渲染；已在设置时仅刷新邮箱。
+ * 约束：不打开授权弹窗，不调用 OAuth，不创建邮箱或自动发起同步。 */
+async function openEmailSettings() {
+  if (location.hash !== '#gmail') { location.hash = '#gmail'; return; }
   await loadMailboxes();
+}
+
+/** 功能：展示显式添加或重新授权的权限说明。输入：address 为可选的现有账号。
+ * 输出：无。逻辑：显示目标账号提示，等待用户点击 Google 授权按钮。
+ * 约束：本函数不调用授权接口；日志仅记录添加或重新授权类型，不记录邮箱；不把普通同步错误判定为令牌失效。 */
+function showGmailAuthorization(address = '') {
+  console.info('gmail_authorization_dialog_opened', { reason: address ? 'reconnect' : 'add' });
+  $('gmail-authorization-account').textContent = address ? emailSettingsLabels.selectAccount + address : '';
+  $('gmail-authorization-account').hidden = !address;
   $('gmail-dialog').showModal();
 }
 
 /** 功能：开始服务端 Google OAuth。输入：当前员工会话。输出：浏览器跳转。
- * 逻辑：后端生成带 state 的授权地址。约束：前端不接触 access token。 */
+ * 逻辑：记录显式授权请求后，由后端生成带 state 的授权地址。约束：日志不记录地址或令牌，前端不接触 access token。 */
 async function startGmailAuthorization() {
+  console.info('gmail_authorization_requested');
   const result = await request('mailboxes/gmail-authorize/', { method: 'POST' });
   if (!result.authorization_url) throw new Error(t('后端未返回 Google 授权地址。'));
   location.assign(result.authorization_url);
@@ -506,7 +530,7 @@ async function initialize() {
 }
 
 /** 功能：注册静态表单与动态内容事件。输入：现有 DOM。输出：无。
- * 逻辑：绑定账号注册和业务表单；浮窗独立保留当前会话，恢复按钮只读观察，pagehide 取消旧响应。
+ * 逻辑：绑定账号注册和业务表单；邮箱设置导航与显式授权按钮分离；浮窗独立保留当前会话，恢复按钮只读观察，pagehide 取消旧响应。
  * 约束：只绑定一次，不通过 eval 或字符串内联事件执行代码。 */
 function bindEvents() {
   initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
@@ -529,12 +553,22 @@ function bindEvents() {
   $('next').onclick = event => { state.page += 1; busy(event.currentTarget, loadList); };
   $('compose').onclick = event => busy(event.currentTarget, openMail);
   $('seed').onclick = event => busy(event.currentTarget, async () => { const result = await request('demo/seed/', { method: 'POST' }); await loadList(); notice(t`已导入 ${result.created_emails} 封合成样例。重复导入不会新增已有邮件。`, false); });
-  $('gmail-manage').onclick = event => busy(event.currentTarget, openGmail);
-  $('gmail-manage-top').onclick = () => openGmail().catch(error => notice(error.message));
+  $('gmail-manage').onclick = event => busy(event.currentTarget, openEmailSettings);
+  $('gmail-manage-top').onclick = () => openEmailSettings().catch(error => notice(error.message));
+  $('email-settings-description').textContent = emailSettingsLabels.description;
+  $('gmail-add').textContent = emailSettingsLabels.add;
+  $('gmail-progress-link').textContent = emailSettingsLabels.progress;
+  $('gmail-add').onclick = () => showGmailAuthorization();
+  $('gmail-settings-refresh').onclick = event => busy(event.currentTarget, loadMailboxes);
   $('gmail-authorize').onclick = event => busy(event.currentTarget, startGmailAuthorization);
   $('gmail-accounts').onclick = event => {
     const sync = event.target.closest('[data-gmail-sync]');
     if (sync) busy(sync, () => requestGmailSync(sync.dataset.gmailSync));
+    const reconnect = event.target.closest('[data-gmail-reconnect]');
+    if (reconnect) {
+      const mailbox = state.mailboxes.find(item => item.mailbox_id === reconnect.dataset.gmailReconnect);
+      if (mailbox) showGmailAuthorization(mailbox.address);
+    }
     const disconnect = event.target.closest('[data-gmail-disconnect]');
     if (disconnect) busy(disconnect, () => disconnectGmail(disconnect.dataset.gmailDisconnect));
   };
