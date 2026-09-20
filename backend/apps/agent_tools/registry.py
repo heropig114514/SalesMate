@@ -1,5 +1,5 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：派生记录工具，登记客户、邮件、日历、资料及文件内容能力；QQ 禁用时不发布其发信准备工具。
+实现：派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
 关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
@@ -17,6 +17,7 @@ from apps.sales.views import LABELS
 from apps.crm.serializers import RegisterSerializer
 from .schemas import UUID, REVISION, PAGE, object_schema, record_schema
 from .support import support_specs
+from .experiments import experiment_specs
 
 RESOURCES = {
     "customers": "customer_settings",
@@ -73,7 +74,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：新增资料文件工具和活动资讯筛选；活动资讯可直接归档，原记录确认语义不变；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
+# 逻辑：组合业务、资料文件与共享实验工具；活动资讯可直接归档，原记录确认语义不变；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
 # 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
     entries = []
@@ -455,4 +456,5 @@ def build_registry():
             )
         )
     entries.extend(support_specs(tool))
+    entries.extend(experiment_specs(tool))
     return {entry["name"]: entry for entry in entries if settings.QQ_MAIL_ENABLED or entry["name"] != "actions.prepare_qq"}

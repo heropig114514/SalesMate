@@ -7,7 +7,7 @@
 - evidence_for：把实际业务响应投影为完整四字段来源。
 - read_tool：执行一次查询并登记返回证据。
 变量索引：
-- ALLOWED_READ_TOOLS：首期明确允许的两个客户读取工具。
+- ALLOWED_READ_TOOLS：客户读取及获准共享实验读取的固定工具集合。
 - CONTRACT_VERSION：工具对接协议标识，不限制回答提示词版本。
 - CALL_SCHEMA：请求绑定工具调用的封闭 JSON Schema。
 - CATALOG_SCHEMA：目录查询的 UUID 与分页 Schema。
@@ -28,10 +28,12 @@ from apps.agent_tools.registry import build_registry
 from apps.agent_tools.schemas import PAGE, UUID, object_schema, validate
 from apps.crm.access import InvalidState, plain
 
+from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS
+
 from .models import ToolRead
 from .services import lock_owner, request_for, require_workspace
 
-ALLOWED_READ_TOOLS = frozenset({"customers.search", "customers.context"})
+ALLOWED_READ_TOOLS = WORKSPACE_READ_TOOLS
 CONTRACT_VERSION = "chat-tools-v1"
 CALL_SCHEMA = object_schema(
     {
@@ -63,7 +65,7 @@ def processing_request(owner, request_id):
 # 输入：`owner` 为认证员工，`query` 含 request_id 及可选整数 page/page_size。
 # 输出：版本、请求 ID、tools/count/page/page_size，不包含业务数据。
 # 逻辑：验证请求后复用原目录，按固定白名单与实时 read 模式双重过滤，再分页。
-# 约束：不发布写入、确认或未获首期授权的其他只读工具，不隐式扩大权限。
+# 约束：不发布写入、确认或未获明确授权的其他只读工具，不隐式扩大权限。
 @transaction.atomic
 def catalog_for(owner, query):
     validate(query, CATALOG_SCHEMA)
@@ -88,8 +90,8 @@ def catalog_for(owner, query):
 # 功能：为实际返回的查询数据创建不会与其他读取冲突的来源。
 # 输入：`read_id` 为新读取 UUID，`name` 为已允许工具名，`data` 为 JSON 业务结果。
 # 输出：具有 source_id/source_type/title_or_label/content 的证据数组。
-# 逻辑：搜索按公司拆分并附本页计数证据；详情完整序列化本次公司数据，不二次读取或裁剪。
-# 约束：来源由读取 UUID 和公司 ID 区分，正文可能较长；Agent 自行选择预算内证据，不能把节选称为完整。
+# 逻辑：客户搜索和实验表按记录拆分并附分页证据；其他读取完整序列化，实验来源明确标记虚构。
+# 约束：来源由读取 UUID 和记录标识区分，正文可能较长；Agent 自行选择预算内证据，不能把节选称为完整。
 def evidence_for(read_id, name, data):
     prefix = f"chat-tool:{read_id}"
     if name == "customers.search":
@@ -111,6 +113,15 @@ def evidence_for(read_id, name, data):
                 | {"returned_company_ids": [row["id"] for row in data["results"]]},
             )
         )
+    elif name == "experiments.rows":
+        parts = [(f"{prefix}:row:{data['model']}:{row['pk']}", "experiment_row",
+                  f"虚构实验 · {data['model']} · {row['pk']}", row) for row in data["results"]]
+        parts.append((f"{prefix}:page:{data['page']}", "experiment_page", "虚构实验 · 分页范围",
+                      {key: value for key, value in data.items() if key != "results"}
+                      | {"returned_pks": [row["pk"] for row in data["results"]], "synthetic": True}))
+    elif name in {"experiments.catalog", "experiments.file_read"}:
+        parts = [(f"{prefix}:experiment", "experiment_catalog" if name.endswith("catalog") else "experiment_file",
+                  "虚构实验 · 批次目录" if name.endswith("catalog") else "虚构实验 · 文件内容块", data)]
     else:
         parts = [
             (

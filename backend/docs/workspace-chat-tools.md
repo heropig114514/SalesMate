@@ -1,6 +1,6 @@
 # 工作空间聊天：Agent 对接契约
 
-更新：2026-09-20。本文描述已经实现的后端接口；生产环境需先应用 `chat.0003_tool_read` 并发布代码。Agent 的工具选择、模型调用循环、分页遍历和提示词由 Agent 侧实现，后端不会自动为模型安装 MCP 或执行模型调用。
+更新：2026-09-21。本文描述已经实现的后端接口；生产环境需先应用 `chat.0003_tool_read` 并发布代码。Agent 的工具选择、模型调用循环、分页遍历和提示词由 Agent 侧实现，后端不会自动为模型安装 MCP 或执行模型调用。
 
 ## 1. 范围与身份
 
@@ -8,9 +8,9 @@
 
 以下接口统一使用 `Authorization: Agent <员工绑定服务令牌>`，不接受普通 Tool token 或浏览器 Session 替代。令牌确定员工；输入不允许 owner_id、employee_id 或其他身份覆盖。Agent 凭证本身标识员工，不区分调用进程是否命名为聊天 Worker。工具目录和工具执行同时检查本人请求处于 processing，且会话仍可访问。
 
-首期只开放 `customers.search`、`customers.context`，还会检查工具实时注册为 read。其他只读工具也不会自动开放；写工具、确认工具、授权管理、发信和日历动作不在此入口范围。
+明确开放 `customers.search`、`customers.context`、`experiments.catalog`、`experiments.rows`、`experiments.file_read`，还会检查工具实时注册为 read。其他只读工具也不会自动开放；写工具、确认工具、授权管理、发信和日历动作不在此入口范围。
 
-客户搜索复用 `visible_company_ids`，客户详情复用原公司 owner 权限。团队共享搜索命中不意味着可以读取私人邮件或画像。后端不重写客户权限，也不改变 L1–L4。
+客户搜索复用 `visible_company_ids`，客户详情复用原公司 owner 权限。团队共享搜索命中不意味着可以读取私人邮件或画像。共享实验工具复用网页精确批次清单与指纹校验，只读获准的虚构记录并保留 owner；不会因此开放普通私有客户详情。后端不改变 L1–L4。实验调用参数及 MCP 接入见 [实验数据共享](experiment-data.md)。
 
 ## 2. 接口列表
 

@@ -111,7 +111,7 @@ class ChatToolTests(TestCase):
 
     # 功能：验证工具目录准确反映当前白名单与原始参数契约。
     # 输入：处理请求、分页参数和无效查询变体。
-    # 输出：只有两个 read 工具，原 Schema 相等，错误参数为 400。
+    # 输出：只有五个明确获准的 read 工具，原 Schema 相等，错误参数为 400。
     # 逻辑：遍历分页并对照真实业务注册表。
     # 约束：发现不能授予写入权限，也不要求预选公司。
     def test_catalog_and_schema(self):
@@ -120,7 +120,7 @@ class ChatToolTests(TestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response["Cache-Control"], "no-store")
-        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["count"], 5)
         self.assertEqual(
             {row["name"] for row in response.data["tools"]},
             tool_reads.ALLOWED_READ_TOOLS,
@@ -133,7 +133,7 @@ class ChatToolTests(TestCase):
             BASE + "tools/",
             {"request_id": str(self.request.pk), "page": 2, "page_size": 1},
         )
-        self.assertEqual((page.data["count"], len(page.data["tools"])), (2, 1))
+        self.assertEqual((page.data["count"], len(page.data["tools"])), (5, 1))
         for query in (
             {},
             {"page": "x"},
@@ -403,7 +403,7 @@ class ChatToolTests(TestCase):
     # 功能：验证白名单工具后来变为写模式时不会被继续开放。
     # 输入：仅在测试中替换注册表的 customers.search executionMode。
     # 输出：目录移除该工具，调用被 403 拒绝且处理器未执行。
-    # 逻辑：发现和执行分别复核实时声明，不能只依赖固定工具名。
+    # 逻辑：发现保留其他四个 read 工具，执行再次复核被变更工具的实时模式。
     # 约束：模拟只涉及注册表，不修改真实业务代码或数据库。
     def test_registry_mode_is_rechecked(self):
         registry = copy.deepcopy(build_registry())
@@ -417,7 +417,7 @@ class ChatToolTests(TestCase):
                 BASE + "tools/", {"request_id": str(self.request.pk)}
             )
             self.assertEqual(
-                [item["name"] for item in catalog.data["tools"]], ["customers.context"]
+                [item["name"] for item in catalog.data["tools"]], sorted(tool_reads.ALLOWED_READ_TOOLS - {"customers.search"})
             )
             self.assertEqual(self.read("customers.search", {}).status_code, 403)
             handler.assert_not_called()

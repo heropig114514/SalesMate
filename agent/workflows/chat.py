@@ -1,7 +1,57 @@
-"""工作空间聊天：按员工请求发现只读工具、读取后端证据并回报回答。
-
-本模块只处理没有预选公司的聊天请求。后端决定员工可见范围并保存会话、
-工具读取及引用；Agent 只选择查询、控制模型输入和核对输出。
+"""职责：按请求编排客户与共享实验只读查询，核验模型回答引用。
+实现：实时工具目录、固定候选集合、原有读取与上下文预算共同约束模型调用。
+关联：DjangoBackendClient 提供请求绑定 HTTP；workspace-chat Skill 定义选择规则，后端持久化证据。
+目录：
+- ChatValidationError：表示工作空间契约校验失败。
+- _nonblank：读取非空文本。
+- _keys：核对封闭对象字段。
+- _recognizable_request_id：提取可识别的请求 ID。
+- _source：校验四字段来源。
+- parse_conversation_request：解析领取的工作空间请求。
+- parse_answer_context：解析冻结的请求上下文。
+- trim_recent_history：按字符预算保留近期历史。
+- trim_context_items：裁剪初始知识输入。
+- _decode_json_object：解析无重复键的 JSON 对象。
+- _decode_json_object.unique：拒绝重复 JSON 字段。
+- parse_model_candidate：验证回答引用并重排编号。
+- parse_model_candidate.replace_marker：替换正文引用编号。
+- stable_failure_result：建立稳定失败回报。
+- _diagnostic_excerpt：生成有限错误摘要。
+- _lexical_units：提取片段匹配单元。
+- _is_direct_tool_action：识别直接业务操作请求。
+- bailian_chat_provider：调用百炼生成一次 JSON 回答。
+- _workspace_failure：生成当前工作空间版本失败结果。
+- _workspace_arguments：验证固定只读工具及模型参数。
+- _workspace_uuid：校验 UUID 字符串。
+- _workspace_catalog：解析请求实际发布的只读目录。
+- _workspace_schema_arguments：核对参数键与实时 Schema。
+- _workspace_decision：解析模型动作。
+- _workspace_tool_result：校验读取回执并生成提示摘要。
+- _workspace_append_evidence：追加不同身份的读取证据。
+- _workspace_excerpt：截取与问题相关的原文片段。
+- _workspace_prompt_evidence：选择预算内的来源。
+- answer_workspace_request：处理工作空间问题和只读工具循环。
+- _chat_report_is_saved：核对响应丢失后的权威终态。
+- process_chat_once：领取并处理至多一个聊天请求。
+变量索引：
+- WORKSPACE_CHAT_PROMPT_VERSION：实际加载的提示词版本。
+- _CITATION_FIELDS：引用元数据契约。
+- _CITATION_MARKER：正文数字引用正则。
+- _CONTEXT_FIELDS：上下文响应字段契约。
+- _FAILURE_MESSAGES：稳定失败码和文案。
+- _HISTORY_CHARACTER_BUDGET：近期历史字符预算。
+- _NONSTANDARD_SOURCE_TAG：旧式非标准引用标签正则。
+- _REQUEST_FIELDS：领取请求五字段契约。
+- _SOURCE_FIELDS：来源四字段契约。
+- _WORKSPACE_CHAT_SKILL：工作空间提示及既定模型输出预算。
+- _WORKSPACE_DETAIL_EXCERPT_CHARACTERS：单条客户详情节选预算。
+- _WORKSPACE_MAX_EVIDENCE_ITEMS：模型展示来源最多 12 条。
+- _WORKSPACE_MAX_PROMPT_CHARACTERS：来源正文总字符预算。
+- _WORKSPACE_MAX_SEARCH_PAGE_SIZE：模型分页读取上限 20。
+- _WORKSPACE_MAX_TOOL_READS：每次回答最多六次读取。
+- _WORKSPACE_OTHER_EXCERPT_CHARACTERS：其他来源单条节选预算。
+- __all__：公开的工作空间解析与执行符号。
+- logger：工作流阶段及耗时日志。
 """
 
 from __future__ import annotations
@@ -15,6 +65,7 @@ from typing import Any, Mapping
 
 from agent.clients.backend_api import BackendContractError, BackendRequestError
 from agent.skills import load_skill
+from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, WORKSPACE_READ_TOOLS
 
 
 _WORKSPACE_CHAT_SKILL = load_skill("workspace-chat")
@@ -51,22 +102,40 @@ _NONSTANDARD_SOURCE_TAG = re.compile(
 logger = logging.getLogger("salesmate.chat")
 
 
+# 功能：表示工作空间契约校验失败。
+# 逻辑：由调用方转成阶段失败，不隐藏解析错误。
+# 约束：只标记验证失败，不执行 I/O。
 class ChatValidationError(ValueError):
     """请求、来源或模型输出不符合工作空间聊天契约。"""
 
 
+# 功能：读取非空文本。
+# 输入：`value` 待校验文本、`path` 错误消息中的字段路径。
+# 输出：校验字符串类型与去空白后非空，返回原字符串。
+# 逻辑：校验字符串类型与去空白后非空，返回原字符串。
+# 约束：非法值抛出 ChatValidationError。
 def _nonblank(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ChatValidationError(f"{path} 必须是非空字符串。")
     return value.strip()
 
 
+# 功能：核对封闭对象字段。
+# 输入：`value` 待校验对象、`expected` 允许且必需的键集合、`path` 错误字段路径。
+# 输出：要求 Mapping 且键集合与 expected 完全一致，返回原对象。
+# 逻辑：要求 Mapping 且键集合与 expected 完全一致，返回原对象。
+# 约束：拒绝缺失及多余字段。
 def _keys(value: object, expected: set[str], path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != expected:
         raise ChatValidationError(f"{path} 字段必须与契约完全一致。")
     return value
 
 
+# 功能：提取可识别的请求 ID。
+# 输入：`value` 可能无效的领取请求对象。
+# 输出：对象含非空字符串时返回 ID，否则返回 None。
+# 逻辑：对象含非空字符串时返回 ID，否则返回 None。
+# 约束：只用于失败归属，不证明请求已获授权。
 def _recognizable_request_id(value: object) -> str | None:
     if not isinstance(value, Mapping):
         return None
@@ -74,6 +143,11 @@ def _recognizable_request_id(value: object) -> str | None:
     return request_id.strip() if isinstance(request_id, str) and request_id.strip() else None
 
 
+# 功能：校验四字段来源。
+# 输入：`value` 待校验来源对象、`path` 错误字段路径。
+# 输出：校验元数据非空及正文为字符串，返回来源字典。
+# 逻辑：校验元数据非空及正文为字符串，返回来源字典。
+# 约束：保留正文原值，不生成新证据。
 def _source(value: object, path: str) -> dict[str, str]:
     item = _keys(value, _SOURCE_FIELDS, path)
     content = item["content"]
@@ -85,6 +159,11 @@ def _source(value: object, path: str) -> dict[str, str]:
     }
 
 
+# 功能：解析领取的工作空间请求。
+# 输入：`value` 后端领取接口返回的五字段对象。
+# 输出：核对五字段及历史角色，返回规范化请求字典。
+# 逻辑：核对五字段及历史角色，返回规范化请求字典。
+# 约束：拒绝预选公司及多余字段。
 def parse_conversation_request(value: object) -> dict[str, Any]:
     """解析后端领取的工作空间请求。"""
     request = _keys(value, _REQUEST_FIELDS, "request")
@@ -109,6 +188,11 @@ def parse_conversation_request(value: object) -> dict[str, Any]:
     }
 
 
+# 功能：解析冻结的请求上下文。
+# 输入：`value` 后端冻结上下文；`expected_request_id`、`expected_scope` 默认 None 表示不额外核对对应预期值。
+# 输出：核对请求和范围、来源一致性与状态，返回上下文字典。
+# 逻辑：核对请求和范围、来源一致性与状态，返回上下文字典。
+# 约束：同一来源元数据不能对应不同正文。
 def parse_answer_context(
     value: object, *, expected_request_id: str | None = None,
     expected_scope: str | None = None,
@@ -152,6 +236,11 @@ def parse_answer_context(
     }
 
 
+# 功能：按字符预算保留近期历史。
+# 输入：`value` 已经过角色与正文验证的近期消息数组。
+# 输出：从最早消息开始剔除，返回剩余消息列表。
+# 逻辑：从最早消息开始剔除，返回剩余消息列表。
+# 约束：不修改原列表或既定历史预算。
 def trim_recent_history(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         raise ChatValidationError("recent_history 必须是数组。")
@@ -161,6 +250,11 @@ def trim_recent_history(value: object) -> list[dict[str, str]]:
     return retained
 
 
+# 功能：裁剪初始知识输入。
+# 输入：`customer_context` 客户来源、`internal_knowledge` 内部知识、`external_knowledge` 外部知识数组。
+# 输出：按顺序选最多 12 条，超过 2000 字时加节选标记，返回三组来源。
+# 逻辑：按顺序选最多 12 条，超过 2000 字时加节选标记，返回三组来源。
+# 约束：不修改后端原始证据。
 def trim_context_items(customer_context: object, internal_knowledge: object, external_knowledge: object) -> dict[str, list[dict[str, str]]]:
     """本流程只展示最多 12 条知识，单条至多 2000 字；不改后端原始证据。"""
     result = {"customer_context": [], "internal_knowledge": [], "external_knowledge": []}
@@ -184,7 +278,17 @@ def trim_context_items(customer_context: object, internal_knowledge: object, ext
     return result
 
 
+# 功能：解析无重复键的 JSON 对象。
+# 输入：`value` 模型返回的 JSON 字符串。
+# 输出：通过对象钩子拒绝重复键，返回 dict。
+# 逻辑：通过对象钩子拒绝重复键，返回 dict。
+# 约束：非法 JSON 或非对象抛出 ChatValidationError。
 def _decode_json_object(value: str) -> dict[str, Any]:
+    # 功能：拒绝重复 JSON 字段。
+    # 输入：`pairs` JSON 解码器提供的顺序键值对。
+    # 输出：遍历 pairs 建立字典，重复键即失败。
+    # 逻辑：遍历 pairs 建立字典，重复键即失败。
+    # 约束：用于 JSON 解码钩子，不合并重复字段。
     def unique(pairs):
         result = {}
         for key, item in pairs:
@@ -201,6 +305,11 @@ def _decode_json_object(value: str) -> dict[str, Any]:
     return parsed
 
 
+# 功能：验证回答引用并重排编号。
+# 输入：`value` 含回答与引用的模型对象、`allowed_context_items` 本轮展示来源、`request_id` 可选请求标识。
+# 输出：对照允许来源三字段身份，按正文首次出现顺序压缩引用，返回回答对象。
+# 逻辑：对照允许来源三字段身份，按正文首次出现顺序压缩引用，返回回答对象。
+# 约束：不得引用未展示来源；request_id 保留为调用契约参数，当前不用于校验。
 def parse_model_candidate(
     value: object, *, allowed_context_items: object, request_id: str | None = None
 ) -> dict[str, Any]:
@@ -234,6 +343,11 @@ def parse_model_candidate(
             compact.append(row)
     cursor = iter(markers)
 
+    # 功能：替换正文引用编号。
+    # 输入：`_` 正则匹配对象；隐式读取外围已验证的 markers 游标及引用映射。
+    # 输出：读取外围 cursor、citations 与 used，返回压缩后的编号字符串。
+    # 逻辑：读取外围 cursor、citations 与 used，返回压缩后的编号字符串。
+    # 约束：参数为正则匹配对象；序号来自已验证的 markers。
     def replace_marker(_: re.Match[str]) -> str:
         row = citations[next(cursor) - 1]
         key = tuple(row[field] for field in ("source_id", "source_type", "title_or_label"))
@@ -243,6 +357,11 @@ def parse_model_candidate(
     return {"assistant_text": text, "citations": compact}
 
 
+# 功能：建立稳定失败回报。
+# 输入：`request_id` 可识别请求标识、`code` 固定失败消息表中的错误码。
+# 输出：验证请求 ID 和失败码，返回六字段 failed 对象。
+# 逻辑：验证请求 ID 和失败码，返回六字段 failed 对象。
+# 约束：只接受固定失败码，不保存后端状态。
 def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     request_id = _nonblank(request_id, "request_id")
     if code not in _FAILURE_MESSAGES:
@@ -255,12 +374,22 @@ def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     }
 
 
+# 功能：生成有限错误摘要。
+# 输入：`value` 安全错误说明、`limit` 截断字符数，默认 160。
+# 输出：压缩空白并遮蔽邮箱后按 limit 截断，返回字符串。
+# 逻辑：压缩空白并遮蔽邮箱后按 limit 截断，返回字符串。
+# 约束：不是任意敏感信息过滤器，只供安全错误说明。
 def _diagnostic_excerpt(value: str, limit: int = 160) -> str:
     excerpt = re.sub(r"\s+", " ", value).strip()
     excerpt = re.sub(r"[\w.+-]+@[\w.-]+", "[email]", excerpt)
     return excerpt[:limit]
 
 
+# 功能：提取片段匹配单元。
+# 输入：`value` 当前用户问题或其他用于片段匹配的字符串。
+# 输出：提取英文词和中文二元组，返回集合。
+# 逻辑：提取英文词和中文二元组，返回集合。
+# 约束：仅用于节选定位，不是语义检索模型。
 def _lexical_units(value: str) -> set[str]:
     units = set(re.findall(r"[a-z0-9][a-z0-9_-]+", value.lower()))
     for sequence in re.findall(r"[\u4e00-\u9fff]+", value):
@@ -268,6 +397,11 @@ def _lexical_units(value: str) -> set[str]:
     return units
 
 
+# 功能：识别直接业务操作请求。
+# 输入：`question` 当前用户问题。
+# 输出：解释类问法排除后进行既定正则匹配，返回布尔值。
+# 逻辑：解释类问法排除后进行既定正则匹配，返回布尔值。
+# 约束：此启发式不替代后端权限检查。
 def _is_direct_tool_action(question: str) -> bool:
     compact = re.sub(r"\s+", "", question).lower()
     if re.search(r"(?:如何|怎么|怎样).{0,8}(?:发送|安排|创建|更新|删除)", compact):
@@ -278,24 +412,46 @@ def _is_direct_tool_action(question: str) -> bool:
     ))
 
 
+# 功能：调用百炼生成一次 JSON 回答。
+# 输入：`messages` 模型消息数组、`max_tokens` 最大输出预算，默认由工作空间 Skill 提供。
+# 输出：委托 generate_chat_json，返回模型文本。
+# 逻辑：委托 generate_chat_json，返回模型文本。
+# 约束：max_tokens 默认来自 Skill；网络与模型错误向上传播。
 def bailian_chat_provider(messages: list[dict[str, str]], *, max_tokens: int = _WORKSPACE_CHAT_SKILL.max_tokens) -> str:
     from agent.llm.bailian import generate_chat_json
     return generate_chat_json(messages, max_tokens=max_tokens)
 
 
+# 功能：生成当前工作空间版本失败结果。
+# 输入：`request_id` 当前请求标识、`code` 固定失败码。
+# 输出：委托稳定失败构造并写入当前版本，返回字典。
+# 逻辑：委托稳定失败构造并写入当前版本，返回字典。
+# 约束：不改变错误码及其提示。
 def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
     return {**stable_failure_result(request_id, code), "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION}
 
 
+# 功能：验证固定只读工具及模型参数。
+# 输入：`name` 模型选择的工具名称、`value` 模型生成的参数对象。
+# 输出：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
+# 逻辑：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
+# 约束：实验参数完整类型由实时后端 Schema 验证，不猜测模型或批次名。
 def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, Any]]:
-    """只接受当前后端协定的两个只读客户工具及其参数。"""
+    """校验客户参数与实验分页预算；实验字段类型继续由后端实时 Schema 验证。"""
     if (
         not isinstance(name, str)
-        or name not in {"customers.search", "customers.context"}
+        or name not in WORKSPACE_READ_TOOLS
         or not isinstance(value, dict)
     ):
-        raise ChatValidationError("工作空间只允许客户搜索和客户详情只读工具。")
+        raise ChatValidationError("工作空间只允许已登记的客户及实验只读工具。")
     arguments = dict(value)
+    if name in EXPERIMENT_TOOLS:
+        if name == "experiments.rows":
+            size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+            if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
+                raise ChatValidationError("实验读取每页数量无效。")
+            arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+        return name, arguments
     if name == "customers.search":
         if set(arguments) - {"q", "company", "archived", "page", "page_size"}:
             raise ChatValidationError("客户搜索含不支持的参数。")
@@ -324,6 +480,11 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
     return name, arguments
 
 
+# 功能：校验 UUID 字符串。
+# 输入：`value` 待验证的公司或工具读取 UUID 字符串。
+# 输出：解析 UUID，成功无返回值。
+# 逻辑：解析 UUID，成功无返回值。
+# 约束：不验证该 UUID 对应记录的访问权限。
 def _workspace_uuid(value: object) -> None:
     if not isinstance(value, str):
         raise ChatValidationError("公司 ID 必须是 UUID。")
@@ -333,8 +494,13 @@ def _workspace_uuid(value: object) -> None:
         raise ChatValidationError("公司 ID 必须是 UUID。") from None
 
 
+# 功能：解析请求实际发布的只读目录。
+# 输入：`raw` 后端目录响应、`request_id` 当前已领取的请求标识。
+# 输出：核对协议与请求，筛选五个固定候选并检查封闭 Schema，返回名称索引。
+# 逻辑：核对协议与请求，筛选五个固定候选并检查封闭 Schema，返回名称索引。
+# 约束：未发布工具不可执行，不接受写模式。
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
-    """只采用后端在本次 processing 请求中发布的两个 read 工具。"""
+    """仅采用固定集合中由本次 processing 请求实际发布的 read 工具。"""
     if not isinstance(raw, Mapping) or (
         raw.get("contract_version") != "chat-tools-v1"
         or raw.get("request_id") != request_id
@@ -346,7 +512,7 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
         if not isinstance(entry, Mapping):
             raise ChatValidationError("工作空间工具目录项无效。")
         name = entry.get("name")
-        if name not in {"customers.search", "customers.context"}:
+        if name not in WORKSPACE_READ_TOOLS:
             continue
         schema = entry.get("inputSchema")
         if (
@@ -367,6 +533,11 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
     return catalog
 
 
+# 功能：核对参数键与实时 Schema。
+# 输入：`arguments` 工具参数、`schema` 本次后端目录发布的封闭对象 Schema。
+# 输出：拒绝未声明字段及缺失必填项，成功无返回值。
+# 逻辑：拒绝未声明字段及缺失必填项，成功无返回值。
+# 约束：具体字段值仍由后端完整 Schema 校验。
 def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
     """模型参数先满足当前目录声明；具体业务约束仍由后端验证。"""
     properties = schema["properties"]
@@ -374,6 +545,11 @@ def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[st
         raise ChatValidationError("工具参数与后端目录 Schema 不一致。")
 
 
+# 功能：解析模型动作。
+# 输入：`raw` 模型 JSON 文本、`evidence` 当前展示的来源白名单、`request_id` 当前请求标识。
+# 输出：严格区分 tool 与 answer，返回动作和已验证载荷。
+# 逻辑：严格区分 tool 与 answer，返回动作和已验证载荷。
+# 约束：回答只能引用当前展示的 evidence；不接受其他动作。
 def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id: str):
     if not isinstance(raw, str):
         raise ChatValidationError("模型结果必须是 JSON 文本。")
@@ -393,6 +569,11 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
     raise ChatValidationError("模型动作必须是只读工具查询或最终回答。")
 
 
+# 功能：校验读取回执并生成提示摘要。
+# 输入：`raw` 后端读取回执、`request_id` 当前请求标识、`name` 预期被执行的工具名。
+# 输出：核对请求工具和来源 UUID，按客户、实验目录、行或文件投影，返回摘要与完整证据。
+# 逻辑：核对请求工具和来源 UUID，按客户、实验目录、行或文件投影，返回摘要与完整证据。
+# 约束：摘要不展开附件正文；来源正文交给统一预算裁剪。
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
         raise ChatValidationError("工具响应必须是对象。")
@@ -435,6 +616,20 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
             "count": data["count"], "page": data["page"],
             "page_size": data["page_size"], "results": rows,
         }
+    elif name == "experiments.catalog":
+        if not isinstance(data.get("batches"), list):
+            raise ChatValidationError("实验目录缺少批次数组。")
+        summary = {"batches": [{key: batch[key] for key in ("batch", "owner", "synthetic", "read_only", "notice", "total")}
+                    | {"tables": [{key: table[key] for key in ("model", "name", "count")} for table in batch["tables"]]}
+                    for batch in data["batches"]]}
+    elif name == "experiments.rows":
+        if not isinstance(data.get("results"), list):
+            raise ChatValidationError("实验分页缺少记录数组。")
+        summary = {key: data[key] for key in ("batch", "model", "count", "page", "page_size")}
+        summary["results"] = [{key: row[key] for key in ("pk", "owner", "synthetic", "read_only")}
+                              for row in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]]
+    elif name == "experiments.file_read":
+        summary = {key: value for key, value in data.items() if key != "content"}
     else:
         summary = {
             key: data[key]
@@ -444,6 +639,11 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
     return summary, evidence
 
 
+# 功能：追加不同身份的读取证据。
+# 输入：`allowed` 累积来源数组、`additions` 本次后端新登记的来源数组。
+# 输出：按来源三字段去重并原地扩展 allowed，无返回值。
+# 逻辑：按来源三字段去重并原地扩展 allowed，无返回值。
+# 约束：同一身份内容冲突立即失败，不覆盖历史来源。
 def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[dict[str, str]]):
     identities = {
         (item["source_id"], item["source_type"], item["title_or_label"]): item["content"]
@@ -459,6 +659,11 @@ def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[di
         identities[key] = item["content"]
 
 
+# 功能：截取与问题相关的原文片段。
+# 输入：`content` 原始来源正文、`question` 当前问题、`limit` 此来源可用字符数。
+# 输出：保留头部并按词单元寻找原文，返回受 limit 限制且带节选标记的文本。
+# 逻辑：保留头部并按词单元寻找原文，返回受 limit 限制且带节选标记的文本。
+# 约束：不改写原文含义，不表示已经提供全文。
 def _workspace_excerpt(content: str, question: str, limit: int) -> str:
     """对模型展示明确标记的节选，优先保留与问题匹配的原文片段。"""
     if len(content) <= limit:
@@ -482,6 +687,11 @@ def _workspace_excerpt(content: str, question: str, limit: int) -> str:
     return "\n…\n".join(excerpts)[:budget] + marker
 
 
+# 功能：选择预算内的来源。
+# 输入：`evidence` 累积来源数组、`question` 当前问题；预算读取模块常量。
+# 输出：按既定优先级和数量字符预算裁剪，返回完整来源白名单与展示片段。
+# 逻辑：按既定优先级和数量字符预算裁剪，返回完整来源白名单与展示片段。
+# 约束：保留原有来源优先级和预算；新实验文件优先展示，分页与目录随后，行记录最后；未展示来源不可引用。
 def _workspace_prompt_evidence(
     evidence: list[dict[str, str]], question: str
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -491,6 +701,10 @@ def _workspace_prompt_evidence(
         "customer_search_page": 1,
         "internal_knowledge": 2,
         "customer_search": 3,
+        "experiment_file": 0,
+        "experiment_page": 1,
+        "experiment_catalog": 1,
+        "experiment_row": 3,
     }
     ranked = sorted(
         enumerate(evidence),
@@ -515,6 +729,11 @@ def _workspace_prompt_evidence(
     return visible, prompt
 
 
+# 功能：处理工作空间问题和只读工具循环。
+# 输入：`request` 后端领取对象、`backend` 请求绑定客户端、`chat_provider` 单次模型调用函数。
+# 输出：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
+# 逻辑：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
+# 约束：backend 是真实边界，chat_provider 是模型边界；保存证据在后端执行，参数与预算保持不变。
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
     """最多六次只读查询；每次由模型选择，最终回答仅引用后端登记的证据。"""
     request_id = _recognizable_request_id(request)
@@ -561,7 +780,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                             "evidence_items_available": len(evidence),
                             "evidence_items_shown": len(prompt_evidence),
                             "available_tools": list(catalog.values()) if catalog is not None else [
-                                {"name": "customers.search"}, {"name": "customers.context"}
+                                {"name": name} for name in sorted(WORKSPACE_READ_TOOLS)
                             ],
                             "tool_results": observations,
                             "remaining_reads": _WORKSPACE_MAX_TOOL_READS - turn,
@@ -650,6 +869,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
         return _workspace_failure(request_id, code)
 
 
+# 功能：核对响应丢失后的权威终态。
+# 输入：`result` 本地回报载荷、`state` 后端权威状态响应。
+# 输出：比较请求版本状态及失败内容或引用身份，返回布尔值。
+# 逻辑：比较请求版本状态及失败内容或引用身份，返回布尔值。
+# 约束：只确认已保存结果，不重新回报或运行模型。
 def _chat_report_is_saved(result: Mapping[str, Any], state: object) -> bool:
     """回报响应丢失时，仅在权威终态与本地结果相符才确认已保存。"""
     if not isinstance(state, Mapping) or (

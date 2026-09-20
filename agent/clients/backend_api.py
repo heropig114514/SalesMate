@@ -20,6 +20,9 @@
 - BackendClient.save_sync_state：条件更新邮箱游标。
 - BackendClient.claim_answer_request：领取一条工作空间聊天回答请求。
 - BackendClient.get_answer_context：读取请求绑定的客户和知识上下文。
+- BackendClient.get_chat_tools：发现本请求只读工具。
+- BackendClient.get_chat_request_status：读取本人请求状态。
+- BackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
 - BackendClient.report_answer：回报带 Prompt 版本的聊天结果。
 - BackendRetrievalError：表示后端读取失败。
 - BackendConfigurationError：表示配置不满足调用前提。
@@ -47,6 +50,9 @@
 - DjangoBackendClient.save_sync_state：条件更新邮箱游标。
 - DjangoBackendClient.claim_answer_request：映射工作空间聊天领取接口并移除过渡期空公司字段。
 - DjangoBackendClient.get_answer_context：映射聊天上下文接口。
+- DjangoBackendClient.get_chat_tools：发现本请求只读工具。
+- DjangoBackendClient.get_chat_request_status：读取本人请求状态。
+- DjangoBackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
 - DjangoBackendClient.report_answer：映射聊天回答保存接口。
 - DjangoBackendClient._required_string：读取并校验非空字符串。
 - DjangoBackendClient._object_list：验证对象数组。
@@ -59,6 +65,7 @@
 - DjangoBackendClient._error：规范化 API 错误。
 - django_backend_from_environment：读取连接配置，允许任务显式提供独立身份和邮箱。
 变量索引：
+- logger：记录安全请求上下文与耗时。
 - JsonObject：只读 JSON 映射类型别名。
 - _DEFAULT_ANALYSIS_PROMPT_VERSION：从实际分析 Skill 读取的提示词版本。
 - _JobContext.job_id：已领取任务 ID。
@@ -81,6 +88,7 @@ from urllib.parse import quote, urlencode
 import requests
 
 from agent.skills import load_skill
+from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
@@ -216,14 +224,25 @@ class BackendClient(Protocol):
     # 约束：声明或异常构造不执行 HTTP 请求。
     def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
 
-    # 功能：发现当前聊天请求已获授权的只读工具及参数 Schema。
+    # 功能：发现请求实际获准的只读工具目录。
+    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：仅声明协议，由具体客户端实现传输。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_tools(self, request_id: str) -> JsonObject: ...
 
-    # 功能：回报响应丢失后核对当前请求的权威终态。
+    # 功能：读取本人请求的权威状态。
+    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：仅声明协议，由具体客户端实现传输。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
-    # 功能：在当前聊天请求中执行后端授权的只读客户工具，并登记可引用证据。
-    # 约束：仅声明请求绑定的查询，不允许 Agent 指定员工身份或写工具。
+    # 功能：执行客户或共享实验只读查询并取得登记证据。
+    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定只读工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：仅声明协议，由具体客户端实现传输。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def read_chat_tool(
         self, request_id: str, name: str, arguments: JsonObject
     ) -> JsonObject: ...
@@ -264,7 +283,7 @@ class BackendRequestError(RuntimeError):
     """后端请求失败，且不暴露服务凭证。"""
 
     # 功能：保存 HTTP 状态、错误代码和安全说明。
-    # 输入：`status_code` HTTP 状态或网络失败的零值、`code` 安全错误代码、`detail` 安全错误说明。
+    # 输入：`status_code` HTTP 状态或网络失败的零值、`code` 安全错误代码、`detail` 安全错误说明、`scope` 工具或请求错误范围。
     # 输出：无返回值，初始化实例状态。
     # 逻辑：保存状态、代码和说明，并构造安全异常消息。
     # 约束：声明或异常构造不执行 HTTP 请求。
@@ -815,6 +834,11 @@ class DjangoBackendClient:
             )
         return document
 
+    # 功能：发现请求实际获准的只读工具目录。
+    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：一次 GET 并检查协议版本、请求、页码与数量。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_tools(self, request_id: str) -> dict[str, Any]:
         """读取本次 processing 请求可用的工具目录，不从全局注册表猜测权限。"""
         self._required_string({"request_id": request_id}, "request_id", "Chat tools 请求")
@@ -838,6 +862,11 @@ class DjangoBackendClient:
             raise BackendContractError("Chat tools 目录数量不一致。")
         return document
 
+    # 功能：读取本人请求的权威状态。
+    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：一次 GET 并核对请求 ID 及合法状态。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_request_status(self, request_id: str) -> dict[str, Any]:
         """只查询本人聊天请求的已保存状态，不重新领取或生成回答。"""
         self._required_string({"request_id": request_id}, "request_id", "Chat status 请求")
@@ -852,13 +881,18 @@ class DjangoBackendClient:
             raise BackendContractError("Chat request status 与本次请求不一致。")
         return document
 
+    # 功能：执行客户或共享实验只读查询并取得登记证据。
+    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定只读工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
+    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
+    # 逻辑：核对固定名称与参数对象，一次 POST 并核对响应归属及证据数组。
+    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         """调用请求绑定的只读工具；工具结果和证据由后端共同确认。"""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool 请求")
-        if name not in {"customers.search", "customers.context"}:
-            raise BackendContractError("Chat tool 仅支持只读客户搜索与详情。")
+        if name not in WORKSPACE_READ_TOOLS:
+            raise BackendContractError("Chat tool 仅支持已登记的客户及实验只读查询。")
         if not isinstance(arguments, Mapping):
             raise BackendContractError("Chat tool arguments 必须是对象。")
         response, _ = self._request(

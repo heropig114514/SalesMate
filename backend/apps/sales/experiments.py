@@ -1,10 +1,11 @@
 """职责：向所有有效登录账号提供已批准虚构批次的跨账号只读数据视图。
 实现：模型白名单、精确清单主键及原始指纹共同限制读取；保留归属与外键，提供分页、导出和附件。
-关联：读取 seed_kg_lab 保存的 AuditEvent 清单；experiments.html 展示结果；不改变业务写权限或 Agent 执行权限。
+关联：读取 seed_kg_lab 保存的 AuditEvent 清单；experiments.html 展示结果；agent_tools 复用同一校验，不改变业务写权限。
 目录：
 - load_batch：定位获准且未清理的完整批次。
 - model_fields：返回允许展示的字段及关系说明。
 - table_rows：验证和投影清单中的单表记录。
+- file_content：核验并读取清单内文件字节。
 - batch_summary：提供表目录、归属与来源声明。
 - ExperimentView：已登录用户的只读实验 API。
 - ExperimentView.get：分派目录、分页、完整导出和文件下载。
@@ -173,6 +174,35 @@ def table_rows(entry, label):
     return rows
 
 
+# 功能：核验并读取清单内文件字节。
+# 输入：`entry` 为已授权批次，`label` 为文件模型，`pk` 为清单主键字符串。
+# 输出：模型记录与完整 bytes；未知记录 404，文件漂移或路径越界 409。
+# 逻辑：检查整表清单后再次核验实际读取的记录，避免 READ COMMITTED 下两次查询间漂移；附件另验路径和摘要。
+# 约束：调用方必须先验证用户权限并在事务中调用；不写下载审计，不读取批次目录外文件。
+def file_content(entry, label, pk):
+    if label not in {"sales.Attachment", "accounts.SetupDocument"}:
+        raise NotFound("该记录没有文件下载。")
+    rows = table_rows(entry, label)
+    if not any(row["pk"] == pk for row in rows):
+        raise NotFound("实验文件不存在。")
+    record = apps.get_model(label).objects.filter(pk=pk).first()
+    expected_row = next(row["fingerprint"] for row in entry.changes["rows"] if row["model"] == label and row["pk"] == pk)
+    if record is None or fingerprint(record) != expected_row:
+        raise Conflict("实验文件记录已变化，停止读取。")
+    if label == "accounts.SetupDocument":
+        content = bytes(record.content)
+    else:
+        root = (settings.BASE_DIR / "private_uploads" / str(entry.owner_id) / entry.object_id).resolve()
+        path = (settings.BASE_DIR / "private_uploads" / record.storage_key).resolve()
+        expected = {item["key"]: item["sha256"] for item in entry.changes.get("files", [])}
+        if path.parent != root or record.storage_key not in expected or not path.is_file():
+            raise Conflict("实验附件路径或文件状态异常。")
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected[record.storage_key]:
+            raise Conflict("实验附件内容已变化，停止下载。")
+    return record, content
+
+
 # 功能：提供表目录、归属与来源声明。
 # 输入：`entry` 已批准的批次事件。
 # 输出：批次元数据、表字段结构与登记数量。
@@ -250,26 +280,10 @@ class ExperimentView(APIView):
     # 功能：核验并返回清单内文件。
     # 输入：`entry` 批次事件、`label` 文档或附件模型、`pk` 原始主键字符串。
     # 输出：强制下载响应；未知文件 404，文件损坏或路径越界 409。
-    # 逻辑：先检查行指纹，再按精确清单检查文件内容；返回已校验的内存字节避免检查后文件被替换。
+    # 逻辑：委托 file_content 核验行及文件，下载与 Agent 分块读取使用同一内容边界。
     # 约束：不沿用私有附件的写审计服务，不访问批次目录之外的文件，不以内联 HTML 执行。
     def download(self, entry, label, pk):
-        if label not in {"sales.Attachment", "accounts.SetupDocument"}:
-            raise NotFound("该记录没有文件下载。")
-        rows = table_rows(entry, label)
-        if not any(row["pk"] == pk for row in rows):
-            raise NotFound("实验文件不存在。")
-        record = apps.get_model(label).objects.get(pk=pk)
-        if label == "accounts.SetupDocument":
-            content = bytes(record.content)
-        else:
-            root = (settings.BASE_DIR / "private_uploads" / str(entry.owner_id) / entry.object_id).resolve()
-            path = (settings.BASE_DIR / "private_uploads" / record.storage_key).resolve()
-            expected = {item["key"]: item["sha256"] for item in entry.changes.get("files", [])}
-            if path.parent != root or record.storage_key not in expected or not path.is_file():
-                raise Conflict("实验附件路径或文件状态异常。")
-            content = path.read_bytes()
-            if hashlib.sha256(content).hexdigest() != expected[record.storage_key]:
-                raise Conflict("实验附件内容已变化，停止下载。")
+        record, content = file_content(entry, label, pk)
         return FileResponse(io.BytesIO(content), as_attachment=True, filename=Path(record.name).name,
                             content_type="application/octet-stream")
 

@@ -1,6 +1,6 @@
 """职责：为算法调用方提供资料、目录和文件的数据工具，不运行模型或评分。
-实现：复用账号资料 API；单条目录修改在账号锁和资料 revision 下转换为原数组保存；附件直接经 Tool 身份分块读取。
-关联：registry 调用 support_specs，dispatch 调用 execute_support；现有 services 提供幂等和调用日志。
+实现：复用账号资料 API；目录修改保留账号锁和 revision；普通文件要求 TXT 后缀，实验入口可显式接受已核验 text/plain。
+关联：registry 调用 support_specs，dispatch 调用 execute_support；experiments 复用分块编码；services 提供幂等和调用日志。
 目录：
 - support_specs：声明资料、目录及文件工具。
 - catalog_operation：分页读取或版本化修改产品与方案条目。
@@ -162,14 +162,15 @@ def document_operation(request, operation, args):
 
 
 # 功能：将文件内容映射为有界数据。
-# 输入：`record` 元数据、`content` 原始字节、`args` 的 format/offset/limit。
+# 输入：`record` 元数据、`content` 原始字节、`args` 的 format/offset/limit、`allow_plain_text` 是否允许已核验 text/plain 实验文件。
 # 输出：内容、单位、总长度和 next_offset。
-# 逻辑：二进制 Base64、TXT 按 UTF-8 解码；超出文件范围报错，末尾返回空块。
-# 约束：text 不对 PDF/任意二进制猜测编码；不执行文件，不在日志记录正文。
-def read_content(record, content, args):
+# 逻辑：二进制 Base64、TXT 按 UTF-8 解码；实验入口可显式接受 text/plain 元数据，普通文件默认仍要求 .txt 后缀。
+# 约束：text 不对 PDF/任意二进制猜测编码；偏移超界报错，末尾为空块；不执行文件或记录正文。
+def read_content(record, content, args, *, allow_plain_text=False):
     offset, limit, mode = args["offset"], args["limit"], args["format"]
     if mode == "text":
-        if not record.name.lower().endswith(".txt") or limit > CHUNK_TEXT:
+        text_file = record.name.lower().endswith(".txt") or (allow_plain_text and record.content_type == "text/plain")
+        if not text_file or limit > CHUNK_TEXT:
             raise ValidationError("text 只支持 UTF-8 TXT，每次最多 16000 字符；其他文件使用 base64。")
         try:
             value = content.decode("utf-8-sig")
