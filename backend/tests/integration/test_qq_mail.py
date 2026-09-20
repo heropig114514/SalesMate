@@ -1,5 +1,5 @@
 """职责：验证 QQ 接入、持久同步、权限与 Gmail 共存。
-实现：显式启用 QQ 能力以覆盖恢复后的行为；隔离 PostgreSQL 真实事务和 HTTP 序列化器，模拟 IMAP/LLM 边界。
+实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；显式启用 QQ 能力以覆盖恢复后的行为；隔离 PostgreSQL 真实事务和 HTTP 序列化器，模拟 IMAP/LLM 边界。
 关联：qq_views、qq_connection、qq_sync、worker；不读取真实邮箱或调用真实模型。
 目录：
 - QQMailTests：QQ 跨模块回归测试。
@@ -167,13 +167,13 @@ class QQMailTests(TransactionTestCase):
     # 功能：防止旧 Gmail CLI 消费 QQ 任务。
     # 输入：无外部参数；QQ 排在 Gmail 前面的队列。
     # 输出：领取结果仅含 Gmail，QQ 仍排队。
-    # 逻辑：通过原公开领取函数检查 provider 过滤。
+    # 逻辑：通过原公开领取函数检查 provider 过滤。 Gmail 夹具显式提供 20 封范围，旧领取端仍不能取得 QQ 批次。
     # 约束：Google 凭证响应中不出现 QQ 密文。
     def test_legacy_gmail_claim_skips_qq(self):
         qq_run = request_run(self.owner, self.mailbox.pk, sync_options={"recent_days": 7, "max_messages": 20})
         gmail = Mailbox.objects.create(owner=self.owner, address="demo@gmail.com")
         GmailCredential.objects.create(mailbox=gmail, credentials={"token": "test"})
-        request_run(self.owner, gmail.pk)
+        request_run(self.owner, gmail.pk, sync_options={"max_messages": 20})
         claims = gmail_oauth.claim_mailbox_syncs(self.owner, 10)
         self.assertEqual([item["mailbox_id"] for item in claims], [str(gmail.pk)])
         qq_run.refresh_from_db()
@@ -261,7 +261,7 @@ class QQMailTests(TransactionTestCase):
     # 功能：验证每次 QQ 请求都必须明确选择范围。
     # 输入：无外部参数；空范围、非法值、越权账号及正常双限制请求。
     # 输出：非法输入 400、越权 404、有效请求 202，活动批次拒绝覆盖。
-    # 逻辑：执行真实 HTTP 校验与数据库排队，检查窗口保存与 Gmail 空请求兼容。
+    # 逻辑：执行真实 HTTP 校验与数据库排队，检查窗口保存与 Gmail 同样拒绝空请求。
     # 约束：不访问真实 IMAP；省略范围不会复用上次选择。
     def test_scope_is_required_and_validated_on_every_request(self):
         url = f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
@@ -286,12 +286,12 @@ class QQMailTests(TransactionTestCase):
         self.assertEqual(self.browser.post(url, {}, format="json").status_code, 400)
         gmail = Mailbox.objects.create(owner=self.owner, address="demo@gmail.com")
         GmailCredential.objects.create(mailbox=gmail, credentials={"token": "test"})
-        self.assertEqual(self.browser.post(f"/api/v1/mailboxes/{gmail.pk}/request-sync/", {}, format="json").status_code, 202)
+        self.assertEqual(self.browser.post(f"/api/v1/mailboxes/{gmail.pk}/request-sync/", {}, format="json").status_code, 400)
 
     # 功能：验证范围筛选先于原文读取及模型调用，并覆盖全部目标文件夹。
     # 输入：无外部参数；模拟跨文件夹新旧邮件、边界时间、未来日期和范围外 pending。
     # 输出：双限制最多两封，后续天数扩展可发现低 UID 老邮件，范围外原文不读取。
-    # 逻辑：真实同步及 L1/入库流程，仅模拟 IMAP 和模型；完成记录不占后续封数。
+    # 逻辑：真实同步及 L1/入库流程，仅模拟 IMAP 和模型；完成记录不占后续封数。 冻结时钟从共用 sync_scope 注入，QQ 原有时间精度和先去重后限量保持不变。
     # 约束：不能把每页封数当作批次封数，也不能用最大 UID 跳过未选择消息。
     def test_limits_apply_before_bodies_across_folders(self):
         now = timezone.now()
@@ -300,7 +300,7 @@ class QQMailTests(TransactionTestCase):
         old = qq_mail.message_id("INBOX", 10, 1)
         StoredMessage.objects.create(mailbox=self.mailbox, message_id=old)
         facts = json.dumps(self.raw(old)["facts"])
-        with patch("apps.crm.qq_scope.timezone.now", return_value=now):
+        with patch("apps.crm.sync_scope.timezone.now", return_value=now):
             request_run(self.owner, self.mailbox.pk, sync_options={"recent_days": 7, "max_messages": 2})
         run = claim_run(self.owner)
         with patch.object(qq_mail, "folders", return_value=["INBOX", "Sent Messages"]), patch.object(qq_mail, "select_folder", return_value=10), patch.object(qq_mail, "read_email", side_effect=lambda client, value: self.raw(value)) as read, patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=facts) as model:
@@ -335,14 +335,14 @@ class QQMailTests(TransactionTestCase):
     # 功能：验证只填天数或只填封数的语义及空结果。
     # 输入：无外部参数；固定窗口边界及两封历史邮件的模拟元数据。
     # 输出：仅天数保留边界，仅封数保留最新，无匹配批次零正文读取。
-    # 逻辑：真实范围选择先比较精确日期，再按全局数量筛选。
+    # 逻辑：真实范围选择先比较精确日期，再按全局数量筛选。 共用 sync_scope 提供固定时钟，QQ 单项限制与空窗口边界保持既定语义。
     # 约束：IMAP 元数据模拟不证明实际外部服务已验证。
     def test_single_limits_and_empty_window(self):
         now = timezone.now()
         for options, dates, expected in [({"recent_days": 7}, {1: now - timedelta(days=7), 2: now - timedelta(days=7, seconds=1)}, [1]),
                                          ({"max_messages": 1}, {1: now - timedelta(days=70), 2: now - timedelta(days=60)}, [2]),
                                          ({"recent_days": 1}, {1: now - timedelta(days=2)}, [])]:
-            with patch("apps.crm.qq_scope.timezone.now", return_value=now):
+            with patch("apps.crm.sync_scope.timezone.now", return_value=now):
                 request_run(self.owner, self.mailbox.pk, sync_options=options)
             run = claim_run(self.owner)
             with patch.object(qq_mail, "folders", return_value=["INBOX", "Sent Messages"]), patch.object(qq_mail, "select_folder", return_value=10), patch.object(qq_mail, "list_uids", side_effect=[list(dates), []]), patch.object(qq_mail, "message_dates", return_value=dates), patch.object(qq_mail, "read_email") as read:

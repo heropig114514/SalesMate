@@ -6,13 +6,13 @@
 
 ## 1. 当前范围
 
-2026-09-13 软件集成更新：产品入口由 Django 独立 `crm_worker` 调度，支持原文/L1 输出持久缓存、完整历史分页补采、History 增量及人工补抽取。下文一次性 CLI 描述保留用于模块调试；已由 Worker 接管的邮箱不可再用旧 CLI 写游标。无采购阶段的入站邮件进入复核，来源变化自动失效并重算 L2–L4。当前产品运行与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。本轮验证使用模拟 Gmail/模型，不代表新增流程已完成真实外部联调。
+2026-09-13 软件集成更新：产品入口由 Django 独立 `crm_worker` 调度，支持原文/L1 输出持久缓存、用户显式范围内的去重同步及人工补抽取（2026-09-20 起取消全量补采和 History 失效回退）。下文一次性 CLI 描述保留用于模块调试；已由 Worker 接管的邮箱不可再用旧 CLI 写游标。无采购阶段的入站邮件进入复核，来源变化自动失效并重算 L2–L4。当前产品运行与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。本轮验证使用模拟 Gmail/模型，不代表新增流程已完成真实外部联调。
 
 本目录负责 Gmail 邮件理解和公司级销售分析：
 
 ```text
 员工网页授权 Gmail
-  → Django 保存员工邮箱连接并创建同步请求
+  → Django 保存员工邮箱连接，员工选择天数或封数后创建同步请求
   → Agent 一次性领取授权和同步范围
   → Gmail
   → L1 单封邮件事实抽取
@@ -337,9 +337,9 @@ process_email(email, mailbox_address, extraction_provider) -> EmailSubmission
 python -m agent.main --sync-authorized-mailboxes-once
 ```
 
-自动执行和该调试命令都通过 `claim_mailbox_syncs()` 取得邮箱地址、后端保存的授权信息和读取上限；Agent 必要时刷新授权，完成同步后调用 `report_mailbox_sync()`。浏览器只读取同步状态并轮询结果。
+产品入口由独立 `crm_worker` 领取持久批次；该调试命令通过 `claim_mailbox_syncs()` 取得邮箱地址、授权、冻结 `sync_options` 和显式重试 ID。Agent 必须执行所选范围，缺失范围及 ID 的旧请求会失败，不能隐式改为全量同步。浏览器提交范围后读取状态并轮询。
 
-`sync_gmail()` 是底层同步函数。直接调用时需要后端提供的授权信息和 mailbox_id；正常产品流程由 `sync_authorized_mailboxes_once()` 从后端领取这些数据：
+`sync_gmail()` 是底层同步函数。直接调用时需要后端提供的授权信息和 mailbox_id；调试入口 `sync_authorized_mailboxes_once()` 从后端领取这些数据，产品使用持久 Worker：
 
 ```python
 from agent.clients.backend_api import DjangoBackendClient
@@ -361,9 +361,9 @@ result = sync_gmail(
 )
 ```
 
-`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20。首次同步读取最近的收件和发件邮件，并在本轮逐封提交结束后通过后端现有 `sync-state` 接口保存 Gmail `historyId`。读取邮件后，Agent 先按 `dedupe_key` 查询后端已有记录：当前 `extract-v7` 已完成或已确认为非业务的邮件直接复用，不再次调用百炼；失败记录继续抽取；不存在的邮件执行正常 L1。需要执行 L1 的邮件使用最多四个线程并发处理；任一邮件完成后立即在主线程逐封调用后端接口，不等待同批最慢的模型调用。默认百炼输出若只是不符合 L1 JSON 或原文证据约束，会在当前线程内修正重试一次；网络、配置和第二次校验失败仍作为单封失败隔离。提交顺序因此是 L1 实际完成顺序，最终统计仍与邮件顺序无关。一封邮件的处理或提交错误不会回滚其他邮件。同版本失败记录再次抽取仍失败时保留后端原记录，不提交后端禁止的 `failed → failed` 改写。所有未完成的 message ID 保存在 `scope.failed_message_ids`，下一次同步继续读取和处理。后续同步只读取游标之后新增的邮件；历史游标过期时退回最近邮件扫描，最终仍由 `dedupe_key` 保证保存幂等。
+`mailbox_address` 可以省略，此时读取 Gmail profile。`max_results` 必须是 1–20，表示底层单页大小。网页领取的 `sync_options` 包含 `recent_days`、`max_messages`、`since`、`until`，由后端在请求时冻结；Gmail 默认最多 50 封，仅填天数也适用，超过 50 封须用户明确批准后携带 `allow_large_sync=true`，不能批准无限量；最近封数先截断，再按邮箱与 message ID 跳过已存记录，不继续向旧邮件补足数量。失败 ID 保留供明确重试，不会被普通范围同步隐式重做。`sync_gmail` 底层仍保留无 `sync_options` 时的模块测试游标协议，产品 Worker 和网页领取入口均不走该路径。
 
-如果传入的测试后端或旧适配器没有 `get_sync_state()` 与 `save_sync_state()`，`sync_gmail()` 会兼容退回原来的最近邮件扫描。游标读取或保存不可用不会改变邮件提交的正确性，只会让下一次同步重新扫描最近邮件。
+L1 既定最多四路并发、完成即提交、校验修正和失败隔离逻辑保持不变。Worker 使用持久原文及 L1 输出复用缓存；其接管邮箱不能混用旧 CLI 游标写入，已配置的读写错误明确向上报告。具体首次授权、范围校验与恢复边界见 [邮件处理适配](../backend/docs/processing-integration.md)。
 
 L1 的标准 `EmailSubmission` 保持上一节的业务字段。HTTP 适配器提交时额外加入后端传输所需的 `mailbox_id` 和 `source=gmail_real`，但不会把多值 facts 降级成后端当前的旧单值结构。
 

@@ -1,13 +1,13 @@
 # 邮件处理与复核适配
 
-依据 2026-09-13 的需求及后续用户决策实施。Web 只排队，独立 Worker 调用 Agent；保留既有评分和模型参数。历史补采每页 20 封直至扫描完成，后续使用 History 增量。当前 Agent 从 `customer-analysis` Skill 读取 `analysis-v3`，后端按请求中的版本保存和查询缓存，无需固定分析版本配置。
+依据 2026-09-13 的需求及后续用户决策实施。Web 只排队，独立 Worker 调用 Agent；保留既有评分和模型参数。2026-09-20 起 Gmail 每次必须明确选择最近 N 天或最近 N 封；仅在该范围内按每页 20 封查询；普通同步最多 50 封（只填天数也适用），超量必须明确批准，不执行全量历史补采或 History 失效回退。当前 Agent 从 `customer-analysis` Skill 读取 `analysis-v3`，后端按请求中的版本保存和查询缓存，无需固定分析版本配置。
 
 ## 已实现
 
 | 需求 | 实现 |
 |---|---|
 | 持久批次和逐封状态 | MailboxSyncRun、EmailProcessingJob；发现时登记，回报 fetching/extracting/persisting/completed/failed |
-| 快速返回 | request-sync 返回 202，附 run_id、queued 和原邮箱字段；重复点击复用活动批次 |
+| 快速返回 | request-sync 返回 202，附 run_id、queued 和原邮箱字段；活动批次期间重复请求返回 409，不覆盖原范围 |
 | 失败隔离 | Worker 启用 Agent 观察回调，单封 Gmail 读取、L1 或提交失败独立记录 |
 | 独立调度 | crm_worker：一个同步通道，默认两个画像通道；L1 保留四路 |
 | 公司互斥 | 复用 Job，所有者行锁串行化领取，同公司运行时后继等待，其他公司可领取 |
@@ -48,13 +48,13 @@ Web 内的旧调度线程及其开关已移除。共享 Worker 从数据库轮�
 - 公司 Job 保留既定租约、revision 和失败语义；旧结果不能覆盖新上下文。一个公司运行期间的多次更新合并到待办后继。
 - 新 Worker 的最终回报校验 run_id、租约和状态。旧 Agent CLI 的 mailbox-syncs 领取/回报接口保留用于迁移；其回报仍按当前邮箱运行批次匹配，缺少执行者身份的旧协议不要与新 Worker 混用同一邮箱。
 - Agent 可选 `progress` 回调仅传 ID、阶段及受控代码。回调失败向上报告。旧 CLI 未启用回调时仍保持原调用行为，完整逐封读取隔离请使用 crm_worker。
-- Worker 的 SyncCheckpoint 与消息发现记录在同一数据库事务提交；游标只在 ID 已持久登记后推进。数据库或网络失败不会被当作首次同步。旧 CLI 已支持的游标协议也改为异常向上报告；Worker 接管邮箱后，后端拒绝旧 CLI 修改该邮箱游标，避免双写。
+- Worker 的接管标记、范围内消息发现与逐封任务在同一数据库事务提交；不推进全局 History 游标。数据库或网络失败直接报告。旧 CLI 已支持的游标协议也改为异常向上报告；Worker 接管邮箱后，后端拒绝旧 CLI 修改该邮箱游标，避免双写。
 
 ## 接口
 
 | 接口 | 行为 |
 |---|---|
-| POST `/api/v1/mailboxes/{mailbox_id}/request-sync/` | 返回 202 和批次；无需等待模型 |
+| POST `/api/v1/mailboxes/{mailbox_id}/request-sync/` | 必须提供 sync_options，返回 202 和批次；无需等待模型 |
 | GET `/api/v1/mailbox-sync-runs/{run_id}/` | 邮件进度、公司分析进度、逐封安全错误 |
 | POST `/api/v1/mailbox-sync-runs/{run_id}/` | 明确重试 failed/partial 批次，返回新批次 202 |
 | GET `/api/v1/email-reviews/?status=pending&page=1` | 当前员工全部邮箱复核分页 |
@@ -69,12 +69,12 @@ Web 内的旧调度线程及其开关已移除。共享 Worker 从数据库轮�
 2. 人工确认尚未完成 L1 的邮件时创建 `ExtractionRepair`。Worker 从持久正文补抽取，使用原 L1 提示词，跳过已被人工否定的自动邮件过滤。旧抽取和原文保留，新抽取以 `repair_generation` 标记代次，不伪造新的提示词版本。此公司的画像等待 L1 修复；失败在“全部”复核列表显示，再次点击“确认业务”才重试。
 3. 分类、抽取变化沿 `邮件 → Extraction → AnalysisInput → Analysis → Score` 失效。旧结果保留用于追溯，展示与缓存立即排除；仍有业务邮件时自动合并一个公司重算任务，无业务邮件时停止待办。运行中的旧 revision 回报被拒绝。人工变更决定会撤销未完成补抽取，过时模型结果不能写回。
 4. 原文保存到 `StoredMessage.raw`，包括 Gmail 解析出的头、正文及 eligible body；LLM 输出保存到 `submission` 后才调用业务提交接口。已经落库且同提示词版本的终态不重复拉原文、不重复 L1。失败 L1 复用原文，失败 HTTP 提交复用 L1 输出。批量 ORM 查询替代每页逐封 HTTP 查询，仍沿用原业务写入 API。
-5. `SyncCheckpoint` 保存历史页位置、扫描前 History 锚点及增量游标。每页 20 封，不再把 20 封当作完整历史上限；查询范围仍为 inbox/sent。历史完成后补扫扫描期间的新消息。History 404 才重新完整扫描，已缓存邮件和旧 pending/failed ID 不清空；其他分页错误明确失败，重试从已保存页继续。
+5. Gmail 使用冻结 UTC 秒级窗口（`after:since before:until`）；`recent_days` 按 24 小时计算，`max_messages` 指该窗口内最新 N 封，收件箱与已发送合计。普通同步的封数缺省为 50；大于 50 时必须携带 `allow_large_sync=true`，该批准仅适用于本次明确封数。先限量再排除已保存邮件及 completed/failed 缓存，不用更早邮件补足数量，不排空范围外 pending；提示词升级也不在普通同步中重抽已完成邮件。`SyncCheckpoint` 现在只标识 Worker 接管，旧游标字段保留审计，不再驱动扫描。明确重试只处理失败 ID；若分页失败但没有失败 ID，则使用原冻结范围重新选择并跳过已完成邮件。升级前无范围且无明确 ID 的旧批次必须重新选择范围。
 6. L1 只处理新增、缺失或明确重试的邮件。L2 仍从数据库读取该公司完整有效上下文，L3 对受影响公司整体生成新画像，L4 使用既定规则计算；没有把 LLM 改成只看最后一封邮件。人工维护的客户资料、报价、订单等权威记录不会因邮件误判而自动删除或改写。
 
 新快照保存精确关系血缘；历史快照只能按其已有 `member_dedupe_keys` 识别依赖，不能倒填当时未知的抽取代次。分析快照唯一键扩展到公司、input_version 和 revision，支持分类撤销后恢复相同内容并保留各代记录。升级使用 `crm.0006_durable_lineage`，再执行历史分类预览及应用。已有人工决定不会被覆盖。
 
-Gmail 当前 History 流仍只消费 messageAdded；Gmail 中删除邮件或更改标签不会自动删除本地业务档案。原文缓存不等于附件二进制归档。已发现但尚未开始的任务可继续处理；已经失败的任务需要明确重试。恢复和增量依赖 Worker 运行，Web 重启不会自动启动 Worker。
+Gmail 同步只查询选定范围内当前收件箱及已发送邮件；Gmail 中删除邮件或更改标签不会自动删除本地业务档案。原文缓存不等于附件二进制归档。已发现但尚未开始的任务仅在本次范围内处理；已经失败的任务需要明确重试。恢复和增量依赖 Worker 运行，Web 重启不会自动启动 Worker。
 
 ## 验证边界
 
@@ -92,3 +92,21 @@ Gmail 当前 History 流仍只消费 messageAdded；Gmail 中删除邮件或更�
 - 实际管理入口 `crm_worker --help` 已验证；没有启动真实队列消费，也没有进行真实 Gmail/百炼联调或生产压力、进程崩溃验收。
 - 本机已应用 `crm.0005_persistent_processing`；历史分类更新 21 封，再次预览 0 项差异。邮件原文及人工决定保留，21 是元数据变化数，不等于新增隐藏邮件数。
 - 当前 Python 环境未安装 Ruff，未完成该项静态检查；未改动检查器，也未声称验证 Git 提交原子性。
+
+## Gmail 范围请求示例
+
+```json
+{"sync_options":{"recent_days":7,"max_messages":50}}
+```
+
+示例选择最近 7 天且最多 50 封。天数和封数至少填写一项，两项同时提供时取交集；仅填写天数时封数默认 50。超过 50 封会弹出警告，说明本次数量、长时间占用进程及分析成本风险；取消保留表单且不提交，批准后才发送 `allow_large_sync=true`。后端与 Worker 独立校验，缺少批准的超量请求直接拒绝，不能通过跳过前端或旧队列绕过。批准不跨新选择复用；同一失败批次的明确重试保留原批准和封数，不能扩大范围。Google 授权回调只保存连接，不排队；返回页面后由范围弹窗收集选择，取消不会同步。刷新收件箱也要求选择范围。
+
+范围列表按 [Gmail 官方最新优先分页说明](https://developers.google.com/workspace/gmail/api/guides/list-messages) 读取，UTC 时间边界使用 [Gmail 秒级查询条件](https://developers.google.com/workspace/gmail/api/guides/filtering)。正文读取和 L1 参数保持既定设置。
+
+超量请求示例（必须先获用户明确批准）：
+
+```json
+{"sync_options":{"recent_days":7,"max_messages":100,"allow_large_sync":true}}
+```
+
+批准不允许无限量同步，必须填写具体封数。旧的纯天数批次执行时也最多选 50 封；旧的超量且无批准批次会被拒绝。50 封是邮件数量上限，不是每封外部请求的耗时保证；分页大小、模型参数和失败重试语义不变。

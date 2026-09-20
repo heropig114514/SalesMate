@@ -5,7 +5,7 @@
 - _client_config：构造 Google Web application 客户端配置。
 - begin_authorization：创建员工授权地址并保存 state 与 PKCE verifier。
 - _fetch_token：交换授权码并接受包含 Gmail 只读权限的 scope 超集。
-- finish_authorization：交换 code、验证账号并请求首次同步。
+- finish_authorization：交换 code、验证账号，等待用户选择同步范围。
 - mailbox_status：生成不含凭证的浏览器邮箱状态。
 - request_mailbox_sync：把已授权邮箱标记为等待同步。
 - disconnect_mailbox：移除本地授权并保留历史业务数据。
@@ -99,10 +99,10 @@ def _fetch_token(flow, code: str) -> None:
 # 功能：完成 Google 回调并建立当前员工邮箱连接。
 # 输入：`request` 含员工会话、code 和 state。
 # 输出：已验证地址对应的 Mailbox。
-# 逻辑：恢复发起授权时的 PKCE verifier，交换 code、读取 Gmail profile、保存凭证并请求首次同步。
+# 逻辑：恢复 PKCE verifier，交换 code、读取 Gmail profile 并保存凭证；首次同步由用户选择范围后请求。
 # 约束：state、PKCE verifier 不匹配或地址无效时不建立绑定；不覆盖已有 QQ 连接。
 def finish_authorization(request) -> Mailbox:
-    """Exchange Google callback code, verify the account, and queue its first sync."""
+    """Exchange Google callback code and verify the account without queueing mail reads."""
     expected_state = request.session.pop(SESSION_STATE_KEY, "")
     code_verifier = request.session.pop(SESSION_CODE_VERIFIER_KEY, "")
     returned_state = request.query_params.get("state", "")
@@ -147,7 +147,10 @@ def finish_authorization(request) -> Mailbox:
             mailbox=mailbox,
             defaults={"credentials": json.loads(credentials.to_json())},
         )
-        request_mailbox_sync(request.user, mailbox.pk)
+        if not mailbox.sync_state or mailbox.sync_state.get("status") == "authorization_required":
+            mailbox.sync_state = {"status": "connected"}
+            mailbox.version += 1
+            mailbox.save(update_fields=["sync_state", "version"])
     return mailbox
 
 
@@ -168,7 +171,7 @@ def mailbox_status(mailbox: Mailbox) -> dict[str, Any]:
 
 
 # 功能：请求一次员工 Gmail 或 QQ 同步。
-# 输入：`owner` 为当前员工，`mailbox_id` 为其邮箱 UUID，`sync_options` 为 QQ 显式限制。
+# 输入：`owner` 为当前员工，`mailbox_id` 为其邮箱 UUID，`sync_options` 为本次显式限制。
 # 输出：更新后的浏览器安全邮箱状态。
 # 逻辑：复用 processing 创建持久批次，返回旧邮箱表示与新增 run_id/queued 状态。
 # 约束：拒绝其他员工邮箱和未授权邮箱。
@@ -200,8 +203,8 @@ def disconnect_mailbox(owner, mailbox_id) -> dict[str, Any]:
 
 # 功能：为一次性 Agent 领取员工邮箱同步请求。
 # 输入：`owner` 为 Agent 凭证所属员工，`limit` 为本次领取上限。
-# 输出：含邮箱地址、授权和读取上限的同步请求数组。
-# 逻辑：复用持久批次原子领取并限定 Gmail，避免旧 CLI 误领 QQ 任务；保留旧响应字段。
+# 输出：含邮箱地址、授权、冻结范围及显式重试 ID 的同步请求数组。
+# 逻辑：复用持久批次原子领取并限定 Gmail，避免旧 CLI 误领 QQ 任务；保留单页大小并透传 sync_options/message_ids，旧客户端不得忽略范围。
 # 约束：只返回 owner 自己的已授权邮箱；精确逐封进度请使用 crm_worker。
 def claim_mailbox_syncs(owner, limit: int) -> list[dict[str, Any]]:
     """Claim up to limit employee mailbox requests for one Agent process."""
@@ -212,7 +215,8 @@ def claim_mailbox_syncs(owner, limit: int) -> list[dict[str, Any]]:
         if run is None:
             break
         claimed.append({"mailbox_id": str(run.mailbox_id), "mailbox_address": run.mailbox.address,
-                        "authorization": run.mailbox.gmail_credential.credentials, "max_results": 20})
+                        "authorization": run.mailbox.gmail_credential.credentials, "max_results": 20,
+                        "sync_options": run.sync_options, "message_ids": run.message_ids})
     return claimed
 
 

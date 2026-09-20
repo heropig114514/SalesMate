@@ -1,5 +1,5 @@
 """职责：验证 QQ 临时停用覆盖入口、队列和外部执行，同时保留历史数据及 Gmail。
-实现：隔离 PostgreSQL、真实服务及 HTTP 视图；网络调用用 Mock 证明未发生。
+实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；隔离 PostgreSQL、真实服务及 HTTP 视图；网络调用用 Mock 证明未发生。
 关联：common.mail_features、CRM 调度、销售动作及运行时能力接口。
 目录：
 - QQDisabledTests：QQ 默认关闭集成验证。
@@ -68,7 +68,7 @@ class QQDisabledTests(TestCase):
     # 功能：验证 QQ 队列暂停但不阻塞 Gmail。
     # 输入：较早 QQ 排队记录及同账户较晚 Gmail 记录。
     # 输出：QQ 原队列不变；调度器仅在有 Gmail 时选择该员工。
-    # 逻辑：先验证 QQ-only 无待办，再添加 Gmail 并实际领取。
+    # 逻辑：先验证 QQ-only 无待办，再添加 Gmail 并实际领取。 Gmail 批次显式提供 20 封范围，QQ 开关不改变其可领取性。
     # 约束：不执行任何邮箱网络请求。
     def test_queue_pauses_qq_and_keeps_gmail(self):
         pending = MailboxSyncRun.objects.create(mailbox=self.qq)
@@ -78,7 +78,7 @@ class QQDisabledTests(TestCase):
         self.assertIsNone(next_owner("sync"))
         gmail = Mailbox.objects.create(owner=self.user, address="fixture@gmail.com")
         GmailCredential.objects.create(mailbox=gmail, credentials={})
-        gmail_run = request_run(self.user, gmail.pk)
+        gmail_run = request_run(self.user, gmail.pk, sync_options={"max_messages": 20})
         self.assertEqual(next_owner("sync").pk, self.user.pk)
         self.assertEqual(claim_run(self.user).pk, gmail_run.pk)
         pending.refresh_from_db()

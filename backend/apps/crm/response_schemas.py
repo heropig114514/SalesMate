@@ -1,5 +1,5 @@
 """职责：为 Agent 查询和批量响应声明可消费的 OpenAPI 结构。
-实现：独立响应序列化器描述真实数组与对象；CompanyContext 增加与邮件分离的正式评分上下文。
+实现：独立响应序列化器描述真实数组与对象；CompanyContext 描述独立评分上下文，邮箱领取响应包含必需冻结范围和重试 ID。
 关联：views 用作 Schema 声明，服务的实际字段由契约测试核验。
 目录：
 - SubmissionResultSerializer：描述单封邮件的提交结果。
@@ -50,7 +50,9 @@
 - MailboxSyncClaimResponseSerializer.authorization：仅向 Agent 返回的 Google authorized user JSON。
 - MailboxSyncClaimResponseSerializer.mailbox_address：已经由 Gmail profile 验证的邮箱地址。
 - MailboxSyncClaimResponseSerializer.mailbox_id：后端员工业务邮箱 UUID。
-- MailboxSyncClaimResponseSerializer.max_results：本次最多读取的 Gmail 邮件数量。
+- MailboxSyncClaimResponseSerializer.sync_options：用户选择、服务器冻结的时间窗口及本次超量批准。
+- MailboxSyncClaimResponseSerializer.message_ids：明确失败重试 ID，普通范围同步为空数组。
+- MailboxSyncClaimResponseSerializer.max_results：Gmail 单页读取上限，不是本批总封数。
 """
 from rest_framework import serializers as s
 
@@ -131,10 +133,12 @@ class MailboxResponseSerializer(s.Serializer):
 
 
 # 功能：描述 Agent 领取到的员工邮箱同步请求。
-# 逻辑：完整授权凭证只在 AgentAuthentication 保护的响应中出现。
+# 逻辑：完整授权凭证只在 AgentAuthentication 保护的响应中出现；消费者必须执行 sync_options 或明确 message_ids。
 # 约束：浏览器邮箱接口不得使用该结构。
 class MailboxSyncClaimResponseSerializer(s.Serializer):
     mailbox_id = s.UUIDField()
     mailbox_address = s.EmailField()
     authorization = s.DictField()
     max_results = s.IntegerField(min_value=1, max_value=20)
+    sync_options = s.DictField()
+    message_ids = s.ListField(child=s.CharField(max_length=200))

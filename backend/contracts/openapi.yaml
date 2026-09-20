@@ -1,5 +1,5 @@
 # 职责：保存后端公开 OpenAPI 的版本化契约。
-# 实现：由 drf-spectacular 生成路径、参数及载荷结构，包含客户事实升级 GET/POST。
+# 实现：由 drf-spectacular 生成路径、参数及载荷结构；邮箱同步要求显式范围，Gmail 超过 50 封须批准。
 # 关联：views/serializers 定义接口；tests/contracts/test_schema.py 比较生成结构。
 # 目录：无函数或类；paths 为 HTTP 操作，components 为共用 Schema 和认证声明。
 # 变量索引：openapi 为规范版本，info 为服务信息；无运行时变量。
@@ -1343,6 +1343,7 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/SyncRequest'
+        required: true
       security:
       - cookieAuth: []
       responses:
@@ -2918,11 +2919,34 @@ components:
           type: integer
           maximum: 20
           minimum: 1
+        sync_options:
+          type: object
+          additionalProperties: {}
+        message_ids:
+          type: array
+          items:
+            type: string
+            maxLength: 200
       required:
       - authorization
       - mailbox_address
       - mailbox_id
       - max_results
+      - message_ids
+      - sync_options
+    MailboxSyncOptions:
+      type: object
+      properties:
+        recent_days:
+          type: integer
+          minimum: 1
+          nullable: true
+        max_messages:
+          type: integer
+          minimum: 1
+          nullable: true
+        allow_large_sync:
+          type: boolean
     MailboxSyncReport:
       type: object
       properties:
@@ -3005,7 +3029,7 @@ components:
           writeOnly: true
           pattern: ^[A-Za-z]{16}$
         sync_options:
-          $ref: '#/components/schemas/QQSyncOptions'
+          $ref: '#/components/schemas/MailboxSyncOptions'
       required:
       - address
       - authorization_code
@@ -3024,17 +3048,6 @@ components:
       required:
       - address
       - authorization_code
-    QQSyncOptions:
-      type: object
-      properties:
-        recent_days:
-          type: integer
-          minimum: 1
-          nullable: true
-        max_messages:
-          type: integer
-          minimum: 1
-          nullable: true
     Readiness:
       type: object
       properties:
@@ -3268,7 +3281,9 @@ components:
       type: object
       properties:
         sync_options:
-          $ref: '#/components/schemas/QQSyncOptions'
+          $ref: '#/components/schemas/MailboxSyncOptions'
+      required:
+      - sync_options
     SyncState:
       type: object
       properties:

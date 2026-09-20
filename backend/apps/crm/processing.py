@@ -1,8 +1,8 @@
 """职责：管理邮箱批次、逐封进度和恢复所需的持久状态。
-实现：行锁串行化请求，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
+实现：行锁串行化请求并冻结用户范围，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
 关联：Gmail 与 QQ 共用持久队列，worker 分发提供方；processing_views 提供进度和显式重试。
 目录：
-- request_run：创建或复用邮箱活动批次。
+- request_run：创建有界邮箱批次并拒绝重复活动批次。
 - claim_run：领取一个已排队批次。
 - require_run：核验当前执行租约。
 - record_event：幂等更新逐封处理阶段。
@@ -27,16 +27,17 @@ from rest_framework.exceptions import NotFound
 
 from .access import Conflict, InvalidState, mailbox_for
 from .models import Email, EmailProcessingJob, GmailCredential, QQCredential, Job, MailboxSyncRun
-from .qq_scope import snapshot
+from .sync_scope import snapshot
+from agent.tools.gmail_scope import gmail_message_limit
 
 logger = logging.getLogger("salesmate.processing")
 RUN_LEASE_SECONDS = 600
 
 
 # 功能：把同步请求保存为独立批次。
-# 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围；`sync_options` 为 QQ 限制，`retry_scope` 为内部重试原快照。
-# 输出：新建或复用的 MailboxSyncRun。
-# 逻辑：邮箱锁内冻结 QQ 范围；QQ 活动批次拒绝替换，Gmail 普通重复点击合并；重试保留原时间窗口。
+# 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围；`sync_options` 为邮箱限制，`retry_scope` 为内部重试原快照。
+# 输出：新建的 MailboxSyncRun。
+# 逻辑：邮箱锁内冻结范围；活动批次拒绝替换，防止并发重复同步；重试保留原时间窗口及批准封数；未批准的超量任务不能排队。
 # 约束：必须有凭证；QQ 关闭时拒绝排队；不启动线程或访问邮箱。
 @transaction.atomic
 def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry_scope=None):
@@ -48,19 +49,27 @@ def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry
         raise InvalidState("该邮箱尚未完成 Gmail 授权或 QQ 连接。")
     active = mailbox.sync_runs.filter(status__in=["queued", "running"]).first()
     if active:
-        if message_ids or is_qq:
-            raise Conflict("该邮箱仍有同步批次，请完成后再确认重新抽取或重试。")
-        return active
-    if not is_qq and sync_options is not None:
-        raise InvalidState("该范围设置仅适用于 QQ 邮箱。")
-    scope = (retry_scope if retry_scope is not None else snapshot(sync_options)) if is_qq else {}
-    if is_qq and not scope and not message_ids:
+        raise Conflict("该邮箱仍有同步批次，请完成后再确认重新抽取或重试。")
+    if retry_scope is not None:
+        scope = retry_scope
+    elif message_ids:
+        scope = {}
+    else:
+        scope = snapshot(sync_options, gmail=not is_qq)
+    if not scope and not message_ids:
         raise InvalidState("旧批次没有同步范围，请重新选择范围后同步。")
+    if not is_qq:
+        try:
+            limit = gmail_message_limit(scope)
+        except ValueError as error:
+            raise InvalidState(str(error)) from None
+        if message_ids and len(message_ids) > limit:
+            raise InvalidState("重试邮件数超过本批允许的封数，请先批准相应的同步范围。")
     run = MailboxSyncRun.objects.create(mailbox=mailbox, message_ids=message_ids or [], sync_options=scope)
     mailbox.sync_state = {**mailbox.sync_state, "status": "sync_requested", "run_id": str(run.pk), "requested_at": run.requested_at.isoformat(), "error": None}
     mailbox.version += 1
     mailbox.save(update_fields=["sync_state", "version"])
-    logger.info("mailbox_run_queued run_id=%s mailbox_id=%s explicit_messages=%s", run.pk, mailbox.pk, len(run.message_ids))
+    logger.info("mailbox_run_queued run_id=%s mailbox_id=%s explicit_messages=%s recent_days=%s max_messages=%s allow_large_sync=%s", run.pk, mailbox.pk, len(run.message_ids), scope.get("recent_days"), scope.get("max_messages"), scope.get("allow_large_sync", False))
     return run
 
 
@@ -200,7 +209,7 @@ def run_data(run):
 # 功能：为明确失败的邮件建立新批次。
 # 输入：`owner` 为员工，`run_id` 为终态批次。
 # 输出：新重试批次；无失败或仍活动时拒绝。
-# 逻辑：只重试失败邮件；尚未登记邮件的批次重跑冻结窗口，旧 QQ 批次无窗口且无明确 ID 时拒绝。
+# 逻辑：只重试失败邮件；尚未登记邮件的批次重跑冻结窗口，旧批次无窗口且无明确 ID 时拒绝。
 # 约束：保留旧批次审计历史和原 dedupe_key，不覆盖正常邮件。
 def retry_run(owner, run_id):
     run = MailboxSyncRun.objects.filter(pk=run_id, mailbox__owner=owner).first()

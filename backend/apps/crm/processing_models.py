@@ -18,7 +18,7 @@
 - MailboxSyncRun.error：批次错误，不包含凭证或原始异常正文。
 - MailboxSyncRun.result：Agent 汇总，不包含 Gmail 授权。
 - MailboxSyncRun.message_ids：显式重试的消息范围，空数组表示常规扫描。
-- MailboxSyncRun.sync_options：QQ 批次冻结的时间和封数范围；Gmail 与旧批次为空对象。
+- MailboxSyncRun.sync_options：Gmail/QQ 批次冻结的时间和封数范围及 Gmail 超量批准；旧批次可能为空对象。
 - MailboxSyncRun.Meta.constraints：同邮箱活动批次唯一约束。
 - EmailProcessingJob.id：逐封任务 UUID。
 - EmailProcessingJob.run：所属同步批次。

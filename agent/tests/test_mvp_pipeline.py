@@ -1,4 +1,67 @@
-"""SalesMate Agent MVP 的 L2-L4、同步和编排行为测试。"""
+"""职责：验证 SalesMate Agent MVP 的 L2–L4、同步和编排行为。
+实现：使用模拟后端、Gmail 和模型；网页领取测试显式传入冻结范围，其余既定实验参数保持原值。
+关联：fake_backend 提供内存业务状态，workflows 执行实际编排；不验证真实外部服务。
+目录：
+- _IncrementalBackend：为 Gmail 增量同步测试提供现有 Django sync-state 契约。
+- _IncrementalBackend.__init__：初始化可版本校验的内存邮箱状态。
+- _IncrementalBackend.get_sync_state：返回邮箱同步状态的独立副本。
+- _IncrementalBackend.save_sync_state：按版本保存同步状态并递增版本。
+- _IncrementalBackend.get_stored_email：返回指定天然键的独立邮件副本。
+- _IncrementalBackend.assert_mailbox：拒绝访问夹具之外的邮箱。
+- _PartialSubmitBackend：模拟指定单封邮件提交失败的后端。
+- _PartialSubmitBackend.__init__：记录失败 ID 和提交批次大小。
+- _PartialSubmitBackend.submit_emails：记录调用大小并拒绝指定邮件。
+- _payload：构造来源引用明确的合成 L3 输出。
+- _payload.dimension：构造单个分析维度的事实与推断。
+- _provider：用固定合成 JSON 模拟分析提供方。
+- _completed_submission：构造已完成的标准邮件提交。
+- AnalysisAndScoreTests：验证 L2 上下文、L3 校验和 L4 评分。
+- AnalysisAndScoreTests.setUp：建立固定邮件和分析输入。
+- AnalysisAndScoreTests.test_l2_contains_company_and_business_context：Verify l2 contains company and business context。
+- AnalysisAndScoreTests.test_l3_generates_three_profile_and_four_analysis_dimensions：Verify l3 generates three profile and four analysis dimensions。
+- AnalysisAndScoreTests.test_l3_provider_sends_compact_skill_input：Verify l3 provider sends compact skill input。
+- AnalysisAndScoreTests.test_l3_accepts_single_json_code_fence_without_model_retry：Verify l3 accepts single json code fence without model retry。
+- AnalysisAndScoreTests.test_l3_derives_size_source_from_backend_context：Verify l3 derives size source from backend context。
+- AnalysisAndScoreTests.test_l3_normalizes_and_validates_conflict_fields_before_submission：Verify l3 normalizes and validates conflict fields before submission。
+- AnalysisAndScoreTests.test_l3_rejects_unknown_source_and_percentage：Verify l3 rejects unknown source and percentage。
+- AnalysisAndScoreTests.test_l3_allows_business_percentage_and_normalizes_typed_source_ref：Verify l3 allows business percentage and normalizes typed source ref。
+- AnalysisAndScoreTests.test_default_l3_provider_retries_one_validation_failure：Verify default l3 provider retries one validation failure。
+- AnalysisAndScoreTests.test_no_purchase_basis_only_accepts_unknown_signal：Verify no purchase basis only accepts unknown signal。
+- AnalysisAndScoreTests.test_signal_gates_use_quote_order_and_new_lead_context：Verify signal gates use quote order and new lead context。
+- AnalysisAndScoreTests.test_l4_requires_formal_priority_context_without_legacy_fallback：Verify l4 requires formal priority context without legacy fallback。
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available：Verify company analysis uses priority l4 when context is available。
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext：WithPriorityContext。
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext.get_company_context：get company context。
+- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call：Verify analysis cache avoids second model call。
+- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call.provider：provider。
+- SyncAndOrchestrationTests：验证同步去重、并发提交和公司编排。
+- SyncAndOrchestrationTests.test_access_token_builds_gmail_service：Verify access token builds gmail service。
+- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis：Verify authorized sync reports mailbox before company analysis。
+- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis.process_jobs：记录公司任务开始事件并返回空队列。
+- SyncAndOrchestrationTests.test_sync_deduplicates_second_scan：Verify sync deduplicates second scan。
+- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently：Verify l1 processes multiple new emails concurrently。
+- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently.process：模拟本场景的单封处理、同步屏障或异常。
+- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread：Verify l1 progress callbacks are serialized on sync thread。
+- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread.process：模拟本场景的单封处理、同步屏障或异常。
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes：Verify completed l1 email is submitted before slower email finishes。
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend：观察首封提交是否早于较慢邮件完成。
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend.submit_emails：记录提交时机并委托内存后端入库。
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.process：模拟本场景的单封处理、同步屏障或异常。
+- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails：Verify one l1 exception does not block other emails。
+- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails.process：模拟本场景的单封处理、同步屏障或异常。
+- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails：Verify one backend rejection does not roll back other emails。
+- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails.process：模拟本场景的单封处理、同步屏障或异常。
+- SyncAndOrchestrationTests.test_incremental_cursor_avoids_second_l1_call_when_history_is_empty：Verify incremental cursor avoids second l1 call when history is empty。
+- SyncAndOrchestrationTests.test_initial_scan_skips_existing_completed_extraction_before_l1：Verify initial scan skips existing completed extraction before l1。
+- SyncAndOrchestrationTests.test_incremental_cursor_retries_failed_l1_message：Verify incremental cursor retries failed l1 message。
+- SyncAndOrchestrationTests.test_existing_failed_extraction_is_preserved_when_retry_still_fails：Verify existing failed extraction is preserved when retry still fails。
+- SyncAndOrchestrationTests.test_incremental_cursor_preserves_overflow_for_the_next_sync：Verify incremental cursor preserves overflow for the next sync。
+- SyncAndOrchestrationTests.test_expired_history_cursor_falls_back_to_recent_scan：Verify expired history cursor falls back to recent scan。
+- SyncAndOrchestrationTests.test_failed_submission_can_be_replaced_and_nonbusiness_has_no_job：Verify failed submission can be replaced and nonbusiness has no job。
+- SyncAndOrchestrationTests.test_one_job_runs_l2_l3_l4_and_reports：Verify one job runs l2 l3 l4 and reports。
+变量索引：
+- NOW：固定测试基准时间，不表示运行时当前日期。
+"""
 
 import copy
 import json
@@ -583,6 +646,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         credentials = build.call_args.kwargs["credentials"]
         self.assertEqual(credentials.token, "token-value")
 
+    # 功能：验证有界网页同步先回报邮箱结果，再执行公司分析。
+    # 输入：无外部参数；后端领取返回显式冻结的 7 天、20 封测试范围。
+    # 输出：事件顺序和完成状态断言。
+    # 逻辑：只模拟 Gmail 与公司任务边界，执行实际领取和回报编排。
+    # 约束：范围为测试夹具，不是产品默认值；不连接真实邮箱。
     def test_authorized_sync_reports_mailbox_before_company_analysis(self):
         events = []
         backend = Mock()
@@ -592,6 +660,7 @@ class SyncAndOrchestrationTests(unittest.TestCase):
                 "mailbox_address": "sales@example.com",
                 "authorization": {"token": "token"},
                 "max_results": 20,
+                "sync_options": {"recent_days": 7, "max_messages": 20, "since": "2026-09-13T00:00:00+00:00", "until": "2026-09-20T00:00:00+00:00"},
             }
         ]
         backend.report_mailbox_sync.side_effect = lambda _report: events.append(

@@ -35,7 +35,7 @@ Authorization: Agent <service-token>
 | 领取员工邮箱同步 | `POST mailbox-syncs/claim/` | `limit` → 邮箱地址、Google 授权信息和读取上限 |
 | 回报员工邮箱同步 | `POST mailbox-syncs/report/` | 同步汇总、错误及可选刷新凭证 → 浏览器安全状态 |
 
-兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。产品 Gmail 同步由 Worker 使用 SyncCheckpoint/StoredMessage 保存历史页、History 游标、原文和 L1 输出；失败明确重试，按阶段复用缓存。Worker 接管邮箱后拒绝旧 CLI 游标双写。旧 CLI 的已配置游标读写异常向上报告。
+兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。产品 Gmail 同步必须提供 `sync_options`（`recent_days` 或 `max_messages` 至少一项），普通 Gmail 批次默认最多 50 封，超量必须明确提供 `max_messages` 和 `allow_large_sync=true`；由 Worker 在冻结范围内先限量再去重；StoredMessage 保存原文和 L1 输出，SyncCheckpoint 仅保留 Worker 接管标记及旧审计状态；失败明确重试，按阶段复用缓存。Worker 接管邮箱后拒绝旧 CLI 游标双写。旧 CLI 的已配置游标读写异常向上报告。
 
 ## 写入一致性
 

@@ -1,6 +1,6 @@
 """职责：验证、加密保存及移除当前员工的 QQ 邮箱连接。
 实现：能力开关控制连接和解密；固定 IMAP 验证登录及文件夹，邮箱锁保护活动同步关系。
-关联：qq_views 提供 Session 接口，qq_sync/worker 消费凭证，复用 sales 的显式加密器。
+关联：qq_views 提供 Session 接口，qq_sync/worker 消费凭证，sync_scope 冻结本次范围，复用 sales 的显式加密器。
 目录：
 - connect_mailbox：验证授权后保存并请求首次同步。
 - authorization_code：解密已保存授权码。
@@ -19,7 +19,7 @@ from apps.sales.integrations import vault
 from common.mail_features import require_qq_enabled
 from .access import Conflict, InvalidState, mailbox_for
 from .models import GmailCredential, Mailbox, QQCredential
-from .qq_scope import snapshot
+from .sync_scope import snapshot
 
 logger = logging.getLogger("salesmate.qq_connection")
 

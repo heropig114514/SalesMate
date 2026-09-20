@@ -1,10 +1,10 @@
-"""职责：持久保存 Gmail 原文、扫描检查点、抽取修复任务和分析血缘。
-实现：消息天然键去重，检查点与发现记录原子提交；血缘边保留具体抽取与人工判断版本。
+"""职责：持久保存 Gmail 原文、Worker 接管标记及历史检查点、抽取修复任务和分析血缘。
+实现：消息天然键去重，接管标记与发现记录原子提交；血缘边保留具体抽取与人工判断版本。
 关联：durable_sync 消费原文，lineage 维护修复与失效；models 导入以注册模型。
 目录：
 - StoredMessage：抽取前的持久原文及处理终态。
 - StoredMessage.Meta：邮箱内消息唯一约束。
-- SyncCheckpoint：完整历史扫描与增量 History 的检查点。
+- SyncCheckpoint：Worker 接管标记及旧版本游标审计数据。
 - SnapshotSource：分析快照到邮件抽取的版本化来源边。
 - SnapshotSource.Meta：快照邮件唯一约束。
 - SnapshotInvalidation：保留快照失效原因及时间。
@@ -20,10 +20,10 @@
 - StoredMessage.created_at：发现时间。
 - StoredMessage.Meta.constraints：消息天然键唯一约束。
 - SyncCheckpoint.mailbox：每邮箱唯一检查点。
-- SyncCheckpoint.cursor：已登记所有新增消息的 History 游标。
-- SyncCheckpoint.anchor：历史扫描开始前的 History 基准。
-- SyncCheckpoint.page_token：下一历史邮件列表页；空字符串表示第一页。
-- SyncCheckpoint.backfill_complete：完整历史枚举是否结束。
+- SyncCheckpoint.cursor：旧版本已登记消息的 History 游标，仅保留审计，不驱动有界同步。
+- SyncCheckpoint.anchor：旧版本历史扫描前的 History 基准，仅保留审计。
+- SyncCheckpoint.page_token：旧版本历史分页位置，仅保留审计。
+- SyncCheckpoint.backfill_complete：旧版本历史枚举完成状态，仅保留审计。
 - SnapshotSource.snapshot：依赖邮件的 L2 快照。
 - SnapshotSource.email：来源邮件。
 - SnapshotSource.extraction：当时采用的具体抽取记录。
@@ -63,9 +63,9 @@ class StoredMessage(models.Model):
         constraints = [models.UniqueConstraint(fields=["mailbox", "message_id"], name="crm_stored_message")]
 
 
-# 功能：保存跨重启的扫描位置。
-# 逻辑：先持久登记消息再推进游标；历史结束后从 anchor 补扫期间新增消息。
-# 约束：与消息登记处于同一事务；分页错误显式失败，不清空已有消息。
+# 功能：标识 Worker 接管并保留旧版本同步审计状态。
+# 逻辑：有界同步只创建接管标记，ingestion 据此拒绝旧 CLI 游标双写；旧字段不再推进。
+# 约束：与消息登记处于同一事务；保留既存历史字段以免升级删除审计数据，不进行全量补采。
 class SyncCheckpoint(models.Model):
     mailbox = models.OneToOneField("crm.Mailbox", primary_key=True, on_delete=models.CASCADE, related_name="checkpoint")
     cursor = models.CharField(max_length=200, default="")

@@ -70,7 +70,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：记录、关系和状态沿用现有模型；会话支持通用/客户筛选，特殊能力独立列举。
+# 逻辑：记录、关系和状态沿用现有模型；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
 # 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
     entries = []
@@ -273,7 +273,7 @@ def build_registry():
             ),
             tool(
                 "mailboxes.sync",
-                "提出同步指定邮箱的请求；QQ 必须明确 recent_days 或 max_messages，Gmail 不接受 QQ 范围；须用户确认。",
+                "提出同步指定邮箱的请求；Gmail/QQ 必须明确 recent_days 或 max_messages；Gmail 默认最多 50 封，超过时必须告知长时间占用风险并获用户明确批准，才可设 allow_large_sync=true；最近封数先限量再去重；须用户确认。",
                 "sync",
                 object_schema(
                     {
@@ -282,10 +282,11 @@ def build_registry():
                             {
                                 "recent_days": {"type": "integer", "minimum": 1},
                                 "max_messages": {"type": "integer", "minimum": 1},
+                                "allow_large_sync": {"type": "boolean", "description": "仅在用户获知超量耗时风险并明确批准本次具体封数后设为 true，不能自行推断批准。"},
                             }
                         ),
                     },
-                    ["mailbox_id"],
+                    ["mailbox_id", "sync_options"],
                 ),
                 "confirm",
             ),

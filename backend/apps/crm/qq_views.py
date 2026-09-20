@@ -1,6 +1,6 @@
 """职责：提供 QQ 邮箱连接与移除的员工 HTTP 入口。
 实现：严格输入字段、Session/CSRF 和当前员工隔离；凭证写入后只返回安全邮箱状态。
-关联：urls 注册路径，qq_connection 处理网络与持久化，response_schemas 描述响应。
+关联：sync_scope 提供 Gmail/QQ 共用范围校验；urls 注册路径，qq_connection 处理网络与持久化，response_schemas 描述响应。
 目录：
 - QQConnectSerializer：限制 QQ 地址和 16 位授权码。
 - QQConnectView：验证并连接 QQ 邮箱。
@@ -23,16 +23,16 @@ from . import qq_connection
 from .gmail_oauth import mailbox_status
 from .response_schemas import MailboxResponseSerializer
 from .serializers import StrictSerializer
-from .qq_scope import QQSyncOptionsSerializer
+from .sync_scope import MailboxSyncOptionsSerializer
 
 
 # 功能：声明只允许 QQ 服务的连接请求。
-# 逻辑：拒绝任意服务器、owner 和未知字段；授权码不进入读响应。
+# 逻辑：拒绝任意服务器、owner 和未知字段；共用范围校验仍要求至少一项限制，授权码不进入读响应。
 # 约束：格式检查不能证明已授权，服务层仍须真实登录验证。
 class QQConnectSerializer(StrictSerializer):
     address = serializers.RegexField(r"(?i)^[^\s@]+@(qq|foxmail)\.com$", max_length=254)
     authorization_code = serializers.RegexField(r"^[A-Za-z]{16}$", write_only=True, trim_whitespace=True)
-    sync_options = QQSyncOptionsSerializer()
+    sync_options = MailboxSyncOptionsSerializer()
 
 
 # 功能：连接当前会话员工的 QQ 邮箱。

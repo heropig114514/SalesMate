@@ -47,7 +47,7 @@ QQ 授权码本身可能允许收发等操作；收信同步只执行只读 EXAM
 - `DELETE /api/v1/mailboxes/{mailbox_id}/qq-authorization/`：移除当前员工非活动 QQ 连接。越权 404，活动状态冲突 409。
 - 原 `GET /api/v1/mailboxes/` 新增 `qq_authorized`；`gmail_authorized` 继续只表示 Google 授权。
 - `GET /api/v1/mailboxes/{mailbox_id}/email-reviews/?status=saved`：按接收时间倒序查看本邮箱全部已入库邮件，包含原文、`source`、`received_at` 与分类；每页 20 封，员工归属隔离。客户列表另返回 `email_sources`，表示实际业务邮件的来源集合。
-- 原 `POST /api/v1/mailboxes/{mailbox_id}/request-sync/`、批次查询及失败重试接口同时支持 Gmail 和 QQ。QQ 同步必须传 `{"sync_options":{"recent_days":7,"max_messages":20}}`（示例值，不是默认值），任意一项可省略或为 `null`，两项都为空返回 400。批次进度返回冻结的 `sync_options`。Gmail 继续使用空请求，不能传入 QQ 范围。
+- 原 `POST /api/v1/mailboxes/{mailbox_id}/request-sync/`、批次查询及失败重试接口同时支持 Gmail 和 QQ。QQ 同步必须传 `{"sync_options":{"recent_days":7,"max_messages":20}}`（示例值，不是默认值），任意一项可省略或为 `null`，两项都为空返回 400。批次进度返回冻结的 `sync_options`。Gmail 同样必须提供显式范围，默认最多 50 封，超过时需明确批准；Gmail 的最近 N 封先限量再跳过已同步邮件，不向更早邮件补足。QQ 既有“已完成邮件不占封数”的语义保持不变。
 - QQ 邮件 `source=qq_real`；为兼容既有 L1/HTTP 契约，`gmail_message_id` 字段承载 `qq:{文件夹Base64URL}:{UIDVALIDITY}:{UID}`，不是 Gmail 服务端 ID。`dedupe_key` 仍由邮箱地址与该 ID 组成，QQ 的 `thread_id=null`。
 - 文件夹是独立身份空间；不会仅凭可重复的 MIME Message-ID 合并不同文件夹中的物理副本。已导入邮件移出文件夹后仍保留本地历史。
 - 检查点推进前先持久登记消息，原文在模型调用前落库，写入失败后可复用已成功抽取。UIDVALIDITY 改变或已发送目录改名会明确停止，不静默重置、重扫或冒充同步成功。

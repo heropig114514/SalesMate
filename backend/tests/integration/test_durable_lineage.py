@@ -1,5 +1,5 @@
 """职责：验证原文持久恢复、增量处理和血缘自动纠错。
-实现：使用隔离 PostgreSQL、真实业务事务与模拟 Gmail/LLM，检查持久状态和模型调用次数。
+实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；使用隔离 PostgreSQL、真实业务事务与模拟 Gmail/LLM，检查持久状态和模型调用次数。
 关联：durable_sync、lineage、classification、results；不连接真实邮箱或模型。
 目录：
 - DurableLineageTests：跨连接持久化及来源回归测试。
@@ -19,8 +19,8 @@
 - DurableLineageTests.test_lineage_recomputes_remaining_and_preserves_unrelated：删除来源后重算且不影响其他公司。
 - DurableLineageTests.test_restore_same_input_keeps_revision_history：恢复相同输入时保留独立快照。
 - DurableLineageTests.test_raw_survives_failure_and_incremental_reuses_results：原文在模型前落库，失败重试和后续同步复用缓存。
-- DurableLineageTests.test_backfill_resumes_page_and_processes_more_than_twenty：历史分页失败后恢复而非重读第一页。
-- DurableLineageTests.test_checkpoint_rolls_back_discovery_on_database_error：检查点失败不推进游标或丢失 ID。
+- DurableLineageTests.test_bounded_pages_retry_same_window_without_duplicate_reads：有界分页失败后重试原窗口，去重后不读正文。
+- DurableLineageTests.test_checkpoint_rolls_back_discovery_on_database_error：登记失败时消息及逐封进度原子回滚。
 - DurableLineageTests.test_old_cursor_protocol_fails_loudly：旧协议游标异常不伪装成功。
 - DurableLineageTests.test_completed_l1_retries_submission_without_model：提交失败后只重交持久 L1 输出。
 - DurableLineageTests.test_worker_dispatches_repair_without_sync_and_once_exits：无同步批次仍消费修复，失败后单轮正常退出。
@@ -42,7 +42,7 @@ from agent.workflows.gmail_sync import _get_sync_state, _save_sync_state
 from apps.crm import ingestion, jobs, rules, selectors
 from apps.crm.access import Conflict
 from apps.crm.classification import review_data, review_email
-from apps.crm.durable_models import ExtractionRepair, SnapshotInvalidation, SnapshotSource, StoredMessage, SyncCheckpoint
+from apps.crm.durable_models import ExtractionRepair, SnapshotInvalidation, SnapshotSource, StoredMessage
 from apps.crm.durable_sync import checkpoint, sync_persisted
 from apps.crm.lineage import claim_repair, complete_repair, run_repair
 from apps.crm.models import Email, GmailCredential, Mailbox
@@ -86,10 +86,10 @@ class DurableLineageTests(TransactionTestCase):
     # 功能：创建已领取批次。
     # 输入：无外部参数，读取当前测试员工和邮箱。
     # 输出：带租约的运行批次。
-    # 逻辑：通过真实排队和领取服务。
+    # 逻辑：通过真实排队和领取服务。 夹具显式选择最多 20 封，再通过真实排队与领取服务取得批次。
     # 约束：前一批次必须已结束。
     def start(self):
-        request_run(self.owner, self.mailbox.pk)
+        request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         return claim_run(self.owner)
 
     # 功能：保存一封有明确业务事实的测试邮件。
@@ -301,13 +301,13 @@ class DurableLineageTests(TransactionTestCase):
     # 输入：无外部参数；一次模型失败、一次明确重试及一次空增量。
     # 输出：原文保留、首次失败、重试只调用模型、后续模型和正文调用均为零。
     # 逻辑：使用真实 L1 校验及提交，检查失败后数据库内容与边界调用次数。
-    # 约束：Gmail 和百炼全部 mock，游标值为合成标识。
+    # 约束：Gmail 和百炼全部 mock，范围内重复 ID 不产生正文读取。
     def test_raw_survives_failure_and_incremental_reuses_results(self):
         raw = self.payload("raw-first")
         raw["facts"]["intent_hint"] = "L1 Exploring"
         raw["eligible_body_text"] = raw["body_text"]
         run = self.start()
-        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"), patch("apps.crm.durable_sync.history_page", return_value=(["raw-first"], "")), patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", side_effect=self.fail_after_raw):
+        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.scoped_message_pages", return_value=[["raw-first"]]), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", side_effect=self.fail_after_raw):
             result = sync_persisted(run, object(), self.backend)
         finish_run(run.pk, run.lease_token, result)
         self.assertEqual(StoredMessage.objects.get().raw, raw)
@@ -321,50 +321,56 @@ class DurableLineageTests(TransactionTestCase):
         model.assert_called_once()
         self.assertEqual(StoredMessage.objects.get().status, "completed")
         next_run = self.start()
-        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.list_history_message_ids", return_value=(["raw-first"], "102")), patch("apps.crm.durable_sync.read_email") as reader, patch("apps.crm.durable_sync.bailian_extraction_provider") as model:
+        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.scoped_message_pages", return_value=[["raw-first"]]), patch("apps.crm.durable_sync.read_email") as reader, patch("apps.crm.durable_sync.bailian_extraction_provider") as model:
             result = sync_persisted(next_run, object(), self.backend)
         finish_run(next_run.pk, next_run.lease_token, result)
         reader.assert_not_called()
         model.assert_not_called()
-        self.assertEqual(SyncCheckpoint.objects.get().cursor, "102")
+        self.assertEqual(result["duplicate_count"], 1)
 
-    # 功能：验证超过二十封历史邮件的可恢复分页。
-    # 输入：无外部参数；已有二十封结果，第二页首次失败后成功。
-    # 输出：第一页不重读，第二批从持久 page_token 恢复并进入增量。
-    # 逻辑：使用完成事实复用隔离网络成本，仍执行真实扫描与数据库检查点。
-    # 约束：不放宽单页二十封参数。
-    def test_backfill_resumes_page_and_processes_more_than_twenty(self):
+    # 功能：验证有界分页失败可在原窗口重试，已存邮件不会重复读取。
+    # 输入：无外部参数；显式选择 21 封，已存 21 封，第二页首次请求失败。
+    # 输出：原冻结范围保留、重复 21 封全部跳过、没有正文读取或额外登记。
+    # 逻辑：模拟 Gmail SDK 分页边界，执行真实范围选择、去重和数据库批次服务。
+    # 约束：每页仍最多 20 封，不访问真实 Gmail。
+    def test_bounded_pages_retry_same_window_without_duplicate_reads(self):
         for index in range(21):
             self.store(f"history-{index}")
-        run = self.start()
-        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"), patch("apps.crm.durable_sync.history_page", side_effect=[([f"history-{i}" for i in range(20)], "page-two"), RuntimeError("mock page failure")]), patch("apps.crm.durable_sync.read_email") as reader:
+        service = Mock()
+        execute = service.users.return_value.messages.return_value.list.return_value.execute
+        first_page = {"messages": [{"id": f"history-{i}"} for i in range(20)], "nextPageToken": "page-two"}
+        execute.side_effect = [first_page, RuntimeError("mock page failure")]
+        request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 21})
+        run = claim_run(self.owner)
+        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.read_email") as reader:
             with self.assertRaises(RuntimeError):
-                sync_persisted(run, object(), self.backend)
+                sync_persisted(run, service, self.backend)
         finish_run(run.pk, run.lease_token, {"status": "failed", "error": {"code": "page_failed"}})
         reader.assert_not_called()
-        self.assertEqual(SyncCheckpoint.objects.get().page_token, "page-two")
-        resumed = self.start()
-        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.history_page", return_value=(["history-20"], "")) as page, patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")), patch("apps.crm.durable_sync.read_email") as reader:
-            result = sync_persisted(resumed, object(), self.backend)
+        retry_run(self.owner, run.pk)
+        resumed = claim_run(self.owner)
+        self.assertEqual(resumed.sync_options, run.sync_options)
+        execute.side_effect = [first_page, {"messages": [{"id": "history-20"}]}]
+        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.read_email") as reader:
+            result = sync_persisted(resumed, service, self.backend)
         finish_run(resumed.pk, resumed.lease_token, result)
-        self.assertEqual(page.call_args.args[1], "page-two")
         reader.assert_not_called()
-        self.assertEqual(StoredMessage.objects.count(), 21)
-        self.assertTrue(SyncCheckpoint.objects.get().backfill_complete)
+        self.assertEqual(result["duplicate_count"], 21)
+        self.assertFalse(StoredMessage.objects.exists())
+        self.assertEqual(service.users.return_value.messages.return_value.list.call_args.kwargs["maxResults"], 1)
 
-    # 功能：验证数据库故障时游标与消息登记原子回滚。
-    # 输入：无外部参数；模拟检查点 save 抛出异常。
-    # 输出：旧游标保留，新消息未被虚假登记。
-    # 逻辑：在登记 ID 后、保存游标前注入失败。
-    # 约束：只模拟数据库操作边界，不改变事务实现。
+    # 功能：验证数据库故障时消息与逐封任务原子回滚。
+    # 输入：无外部参数；在登记后模拟 Mailbox.save 抛出异常。
+    # 输出：新消息与进度任务均未提交。
+    # 逻辑：真实事务内注入最后一步数据库失败。
+    # 约束：只模拟保存边界，不改变事务实现。
     def test_checkpoint_rolls_back_discovery_on_database_error(self):
         run = self.start()
-        checkpoint(run, cursor="100")
-        with patch("apps.crm.durable_sync.SyncCheckpoint.save", side_effect=RuntimeError("mock database failure")):
+        with patch.object(Mailbox, "save", side_effect=RuntimeError("mock database failure")):
             with self.assertRaises(RuntimeError):
-                checkpoint(run, ["not-committed"], cursor="200")
-        self.assertEqual(SyncCheckpoint.objects.get().cursor, "100")
+                checkpoint(run, ["not-committed"])
         self.assertFalse(StoredMessage.objects.exists())
+        self.assertFalse(run.email_jobs.exists())
 
     # 功能：验证旧 CLI 的游标读写异常向上报告。
     # 输入：无外部参数；模拟已支持协议的读写错误。
@@ -383,14 +389,14 @@ class DurableLineageTests(TransactionTestCase):
     # 功能：验证模型已完成而 HTTP 写入失败时不重复调用模型。
     # 输入：无外部参数；一次成功 L1、一次 HTTP 异常和明确重试。
     # 输出：缓存保留完整事实，重试无 Gmail 读取或 LLM 调用且业务邮件保存成功。
-    # 逻辑：第一次失败发生在持久 L1 之后、业务入库之前。
+    # 逻辑：第一次失败发生在持久 L1 之后、业务入库之前。 范围选择模拟返回指定单封 ID，重试仍复用原文与已完成 L1。
     # 约束：模拟 HTTP 中断，不宣称真实外部服务恢复已验证。
     def test_completed_l1_retries_submission_without_model(self):
         raw = self.payload("submission-retry")
         raw["facts"]["intent_hint"] = "L1 Exploring"
         run = self.start()
         self.backend.submit_emails.side_effect = RuntimeError("mock HTTP down")
-        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"), patch("apps.crm.durable_sync.history_page", return_value=(["submission-retry"], "")), patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=raw["facts"]):
+        with patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=self.mailbox.address), patch("apps.crm.durable_sync.scoped_message_pages", return_value=[["submission-retry"]]), patch("apps.crm.durable_sync.read_email", return_value=raw), patch("apps.crm.durable_sync.bailian_extraction_provider", return_value=raw["facts"]):
             result = sync_persisted(run, object(), self.backend)
         finish_run(run.pk, run.lease_token, result)
         self.assertFalse(Email.objects.exists())

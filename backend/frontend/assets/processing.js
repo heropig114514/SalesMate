@@ -55,7 +55,7 @@ async function loadReviews() {
 }
 
 /** 功能：渲染整个批次的实时计数。输入：runs 为后端批次数组。输出：无。
- * 逻辑：显示邮件与画像独立进度、QQ 范围、失败邮件及显式重试按钮。约束：不根据公司分页推测完成情况。 */
+ * 逻辑：显示邮件与画像独立进度、Gmail/QQ 冻结范围、失败邮件及显式重试按钮。约束：不根据公司分页推测完成情况。 */
 export function updateRunProgress(runs) {
   const panel = document.getElementById('sync-progress');
   panel.hidden = !runs.length;

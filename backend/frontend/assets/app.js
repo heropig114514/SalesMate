@@ -1,8 +1,8 @@
 /**
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；聊天一级入口直接打开通用会话，QQ 能力控制入口和同步，启用后每次询问范围，旧响应隔离并保留独立草稿。
+ * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；聊天一级入口直接打开通用会话，邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
+ * 关联：workspace.js 共享导航；assistant-entry.js 管理聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、setDetailLiveStatus、loadDetail、navigate、loadMailboxes、renderGmailAccounts、openGmail、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
@@ -11,6 +11,7 @@
  * 变量索引：$ 为元素定位函数；state 保存分页、会话能力、当前详情、方向和列表响应签名；
  * detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、jobNames、gmailStates 为后端枚举的当前语言展示映射；assistant 管理聊天，assistantEntry 管理通用聊天入口，notices 管理页面提示生命周期。
  */
+import { chooseGmailScope } from './gmail-scope.js?v=20260920-gmail-scope';
 import { t, h, locale } from './i18n.js?v=20260920-i18n';
 
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260920-i18n';
@@ -34,7 +35,7 @@ const signals = { unknown: t('待确认'), inquiry_intent: t('询盘'), new_lead
 const sizes = { unknown: t('规模未知'), lt_50: t('少于 50 人'), '50_100': t('50–99 人'), '100_200': t('100–199 人'), '200_500': t('200–499 人'), gte_500: t('500 人及以上') };
 const dimensions = { industry_context: t('行业情况'), company_ops: t('公司经营分析'), intent: t('意向分析'), timeline: t('时间轴'), opportunity: t('商机分析'), risk: t('风险分析'), guidance: t('下一步引导') };
 const jobNames = { pending: t('等待处理'), running: t('正在分析'), completed: t('分析完成'), skipped: t('已复用缓存'), failed: t('处理失败') };
-const gmailStates = { authorization_required: t('未授权'), sync_requested: t('等待 Agent 同步'), sync_running: t('正在同步'), completed: t('同步完成'), failed: t('同步失败'), partial: t('部分完成'), ok: t('同步完成') };
+const gmailStates = { connected: t('已连接，待选择同步范围'), authorization_required: t('未授权'), sync_requested: t('等待 Agent 同步'), sync_running: t('正在同步'), completed: t('同步完成'), failed: t('同步失败'), partial: t('部分完成'), ok: t('同步完成') };
 const detailObserver = new DetailObserver({
   read: id => request(`companies/${encodeURIComponent(id)}/`),
   apply: data => {
@@ -276,7 +277,7 @@ function renderGmailAccounts() {
     ? authorized.map(item => {
         const status = item.sync_state?.status || 'authorization_required';
         const lastSync = item.sync_state?.last_synced_at;
-        return h`<article class="gmail-account"><div><strong>${e(item.address)}</strong><p>${e(gmailStates[status] || status)}${lastSync ? t` · 上次完成 ${e(date(lastSync))}` : ''}</p>${item.sync_state?.error ? `<small class="failure">${e(item.sync_state.error)}</small>` : ''}</div><div class="account-actions"><button class="secondary" data-gmail-sync="${e(item.mailbox_id)}" ${status === 'sync_running' ? 'disabled' : ''}>${status === 'sync_running' ? t('同步中…') : t('同步 Gmail')}</button><button class="text-btn" data-gmail-disconnect="${e(item.mailbox_id)}">移除授权</button></div></article>`;
+        return h`<article class="gmail-account"><div><strong>${e(item.address)}</strong><p>${e(gmailStates[status] || status)}${lastSync ? t` · 上次完成 ${e(date(lastSync))}` : ''}</p>${item.sync_state?.error ? `<small class="failure">${e(item.sync_state.error)}</small>` : ''}</div><div class="account-actions"><button class="secondary" data-gmail-sync="${e(item.mailbox_id)}" ${['sync_requested', 'sync_running'].includes(status) ? 'disabled' : ''}>${['sync_requested', 'sync_running'].includes(status) ? t('同步中…') : t('同步 Gmail')}</button><button class="text-btn" data-gmail-disconnect="${e(item.mailbox_id)}">移除授权</button></div></article>`;
       }).join('')
     : h('<div class="gmail-empty"><strong>尚未连接 Google 邮箱</strong><p>点击下方按钮，选择当前业务员使用的 Gmail 账号。</p></div>');
 }
@@ -321,20 +322,20 @@ async function pollGmailSync(mailboxIds) {
 }
 
 /** 功能：请求同步一个已授权员工邮箱。输入：mailboxId。输出：无。
- * 逻辑：QQ 关闭时拒绝请求，启用时先询问范围，后端排队后由 Worker 执行，页面轮询批次结果。约束：取消不发同步请求。 */
+ * 逻辑：Gmail/QQ 均先询问范围，QQ 关闭时拒绝请求，后端排队后由 Worker 执行，页面轮询批次结果。约束：取消不发同步请求。 */
 async function requestGmailSync(mailboxId) {
   const mailbox = state.mailboxes.find(item => item.mailbox_id === mailboxId);
   if (mailbox?.qq_authorized && !state.runtime.qq_enabled) throw new Error(t('QQ 邮箱功能暂时停用。'));
-  const scope = mailbox?.qq_authorized ? await chooseQQScope(mailbox.address) : null;
-  if (mailbox?.qq_authorized && !scope) return;
-  await request(`mailboxes/${encodeURIComponent(mailboxId)}/request-sync/`, { method: 'POST', ...(scope ? { data: { sync_options: scope } } : {}) });
+  const scope = mailbox?.qq_authorized ? await chooseQQScope(mailbox.address) : await chooseGmailScope(mailbox?.address || '');
+  if (!scope) return;
+  await request(`mailboxes/${encodeURIComponent(mailboxId)}/request-sync/`, { method: 'POST', data: { sync_options: scope } });
   await loadMailboxes();
   notice(t('同步请求已提交，Agent 正在后台读取和分析邮件。'), false);
   void pollGmailSync([mailboxId]).catch(error => notice(error.message));
 }
 
 /** 功能：刷新当前员工收件箱。输入：当前已授权邮箱。输出：无。
- * 逻辑：先排除停用的 QQ，再逐个询问其范围，提交启用邮箱的同步并轮询；活动邮箱沿用当前批次。约束：取消任一范围不提交新请求，未授权时只刷新页面数据。 */
+ * 逻辑：先排除停用的 QQ，再逐个询问邮箱范围，提交启用邮箱的同步并轮询；活动邮箱沿用当前批次。约束：取消任一范围不提交新请求，未授权时只刷新页面数据。 */
 async function refreshInbox() {
   await loadMailboxes();
   const authorized = state.mailboxes.filter(item => item.gmail_authorized || (state.runtime?.qq_enabled && item.qq_authorized));
@@ -346,11 +347,11 @@ async function refreshInbox() {
   const submissions = [];
   for (const item of authorized) {
     if (['sync_requested', 'sync_running'].includes(item.sync_state?.status)) continue;
-    const scope = item.qq_authorized ? await chooseQQScope(item.address) : null;
-    if (item.qq_authorized && !scope) return;
+    const scope = item.qq_authorized ? await chooseQQScope(item.address) : await chooseGmailScope(item.address);
+    if (!scope) return;
     submissions.push({ item, scope });
   }
-  await Promise.all(submissions.map(({ item, scope }) => request(`mailboxes/${encodeURIComponent(item.mailbox_id)}/request-sync/`, { method: 'POST', ...(scope ? { data: { sync_options: scope } } : {}) })));
+  await Promise.all(submissions.map(({ item, scope }) => request(`mailboxes/${encodeURIComponent(item.mailbox_id)}/request-sync/`, { method: 'POST', data: { sync_options: scope } })));
   await loadMailboxes();
   notice(t('正在同步邮箱并运行客户分析，完成后页面会自动刷新。'), false);
   void pollGmailSync(authorized.map(item => item.mailbox_id)).catch(error => notice(error.message));
@@ -493,10 +494,10 @@ async function initialize() {
   const callback = new URLSearchParams(location.search);
   if (callback.get('gmail') === 'authorized') {
     const address = callback.get('address') || '';
-    notice(t`Gmail ${address} 已授权，Agent 正在自动同步和分析邮件。`, false);
+    notice(t`Gmail ${address} 已授权，请选择本次同步范围。`, false);
     history.replaceState({}, '', location.pathname + location.hash);
     const mailbox = state.mailboxes.find(item => item.address === address);
-    if (mailbox) void pollGmailSync([mailbox.mailbox_id]).catch(error => notice(error.message));
+    if (mailbox && !['sync_requested', 'sync_running'].includes(mailbox.sync_state?.status)) void requestGmailSync(mailbox.mailbox_id).catch(error => notice(error.message));
   } else if (callback.get('gmail') === 'error') {
     const reason = callback.get('reason');
     const oauthErrors = {

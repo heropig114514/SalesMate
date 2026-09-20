@@ -1,4 +1,12 @@
-"""处理员工在网页中请求的 Gmail 同步，一次执行后立即退出。"""
+"""职责：领取员工网页 Gmail 有界批次，一次处理后继续公司分析并退出。
+实现：传递冻结范围和明确重试 ID，缺少范围时拒绝执行；回报结果与刷新授权。
+关联：BackendClient 提供员工队列，gmail_sync 执行范围和去重，orchestration 处理公司任务。
+目录：
+- sync_authorized_mailboxes_once：领取有界邮箱请求并回报执行结果。
+变量索引：
+- logger：不含授权的同步日志。
+- __all__：公开的单次同步入口。
+"""
 
 from __future__ import annotations
 
@@ -14,6 +22,11 @@ from agent.workflows.orchestration import process_jobs_once
 
 logger = logging.getLogger("salesmate.agent.authorized_gmail_sync")
 
+# 功能：处理一次网页授权邮箱批次。
+# 输入：`backend` 为员工后端客户端；`limit` 为领取上限；`extraction_provider` 为 L1；`analysis_provider` 为公司分析函数。
+# 输出：邮箱同步结果列表；每次结果先回报后执行公司任务。
+# 逻辑：拒绝无范围的旧请求，冻结范围或显式 ID 透传；单邮箱异常转失败报告，模型任务逐个领取。
+# 约束：不自动全量同步或重试失败；日志不输出凭证，HTTP 回报错误传播。
 def sync_authorized_mailboxes_once(
     *,
     backend: BackendClient,
@@ -30,6 +43,8 @@ def sync_authorized_mailboxes_once(
         logger.info("authorized_gmail_started mailbox_id=%s", mailbox_id)
         refreshed_authorization: dict[str, Any] | None = None
         try:
+            if not claim.get("sync_options") and not claim.get("message_ids"):
+                raise ValueError("此 Gmail 批次缺少范围，请重新选择范围后同步。")
             service, refreshed_authorization = create_service_from_authorization(
                 claim["authorization"]
             )
@@ -41,8 +56,10 @@ def sync_authorized_mailboxes_once(
                     "access_token": "backend-oauth-service",
                     "mailbox_address": claim["mailbox_address"],
                     "max_results": claim.get("max_results", 20),
+                    "sync_options": claim.get("sync_options", {}),
                 },
                 backend=backend,
+                message_ids=claim.get("message_ids") or None,
                 gmail_factory=lambda _token, gmail_service=service: gmail_service,
                 extraction_provider=extraction_provider,
             )

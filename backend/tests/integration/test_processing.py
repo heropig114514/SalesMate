@@ -1,5 +1,5 @@
 """职责：验证持久处理、人工复核和公司调度的业务不变量。
-实现：隔离 PostgreSQL 数据库与合成邮件，模拟 Gmail 网络读取，真实校验事务和 HTTP 权限。
+实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；隔离 PostgreSQL 数据库与合成邮件，模拟 Gmail 网络读取，真实校验事务和 HTTP 权限。
 关联：processing、classification、jobs 及新增进度 API；不向真实邮箱或模型发起调用。
 目录：
 - ProcessingTests：验证批次和分类服务。
@@ -7,7 +7,7 @@
 - ProcessingTests.email：保存可分类的合成邮件。
 - ProcessingTests.test_nonbusiness_hidden_everywhere：验证隐藏、统计、上下文和分析入口一致。
 - ProcessingTests.test_review_is_owned_versioned_and_preserves_source：验证人工优先、原文和权限。
-- ProcessingTests.test_queue_is_durable_and_coalesces_clicks：验证持久排队与 202。
+- ProcessingTests.test_queue_is_durable_and_rejects_duplicate_clicks：验证持久排队与 202。
 - ProcessingTests.test_progress_partial_retry_and_expired_lease：验证逐封计数、明确重试和旧租约拒绝。
 - ProcessingTests.test_same_company_successor_waits_while_other_company_runs：验证公司互斥及跨公司领取。
 - ProcessingTests.test_tracked_gmail_read_failure_keeps_other_messages：验证读取失败逐封隔离。
@@ -156,16 +156,16 @@ class ProcessingTests(TestCase):
         self.assertEqual(email.payload, original)
         self.assertTrue(email.company.jobs.filter(status="pending").exists())
 
-    # 功能：验证重复同步点击复用持久批次。
+    # 功能：验证重复同步点击拒绝新建批次。
     # 输入：无外部参数；两次相同邮箱同步请求。
-    # 输出：HTTP 202、同 run_id 和唯一 queued 记录。
+    # 输出：首次 HTTP 202、重复 HTTP 409 和唯一 queued 记录。
     # 逻辑：重新查询数据库确认状态，而非检查进程内变量。
     # 约束：不启动 Worker，也不把排队当成同步完成。
-    def test_queue_is_durable_and_coalesces_clicks(self):
+    def test_queue_is_durable_and_rejects_duplicate_clicks(self):
         path = f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
-        first, second = self.browser.post(path), self.browser.post(path)
+        first, second = [self.browser.post(path, {"sync_options": {"max_messages": 20}}, format="json") for _ in range(2)]
         self.assertEqual(first.status_code, 202)
-        self.assertEqual(first.data["run_id"], second.data["run_id"])
+        self.assertEqual(second.status_code, 409)
         self.assertEqual(MailboxSyncRun.objects.get().status, "queued")
         other = APIClient()
         other.force_authenticate(self.other)
@@ -174,10 +174,10 @@ class ProcessingTests(TestCase):
     # 功能：验证逐封计数、部分完成、明确重试和租约失效。
     # 输入：无外部参数；一个完成事件和一个读取失败事件。
     # 输出：partial、正确失败范围，以及旧执行者被拒绝。
-    # 逻辑：重复发现不重复计数，新重试仅包含失败 ID，过期后保留任务。
+    # 逻辑：重复发现不重复计数，新重试仅包含失败 ID，过期后保留任务。 初始批次显式选择 20 封，后继批次只重试模拟失败 ID。
     # 约束：模拟阶段事件，不声明真实 Gmail 已读取。
     def test_progress_partial_retry_and_expired_lease(self):
-        request_run(self.owner, self.mailbox.pk)
+        request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         run = claim_run(self.owner)
         for _index in range(2):
             record_event(run.pk, run.lease_token, "discovered", {"message_ids": ["good", "bad"]})
@@ -237,10 +237,10 @@ class ProcessingTests(TestCase):
     # 功能：验证批次画像统计涵盖所有关联公司。
     # 输入：无外部参数；创建超过一页的 21 家公司和完成邮件任务。
     # 输出：整体进度返回 21 个待处理画像。
-    # 逻辑：进度从批次关系查询，不接收前端公司分页参数。
+    # 逻辑：进度从批次关系查询，不接收前端公司分页参数。 排队显式提供 20 封测试范围；21 家公司进度为手工任务夹具，用于验证分页无关统计。
     # 约束：不调模型，邮件任务完成状态为本测试模拟前提。
     def test_progress_covers_companies_outside_visible_page(self):
-        run = request_run(self.owner, self.mailbox.pk)
+        run = request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         for index in range(21):
             email = self.email(f"page-{index}", sender=f"buyer@company-{index}.example")
             EmailProcessingJob.objects.create(run=run, gmail_message_id=f"page-{index}", dedupe_key=email.pk, company=email.company, status="completed", stage="completed")
@@ -288,13 +288,13 @@ class WorkerPipelineTests(TransactionTestCase):
     # 功能：贯通批次领取、逐封读取、并发抽取和持久进度。
     # 输入：无外部参数；两封合法合成邮件、一封读取失败的消息。
     # 输出：两个业务邮件保存，批次 partial，失败 ID 保留且公司分析入队。
-    # 逻辑：替换 Gmail、LLM 和临时身份的 HTTP 客户端，执行检查点及真实 ingestion 事务。
+    # 逻辑：替换 Gmail、LLM 和临时身份的 HTTP 客户端，执行检查点及真实 ingestion 事务。 在显式 20 封范围内模拟选择三封邮件，实际读取错误隔离与入库路径保持真实。
     # 约束：模型输出为合成 fixture；测试通过不代表真实邮箱授权或模型质量已验证。
     def test_worker_persists_stream_and_isolates_read_error(self):
         owner = get_user_model().objects.create_user(username="worker-integration")
         mailbox = Mailbox.objects.create(owner=owner, address="worker@processing.example")
         GmailCredential.objects.create(mailbox=mailbox, credentials={"mock": True})
-        run = request_run(owner, mailbox.pk)
+        run = request_run(owner, mailbox.pk, sync_options={"max_messages": 20})
         payloads = {key: rules.extract_email(mailbox, "buyer@pipeline.example", "询价", "需求：设备\n数量：2 台", key) for key in ["one", "three"]}
         client = Mock()
         client.get_sync_state.return_value = {"mailbox_id": str(mailbox.pk), "cursor": None, "scope": {}, "version": 0}
@@ -304,9 +304,7 @@ class WorkerPipelineTests(TransactionTestCase):
             patch("apps.crm.dispatch.django_backend_from_environment", return_value=client),
             patch("apps.crm.worker.create_service_from_authorization", return_value=(object(), None)),
             patch("apps.crm.durable_sync.resolve_mailbox_address", return_value=mailbox.address),
-            patch("apps.crm.durable_sync.get_profile_history_id", return_value="100"),
-            patch("apps.crm.durable_sync.history_page", return_value=(["one", "bad", "three"], "")),
-            patch("apps.crm.durable_sync.list_history_message_ids", return_value=([], "101")),
+            patch("apps.crm.durable_sync.scoped_message_pages", return_value=[["one", "bad", "three"]]),
             patch("apps.crm.durable_sync.read_email", side_effect=[{"gmail_message_id": "one"}, RuntimeError("simulated"), {"gmail_message_id": "three"}]),
             patch("agent.workflows.gmail_sync.process_email", side_effect=lambda email, *_args: payloads[email["gmail_message_id"]]),
         ):

@@ -1,5 +1,5 @@
 """职责：验证共享调度的公平性、HTTP 员工隔离和凭证撤销。
-实现：隔离 PostgreSQL 与本地测试 HTTP 服务；邮箱/模型被模拟，权限和租约执行真实代码。
+实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；隔离 PostgreSQL 与本地测试 HTTP 服务；邮箱/模型被模拟，权限和租约执行真实代码。
 关联：dispatch、worker、crm_worker 及 AgentAuthentication；不连接真实邮箱或 LLM。
 目录：
 - SharedWorkerTests：共享 Worker 集成测试。
@@ -83,11 +83,11 @@ class SharedWorkerTests(LiveServerTestCase):
     # 功能：确保持续排队的第一位员工不会阻止其他员工被选择。
     # 输入：两位员工分别拥有 queued 批次。
     # 输出：轮转顺序 first/second/first；停用后只选有效员工。
-    # 逻辑：批次保持 queued，直接验证游标选择而非依赖任务完成顺序。
+    # 逻辑：批次保持 queued，直接验证游标选择而非依赖任务完成顺序。 各 Gmail 夹具显式选择 20 封，原员工顺序与活跃状态断言保持不变。
     # 约束：不领取任务，不修改既定并发限制。
     def test_round_robin_and_inactive_owner(self):
         for owner, mailbox in zip(self.owners, self.mailboxes):
-            request_run(owner, mailbox.pk)
+            request_run(owner, mailbox.pk, sync_options={"max_messages": 20})
         first = dispatch.next_owner("sync")
         second = dispatch.next_owner("sync", first.pk)
         self.assertEqual([first.pk, second.pk], [owner.pk for owner in self.owners])
@@ -135,10 +135,10 @@ class SharedWorkerTests(LiveServerTestCase):
     # 功能：复现新员工队列并验证共享命令自动处理两位员工。
     # 输入：两位均未绑定旧环境令牌的员工及各自 queued 批次。
     # 输出：两批次 completed，均有开始时间；临时凭证全部撤销。
-    # 逻辑：真实线程池调度和领取，仅模拟 Gmail 网络/模型；HTTP 员工认证不模拟。
+    # 逻辑：真实线程池调度和领取，仅模拟 Gmail 网络/模型；HTTP 员工认证不模拟。 两名员工各显式选择 20 封范围，模拟 Worker 验证共享调度与命令退出。
     # 约束：没有发送邮件，不更改命令默认并发和轮询参数。
     def test_shared_command_drains_two_owners(self):
-        runs = [request_run(owner, mailbox.pk) for owner, mailbox in zip(self.owners, self.mailboxes)]
+        runs = [request_run(owner, mailbox.pk, sync_options={"max_messages": 20}) for owner, mailbox in zip(self.owners, self.mailboxes)]
         with patch("apps.crm.worker.create_service_from_authorization", return_value=(object(), None)), patch("apps.crm.worker.sync_persisted", side_effect=exercise_sync):
             call_command("crm_worker", once=True)
         for run in runs:
@@ -168,10 +168,10 @@ class SharedWorkerTests(LiveServerTestCase):
     # 功能：验证共享调度能发现过期批次并明确失败，不自动重新读取邮箱。
     # 输入：只有一条租约过期 running 批次。
     # 输出：状态 failed，错误 worker_interrupted，没有可调度同步工作。
-    # 逻辑：调用实际调度与工作单元，断言不进入 Gmail 分支。
+    # 逻辑：调用实际调度与工作单元，断言不进入 Gmail 分支。 创建显式 20 封范围的批次后模拟租约到期，不改变原失败语义。
     # 约束：保留现有显式重试语义。
     def test_expired_sync_fails_without_retry(self):
-        run = request_run(self.owners[0], self.mailboxes[0].pk)
+        run = request_run(self.owners[0], self.mailboxes[0].pk, sync_options={"max_messages": 20})
         MailboxSyncRun.objects.filter(pk=run.pk).update(status="running", lease_until=timezone.now() - timedelta(seconds=1))
         owner = dispatch.next_owner("sync")
         with patch("apps.crm.worker.create_service_from_authorization") as gmail:
@@ -185,10 +185,10 @@ class SharedWorkerTests(LiveServerTestCase):
     # 功能：验证共享部署多个进程时沿用真实数据库互斥。
     # 输入：同一员工一条 queued 批次，两个独立线程竞争领取。
     # 输出：只有一个线程取得批次 ID。
-    # 逻辑：真实 PostgreSQL 行锁与状态复查阻止重复领取。
+    # 逻辑：真实 PostgreSQL 行锁与状态复查阻止重复领取。 竞争对象为显式选择 20 封的唯一批次；不以重复排队替代并发领取测试。
     # 约束：不模拟数据库锁，不代表无限并发负载测试。
     def test_concurrent_claim_is_unique(self):
-        run = request_run(self.owners[0], self.mailboxes[0].pk)
+        run = request_run(self.owners[0], self.mailboxes[0].pk, sync_options={"max_messages": 20})
         with ThreadPoolExecutor(max_workers=2) as pool:
             results = list(pool.map(claim_in_thread, [self.owners[0], self.owners[0]]))
         self.assertCountEqual(results, [run.pk, None])

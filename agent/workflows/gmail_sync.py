@@ -1,5 +1,5 @@
 """职责：编排 Gmail 同步、并发 L1、逐封提交和可选进度观察。
-实现：保留既有默认参数及逐封处理辅助函数；Worker 使用持久检查点编排，旧 CLI 游标异常强失败。
+实现：保留既有默认参数及逐封处理辅助函数；Worker 使用持久检查点编排，网页领取的 CLI 批次严格执行冻结范围，底层旧游标接口异常强失败。
 关联：软件 Worker 使用本模块，Gmail 工具提供原文，后端 HTTP 客户端保存业务数据。
 目录：
 - sync_gmail：同步一个邮箱并逐封保存 L1 结果。
@@ -21,6 +21,7 @@
 - _unique_message_ids：稳定去重 Gmail 消息标识。
 - _failed：构造批次失败汇总。
 变量索引：
+- logger：同步阶段安全日志。
 - EMAIL_EXTRACTION_WORKERS：既定最多四路 L1 并发。
 - __all__：公开 sync_gmail 接口。
 """
@@ -34,6 +35,7 @@ from time import perf_counter
 from typing import Any, Callable, Iterator, Mapping
 
 from agent.clients.backend_api import BackendClient
+from agent.tools.gmail_scope import gmail_message_limit, scoped_message_pages
 from agent.tools.gmail import (
     GmailHistoryExpiredError,
     create_service,
@@ -58,7 +60,7 @@ logger = logging.getLogger("salesmate.agent.gmail_sync")
 # 功能：同步一个邮箱并逐封保存 L1 结果。
 # 输入：`authorization` 为授权或邮箱同步请求对象；`backend` 为业务后端协议客户端；`gmail_factory` 为令牌到 SDK 的构造函数；`extraction_provider` 为单封邮件事实抽取函数；`progress` 为可选阶段回调；`message_ids` 为指定 Gmail ID 数组，None 表示既有扫描范围。
 # 输出：Gmail 同步汇总字典。
-# 逻辑：读取游标与消息，四路抽取逐封提交；可选进度观察及显式重试范围。
+# 逻辑：有冻结范围时执行默认 50 封或已批准上限，明确重试也校验封数；读取前按已存天然键去重，保留范围外失败状态但不计入本批失败数；否则沿底层游标协议，四路抽取逐封提交。
 # 约束：不执行 L2–L4；旧汇总状态兼容，软件 Worker 另行计算 partial；配置和评分不变。
 def sync_gmail(
     authorization: Mapping[str, Any],
@@ -87,6 +89,7 @@ def sync_gmail(
         mailbox_id, max_results, len(message_ids) if message_ids is not None else None,
     )
     read_failures = []
+    skipped_before_read = 0
 
     # 功能：转发进度并收集读取失败 ID。
     # 输入：`stage` 为当前处理阶段；`data` 为阶段关联数据。
@@ -105,10 +108,22 @@ def sync_gmail(
         resolved_address = resolve_mailbox_address(service, mailbox_address)
         sync_state = _get_sync_state(backend, mailbox_id)
         if message_ids is not None:
+            if len(message_ids) > gmail_message_limit(authorization.get("sync_options") or {}):
+                raise ValueError("重试邮件数超过本批允许的封数，请先批准相应的同步范围。")
             emails = read_messages(service, message_ids, progress=observer)
             next_cursor = (sync_state or {}).get("cursor")
             pending_message_ids = (sync_state or {}).get("scope", {}).get("pending_message_ids", [])
             sync_mode = "explicit_retry"
+        elif "sync_options" in authorization:
+            emails = []
+            failed_ids = set((sync_state or {}).get("scope", {}).get("failed_message_ids", []))
+            for page in scoped_message_pages(service, authorization["sync_options"], max_results):
+                unread = [value for value in page if value not in failed_ids and backend.get_stored_email(mailbox_id, f"{resolved_address.casefold()}:{value}") is None]
+                skipped_before_read += len(page) - len(unread)
+                emails.extend(read_messages(service, unread, progress=observer))
+            next_cursor = (sync_state or {}).get("cursor")
+            pending_message_ids = (sync_state or {}).get("scope", {}).get("pending_message_ids", [])
+            sync_mode = "bounded"
         else:
             emails, next_cursor, pending_message_ids, sync_mode = _read_email_batch(
                 service, max_results, sync_state, progress=observer,
@@ -157,19 +172,24 @@ def sync_gmail(
             fetched_count=len(emails),
         )
 
+    skipped_existing_count += skipped_before_read
     retry_message_ids = _unique_message_ids(
         [*read_failures, *retry_message_ids, *l1_failed_message_ids, *submission_retry_ids]
     )
     if message_ids is not None:
         previous_failed = (sync_state or {}).get("scope", {}).get("failed_message_ids", [])
-        retry_message_ids = _unique_message_ids([*[item for item in previous_failed if item not in message_ids], *retry_message_ids])
+        retry_message_ids = _unique_message_ids([*[item for item in previous_failed if item not in (message_ids or [])], *retry_message_ids])
+    state_retry_message_ids = retry_message_ids
+    if sync_mode == "bounded":
+        previous_failed = (sync_state or {}).get("scope", {}).get("failed_message_ids", [])
+        state_retry_message_ids = _unique_message_ids([*previous_failed, *retry_message_ids])
     cursor_saved = _save_sync_state(
         backend,
         mailbox_id,
         sync_state,
         next_cursor,
         pending_message_ids,
-        retry_message_ids,
+        state_retry_message_ids,
     )
     logger.info(
         "gmail_sync_completed mailbox_id=%s fetched=%s processed=%s skipped=%s l1_failed=%s submit_failed=%s retry=%s cursor_saved=%s duration_ms=%s",

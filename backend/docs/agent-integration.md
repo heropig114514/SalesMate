@@ -38,7 +38,7 @@ python backend/manage.py crm_worker
 
 - Agent CLI 保留一次性调试；产品链路由独立 `crm_worker` 消费数据库批次和公司任务。
 - 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。Agent 不再维护旧的本机 Desktop OAuth 读取命令；`test_tools/` 中的测试邮件注入器使用独立的 Desktop OAuth 凭据和 token，具体见其 README。
-- Worker 使用 SyncCheckpoint/StoredMessage 保存游标、页位置、原文和 L1 输出；旧 SyncState 提供兼容投影。Worker 接管后拒绝旧 CLI 游标双写，仍以 `dedupe_key` 保证保存幂等。
+- Worker 按必填 `sync_options` 选择最近天数或封数；Gmail 普通上限 50 封，超量须在告知风险并获用户明确批准后提供 `allow_large_sync=true` 与具体封数，StoredMessage 保存范围内原文及 L1 输出，SyncCheckpoint 仅标识接管并保留旧审计字段；旧 SyncState 提供兼容投影。Worker 接管后拒绝旧 CLI 游标双写，仍以 `dedupe_key` 保证保存幂等。
 - L1 最多四路并发，逐封失败隔离；批次与邮件任务保存到数据库。公司画像默认两路，同公司互斥。
 - 后端依据 Agent 信号保存独立分类，隐藏非业务和待复核邮件；人工确认优先于后续自动分类。
 - `extract-v7` 无采购阶段的入站邮件进入复核；人工确认缺失事实的业务邮件先补 L1，再自动重算画像。邮件分类或事实变化沿快照血缘使 L3/L4 失效，并对剩余业务来源重算。

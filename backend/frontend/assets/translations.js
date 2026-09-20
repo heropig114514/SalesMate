@@ -6,6 +6,14 @@
  * 变量索引：EN 为中文源文案到英文翻译的只读映射。
  */
 export const EN = Object.freeze({
+  "留空则最多 50 封": "Leave blank for up to 50 messages",
+  "默认最多同步 50 封，仅填写天数时也适用。选择超过 50 封需另行确认，可能长时间占用处理进程。": "Sync up to 50 messages by default, including when only days are specified. More than 50 requires confirmation and may keep the worker busy for a long time.",
+  "本次选择最多 {0} 封邮件，超过默认的 50 封上限，可能长时间占用处理进程并增加分析费用。是否批准本次超量同步？取消后可修改数量。": "This sync selects up to {0} messages, exceeding the default limit of 50. It may keep the worker busy for a long time and increase analysis costs. Approve this larger sync? Cancel to change the count.",
+  "已连接，待选择同步范围": "Connected; choose a sync range",
+  "选择本次 Gmail 同步范围": "Choose the Gmail sync range",
+  "最近 N 封": "Latest N messages",
+  "请填写最近 N 天或最近 N 封，至少一项。": "Enter recent days or latest messages, at least one.",
+  "至少填写一项，两项都填时取交集。收件箱与已发送合计；先选最近 N 封，再跳过已同步邮件，不向更早邮件补足。失败邮件请从进度中明确重试。": "Enter at least one limit; both limits apply when provided. Inbox and sent messages are combined. Select the latest N first, then skip synced messages without fetching older ones to fill the count. Retry failed messages explicitly from progress.",
   "100–199 人": "100–199 employees",
   "16 位授权码，不是 QQ 密码": "16-character authorization code, not your QQ password",
   "200–499 人": "200–499 employees",
@@ -14,7 +22,7 @@ export const EN = Object.freeze({
   "AI 助手": "AI assistant",
   "Agent 分析": "Agent analysis",
   "Gmail API 调用失败。请确认项目已启用 Gmail API，且当前账号拥有授权权限。": "Gmail API request failed. Check that Gmail API is enabled and this account has access.",
-  "Gmail {0} 已授权，Agent 正在自动同步和分析邮件。": "Gmail {0} is connected. The agent is syncing and analyzing emails.",
+  "Gmail {0} 已授权，请选择本次同步范围。": "Gmail {0} is connected. Choose the sync range.",
   "Gmail 发信": "Gmail sending",
   "Gmail 发送邮件": "Send via Gmail",
   "Gmail 授权已移除，历史邮件和客户分析仍然保留。": "Gmail authorization removed. Saved emails and customer analyses are retained.",
@@ -419,7 +427,7 @@ export const EN = Object.freeze({
   "按跟进优先级排序 · 未评分排在最后": "Sorted by follow-up priority · Unscored customers last",
   "授权会话状态已失效。请始终使用 127.0.0.1 打开页面，并重新发起授权。": "The authorization session has expired. Open this local page at 127.0.0.1 and start authorization again.",
   "授权后，SalesMate 只读取当前登录员工选择的 Gmail 邮件，用于客户归组与分析。": "After authorization, SalesMate reads only the Gmail emails selected by the current employee for customer grouping and analysis.",
-  "授权完成后会自动请求首次同步。同步请求提交后在后台处理，页面会显示等待、同步中或完成状态。": "The first sync is requested automatically after authorization. Processing runs in the background; the page shows pending, syncing or completed status.",
+  "授权完成后请选择最近天数或邮件封数，再开始同步。已同步邮件会跳过，不会自动全量读取。": "After authorization, choose recent days or a message count to start syncing. Synced messages are skipped; a full mailbox sync never starts automatically.",
   "接收时间：": "Received at:",
   "推断": "Inferred",
   "提交状态": "Submission status",

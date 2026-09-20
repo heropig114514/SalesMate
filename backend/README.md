@@ -46,7 +46,7 @@ flowchart TB
     WEB <-->|Session JSON API| DJANGO[Django + DRF]
     WEB -->|发起 Google OAuth| DJANGO
     DJANGO <-->|授权码与只读凭证| GMAIL[Gmail]
-    DJANGO -->|员工专属同步请求、凭证与 History 游标| SYNC[一次性 Agent Gmail Sync]
+    DJANGO -->|员工专属同步请求、凭证与冻结范围| SYNC[一次性 Agent Gmail Sync]
     GMAIL -->|新增 message ID 与只读邮件| SYNC
     SYNC --> PARSE[邮件解析]
     PARSE --> L1[L1 单封事实抽取<br/>最多四路并发]
@@ -83,7 +83,7 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 |---|---|---|---|
 | 员工 Gmail 授权 | 当前员工 Session、Google OAuth code | 邮箱地址、授权状态、`sync_requested` | Django `GmailCredential` 与 `Mailbox.sync_state` |
 | 同步任务领取 | Agent 服务凭证、领取数量 | `mailbox_id`、邮箱地址、Google 授权信息、读取上限 | 状态变为 `sync_running` |
-| Gmail 读取 | 已领取的员工授权、读取上限和后端 History 游标 | 首次最近邮件或游标后的新增 message resource | Agent 内存；游标由 Django `Mailbox.sync_state` 保存 |
+| Gmail 读取 | 已领取的员工授权、冻结天数/封数范围 | 范围内最新邮件，正文读取前排除已同步 ID | Worker 原文/L1 持久缓存；范围由 MailboxSyncRun 保存 |
 | 邮件解析 | raw MIME、message/thread ID | 发件人、收件人、主题、正文、时间、方向 | Agent 内存 |
 | L1 抽取 | 当前邮件主题和正文 | `EmailSubmission` | 最多四路并发；任一完成后立即逐封保存到 Django `Email` 与 `Extraction` |
 | 后端归组 | 联系人邮箱和自报公司 | `company_id`、联系人、成员邮件键 | Django `Company` 与 `Contact` |
@@ -354,8 +354,8 @@ python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --p
 1. 在工作台左侧点击 Gmail，或点击页面右上角“连接 Gmail”。
 2. 在弹窗点击“使用 Google 账号授权”。
 3. 选择当前员工自己的 Google 账号并同意只读权限。
-4. Google 返回工作台后，页面显示邮箱并持久排队；下一步启动独立 Worker 后执行同步和分析。
-5. 页面持续读取批次进度，并逐步刷新客户列表。
+4. Google 返回工作台后，先选择“最近 N 天”或“最近 N 封”（至少一项，两项取交集），默认最多 50 封，只填天数也适用；超过 50 封会警告长时间占用进程风险，明确批准后才持久排队；取消不会同步。下一步启动独立 Worker 后执行同步和分析。
+5. 页面持续读取批次进度，并逐步刷新客户列表。后续同步或刷新仍须选择范围；Gmail 先取最新 N 封再跳过已同步邮件，不用更早邮件补足，不自动全量补采；失败仅明确重试。
 
 不同 SalesMate 登录用户拥有独立的邮箱连接、客户公司和邮件范围。即使两名员工联系相同客户域名，他们也不会在当前 MVP 中互相看到对方邮件。
 

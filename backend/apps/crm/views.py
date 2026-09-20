@@ -1,6 +1,6 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
 实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离。
-关联：urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
+关联：sync_scope 要求 Gmail/QQ 同步范围；urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
 - AgentAuthenticationSchema.get_security_definition：返回安全方案定义。
@@ -86,7 +86,7 @@ from apps.sales.services import audit
 from . import gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
 from .models import Company, Email, Mailbox
-from .qq_scope import SyncRequestSerializer
+from .sync_scope import SyncRequestSerializer
 from .response_schemas import (SubmissionResultSerializer, JobResponseSerializer, CachedAnalysisResponseSerializer,
                                GroupingResponseSerializer, CompanyContextResponseSerializer, MailboxResponseSerializer,
                                MailboxSyncClaimResponseSerializer)
@@ -362,10 +362,10 @@ class MailboxViewSet(ViewSet):
     def gmail_authorize(self, request):
         return Response({"authorization_url": gmail_oauth.begin_authorization(request)})
 
-    # 功能：完成当前员工 Google OAuth 并请求第一次同步。
+    # 功能：完成当前员工 Google OAuth 并等待选择同步范围。
     # 输入：`request` 含 Google 返回的 code、state 和当前员工会话。
     # 输出：重定向回工作台并携带授权结果。
-    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱并持久化同步批次，由独立 Worker 消费。
+    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱；前端要求员工选择范围后单独排队。
     # 约束：失败时不建立未经验证的邮箱连接。
     @extend_schema(responses={302: None}, tags=["mailboxes"])
     @action(detail=False, methods=["get"], url_path="gmail-callback")
@@ -390,7 +390,7 @@ class MailboxViewSet(ViewSet):
         return redirect(f"/?{query}")
 
     # 功能：让当前员工请求刷新自己的 Gmail 或 QQ 邮件。
-    # 输入：`request` 为当前员工请求及 QQ sync_options，`pk` 为 URL 中的 mailbox_id。
+    # 输入：`request` 为当前员工请求及必填 sync_options，`pk` 为 URL 中的 mailbox_id。
     # 输出：不含凭证的最新连接及同步状态。
     # 逻辑：创建持久批次并返回 HTTP 202，独立 Worker 领取。
     # 约束：不可请求其他员工或未授权邮箱。

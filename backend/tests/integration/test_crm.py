@@ -372,7 +372,7 @@ class CRMTests(TestCase):
     # 功能：验证员工 Gmail 连接只在本人页面可见，并能被对应 Agent 领取和回报。
     # 输入：测试 Gmail 凭证、浏览器同步请求和 Agent 服务调用，执行由独立 Worker 消费。
     # 输出：浏览器无令牌、Agent 单次领取、最终同步完成状态。
-    # 逻辑：同一 Mailbox 贯穿页面状态与 Agent 队列，第二名员工不能操作。
+    # 逻辑：同一 Mailbox 贯穿页面状态与 Agent 队列，第二名员工不能操作。 浏览器显式提交最多 20 封的测试范围，Agent 领取保留相同冻结条件。
     # 约束：不连接真实 Google，凭证内容完全为测试数据。
     def test_employee_gmail_connection_and_sync_queue(self):
         credentials = {
@@ -392,7 +392,8 @@ class CRMTests(TestCase):
         self.assertNotIn("fake-access-token", str(listed.data))
 
         queued = self.browser.post(
-            f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
+            f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/",
+            {"sync_options": {"max_messages": 20}}, format="json"
         )
         self.assertEqual(queued.status_code, 202, queued.data)
         self.assertEqual(queued.data["sync_state"]["status"], "sync_requested")
@@ -429,7 +430,8 @@ class CRMTests(TestCase):
         other_browser.force_authenticate(self.other)
         self.assertEqual(
             other_browser.post(
-                f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
+                f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/",
+                {"sync_options": {"max_messages": 20}}, format="json"
             ).status_code,
             404,
         )
@@ -465,7 +467,7 @@ class CRMTests(TestCase):
 
     # 功能：验证 PKCE code_verifier 保持一致，并兼容 Google 返回已授权 scope 超集。
     # 输入：`flow_factory` 构造两次 Flow；`build` 模拟 Gmail profile；令牌交换抛出携带可用 token 的 scope Warning。
-    # 输出：回调成功、凭据落库，第二个 Flow 收到第一个 Flow 的 verifier。
+    # 输出：回调成功、凭据落库但不排队，第二个 Flow 收到第一个 Flow 的 verifier。
     # 逻辑：回调恢复 verifier，并在返回权限仍包含 gmail.readonly 时接受 token。
     # 约束：测试凭据均为虚构内容，不发起任何外部请求。
     @override_settings(
@@ -518,6 +520,7 @@ class CRMTests(TestCase):
         self.assertEqual(callback.status_code, 302)
         self.assertIn("gmail=authorized", callback["Location"])
         self.assertTrue(GmailCredential.objects.filter(mailbox=self.mailbox).exists())
+        self.assertFalse(self.mailbox.sync_runs.exists())
         finish_flow.fetch_token.assert_called_once_with(code="test-code")
         self.assertEqual(finish_flow.oauth2session.token, scope_warning.token)
         self.assertEqual(

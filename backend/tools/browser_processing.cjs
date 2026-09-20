@@ -1,7 +1,7 @@
 /**
  * 职责：隔离验证 QQ/Gmail 共存、来源标识、原文入口、同步进度、人工复核及移动端布局。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
+ * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 Gmail/QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
  * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
  * 目录：main 运行浏览器场景；静态服务及路由回调属于 main 的测试夹具。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为被忽略的截图目录；其余导入无业务状态。
@@ -16,7 +16,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：验证真实浏览器交互与文本安全。输入：显式模块/浏览器环境变量。输出：成功说明与截图。
- * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；回归 Gmail 进度和人工复核。
+ * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；验证 Gmail 首次授权不自动排队、默认 50 封、超量警告拒绝/批准及批准不复用、刷新及移动布局，再回归进度和人工复核。
  * 约束：拒绝非本地网络，测试独立静态服务在 finally 关闭，不写实际业务记录。 */
 async function main() {
   const server = http.createServer((request, response) => {
@@ -34,6 +34,13 @@ async function main() {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     let qqEnabled = false;
+    let approveLarge = false;
+    const warnings = [], gmailRequests = [];
+    page.on('dialog', async dialog => {
+      assert.equal(dialog.type(), 'confirm');
+      warnings.push(dialog.message());
+      if (approveLarge) await dialog.accept(); else await dialog.dismiss();
+    });
     let runId = null, reads = 0, reviewed = false, retried = false, qqConnected = false, qqAttempts = 0, qqSyncs = 0;
     await page.route('**/*', async route => {
       const request = route.request();
@@ -69,7 +76,15 @@ async function main() {
         const newRun = endpoint === 'mailbox-sync-runs/qq-run-2/';
         data = { run_id: newRun ? 'qq-run-2' : 'qq-run', mailbox_id: 'qq1', status: 'completed', sync_options: { recent_days: newRun ? null : 7, max_messages: newRun ? 3 : 20, until: '2026-09-14T10:00:00Z' }, total_count: 0, completed_count: 0, failed_count: 0, pending_count: 0, running_count: 0, analysis_completed_count: 0, analysis_pending_count: 0, analysis_failed_count: 0, error: null, email_errors: [] };
       }
-      else if (endpoint === 'mailboxes/mb1/request-sync/') { runId = 'run1'; data = { run_id: runId, mailbox_id: 'mb1', status: 'queued' }; }
+      else if (endpoint === 'mailboxes/mb1/request-sync/') {
+        gmailRequests.push(request.postDataJSON());
+        if (gmailRequests.length === 1) {
+          assert.deepEqual(request.postDataJSON(), { sync_options: { recent_days: 7, max_messages: 50 } });
+          return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { detail: '模拟拒绝默认范围，不启动同步' } }) });
+        }
+        assert.deepEqual(request.postDataJSON(), { sync_options: { recent_days: 7, max_messages: 75, allow_large_sync: true } });
+        runId = 'run1'; data = { run_id: runId, mailbox_id: 'mb1', status: 'queued' };
+      }
       else if (endpoint === 'email-reviews/') data = { results: reviewed ? [] : [{ email_id: 'sales@example.com:review', sender: 'buyer@example.com', subject: '<img src=x onerror=alert(1)>', body_text: '模拟复核原文', reason: '员工确认业务，模拟补抽取失败', revision: 2, intent_evidences: ['模拟证据'], repair_status: 'failed' }], pending_count: reviewed ? 0 : 1, count: reviewed ? 0 : 1, page: 1, page_size: 20 };
       else if (endpoint.startsWith('email-reviews/') && request.method() === 'PATCH') {
         assert.equal(request.headers()['if-match'], '2');
@@ -85,7 +100,29 @@ async function main() {
       return route.fulfill({ status: request.method() === 'POST' && endpoint.includes('sync') ? 202 : 200, contentType: 'application/json', body: JSON.stringify(data) });
     });
     fs.mkdirSync(OUTPUT, { recursive: true });
-    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.goto(`http://127.0.0.1:${server.address().port}/?gmail=authorized&address=sales%40example.com`);
+    await page.locator('#gmail-scope-dialog').waitFor({ state: 'visible' });
+    assert.equal(runId, null, 'OAuth must not start unbounded sync');
+    await page.locator('#gmail-scope-form [type=submit]').click();
+    await page.locator('#gmail-scope-error').filter({ hasText: '至少一项' }).waitFor();
+    assert.equal(runId, null);
+    await page.locator('#gmail-scope-form [name=max_messages]').fill('51');
+    await page.locator('#gmail-scope-form [type=submit]').click();
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /51.*50.*长时间/);
+    assert.equal(gmailRequests.length, 0, 'Rejected warning must not submit');
+    assert.equal(await page.locator('#gmail-scope-dialog').isVisible(), true);
+    await page.locator('#gmail-scope-form [name=max_messages]').fill('');
+    await page.locator('#gmail-scope-form [name=recent_days]').fill('7');
+    await page.locator('#gmail-scope-form [type=submit]').click();
+    await page.locator('#notice').filter({ hasText: '模拟拒绝默认范围' }).waitFor();
+    assert.equal(warnings.length, 1, 'Default 50 must not require extra approval');
+    assert.equal(gmailRequests.length, 1);
+    await page.locator('#refresh').click();
+    await page.locator('#gmail-scope-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#gmail-scope-form [name=recent_days]').inputValue(), '');
+    await page.locator('#gmail-scope-dialog .close-dialog').click();
+    assert.equal(runId, null, 'Cancel refresh must not queue Gmail');
     await page.locator('#email-reviews-open').filter({ hasText: '(1)' }).waitFor();
     assert.match(await page.locator('.company-row .row-tags').textContent(), /演示样例/);
     assert.equal(await page.locator('#qq-manage-top').isVisible(), false);
@@ -170,6 +207,18 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.locator('#gmail-manage-top').click();
     await page.locator('[data-gmail-sync]').click();
+    await page.locator('#gmail-scope-form [name=recent_days]').fill('7');
+    await page.locator('#gmail-scope-form [name=max_messages]').fill('75');
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Gmail scope mobile overflow');
+    await page.screenshot({ path: path.join(OUTPUT, 'gmail-scope-mobile.png') });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: path.join(OUTPUT, 'gmail-scope-desktop.png') });
+    approveLarge = true;
+    await page.locator('#gmail-scope-form [type=submit]').click();
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[1], /75.*50.*长时间/);
+    await page.locator('#gmail-scope-dialog').waitFor({ state: 'hidden' });
     await page.locator('#gmail-dialog .close-dialog').click();
     await page.locator('[data-retry-run]').waitFor();
     assert.match(await page.locator('#sync-progress').textContent(), /失败 1/);
@@ -177,8 +226,17 @@ async function main() {
     await page.locator('[data-retry-run]').click();
     await page.waitForFunction(() => document.getElementById('sync-progress').textContent.includes('完成 3'));
     assert.equal(retried, true);
+    runId = null;
+    approveLarge = false;
+    await page.locator('#refresh').click();
+    await page.locator('#gmail-scope-form [name=max_messages]').fill('76');
+    await page.locator('#gmail-scope-form [type=submit]').click();
+    assert.equal(warnings.length, 3, 'New selection needs fresh approval');
+    assert.match(warnings[2], /76.*50/);
+    assert.equal(gmailRequests.length, 2, 'Prior approval must not authorize a new selection');
+    await page.locator('#gmail-scope-dialog .close-dialog').click();
     assert.deepEqual(errors, []);
-    console.log('Browser processing checks passed: source labels, QQ saved originals/account scope/classification/date, global review reset, explicit limits, cancel, connection failure/success, secret clearing, disconnect, Gmail coexistence, escaping, If-Match, mobile layout, batch progress and explicit retry.');
+    console.log('Browser processing checks passed: source labels, QQ saved originals/account scope/classification/date, global review reset, explicit limits, default 50 cap, large-sync warning rejection/approval/no reuse, cancel, connection failure/success, secret clearing, disconnect, Gmail coexistence, escaping, If-Match, mobile layout, batch progress and explicit retry.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));
