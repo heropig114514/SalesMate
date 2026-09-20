@@ -1,10 +1,12 @@
-"""职责：管理 Windows 本地 SalesMate 环境检查及 Web/Worker 生命周期。
-实现：沿用根 .env，显式唤起 WSL PostgreSQL，应用迁移；后台监督器持有文件锁，按就绪检查启动子进程。
-关联：start-local.ps1 准备依赖；原管理命令保持任务参数和 SIGTERM 排空语义；不安装数据库或导入演示数据。
+"""职责：管理 Windows/macOS 本地 SalesMate 环境检查及 Web/Worker 生命周期。
+实现：沿用根 .env，可显式启动 WSL/Homebrew PostgreSQL；按平台持有独占文件锁、分离后台进程并执行同一就绪检查。
+关联：start-local.ps1/start-local.sh 准备依赖；原管理命令保持任务参数和 SIGTERM 排空语义；不安装数据库或导入演示数据。
 
 目录：
 - emit：输出不含配置秘密的阶段信息。
-- lock_runtime：获得 Windows 运行目录独占锁。
+- background_options：选择 Windows 隐藏窗口或 POSIX 独立会话参数。
+- validate_database_options：校验数据库启动参数的平台与服务名边界。
+- lock_runtime：获得 Windows/POSIX 运行目录独占锁。
 - running：只读检查监督器锁是否被持有。
 - read_state：读取原子发布的状态文件。
 - write_state：更新状态与所管理的进程信息。
@@ -26,12 +28,14 @@
 
 import _thread
 import argparse
+import errno
 import json
-import msvcrt
 import os
 from pathlib import Path
+import re
 import runpy
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
@@ -62,17 +66,49 @@ def emit(message):
     print(f'[local] {message}', flush=True)
 
 
+# 功能：选择与当前平台对应的后台进程隔离方式。
+# 输入：无外部参数；读取 os.name。
+# 输出：供 Popen/run 展开的关键字字典。
+# 逻辑：Windows 使用 CREATE_NO_WINDOW，POSIX 创建独立会话，避免关闭启动终端时收到终端挂断信号。
+# 约束：平台分支是显式实现，不是失败后的回退；标准流仍由调用者重定向。
+def background_options():
+    if os.name == 'nt':
+        return {'creationflags': subprocess.CREATE_NO_WINDOW}
+    return {'start_new_session': True}
+
+
+# 功能：在任何服务变更前校验数据库启动选项。
+# 输入：`distro` 为 WSL 发行版或 None；`brew_service` 为 Homebrew PostgreSQL 公式名或 None。
+# 输出：无；不合法时抛 RuntimeError。
+# 逻辑：限制 WSL 仅 Windows、Homebrew 仅 macOS，且两种选项互斥；只接受 PostgreSQL 公式名。
+# 约束：不执行外部命令、不自动探测或选择数据库版本。
+def validate_database_options(distro, brew_service):
+    if distro and brew_service:
+        raise RuntimeError('--wsl-distro and --brew-service cannot be combined.')
+    if distro and sys.platform != 'win32':
+        raise RuntimeError('--wsl-distro is available only on Windows.')
+    if brew_service and sys.platform != 'darwin':
+        raise RuntimeError('--brew-service is available only on macOS.')
+    if brew_service and not re.fullmatch(r'postgresql(?:@[0-9]+)?', brew_service):
+        raise RuntimeError('--brew-service must be an installed PostgreSQL formula, e.g. postgresql@16.')
+
+
 # 功能：获得监督器的独占文件锁。
 # 输入：无外部参数；读取 RUNTIME。
 # 输出：返回必须保持打开的文件句柄；冲突抛 OSError。
-# 逻辑：锁定首字节，进程退出后由操作系统自动释放。
-# 约束：仅支持 Windows；不依靠可能被复用的 PID 杀进程。
+# 逻辑：Windows 锁定首字节，macOS/POSIX 使用 flock；关闭句柄或进程退出后由操作系统释放。
+# 约束：不依靠可能被复用的 PID 杀进程；平台专用模块仅在对应分支导入。
 def lock_runtime():
     RUNTIME.mkdir(parents=True, exist_ok=True)
     handle = (RUNTIME / 'run.lock').open('a+b')
     handle.seek(0)
     try:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         handle.close()
         raise
@@ -82,13 +118,13 @@ def lock_runtime():
 # 功能：查询是否已有监督器持锁。
 # 输入：无外部参数；读取运行目录文件锁。
 # 输出：返回布尔值。
-# 逻辑：短暂尝试同一把锁；锁竞争表示运行中。
+# 逻辑：短暂尝试同一把锁；用当前平台的 errno 常量识别锁竞争，兼容 macOS 的 EAGAIN 编号。
 # 约束：不启动或停止进程；其他文件系统错误仍向上传播。
 def running():
     try:
         handle = lock_runtime()
     except OSError as error:
-        if error.errno in (13, 11, 36):
+        if error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
             return True
         raise
     handle.close()
@@ -121,11 +157,12 @@ def write_state(status, processes, detail=''):
 
 
 # 功能：检查既有配置并执行已授权的本地数据库迁移。
-# 输入：`distro` 为显式 WSL 发行版名称或 None；读取根 .env 及进程环境。
+# 输入：`distro` 为显式 WSL 发行版名称或 None；`brew_service` 为显式 Homebrew 公式名或 None；读取根 .env 及进程环境。
 # 输出：返回应启动的服务名称列表；不满足前提时抛 RuntimeError。
-# 逻辑：缺失配置只生成带随机密钥的模板；配置存在时验证本地数据库、任务模式和密钥，随后检查并迁移。
-# 约束：不覆盖 .env、不创建或重置账号、不改变 provider；仅允许本地 PostgreSQL/显式 SQLite，禁止误迁移远程数据库。
-def prepare(distro):
+# 逻辑：校验平台选项；缺失配置只生成模板；验证本地配置后按显式选项启动数据库、等待端口，随后检查并迁移。
+# 约束：不覆盖 .env、不重设账号或 provider；仅允许本地 PostgreSQL/显式 SQLite；Homebrew run 不注册登录启动项，也不安装软件。
+def prepare(distro, brew_service=None):
+    validate_database_options(distro, brew_service)
     env_path = ROOT / '.env'
     if not env_path.exists():
         template = (ROOT / '.env.example').read_text(encoding='utf-8')
@@ -157,13 +194,21 @@ def prepare(distro):
             raise RuntimeError('Agent mode requires DASHSCOPE_API_KEY and BAILIAN_MODEL in .env. No rules fallback is applied.')
         if os.getenv('SALESMATE_BACKEND_AGENT_URL', URL + '/api/v1/agent/').rstrip('/') != URL + '/api/v1/agent':
             raise RuntimeError('SALESMATE_BACKEND_AGENT_URL must point to this launcher at 127.0.0.1:8000.')
-    if distro:
+    if distro or brew_service:
         if not engine.endswith('postgresql'):
-            raise RuntimeError('--wsl-distro requires a configured PostgreSQL database.')
+            raise RuntimeError('Database startup options require a configured PostgreSQL database.')
+    if distro:
         emit(f'Starting PostgreSQL in explicitly selected WSL distribution: {distro}')
         subprocess.run(['wsl.exe', '-d', distro, '-u', 'root', '--', 'service', 'postgresql', 'start'],
                        check=True, timeout=90)
-        # WSL 服务启动返回后 Windows localhost 转发可能尚未就绪；这里只等待 TCP，不重试业务操作。
+    if brew_service:
+        brew = shutil.which('brew')
+        if not brew:
+            raise RuntimeError('Homebrew is not on PATH. Configure your shell or start the database yourself.')
+        emit(f'Starting explicitly selected Homebrew PostgreSQL service: {brew_service}')
+        subprocess.run([brew, 'services', 'run', brew_service], check=True, timeout=90)
+    if distro or brew_service:
+        # 服务命令返回后监听端口或 WSL 转发可能尚未就绪；只等待 TCP，不重试业务操作。
         deadline = time.monotonic() + 30
         while True:
             try:
@@ -171,7 +216,7 @@ def prepare(distro):
                     break
             except OSError:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError('WSL PostgreSQL is not reachable from Windows. Check WSL localhost forwarding.') from None
+                    raise RuntimeError('Local PostgreSQL is not reachable. Check the selected service, port and WSL forwarding if applicable.') from None
                 time.sleep(0.5)
     emit('Checking database and Django configuration; applying pending migrations.')
     connection = connections['default']
@@ -214,7 +259,7 @@ def healthy():
         return False
 
 
-# 功能：将 Windows 文件控制请求交给现有服务的 SIGTERM 处理器。
+# 功能：将跨平台文件控制请求交给现有服务的 SIGTERM 处理器。
 # 输入：`name` 为服务名；读取对应停止文件。
 # 输出：无；向 Python 主线程投递一次 SIGTERM。
 # 逻辑：后台线程等待停止文件及入口已注册信号处理器，再使用 interrupt_main 调度处理器。
@@ -244,24 +289,25 @@ def child(name):
         runpy.run_module(module, run_name='__main__', alter_sys=True)
 
 
-# 功能：启动有独立日志的隐藏 Python 进程。
+# 功能：启动有独立日志且脱离启动终端的 Python 进程。
 # 输入：`arguments` 为本脚本子命令参数；`name` 为日志名。
 # 输出：返回 Popen 对象。
-# 逻辑：直接传递 argv 列表，不经过 shell，标准输出及错误合并到文件。
-# 约束：只支持 Windows；不记录环境；日志每次启动重新写入。
+# 逻辑：直接传递 argv 列表，标准流重定向到文件，按平台隐藏窗口或创建独立 POSIX 会话。
+# 约束：Windows/macOS/POSIX 使用同一服务入口；不记录环境；日志每次启动重新写入。
 def spawn(arguments, name):
     with (RUNTIME / f'{name}.log').open('w', encoding='utf-8') as log:
         return subprocess.Popen([sys.executable, '-X', 'utf8', '-u', str(Path(__file__).resolve()), *arguments], cwd=ROOT,
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+                                **background_options())
 
 
 # 功能：持锁管理启动、监控及协作停止。
-# 输入：`distro` 为显式数据库 WSL 发行版或 None。
+# 输入：`distro` 为显式数据库 WSL 发行版或 None；`brew_service` 为 macOS Homebrew PostgreSQL 公式名或 None。
 # 输出：正常停止返回 0，初始化或运行失败返回 1。
-# 逻辑：先检查端口，显式 WSL 模式保持 stdin 会话以维持数据库生命周期；Web 就绪后启动 Workers；停止时依次排空 Worker、Web、WSL 会话。
+# 逻辑：先校验平台参数及端口；WSL 模式保持 stdin 会话，Homebrew 模式委托 prepare 启动；Web 就绪后启动 Workers，按顺序排空停止。
 # 约束：不终止其他进程、不执行 PostgreSQL 停止命令、不自动重启；释放最后的 WSL 会话后发行版可能自行休眠。
-def supervise(distro):
+def supervise(distro, brew_service=None):
+    validate_database_options(distro, brew_service)
     handle = lock_runtime()
     processes = {}
     failure = ''
@@ -275,9 +321,9 @@ def supervise(distro):
             # systemd 服务本身不保证 WSL 保持运行；管道由监督器持有，关闭后 cat 正常退出。
             processes['database-session'] = subprocess.Popen(
                 ['wsl.exe', '-d', distro, '--', 'cat'], stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW)
-        services = prepare(distro)
+        services = prepare(distro, brew_service)
         if (RUNTIME / 'all.stop').exists():
             return 0
         processes['web'] = spawn(['child', '--service', 'web'], 'web')
@@ -323,9 +369,9 @@ def supervise(distro):
 
 
 # 功能：执行面向用户的启动、状态或停止命令。
-# 输入：`args` 含 action、wsl_distro、no_browser；读取运行锁与状态。
+# 输入：`args` 含 action、wsl_distro、brew_service、no_browser；读取运行锁与状态。
 # 输出：返回命令退出码；启动可打开浏览器。
-# 逻辑：重复启动复用受管服务；冷启动等待初始化状态；停止仅创建控制文件并等待有界时间。
+# 逻辑：重复启动复用受管服务；冷启动转交显式 WSL/Homebrew 选项；停止仅创建控制文件并等待有界时间。
 # 约束：等待超时报告尚未完成，不暗中取消或强杀；启动与状态探测不修改业务数据。
 def control(args):
     active = running()
@@ -346,7 +392,7 @@ def control(args):
         if running():
             emit('Stop requested; current work is still draining. Check status/logs; nothing was force-killed.')
             return 1
-        emit('Stopped Web and Workers; released the managed WSL session without stopping PostgreSQL explicitly.')
+        emit('Stopped Web and Workers; released any managed WSL session. PostgreSQL was not stopped explicitly.')
         return 0
     if active:
         state = read_state()
@@ -357,6 +403,8 @@ def control(args):
         arguments = ['serve']
         if args.wsl_distro:
             arguments += ['--wsl-distro', args.wsl_distro]
+        if args.brew_service:
+            arguments += ['--brew-service', args.brew_service]
         process = spawn(arguments, 'launcher')
         deadline = time.monotonic() + 180
         while True:
@@ -376,12 +424,13 @@ def control(args):
 # 功能：解析 CLI 并限制启动器错误输出。
 # 输入：无外部参数；读取 sys.argv。
 # 输出：返回退出码，参数错误由 argparse 报告。
-# 逻辑：私有 serve/child 子命令复用同一文件，用户命令委托 control。
-# 约束：仅 RuntimeError 的受控信息原样输出，其他异常只显示类型；子进程业务异常留在私有日志。
+# 逻辑：私有 serve/child 子命令复用同一文件；启动参数先验证平台与互斥关系，用户命令委托 control。
+# 约束：非法平台参数在写状态或配置前失败；仅受控 RuntimeError 原样输出，其他异常只显示类型，业务异常留在私有日志。
 def main():
-    parser = argparse.ArgumentParser(description='Manage the local SalesMate workspace on Windows.')
+    parser = argparse.ArgumentParser(description='Manage the local SalesMate workspace on Windows and macOS.')
     parser.add_argument('action', choices=('start', 'status', 'stop', 'serve', 'child'))
     parser.add_argument('--wsl-distro')
+    parser.add_argument('--brew-service')
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--service', choices=tuple(SERVICES))
     args = parser.parse_args()
@@ -391,8 +440,9 @@ def main():
         child(args.service)
         return 0
     try:
+        validate_database_options(args.wsl_distro, args.brew_service)
         if args.action == 'serve':
-            return supervise(args.wsl_distro)
+            return supervise(args.wsl_distro, args.brew_service)
         return control(args)
     except Exception as error:
         detail = str(error) if isinstance(error, RuntimeError) else type(error).__name__

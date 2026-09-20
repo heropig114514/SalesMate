@@ -1,0 +1,52 @@
+# 职责：验证本地启动器在 Windows、macOS 和 Linux 的平台边界与原生进程行为。
+# 实现：Python 标准库测试；POSIX 通过系统 Bash 创建空依赖测试环境，Windows 检查 PowerShell 语法。
+# 关联：local_server.py、test_local_server.py、start-local.ps1/start-local.sh；不读取业务凭据或启动真实业务服务。
+# 目录：launcher 平台矩阵任务；无函数或类。
+# 变量索引：matrix.os 选择宿主；matrix.python-version 验证 3.11 与 3.12；parseErrors/parseTokens 接收 PowerShell 解析结果；只读 contents 权限用于 checkout。
+name: Local launcher
+on:
+  pull_request:
+    paths:
+      - 'start-local.*'
+      - 'backend/tools/local_server.py'
+      - 'backend/tools/test_local_server.py'
+      - '.github/workflows/local-launcher.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'start-local.*'
+      - 'backend/tools/local_server.py'
+      - 'backend/tools/test_local_server.py'
+      - '.github/workflows/local-launcher.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  launcher:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python-version: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check Bash syntax
+        if: runner.os != 'Windows'
+        run: /bin/bash -n start-local.sh
+      - name: Check PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $parseErrors = $null
+          $parseTokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/start-local.ps1", [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+      - name: Test locks, signals, sessions and shell setup
+        run: python -X utf8 backend/tools/test_local_server.py

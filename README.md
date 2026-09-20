@@ -21,6 +21,7 @@ SalesMate/
 ├── test_tools/       # 开发和测试人员可独立使用的全流程测试数据工具
 ├── .env.example      # 软件与 Agent 共用的配置模板
 ├── start-local.ps1   # Windows 一键准备 Python 环境、启动系统、查看状态与停止
+├── start-local.sh    # macOS/POSIX 一键入口，复用同一套服务管理逻辑
 ├── requirements.txt  # 两侧依赖的安装入口
 └── .gitignore        # 仓库级凭证、缓存及运行产物排除规则
 ```
@@ -47,17 +48,19 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 - [Agent 业务工具接入](backend/docs/agent-business-tools.md)：123 个工具、独立用户委托、版本/幂等保护及人工确认，供 Agent 开发侧接入。
 - [世界消息地图与后续推送契约](backend/docs/world-news.md)：`/world/` 提供行业消息地图、摘要侧栏和详情页；当前使用明确标注的虚构演示数据。
 
-## Windows 本地一键启动
+## 本地一键启动
 
 **在已安装 Python、配置好本地数据库及 `.env` 的电脑上，一条命令即可自动准备项目 Python 环境并运行系统。新电脑首次使用仍有下表中的人工准备项。** 以下命令从包含本 README 的 `SalesMate` 仓库根目录执行。
 
 | 项目 | 启动器自动处理 | 首次使用者准备 |
 | --- | --- | --- |
-| Python 环境 | 缺少时创建 `.venv`；按原清单安装依赖并检查兼容性 | 安装 Python 3.11+；需要时用 `-Python` 指定解释器 |
-| 数据库 | 启动指定 WSL 中已安装的 PostgreSQL；检查连接及 pgvector；应用迁移 | 安装并创建本地数据库，PostgreSQL 需安装 pgvector；填写 `DATABASE_URL` |
+| Python 环境 | 缺少时创建 `.venv`；按原清单安装依赖并检查兼容性 | 安装 Python 3.11+；Windows 用 `-Python`、macOS 用 `--python` 指定解释器 |
+| 数据库 | 可显式启动 Windows WSL 或 macOS Homebrew 中已安装的 PostgreSQL；检查连接及 pgvector；应用迁移 | 安装并创建本地数据库，PostgreSQL 需安装 pgvector；填写 `DATABASE_URL` |
 | 应用配置 | 缺少 `.env` 时生成模板和随机 Django 密钥，然后提示配置；已有文件不覆盖 | 填写所选模式的配置；初始化本地普通账号，或明确关闭自动登录后网页注册 |
 | 真实外部服务 | 按现有 `ANALYSIS_PROVIDER` 启动对应 Worker | 自行提供模型密钥和模型名；使用 Gmail 时配置 Google OAuth 并完成授权 |
 | 网页与进程 | 后台启动、健康检查、打开浏览器、状态查询、协作停止 | 无需 npm、前端编译或手工双击 HTML |
+
+### Windows
 
 如果 PostgreSQL 位于已配置的 WSL `Ubuntu-24.04`（本机采用此方式）：
 
@@ -80,6 +83,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action st
 
 启动成功后服务在后台运行，关闭启动终端不会主动停止服务。重复启动复用受管进程；8000 端口冲突或依赖缺失会明确报错，不改端口、不自动切换数据库或模型模式。日志在 `artifacts/local-server/`；首次依赖安装日志在 `.venv/salesmate-install*.log`。更新代码后先 stop 再 start。完整前提、日志与停止语义见[本地一键启动](backend/docs/local-development.md#一键启动windows)。
 
+### macOS
+
+在项目目录执行，无需 PowerShell 或 WSL：
+
+```bash
+bash start-local.sh
+```
+
+如果需要同时启动 **已安装的** Homebrew PostgreSQL，可显式指定实际使用的版本（示例为 16，不会自动安装或切换版本）：
+
+```bash
+bash start-local.sh --brew-service postgresql@16
+```
+
+脚本使用 `.venv/bin/python`，兼容系统 Bash 3.2；按本机 Python 架构创建环境，不硬编码 Apple Silicon/Intel 的 Homebrew 路径。使用现有数据库、Postgres.app 或其他本地 PostgreSQL 时，先自行启动数据库，再省略 `--brew-service`。两平台使用相同的 8000 端口、根 `.env`、健康检查、Worker 参数和失败语义。不要跨操作系统复制 `.venv`。
+
+```bash
+bash start-local.sh status
+bash start-local.sh stop
+# 可选：指定 Python 或禁止自动打开浏览器
+bash start-local.sh --python /path/to/python3 --no-browser
+```
+
+首次环境、账号准备、Homebrew 行为及验证范围见 [macOS 本地启动说明](backend/docs/local-development.md#一键启动macos)。平台 CI 验证锁、协作停止、后台会话和空依赖环境初始化，不代表真实模型、邮箱或完整数据库链路已通过验证。
+
 ### 手动启动与热更新
 
 如需手动启动并启用代码热更新，在仓库根目录运行：
@@ -88,6 +116,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action st
 .\.venv\Scripts\Activate.ps1
 python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --port 8000 --reload
 ```
+
+macOS 使用 `source .venv/bin/activate` 激活环境，其余手动 Python 命令相同。
 
 访问 [工作台](http://127.0.0.1:8000/)。本地默认以已有 demo 普通账号直接进入。环境初始化、恢复登录与验证命令见软件开发说明。
 

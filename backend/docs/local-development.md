@@ -29,11 +29,49 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -Action st
 
 新电脑前提：已安装 Python 3.11+ 和数据库；使用 `-WslDistro` 时该发行版及 PostgreSQL/pgvector 必须已经安装。入口不会下载 WSL 或修改系统网络。无根 `.env` 时生成带随机 Django 密钥的模板并停止，需填写数据库和所选模式需要的凭据；已有 `.env` 从不覆盖。自动登录用户缺失时明确提示按下方 `provision_local` 初始化，或由用户明确关闭自动登录并使用网页注册。Google OAuth 和真实模型密钥必须由使用者提供。
 
-启动器的隔离测试（Windows，不访问数据库或真实外部服务）：
+启动器的隔离测试（Windows，不访问数据库或真实外部服务；shell 入口测试在 POSIX 平台执行）：
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 backend/tools/test_local_server.py
 ```
+
+## 一键启动（macOS）
+
+先安装 Python 3.11+，准备本地 PostgreSQL/pgvector、数据库账号及根 `.env`。脚本兼容系统 Bash 3.2，不自动安装 Homebrew 或数据库，不要求 PowerShell/WSL；共享后端拒绝在 Mac 上传入 `--wsl-distro`。在仓库根目录运行：
+
+```bash
+bash start-local.sh
+# 仅在使用已安装的 Homebrew PostgreSQL 时，显式传入本机实际公式名
+bash start-local.sh --brew-service postgresql@16
+# 管理已启动的服务
+bash start-local.sh status
+bash start-local.sh stop
+```
+
+macOS 与 Windows 使用同一 Python 监督器、配置检查、迁移、健康检查及 Worker 参数。差异仅在平台适配：`.venv/bin/python`、POSIX `flock` 文件锁、独立进程会话，以及可选 Homebrew 数据库启动。不硬编码 `/opt/homebrew` 或 `/usr/local`；`brew` 从当前 PATH 查找。POSIX 独立会话与标准流重定向避免服务依赖启动终端；停止仍先排空 Worker 再停止 Web。
+
+`--brew-service` 仅接受 `postgresql` 或 `postgresql@版本号`，调用 `brew services run`，不新增登录启动项；行为依据 [Homebrew 官方命令文档](https://docs.brew.sh/Manpage#services-subcommand)。它要求对应服务已安装，不创建数据库、角色、扩展或密码，也不切换根 `.env` 的数据库地址。数据库需监听本地回环地址；服务启动后最多等待 30 秒 TCP 就绪，认证及 SQL 检查失败仍直接报错。应用 `stop` 不停止可能被其他软件使用的 Homebrew PostgreSQL。Postgres.app 等其他安装方式请自行启动数据库，并省略该选项。
+
+首次执行时，缺少 `.venv` 会创建环境并安装仓库原依赖；缺少 `.env` 会生成随机 Django 密钥及模板，然后明确退出等待填写。请先编辑模板中的 `DATABASE_URL`，按既定模式填写必要凭据，再按需要初始化普通账号：
+
+```bash
+.venv/bin/python backend/manage.py migrate
+.venv/bin/python backend/manage.py provision_local --username demo --mailbox-address your-account@gmail.com
+bash start-local.sh
+```
+
+已有账号及 `.local-access.json` 时不要再次运行 `provision_local`。如要用网页注册，需明确设置 `LOCAL_DEBUG_AUTO_LOGIN=False`。若 Python 不在默认位置，可用 `bash start-local.sh --python /path/to/python3` 指定首次创建环境的解释器；`--no-browser` 可禁止打开浏览器。已有 `.venv` 缺少 POSIX 解释器时明确报错，不覆盖 Windows 环境；Intel 与 Apple Silicon 之间也应重新创建环境，不能直接复制虚拟环境。
+
+依赖摘要保存在 `.venv/salesmate-unix-requirements.sha256`，清单变化才重新安装，安装日志为 `.venv/salesmate-install.log`；Web/Worker 日志与状态仍在 `artifacts/local-server/`。工作台地址为 `http://127.0.0.1:8000/`。停止超时、端口冲突、重复启动及无自动重试语义与 Windows 一致。
+
+跨平台验证：
+
+```bash
+/bin/bash -n start-local.sh
+python3 -X utf8 backend/tools/test_local_server.py
+```
+
+测试只依赖 Python 标准库；测试中的 Django/Homebrew 使用明确模拟，shell 初始化只安装空依赖清单。CI 的 `Local launcher` 工作流在 Windows、macOS、Linux 与 Python 3.11/3.12 组合运行；POSIX 用 `/bin/bash` 验证宿主系统 shell。只有对应任务实际通过才算该平台验证完成，不能据此声称真实 Homebrew 服务、完整业务依赖、数据库、邮箱或模型链路已验证。Windows 现有真实服务另做回归检查。
 
 ## 环境
 

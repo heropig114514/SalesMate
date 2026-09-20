@@ -292,7 +292,7 @@ DATABASE_URL=postgresql://salesmate:password@127.0.0.1:5432/salesmate?connect_ti
 
 ## 7. 首次安装和初始化
 
-Windows 一键入口见[仓库 README](../README.md#windows-本地一键启动)：`start-local.ps1` 自动准备虚拟环境和依赖，检查并迁移既有本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、数据库（PostgreSQL 需要 pgvector），配置根 `.env` 和本地普通账号；脚本不会覆盖已有配置或替换数据库。下列命令用于手动初始化。
+Windows/macOS 一键入口见[仓库 README](../README.md#本地一键启动)：Windows 使用 `start-local.ps1`，macOS 使用 `bash start-local.sh`；自动准备虚拟环境和依赖，检查并迁移既有本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、数据库（PostgreSQL 需要 pgvector），配置根 `.env` 和本地普通账号；脚本不会覆盖已有配置或替换数据库。下列命令用于 Windows 手动初始化，macOS 的环境路径和步骤见[本地开发说明](docs/local-development.md#一键启动macos)。
 
 以下命令从项目根目录执行：
 
