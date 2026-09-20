@@ -31,6 +31,8 @@
 
 ## 后续 Agent 推送契约
 
+软件辅助层已新增 `world_events.*` / `world_news.*` 工具及 Session 数据接口，字段与接入边界见 [算法侧的软件辅助接口](software-support-tools.md)。下面是现有前端 feed 契约，与数据库字段不完全相同，接入时须显式转换；当前页面仍加载演示源，尚未绑定数据库或建立推送传输。
+
 传输与数据源分离。后续 SSE/WebSocket 适配器应先通过授权 API 读取快照，构造 `new NewsFeed('live', items)`，再把事件交给 `feed.receive(event)`。本次只实现数据接收入口，不创建不存在的 API、EventSource 或自动重连策略。真实接入还需替换页面演示数据源和演示状态文案、并补充加载/连接中断与详情按 ID 查询。
 
 ```json

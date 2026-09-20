@@ -1,6 +1,6 @@
 # Agent 业务工具接入
 
-完整目录提供 123 个业务工具（默认 QQ 暂停时为 122 个，不发布 `actions.prepare_qq`）、独立用户委托、HTTP SDK、CLI 和 stdio MCP 服务，复用现有权限、序列化器和事务。供 Agent 开发侧接入；当前聊天工作流仍为只读问答，尚未增加自动选择/执行工具的循环。
+完整目录提供 155 个业务工具（默认 QQ 暂停时为 154 个，不发布 `actions.prepare_qq`）、独立用户委托、HTTP SDK、CLI 和 stdio MCP 服务，复用现有权限、序列化器和事务。新增资料、文件、活动资讯和授权模板见 [算法侧的软件辅助接口](software-support-tools.md)。供 Agent 开发侧接入；当前聊天工作流仍为只读问答，尚未增加自动选择/执行工具的循环。
 
 ## 文件职责
 
@@ -10,6 +10,8 @@ backend/apps/agent_tools/
   schemas.py           # 从实际序列化器生成输入 Schema，严格预检
   authentication.py    # 用户、token 到期/撤销、工具白名单
   dispatch.py          # 固定适配 crm/sales/chat 业务处理器
+  support.py           # 资料目录、引导文件和附件分块读取
+  presets.py           # 当前工具范围的明确授权快照
   services.py          # 幂等回执、冻结提案、独立确认和权限复核
   models.py            # ToolCredential、ToolCall、ToolProposal
   views.py / urls.py   # 工具 HTTP 与 Session-only 授权/确认
@@ -42,6 +44,9 @@ integrations/salesmate_tools/
 | 日历 | `calendar.events/freebusy` | 指定连接/日历/带时区窗口内的事件和忙闲 |
 | 证据 | `knowledge.search/get`、`files.list/get/archive/download_link` | 已导入知识关键词检索、来源版本、附件元数据及 Session 下载链接 |
 | 状态 | `sales.overview/audit`、`connections.list/get`、`proposals.get` | 概况、审计、无密钥连接信息、本人提案结果 |
+| 资料 | `company_profile.*`、`sales_setup.*`、`seller_profile.*`、`setup_products.*`、`solutions.*` | 资料读写、产品与方案逐条管理、显式交易关联 |
+| 文件内容 | `setup_documents.*`、`files.read` | 私有资料上传、分块读取、引用检查与删除；无需 Session 下载 |
+| 活动资讯 | `world_events.*`、`world_news.*` | 私有事实记录 CRUD、归档恢复、地区与时间筛选，不生成评分 |
 
 常规可写资源提供 list/get/create/update/archive；不支持的操作不会登记。消息、动作、附件、提醒、连接不开放普通 create/update。具体字段以实时 `inputSchema` 为准。目录按 token 过滤，默认 30 项、最大 100，需处理分页。业务列表不自动遍历全部页。Agent 应按任务选择工具分类和授权子集，避免将全部工具放入每次模型上下文。
 
@@ -66,6 +71,7 @@ integrations/salesmate_tools/
 | 方法/路径 | 身份 | 用途 |
 | --- | --- | --- |
 | `GET catalog/?category=follow_ups&page=1&page_size=100` | Tool 或 Session | 名称、描述、Schema、执行模式和 annotations |
+| `GET permission-presets/` | Tool 或 Session | 一次性授权模板及工具名快照说明 |
 | `POST call/` | Tool 或 Session | 一次结构化调用 |
 | `GET/POST credentials/` | Session，写入要求 CSRF | 本人授权列表/创建 |
 | `DELETE credentials/{id}/` | Session + CSRF | 撤销本人凭证 |
@@ -129,8 +135,8 @@ result = client.call("customers.search", {"q": "设备", "page": 1})
 - 本次预留开发接口，尚无新增的凭证管理、通用 ToolProposal 审阅前端。前端可直接对接 Session API。发信/会议仍可使用原业务页面的 ToolAction 确认。
 - 提案保存时校验结构，批准时重新验证实体权限、版本与原 token 有效性。过期/撤销/冲突拒绝执行。确认请求不能修改冻结内容，同一决定重复提交不会重复执行。Agent 只能用 `proposals.get` 查询结果。
 - 聊天 Skill、模型参数和只读提示未改变。后续需要 Agent 工具选择、参数澄清、执行循环、确认卡片及业务评估。
-- 世界消息仍为演示，没有新闻后端；知识检索是已导入内容的关键词匹配；附件未解析，下载链接要求 Session。未虚构推送、向量检索或文件解析能力。
-- OAuth/QQ 密钥连接仍由人类原页面完成。不开放 SQL、Shell、运维、凭证读取、直接批准外发或硬删除。
+- 全球洞察页面仍为演示，活动资讯已提供真实存储 API/MCP；知识检索仍为关键词匹配。附件新增 Tool token 分块读取，原下载链接仍要求 Session，不提供 PDF 解析、实时推送或向量检索。
+- OAuth/QQ 密钥连接仍由人类原页面完成。不开放 SQL、Shell、运维、凭证读取或直接批准外发；仅参考资料条目和未引用的引导附件支持明确删除，交易记录继续归档。
 
 ## 验证
 

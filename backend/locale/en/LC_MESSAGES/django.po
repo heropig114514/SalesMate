@@ -12,6 +12,14 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+#: apps/sales/views.py
+msgid "全球活动"
+msgstr "Global events"
+
+#: apps/sales/views.py
+msgid "行业资讯"
+msgstr "Global news"
+
 
 #: common/exceptions.py
 #, python-format

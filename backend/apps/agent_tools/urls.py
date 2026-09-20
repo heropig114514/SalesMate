@@ -1,5 +1,5 @@
 """职责：声明工具、用户授权和提案确认的独立路径。
-实现：固定路由，调用名称通过 JSON 白名单解析。
+实现：固定路由，权限模板供一次性授权审阅，调用名称通过 JSON 白名单解析。
 关联：config.urls 挂载 /api/v1/agent-tools/。
 目录：
 - 无
@@ -9,8 +9,10 @@
 
 from django.urls import path
 from . import views
+from .presets import PresetView
 
 urlpatterns = [
+    path("permission-presets/", PresetView.as_view()),
     path("catalog/", views.CatalogView.as_view()),
     path("call/", views.CallView.as_view()),
     path("credentials/", views.CredentialView.as_view()),

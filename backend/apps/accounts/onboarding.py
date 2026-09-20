@@ -1,5 +1,5 @@
 """职责：保存四步引导中的个人、产品、方案信息并提供私有附件读取。
-实现：严格结构校验、owner 隔离及 If-Match 乐观锁；PDF/文本附件只经过认证接口读取。
+实现：资料条目包含稳定 id 和可选交易产品关联；严格结构校验、owner 隔离及 If-Match 乐观锁；PDF/文本附件只经过认证接口读取。
 关联：SalesSetup、SetupDocument；公司资料继续使用 company-profile 接口，不修改评分输入。
 目录：
 - StrictSerializer：拒绝未声明字段。
@@ -10,6 +10,7 @@
 - SetupSerializer：验证整份引导信息。
 - SetupSerializer.validate：验证附件归属及产品价格区间。
 - snapshot：输出当前账号的引导快照。
+- catalog_rows：为旧版数组补充无写入的稳定引用标识。
 - SetupView：引导读取及版本化保存。
 - SetupView.get：读取无副作用快照。
 - SetupView.patch：事务保存信息。
@@ -26,6 +27,8 @@
 - PersonalSerializer.regions：负责区域列表。
 - PersonalSerializer.industries：行业列表。
 - ProductSerializer.name：产品名称。
+- ProductSerializer.id：资料条目 UUID，保存后持久化。
+- ProductSerializer.linked_product_id：显式关联本账号交易目录，不同步或改变价格。
 - ProductSerializer.category：类别或型号。
 - ProductSerializer.specifications：规格逐项文本。
 - ProductSerializer.price_min：可空价格下界。
@@ -34,6 +37,7 @@
 - ProductSerializer.scenarios：适用行业或场景列表。
 - ProductSerializer.document_id：可空的本账号规格书引用。
 - SolutionSerializer.name：方案名称。
+- SolutionSerializer.id：方案条目 UUID，保存后持久化。
 - SolutionSerializer.document_id：本账号文件引用。
 - SetupSerializer.personal：个人信息对象。
 - SetupSerializer.products：最多 200 个参考产品。
@@ -43,6 +47,7 @@
 """
 
 import logging
+import uuid
 from pathlib import PurePath
 
 from django.contrib.auth import get_user_model
@@ -92,9 +97,11 @@ class PersonalSerializer(StrictSerializer):
 
 
 # 功能：验证参考产品信息。
-# 逻辑：限制数量、长度与非负价格，未知价格必须为 null。
+# 逻辑：缺省为新条目生成 UUID，显式 linked_product_id 只建立引用；限制长度与价格，未知价格为 null。
 # 约束：参考价格不创建业务报价或覆盖已有 Product 交易记录。
 class ProductSerializer(StrictSerializer):
+    id = serializers.UUIDField(required=False, default=uuid.uuid4)
+    linked_product_id = serializers.UUIDField(required=False, allow_null=True, default=None)
     name = serializers.CharField(max_length=240)
     category = serializers.CharField(max_length=150, allow_blank=True)
     specifications = serializers.ListField(child=serializers.CharField(max_length=500), max_length=50)
@@ -106,9 +113,10 @@ class ProductSerializer(StrictSerializer):
 
 
 # 功能：验证销售方案信息。
-# 逻辑：方案名称与文件绑定，文件归属在外层检查。
+# 逻辑：缺省生成新条目 UUID，方案名称与文件绑定，文件归属在外层检查。
 # 约束：不解析或执行文件，不宣称 AI 已读取附件。
 class SolutionSerializer(StrictSerializer):
+    id = serializers.UUIDField(required=False, default=uuid.uuid4)
     name = serializers.CharField(max_length=240)
     document_id = serializers.UUIDField()
 
@@ -125,10 +133,19 @@ class SetupSerializer(StrictSerializer):
     # 功能：校验跨字段边界与私有文件引用。
     # 输入：`attrs` 为字段校验后的数据；context 中 user 是当前用户。
     # 输出：验证后的数据；价格倒置或他人附件抛 ValidationError。
-    # 逻辑：批量核对引用集合，只接受全部属于当前账号的文件。
+    # 逻辑：验证条目 UUID 唯一、交易产品为本人未归档记录；批量核对全部附件归属。
     # 约束：不查询或泄露其他账号文件内容。
     def validate(self, attrs):
+        from apps.sales.models import Product
+
         products = attrs.get("products", [])
+        for key in ("products", "solutions"):
+            rows = attrs.get(key, [])
+            if len({row["id"] for row in rows}) != len(rows):
+                raise serializers.ValidationError("资料条目 id 不得重复。")
+        linked = {row["linked_product_id"] for row in products if row.get("linked_product_id")}
+        if Product.objects.filter(owner=self.context["user"], archived=False, pk__in=linked).count() != len(linked):
+            raise serializers.ValidationError("关联产品不存在、已归档或不属于当前账号。")
         for product in products:
             low, high = product["price_min"], product["price_max"]
             if low is not None and high is not None and low > high:
@@ -142,13 +159,26 @@ class SetupSerializer(StrictSerializer):
 # 功能：构造引导快照。
 # 输入：`user` 为已认证用户。
 # 输出：资料、版本及本账号附件元数据字典。
-# 逻辑：没有记录时使用未保存实例，避免读取产生业务写入。
+# 逻辑：没有记录时使用未保存实例；目录通过 catalog_rows 补齐旧条目引用，GET 不持久化。
 # 约束：不输出文件内容，也不查询其他账号。
 def snapshot(user):
     record = SalesSetup.objects.filter(owner=user).first() or SalesSetup(owner=user)
-    return {"personal": record.personal, "products": record.products, "solutions": record.solutions,
+    return {"personal": record.personal, "products": catalog_rows(user, "products", record.products), "solutions": catalog_rows(user, "solutions", record.solutions),
             "completed": record.completed, "revision": record.revision,
             "documents": list(SetupDocument.objects.filter(owner=user).values("id", "name", "content_type"))}
+
+
+# 功能：为历史资料生成可寻址标识。
+# 输入：`user`、`kind` 资料类别、`rows` 已保存数组。
+# 输出：含 id 的新数组；products 同时显式返回 linked_product_id。
+# 逻辑：历史无 id 条目按账号、类别和位置派生 UUID；下一次保存持久化该标识，之后不随排序变化。
+# 约束：读取不写数据库；修改必须携带整个资料 revision；不自动关联交易产品。
+def catalog_rows(user, kind, rows):
+    return [
+        {**({"linked_product_id": None} if kind == "products" else {}), **row,
+         "id": row.get("id") or str(uuid.uuid5(uuid.NAMESPACE_URL, f"salesmate:setup:{user.pk}:{kind}:{index}"))}
+        for index, row in enumerate(rows)
+    ]
 
 
 # 功能：维护当前账号的引导资料。

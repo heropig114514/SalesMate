@@ -1,5 +1,5 @@
 """职责：提供工具发现、调用、用户委托和人工确认 HTTP 接口。
-实现：独立 Tool 或 Session 调用；凭证管理与提案批准只接受用户 Session/CSRF。
+实现：独立 Tool 或 Session 调用，文件 JSON 使用有界解析；凭证支持显式工具清单或模板快照，管理与提案批准只接受用户 Session/CSRF。
 关联：services 管理幂等和权限；复用 SalesView 的安全错误映射；不修改原业务认证。
 目录：
 - ToolView：工具认证边界。
@@ -20,6 +20,7 @@
 - DecisionView.post：批准或取消冻结提案。
 变量索引：
 - ToolView.authentication_classes：Tool 与浏览器认证。
+- CallView.parser_classes：文件 JSON 有界解析，保留原表单解析器。
 - CredentialView.authentication_classes：仅用户 Session。
 - CredentialDetailView.authentication_classes：仅用户 Session。
 - ProposalView.authentication_classes：仅用户 Session。
@@ -34,12 +35,15 @@ from drf_spectacular.utils import extend_schema, OpenApiTypes
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
+from rest_framework.parsers import FormParser, MultiPartParser
 from apps.sales.views import SalesView, paged
 from .authentication import ToolAuthentication
 from .models import ToolCredential, ToolProposal
 from .registry import build_registry
 from .schemas import UUID, PAGE, object_schema, validate
 from . import services
+from .presets import permission_presets
+from .parsers import ToolJSONParser
 
 
 # 功能：限定工具身份。
@@ -83,9 +87,11 @@ class CatalogView(ToolView):
 
 
 # 功能：接收结构化业务调用。
-# 逻辑：不执行任意 URL 或函数。
+# 逻辑：使用文件工具有界 JSON 解析，不执行任意 URL 或函数。
 # 约束：名称来自目录。
 class CallView(ToolView):
+    parser_classes = [ToolJSONParser, FormParser, MultiPartParser]
+
     # 功能：执行一次工具调用。
     # 输入：`request` 含 name/arguments 和写入幂等键。
     # 输出：结构化执行或待确认回执。
@@ -144,9 +150,9 @@ class CredentialView(SalesView):
         return Response({**pagination, "results": rows})
 
     # 功能：创建明确范围的 token。
-    # 输入：`request` 的 name、allowed_tools、expires_in_hours。
+    # 输入：`request` 的 name、expires_in_hours，以及 allowed_tools 或 preset 二选一。
     # 输出：授权 ID、一次性 token、期限。
-    # 逻辑：仅保存摘要，范围是注册名称子集。
+    # 逻辑：模板解析为当下确切工具名再冻结，显式清单保持原行为；仅保存 token 摘要。
     # 约束：有效期须明确为 1..720 小时；不允许星号或自动扩大权限。
     @extend_schema(
         request=OpenApiTypes.OBJECT,
@@ -165,20 +171,26 @@ class CredentialView(SalesView):
                         "uniqueItems": True,
                         "items": {"enum": list(build_registry())},
                     },
+                    "preset": {"enum": ["read_only", "data_management"]},
                     "expires_in_hours": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 720,
                     },
                 },
-                ["name", "allowed_tools", "expires_in_hours"],
+                ["name", "expires_in_hours"],
             ),
         )
+        from rest_framework.exceptions import ValidationError
+        if ("allowed_tools" in request.data) == ("preset" in request.data):
+            raise ValidationError("allowed_tools 与 preset 必须明确提供且只能提供一项。")
+        allowed_tools = (request.data["allowed_tools"] if "allowed_tools" in request.data
+                         else permission_presets(build_registry())[request.data["preset"]]["allowed_tools"])
         token = secrets.token_urlsafe(32)
         item = ToolCredential.objects.create(
             owner=request.user,
             name=request.data["name"],
-            allowed_tools=request.data["allowed_tools"],
+            allowed_tools=allowed_tools,
             expires_at=timezone.now()
             + timedelta(hours=request.data["expires_in_hours"]),
             digest=hashlib.sha256(token.encode()).hexdigest(),

@@ -1,5 +1,5 @@
 /** 职责：验证四步引导在浏览器中的真实表单和交互契约。
- * 实现：本地静态服务、模拟 API 与真实 DOM；后端权限另由 test_onboarding.py 验证。
+ * 实现：本地静态服务、模拟 API 与真实 DOM，验证编辑保留后台分配的产品 ID 和交易关联；后端权限另由集成测试验证。
  * 关联：onboarding.js、company-settings.js 和对应模板/样式；截图写入忽略目录。
  * 目录：main。
  * 变量索引：ROOT 为前端目录；OUTPUT 为截图目录。
@@ -12,7 +12,7 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const ROOT = path.resolve(__dirname, "../frontend"),
   OUTPUT = path.resolve(__dirname, "../artifacts/browser");
 /** 功能：执行引导 UI 验收。输入：浏览器环境变量。输出：断言和截图。
- * 逻辑：个人保存、公司规模、CSV 校验、手动产品、私有附件、方案、版本冲突及完成后进入收件箱。
+ * 逻辑：个人保存、公司规模、CSV 校验、手动产品、私有附件、方案、版本冲突、产品关联保留及完成后进入收件箱。
  * 约束：模拟接口不代表真实外部服务；不修改工作区数据库。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -272,6 +272,8 @@ async function main() {
       await page.locator("#filters [name=q]").getAttribute("autocomplete"),
       "off",
     );
+    setup.products[0].id = "bbbff6b4-f87e-4bac-80a7-ea87e7ef0982";
+    setup.products[0].linked_product_id = "4b0e5dfe-7b7f-44ac-8942-94437915719a";
     await page.goto(base + "/settings/company/");
     await page
       .locator("#setup-title")
@@ -279,6 +281,17 @@ async function main() {
       .waitFor({ state: "attached" });
     await page.locator('[data-step="2"]').click();
     assert.equal(await page.locator("#product-count").textContent(), "2");
+    await page.locator('[data-edit="0"]').click();
+    await page.locator("#product-form [name=name]").fill("Renamed scanner");
+    await page.locator("#product-form button[type=submit]").click();
+    const savedCatalog = page.waitForResponse((response) =>
+      response.url().endsWith("/accounts/onboarding/") && response.request().method() === "PATCH",
+    );
+    await page.locator("#products-save").click();
+    assert.equal((await savedCatalog).status(), 200);
+    assert.equal(setup.products[0].name, "Renamed scanner");
+    assert.equal(setup.products[0].id, "bbbff6b4-f87e-4bac-80a7-ea87e7ef0982");
+    assert.equal(setup.products[0].linked_product_id, "4b0e5dfe-7b7f-44ac-8942-94437915719a");
     await page
       .context()
       .addCookies([{ name: "django_language", value: "en", url: base }]);

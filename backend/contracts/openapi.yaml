@@ -380,6 +380,22 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/agent-tools/permission-presets/:
+    get:
+      operationId: agent_tools_permission_presets
+      tags:
+      - v1
+      security:
+      - businessToolCredential: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/agent-tools/proposals/:
     get:
       operationId: agent_tools_proposals_read
@@ -3468,6 +3484,13 @@ components:
     Product:
       type: object
       properties:
+        id:
+          type: string
+          format: uuid
+        linked_product_id:
+          type: string
+          format: uuid
+          nullable: true
         name:
           type: string
           maxLength: 240
@@ -3759,6 +3782,9 @@ components:
     Solution:
       type: object
       properties:
+        id:
+          type: string
+          format: uuid
         name:
           type: string
           maxLength: 240

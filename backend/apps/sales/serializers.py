@@ -1,7 +1,15 @@
 """职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
+实现：新增活动资讯的时间、来源及本人商机关联校验；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
 关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
 目录：
+- ZonedDateTimeField：活动资讯时间及字段验证。
+- ZonedDateTimeField.to_internal_value：活动资讯时间及字段验证。
+- WorldEventSerializer：活动资讯时间及字段验证。
+- WorldEventSerializer.validate：活动资讯时间及字段验证。
+- WorldEventSerializer.Meta：活动资讯时间及字段验证。
+- WorldNewsSerializer：活动资讯时间及字段验证。
+- WorldNewsSerializer.validate：活动资讯时间及字段验证。
+- WorldNewsSerializer.Meta：活动资讯时间及字段验证。
 - ConnectionSerializer：连接安全字段。
 - ConnectionSerializer.Meta：字段配置。
 - StrictModelSerializer：拒绝未知或只读输入并按用户限制关系。
@@ -51,6 +59,25 @@
 - NotificationSerializer：应用内到期提醒的授权字段契约。
 - NotificationSerializer.Meta：声明本实体字段和不可直接写入的状态。
 变量索引：
+- WorldEventSerializer.latitude：显式验证 latitude 的类型与边界。
+- WorldEventSerializer.longitude：显式验证 longitude 的类型与边界。
+- WorldEventSerializer.country：显式验证 country 的类型与边界。
+- WorldEventSerializer.starts_at：显式验证 starts_at 的类型与边界。
+- WorldEventSerializer.ends_at：显式验证 ends_at 的类型与边界。
+- WorldEventSerializer.registration_deadline：显式验证 registration_deadline 的类型与边界。
+- WorldEventSerializer.onsite：显式验证 onsite 的类型与边界。
+- WorldEventSerializer.suggested_actions：显式验证 suggested_actions 的类型与边界。
+- WorldEventSerializer.opportunity_ids：显式验证 opportunity_ids 的类型与边界。
+- WorldNewsSerializer.published_at：显式验证 published_at 的类型与边界。
+- WorldNewsSerializer.country：显式验证 country 的类型与边界。
+- WorldNewsSerializer.summary：显式验证 summary 的类型与边界。
+- WorldNewsSerializer.content：显式验证 content 的类型与边界。
+- WorldEventSerializer.Meta.model：声明对应模型。
+- WorldEventSerializer.Meta.fields：声明公开字段。
+- WorldEventSerializer.Meta.read_only_fields：声明服务端维护字段。
+- WorldNewsSerializer.Meta.model：声明对应模型。
+- WorldNewsSerializer.Meta.fields：声明公开字段。
+- WorldNewsSerializer.Meta.read_only_fields：声明服务端维护字段。
 - OpportunitySerializer.product_names：规范产品名称的显式数组；省略沿用原值，null 或空数组表示未知。
 - ConnectionSerializer.Meta.model：连接模型。
 - ConnectionSerializer.Meta.fields：无凭证字段清单。
@@ -935,7 +962,87 @@ class ConnectionSerializer(StrictModelSerializer):
         read_only_fields = fields
 
 
+
+# 功能：验证明确带时区的时间。
+# 逻辑：拒绝没有偏移的字符串，避免默用服务端时区。
+# 约束：序列化输出遵循原 DRF 时间约定。
+class ZonedDateTimeField(s.DateTimeField):
+    # 功能：检查时间输入。
+    # 输入：`value` 为原始字段。
+    # 输出：带时区 datetime。
+    # 逻辑：先检查 ISO 解析及偏移，再执行 DRF 校验。
+    # 约束：非法或无时区输入抛 400，不补默认时区。
+    def to_internal_value(self, value):
+        from django.utils.dateparse import parse_datetime
+        from django.utils.timezone import is_aware
+        parsed = parse_datetime(value) if isinstance(value, str) else value
+        if parsed is None or not hasattr(parsed, 'tzinfo') or not is_aware(parsed):
+            raise s.ValidationError('时间必须包含明确时区偏移。')
+        return super().to_internal_value(value)
+
+
+# 功能：验证活动事实与本人商机关联。
+# 逻辑：坐标、时间和列表显式约束。
+# 约束：不生成建议，不调用外站。
+class WorldEventSerializer(StrictModelSerializer):
+    latitude = s.FloatField(min_value=-85, max_value=85)
+    longitude = s.FloatField(min_value=-180, max_value=180)
+    country = s.RegexField(r'^[A-Z]{2}$')
+    starts_at = ZonedDateTimeField()
+    ends_at = ZonedDateTimeField()
+    registration_deadline = ZonedDateTimeField(allow_null=True, required=False)
+    onsite = s.ListField(child=s.CharField(max_length=1000), max_length=100, required=False)
+    suggested_actions = s.ListField(child=s.CharField(max_length=1000), max_length=100, required=False)
+    opportunity_ids = s.ListField(child=s.UUIDField(), max_length=200, required=False)
+
+    # 功能：校验跨字段。
+    # 输入：`attrs` 字段。
+    # 输出：验证后的 attrs。
+    # 逻辑：委托 insights 的来源、日期和归属检查。
+    # 约束：不改变调用方文本或业务记录。
+    def validate(self, attrs):
+        from .insights import validate_insight
+        return validate_insight(self, attrs)
+
+    # 功能：声明活动字段。
+    # 逻辑：复用 Record 的只读版本与账号。
+    # 约束：不接受调用方伪造 owner。
+    class Meta:
+        model = models.WorldEvent
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids']
+        read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
+
+
+# 功能：验证行业资讯存储。
+# 逻辑：显式分类、带时区发布日期和纯文本。
+# 约束：不抓取新闻或自动生成摘要。
+class WorldNewsSerializer(StrictModelSerializer):
+    published_at = ZonedDateTimeField()
+    country = s.RegexField(r'^[A-Z]{2}$', allow_blank=True, required=False)
+    summary = s.CharField(max_length=8000, allow_blank=True, required=False)
+    content = s.CharField(max_length=100000)
+
+    # 功能：校验来源。
+    # 输入：`attrs`。
+    # 输出：验证后字段。
+    # 逻辑：复用 insights 校验。
+    # 约束：不访问链接目标。
+    def validate(self, attrs):
+        from .insights import validate_insight
+        return validate_insight(self, attrs)
+
+    # 功能：声明资讯字段。
+    # 逻辑：仅内容可写，账号、归档与版本服务端维护。
+    # 约束：归档走现有命令接口。
+    class Meta:
+        model = models.WorldNews
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content']
+        read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
+
+
 SERIALIZERS = {
+    "world-events": WorldEventSerializer,
+    "world-news": WorldNewsSerializer,
     "connections": ConnectionSerializer,
     "customers": CompanySettingsSerializer,
     "aliases": CompanyAliasSerializer,

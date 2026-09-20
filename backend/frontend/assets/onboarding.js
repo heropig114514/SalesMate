@@ -1,5 +1,5 @@
 /** 职责：提供个人、公司、产品、方案四步引导及后续编辑。
- * 实现：账号资料通过版本化 API 保存；草稿仅驻留当前页；手动产品与 CSV 进入同一编辑列表，文件经私有接口读取。
+ * 实现：编辑时保留条目 id 和显式 linked_product_id；账号资料通过版本化 API 保存；草稿仅驻留当前页；手动产品与 CSV 进入同一编辑列表，文件经私有接口读取。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；company-settings.js 负责公司步骤；onboarding.css 管理布局；accounts/onboarding 接口持久化。
  * 目录：text、field、tags、fileLink、status、save、chooseStep、personalForm、renderProducts、renderSolutions、upload、parseCSV、importProducts、mountOnboarding。
  * 变量索引：$ 查询 DOM；text 选择语言；industries 对齐收件箱行业；regions 为区域选项；steps 为四步标签；data 当前账号快照；step 当前步骤；wizard 首次引导标志；busy 防重提交；editing 当前编辑产品索引。
@@ -251,7 +251,7 @@ async function importProducts(file) {
   );
 }
 /** 功能：挂载四步流程。输入：页面、登录会话和 onboarding 查询项。输出：Promise。
- * 逻辑：先读取账号资料再绘制；保存、上传、导入均显式触发；公司保存由既有模块通知；完成或最后一步跳过后进入收件箱。
+ * 逻辑：先读取账号资料再绘制，产品编辑保留 id 与目录关联；保存、上传、导入均显式触发；公司保存由既有模块通知；完成或最后一步跳过后进入收件箱。
  * 约束：未保存输入只留在当前页，权限由 API 校验，不触发邮件发送、AI 或评分。 */
 export async function mountOnboarding() {
   data = await request("accounts/onboarding/");
@@ -358,6 +358,7 @@ export async function mountOnboarding() {
         throw new Error(text("最多支持 200 个产品。", "At most 200 products."));
       const fileId = await upload(values.get("file"));
       const product = {
+        ...(editing !== null ? data.products[editing] : {}),
         name: values.get("name"),
         category: values.get("category"),
         specifications: values

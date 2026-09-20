@@ -1,5 +1,5 @@
 """职责：提供销售关系记录、客户归组、附件及外部动作的会话认证 API。
-实现：资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
+实现：活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
 关联：catalog 为管理页提供字段契约，services/grouping/actions/files 实现业务边界。
 目录：
 - ResourceDetailView：单条资源查询路由。
@@ -98,6 +98,8 @@ LABELS = {
     "files": "私有附件",
     "notifications": "提醒",
     "connections": "外部连接",
+    "world-events": "全球活动",
+    "world-news": "行业资讯",
 }
 
 
@@ -180,7 +182,7 @@ class ResourceView(SalesView):
     # 功能：读取单条或分页列表。
     # 输入：`request`、`resource`、可选 `record_id`。
     # 输出：单条记录或含 results 的分页响应；不支持的字段筛选按请求语言报错，保留原字段名。
-    # 逻辑：支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
+    # 逻辑：活动资讯支持地区、类型与带时区窗口；其他资源支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
     # 约束：关联过滤仍经过 scope；不支持 arbitrary ORM 查询表达式。
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_records_read")
     def get(self, request, resource, record_id=None):
@@ -217,6 +219,9 @@ class ResourceView(SalesView):
         if archived != "all":
             query = query.filter(archived=archived == "true")
         query = query.order_by("created_at", "id")
+        if resource in {"world-events", "world-news"}:
+            from .insights import filter_insights
+            query = filter_insights(query, request.query_params)
         rows, pagination = paged(query, request)
         return Response(
             {

@@ -18,9 +18,9 @@
 
 个人字段：name、title、email、phone、regions[]、industries[]。填写邮箱不代表 Gmail 已授权。公司行业与收件箱的四项行业枚举一致，规模使用已有区间值；历史自由文本值仍保留。
 
-每个产品包含 name、category、specifications[]、price_min/price_max（未知为 null）、currency、scenarios[]、document_id（可为 null）。价格是参考资料，不是实际报价；下限不能大于上限。支持 SGD/USD/CNY/EUR/JPY，最多 200 行。
+每个产品包含稳定 UUID id、name、category、specifications[]、price_min/price_max（未知为 null）、currency、scenarios[]、document_id（可为 null），以及可空 linked_product_id（显式关联本人未归档交易产品）。保存/编辑须保留已有 id 和关联；旧资料 ID 在读取时确定性补齐、对应数组保存时持久化。价格是参考资料，不是实际报价；下限不能大于上限。支持 SGD/USD/CNY/EUR/JPY，最多 200 行。
 
-每个方案包含 name 与 document_id，最多 100 行。所有文件引用必须属于当前账号。PDF/文本可在线读取；没有接入其他 Office 文件解析或自动模型阅读。
+每个方案包含稳定 UUID id、name 与 document_id，最多 100 行。所有文件引用必须属于当前账号。PDF/文本可在线读取；没有接入其他 Office 文件解析或自动模型阅读。算法调用方可使用 [软件辅助工具](software-support-tools.md) 按条增删改查、上传和分块读文件，无需浏览器 Session；上述原浏览器路由继续使用 Session。
 
 CSV 模板字段为 `name,category,specifications,price_min,price_max,currency,scenarios`，多规格/场景用 `|` 分隔，支持引号和引号内换行。浏览器最多读取 1 MiB，先验证全部行再加入草稿，最终保存仍通过后端字段及价格验证。
 

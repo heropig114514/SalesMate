@@ -1,5 +1,5 @@
 """职责：从既有序列化器生成工具输入契约。
-实现：只投影可写字段，JSON Schema 预检与原 DRF/业务校验共同生效。
+实现：递归投影嵌套资料和可写字段，JSON Schema 预检与原 DRF/业务校验共同生效。
 关联：registry 发布 Schema；services 调用前验证，避免通用 ORM 或任意字段入口。
 目录：
 - object_schema：构造封闭对象。
@@ -42,10 +42,14 @@ def object_schema(properties, required=()):
 # 功能：投影字段类型。
 # 输入：`field` 为 DRF 字段。
 # 输出：JSON Schema。
-# 逻辑：保持 decimal 字符串精度、关系主键类型及可空语义。
+# 逻辑：递归声明嵌套对象及数组，保持 decimal 字符串精度、关系主键类型及可空语义。
 # 约束：未支持字段显式失败；动态关系权限仍由原序列化器执行。
 def field_schema(field):
-    if isinstance(field, s.PrimaryKeyRelatedField):
+    if isinstance(field, s.ListSerializer):
+        result = {"type": "array", "items": record_schema(type(field.child))}
+    elif isinstance(field, s.Serializer):
+        result = record_schema(type(field))
+    elif isinstance(field, s.PrimaryKeyRelatedField):
         pk = field.queryset.model._meta.pk
         result = (
             dict(UUID)
@@ -84,6 +88,14 @@ def field_schema(field):
             result["minLength"] = 1
     else:
         raise ValueError(f"Unsupported tool schema field: {type(field).__name__}")
+    if result.get("type") == "array":
+        for attribute, keyword in (("min_length", "minItems"), ("max_length", "maxItems")):
+            if getattr(field, attribute, None) is not None:
+                result[keyword] = getattr(field, attribute)
+    if result.get("type") in {"integer", "number"}:
+        for attribute, keyword in (("min_value", "minimum"), ("max_value", "maximum")):
+            if getattr(field, attribute, None) is not None:
+                result[keyword] = getattr(field, attribute)
     if field.help_text:
         result["description"] = str(field.help_text)
     return {"anyOf": [result, {"type": "null"}]} if field.allow_null else result

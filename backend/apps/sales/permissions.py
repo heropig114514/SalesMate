@@ -8,7 +8,7 @@
 - scope：生成模型级可见查询集。
 - require_edit：确认对象编辑权限。
 变量索引：
-- PRIVATE_MODELS：只允许 owner 访问的助手及文件记录模型。
+- PRIVATE_MODELS：只允许 owner 访问的助手、文件、产品、活动和资讯模型。
 """
 
 from django.db.models import Q
@@ -26,6 +26,8 @@ PRIVATE_MODELS = (
     models.Notification,
     models.Product,
     models.Connection,
+    models.WorldEvent,
+    models.WorldNews,
 )
 
 

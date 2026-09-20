@@ -1,7 +1,9 @@
 """职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
+实现：活动和资讯单独保存来源事实，不计算建议；可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
 关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
 目录：
+- WorldNews：行业资讯事实与来源。
+- WorldEvent：活动事实与显式商机关联。
 - Record：可归档的版本化业务记录基类。
 - Record.Meta：声明抽象性或数据库唯一及数值约束。
 - CompanyRecord：关联客户和负责人的业务记录基类。
@@ -42,6 +44,28 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
+- WorldNews.title：资讯标题。
+- WorldNews.category：资讯类别。
+- WorldNews.industry：来源明确提供的行业。
+- WorldNews.country：可空 ISO 国家地区代码。
+- WorldNews.published_at：真实发布时间。
+- WorldNews.source_url：原始报道来源。
+- WorldNews.summary：上游提供摘要。
+- WorldNews.content：纯文本正文。
+- WorldEvent.title：活动名称。
+- WorldEvent.event_type：活动类型。
+- WorldEvent.country：ISO 国家地区代码。
+- WorldEvent.city：城市。
+- WorldEvent.latitude：真实纬度。
+- WorldEvent.longitude：真实经度。
+- WorldEvent.starts_at：带时区开始时间。
+- WorldEvent.ends_at：带时区结束时间。
+- WorldEvent.registration_deadline：可空报名截止时间。
+- WorldEvent.source_url：可核对的来源链接。
+- WorldEvent.description：活动原始说明。
+- WorldEvent.onsite：现场情况原始要点。
+- WorldEvent.suggested_actions：上游提供的建议文本，不由后端生成。
+- WorldEvent.opportunity_ids：本人商机显式关联列表，不推断相关性。
 - SellerProfile.owner：销售方资料的唯一业务所有者，不能跨 owner 共享统计。
 - SellerProfile.revision：销售方资料的乐观锁版本。
 - SellerProfile.profile：可缺失的目标行业、规模、地区和 IANA 时区，不存模型猜测。
@@ -684,3 +708,37 @@ class Connection(Record):
                 name="sales_connection_identity",
             )
         ]
+
+
+# 功能：保存活动事实与显式商机关联。
+# 逻辑：继承业务记录的账号、版本、归档与审计字段。
+# 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
+class WorldEvent(Record):
+    title = models.CharField(max_length=240)
+    event_type = models.CharField(max_length=20, choices=[("exhibition", "展会"), ("sales", "销售活动")])
+    country = models.CharField(max_length=2)
+    city = models.CharField(max_length=120)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    starts_at = models.DateTimeField(db_index=True)
+    ends_at = models.DateTimeField()
+    registration_deadline = models.DateTimeField(null=True, blank=True)
+    source_url = models.URLField(max_length=2000)
+    description = models.TextField(blank=True)
+    onsite = models.JSONField(default=list, blank=True)
+    suggested_actions = models.JSONField(default=list, blank=True)
+    opportunity_ids = models.JSONField(default=list, blank=True)
+
+
+# 功能：保存行业资讯事实与来源。
+# 逻辑：继承业务记录的账号、版本、归档与审计字段。
+# 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
+class WorldNews(Record):
+    title = models.CharField(max_length=240)
+    category = models.CharField(max_length=20, choices=[("regulation", "监管"), ("industry", "产业"), ("competition", "竞争"), ("price", "价格")])
+    industry = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=2, blank=True)
+    published_at = models.DateTimeField(db_index=True)
+    source_url = models.URLField(max_length=2000)
+    summary = models.TextField(blank=True)
+    content = models.TextField()

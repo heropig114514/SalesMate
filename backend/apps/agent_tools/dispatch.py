@@ -1,5 +1,5 @@
 """职责：将已授权工具绑定到现有业务处理器。
-实现：使用显式方法白名单和最小请求上下文；保留既有序列化、scope、事务、版本和状态机。
+实现：使用显式方法白名单和最小请求上下文；资料及文件委托 support，保留既有序列化、scope、事务、版本和状态机。
 关联：services 完成工具认证与输入验证后调用；这里不触发 DRF 二次认证、不构造网络回环。
 目录：
 - request_context：建立限定业务上下文。
@@ -16,6 +16,7 @@ from apps.crm import views as crm
 from apps.crm import processing_views as processing
 from apps.sales import views as sales
 from apps.chat.models import KnowledgeEntry
+from .support import execute_support
 
 
 # 功能：构造业务处理器所需上下文。
@@ -37,11 +38,13 @@ def request_context(actor, query=None, data=None, revision=None):
 # 功能：执行业务适配。
 # 输入：`actor`、`spec` 白名单声明、`args` 校验后参数、`key` 可选幂等 UUID。
 # 输出：既有 Response。
-# 逻辑：业务读写复用原处理器，新证据查询仅限定 owner。
+# 逻辑：support_* 委托资料与文件工具，记录读写复用原处理器，证据查询限定 owner。
 # 约束：调用前必须由 services 认证与校验；不分派任意路径、任意方法或动作批准。
 def execute(actor, spec, args, key=None):
     kind = spec["kind"]
     request = request_context(actor, args, args.get("data"), args.get("revision"))
+    if kind.startswith("support_"):
+        return execute_support(request, spec, args)
     if kind.startswith("record_"):
         resource = spec["resource"]
         if kind == "record_list":
