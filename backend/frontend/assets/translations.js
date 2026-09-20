@@ -1,11 +1,17 @@
 /**
  * 职责：保存简体中文界面文案对应的英文目录。
- * 实现：新增活动/引导文案及简化密码提示；精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
+ * 实现：包含 Channel 来源预览、活动/引导文案及简化密码提示；精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
  * 关联：共享语言/API 资源随需求界面统一版本；i18n.js 的 t/h 读取；静态页面 data-i18n 及显式标记的 JS 字面量调用。
  * 目录：无函数或类。
  * 变量索引：EN 为中文源文案到英文翻译的只读映射。
  */
 export const EN = Object.freeze({
+  "预览引用来源": "Preview evidence source",
+  "打开 AI 助手": "Open AI assistant",
+  "客户沟通操作": "Customer communication actions",
+  "返回 Channels": "Back to Channels",
+  "当前详情中没有这条引用的邮件原文。": "The original email for this reference is not available in the current detail.",
+
   "非洲": "Africa",
   "中东": "Middle East",
   "南美": "South America",

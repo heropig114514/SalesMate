@@ -1,7 +1,7 @@
 /**
  * 职责：覆盖邮箱设置中英文文案、无自动授权及共享 Global Insights 入口；验证真实页面的英文界面、浏览器语言协商、偏好保存和内容隔离。
  * 实现：世界页使用活动地图和类型筛选契约；隔离静态服务器与 GET 夹具，使用真实 Chrome 加载三个入口；业务写入一律拒绝。
- * 关联：i18n.js/translations.js、页面语言控件、业务表单和精简导航和跨页面底部聊天条；后端语言由 test_i18n.py 独立验证。
+ * 关联：0919 界面及共享语言资源统一缓存版本；i18n.js/translations.js、页面语言控件、业务表单和精简导航和跨页面底部聊天条；后端语言由 test_i18n.py 独立验证。
  * 目录：main 执行浏览器验收；main.serve 提供受限静态资源。
  * 变量索引：FRONTEND 为页面根，OUTPUT 为忽略的截图目录；其他状态限于 main。
  */
@@ -97,13 +97,13 @@ async function main() {
     assert.equal(await page.locator('#filters select[name=industry]').inputValue(), '半导体检测');
     await page.screenshot({ path: path.join(OUTPUT, 'inbox-en.png'), fullPage: true });
     const result = await page.evaluate(async () => {
-      const { t, h, resolveLanguage } = await import('/static/i18n.js?v=20260920-i18n');
+      const { t, h, resolveLanguage } = await import('/static/i18n.js?v=20260921-product');
       return { html: h`<button>保存</button><p>${'保存'}</p>`, text: t`当前员工：${'用户名'}`, languages: [resolveLanguage('auto', ['zh-TW', 'en']), resolveLanguage('auto', ['fr', 'en-GB']), resolveLanguage('auto', ['fr']), resolveLanguage('en', ['zh-CN'])] };
     });
     assert.equal(result.html, '<button>Save</button><p>保存</p>');
     assert.equal(result.text, 'Current employee: 用户名');
     assert.deepEqual(result.languages, ['zh-hans', 'en', 'zh-hans', 'en']);
-    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Connections' }).click();
     await page.locator('#email-settings-page').waitFor();
     assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
     assert.equal(await page.locator('#gmail-add').textContent(), 'Add Google mailbox');

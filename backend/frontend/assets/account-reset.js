@@ -1,13 +1,13 @@
 /**
  * 职责：提供保留登录身份的账号清空操作。
  * 实现：一次明确确认后发送幂等请求；成功清理缓存、广播并刷新，失败保留操作键供显式重试。
- * 关联：共享语言/API 资源随需求界面统一版本；workspace.js 挂载按钮，api.js 提供 Session/CSRF 请求，account-cache.js 管理缓存。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 挂载按钮，api.js 提供 Session/CSRF 请求，account-cache.js 管理缓存。
  * 目录：resetAccountData、showResetRecovery。
  * 变量索引：labels 为当前语言的按钮和状态说明。
  */
-import { request } from './api.js?v=20260920-requirements';
-import { accountIdentity, finishAccountReset } from './account-cache.js';
-import { language } from './i18n.js?v=20260920-requirements';
+import { request } from './api.js?v=20260921-product';
+import { accountIdentity, finishAccountReset } from './account-cache.js?v=20260921-product';
+import { language } from './i18n.js?v=20260921-product';
 
 const labels = language === 'en' ? {
   confirm: 'Keep your login and password, and delete all internal data, connections, attachments and caches? This cannot be undone.',

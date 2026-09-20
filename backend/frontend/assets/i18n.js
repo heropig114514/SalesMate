@@ -1,11 +1,11 @@
 /**
  * 职责：统一中英文界面语言、静态翻译及用户偏好，不处理业务正文。
  * 实现：显式语言 cookie 优先于浏览器语言；翻译仅作用于 t/h 字面量和 data-i18n 标记。
- * 关联：共享语言/API 资源随需求界面统一版本；Django LocaleMiddleware 使用同一 django_language cookie；API 请求使用 language；translations.js 保存英文目录。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；Django LocaleMiddleware 使用同一 django_language cookie；API 请求使用 language；translations.js 保存英文目录。
  * 目录：resolveLanguage、t、h、initializeLanguage、changeLanguage。
  * 变量索引：language 为本页协议语言；locale 为日期显示区域；preference 为手动选择或 auto；literalChunks 为静态 HTML 文案边界。
  */
-import { EN } from './translations.js?v=20260920-requirements';
+import { EN } from './translations.js?v=20260921-product';
 
 /** 功能：解析支持的界面语言。输入：preference 手动选择及 languages 浏览器语言列表。
  * 输出：en 或 zh-hans。逻辑：手动选择优先，否则按浏览器偏好查找中英文。

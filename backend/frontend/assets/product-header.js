@@ -1,12 +1,12 @@
 /**
  * 职责：复用产品顶栏及跨页面分区导航，不获取或伪造账户与同步状态。
- * 实现：原生 Web Component 输出可访问的同源链接；监听 hashchange 更新当前分区。
+ * 实现：原生 Web Component 输出品牌及同源分区链接，移除无交互的工作空间角标；监听 hashchange 更新当前分区。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享语言/API 资源随需求界面统一版本；workspace.js 注册组件，三个 HTML 入口声明 salesmate-header，design-system.css 定义样式。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 注册组件，三个 HTML 入口声明 salesmate-header，design-system.css 定义样式。
  * 目录：SalesMateHeader、SalesMateHeader.connectedCallback、SalesMateHeader.disconnectedCallback、SalesMateHeader.updateSection。
  * 变量索引：SalesMateHeader.onRoute 为可移除的路由监听器；其余无模块变量或配置。
  */
-import { h } from './i18n.js?v=20260920-requirements';
+import { h } from './i18n.js?v=20260921-product';
 
 
 /** 功能：呈现产品顶栏。逻辑：采用 light DOM 共享设计变量及原生键盘导航。
@@ -22,7 +22,7 @@ class SalesMateHeader extends HTMLElement {
         <a href="/world/" data-section="world">全球洞察</a>
         <a href="/#inbox" data-section="inbox">社媒情报</a>
         <a href="/business/#directory" data-section="business">销售业务</a>
-      </nav><span class="product-context">销售工作空间</span>
+      </nav>
     </header>`;
     this.onRoute = () => this.updateSection();
     window.addEventListener('hashchange', this.onRoute);

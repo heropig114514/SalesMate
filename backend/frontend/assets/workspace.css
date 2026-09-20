@@ -1,7 +1,7 @@
-/* 职责：各页面共享的侧栏、上下文、待办和响应式外壳。
+/* 职责：各页面共享的侧栏、上下文、首页待办卡和响应式外壳。
  * 实现：顶栏下方固定导航，内容区域保留独立滚动；客户下保留四类业务入口，Profile 固定在侧栏内容底部，移动端导航横向排列。
  * 关联：workspace.js、product-header.js 与工作台、业务、世界洞察和设置 HTML；配色全部来自 design-system.css。
- * 目录：无函数或类；区域为主导航、Profile、状态、客户、首页与移动布局。
+ * 目录：无函数或类；区域为主导航、Profile、客户、首页与移动布局。
  * 变量索引：消费共享主题、--header-height 与 --sidebar-width，无本地变量。 */
 [hidden] { display: none!important; }
 .workspace-shell {
@@ -28,11 +28,6 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
 .workspace-topbar { min-height: 70px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; background: var(--bg); }
 .workspace-topbar h1 { font-size: 21px; }
 .workspace-topbar .eyebrow { margin: 0 0 2px; }
-.workspace-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px; padding: 10px 28px; border-bottom: 1px solid var(--line); font-size: 11px; background: var(--bg); }
-.business-workspace .workspace-status { padding-left: 0; padding-right: 0; }
-.workspace-status a { text-decoration: none; color: var(--muted); }
-.workspace-status strong { color: var(--accent); margin-left: 6px; font-weight: 500; }
-.workspace-status button { margin-left: auto; padding: 3px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
 .workspace-load-error { padding: 8px 28px; color: var(--danger); font-size: 12px; }
 .workspace-context { margin: 20px 28px 0; padding: 16px 20px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 .business-workspace .workspace-context { margin-left: 0; margin-right: 0; }
@@ -45,15 +40,13 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
 .workspace-overview { padding: 28px 28px 0; max-width: 1660px; margin: auto; }
 .workspace-overview h1 { font-size: 25px; margin-bottom: 8px; font-weight: 550; }
 .workspace-overview > p { color: var(--muted); font-size: 12px; }
-.workspace-tasks { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-top: 22px; }
+.workspace-tasks { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 22px; }
 .workspace-task { display: block; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 18px; text-decoration: none; }
 .workspace-task:hover { border-color: var(--accent); }
 .workspace-task > span { display: flex; justify-content: space-between; font-size: 12px; }
 .workspace-task > strong { display: block; color: var(--ink); font-size: 29px; font-weight: 500; margin: 12px 0; }
 .workspace-task > span > span { color: var(--accent); }
 .workspace-task p { color: var(--muted); font-size: 11px; line-height: 1.7; }
-.workspace-customer-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
-.workspace-customer-actions a { background: var(--soft); border: 1px solid var(--line-strong); color: var(--accent); padding: 9px 14px; border-radius: 6px; font-size: 12px; text-decoration: none; }
 .workspace-filter-status { width: 145px; }
 .workspace-page-intro { margin: 18px 0; color: var(--muted); font-size: 12px; }
 .topbar-right { gap: 12px; }
@@ -73,7 +66,6 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
   .business-workspace main > header, .business-workspace main > section:not(.workspace-context), .business-workspace .footnote { margin: 16px; }
   .workspace-topbar, .topbar { height: auto; min-height: 60px; flex-wrap: wrap; padding: 12px 16px; }
   .workspace-topbar h1 { font-size: 20px; }
-  .workspace-status, .business-workspace .workspace-status { padding: 10px 16px; gap: 8px 14px; font-size: 10px; }
   .workspace-load-error { padding: 8px 16px; }
   .workspace-context, .business-workspace .workspace-context { margin: 16px; padding: 14px; gap: 10px; }
   .workspace-context nav { width: 100%; }
@@ -88,3 +80,7 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
   .workspace-page-intro { margin: 16px; }
   .topbar-right { flex-wrap: wrap; gap: 8px; }
 }
+
+/* 三张客户统计卡与首页两张邮件统计卡自适应平分可用宽度。 */
+.business-workspace #business-stats, #stats { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.list-footer { justify-content: flex-end; }

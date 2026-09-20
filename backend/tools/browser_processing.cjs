@@ -1,5 +1,5 @@
 /**
- * 职责：隔离验证 QQ/Gmail 共存、邮箱设置与授权分离、来源标识、原文入口、同步进度、人工复核及移动端布局。
+ * 职责：验证移入邮箱设置的复核入口；隔离验证 QQ/Gmail 共存、邮箱设置与授权分离、来源标识、原文入口、同步进度、人工复核及移动端布局。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 Gmail/QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
  * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
@@ -128,7 +128,7 @@ async function main() {
     assert.equal(await page.locator('#gmail-scope-form [name=recent_days]').inputValue(), '');
     await page.locator('#gmail-scope-dialog .close-dialog').click();
     assert.equal(runId, null, 'Cancel refresh must not queue Gmail');
-    await page.locator('#email-reviews-open').filter({ hasText: '(1)' }).waitFor();
+    await page.waitForFunction(() => document.getElementById('email-reviews-open').textContent.includes('(1)'));
     assert.match(await page.locator('.company-row .row-tags').textContent(), /演示样例/);
     assert.equal(await page.locator('#qq-manage-top').isVisible(), false);
     assert.equal(await page.locator('#qq-manage').isVisible(), false);
@@ -162,7 +162,7 @@ async function main() {
     assert.equal(qqSyncs, 0);
     await page.locator('#qq-scope-form [name=max_messages]').fill('3');
     await page.locator('#qq-scope-form [type=submit]').click();
-    await page.waitForFunction(() => document.getElementById('sync-progress').textContent.includes('最多 3 封'));
+    await page.waitForFunction(() => document.getElementById('sync-progress').hidden);
     assert.equal(qqSyncs, 1);
     await page.locator('[data-qq-sync]').click();
     await page.locator('#qq-scope-dialog').waitFor({ state: 'visible' });
@@ -196,6 +196,7 @@ async function main() {
     await page.locator('#qq-accounts').filter({ hasText: '尚未连接 QQ 邮箱' }).waitFor();
     await page.locator('#qq-dialog .close-dialog').click();
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`http://127.0.0.1:${server.address().port}/#gmail`);
     await page.locator('#email-reviews-open').click();
     await page.locator('.review-card').waitFor();
     assert.equal(await page.locator('#review-filter').inputValue(), 'pending');
@@ -207,14 +208,14 @@ async function main() {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'mobile page overflow');
     await page.screenshot({ path: path.join(OUTPUT, 'processing-review-mobile.png') });
     await page.locator('[data-decision=confirmed_business]').click();
-    await page.locator('#email-reviews-open').filter({ hasText: '(0)' }).waitFor();
+    await page.waitForFunction(() => document.getElementById('email-reviews-open').textContent.includes('(0)'));
     await page.locator('#review-dialog .close-dialog').click();
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.locator('#gmail-manage-top').click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Connections' }).click();
     await page.locator('#email-settings-page').waitFor();
     assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
     assert.match(await page.locator('#gmail-accounts').textContent(), /sales@example.com/);
-    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Connections' }).click();
     await page.locator('#gmail-settings-refresh').click();
     assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
     assert.equal(authorizationRequests.length, 0);

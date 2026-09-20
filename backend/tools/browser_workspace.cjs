@@ -1,8 +1,8 @@
 /**
- * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、真实总数展示、跨页客户上下文和表单预填。
+ * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、精简首页、邮箱设置中的复核入口、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：验证所有页面仅打开工作空间会话；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
- * 关联：product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
+ * 关联：0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
  */
@@ -31,7 +31,7 @@ async function main() {
     const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
     const errors = [], writes = [], queries = [];
     page.on('pageerror', error => errors.push(error.message));
-    let failActions = false, profileFailure = false, profileConflict = false;
+    let failOverview = false, profileFailure = false, profileConflict = false;
     let profile = { company_name: '', industry: '', website: '', email: '', phone: '', address: '', description: '', revision: 0 };
     const company = { id: 'company-a', name: 'A 公司 · 精密设备', domains: ['a.example'], contacts: [], archived: false, crm_status: 'registered', customer: {}, revision: 1 };
     const row = { company_id: company.id, company_name: company.name, domains: company.domains, contacts: [], crm_status: 'registered', industry: 'unknown', size_band: 'unknown', signal: 'inquiry_intent', score: null, provider: 'agent', email_count: 1, headline_summary: '希望采购 100 台设备，待准备报价', last_message_at: '2026-09-13T01:00:00Z' };
@@ -68,11 +68,12 @@ async function main() {
       else if (endpoint === 'companies/') data = { results: url.searchParams.get('q') === '不存在' ? [] : [row], count: url.searchParams.get('q') === '不存在' ? 0 : 1, stats: { companies: 1, unregistered: 0, new_emails_today: 1 } };
       else if (endpoint === 'companies/company-a/') data = { ...row, analysis: null, score_reasons: [], context: { emails: [], tickets: [], quotes: [], orders: [] } };
       else if (endpoint === 'companies/unavailable/') return route.fulfill({ status: 404, json: { error: { detail: '客户不存在或无权访问' } } });
+      else if (endpoint === 'sales/overview/' && failOverview) return route.fulfill({ status: 503, json: { error: { detail: '模拟业务概览不可用' } } });
       else if (endpoint === 'sales/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, unread_notifications: 2, confirmed_order_net: {}, open_opportunity_amount: {} };
       else if (endpoint === 'sales/catalog/') data = { resources };
       else if (endpoint === 'sales/directory/') data = { results: [company], count: 1 };
       else if (endpoint.startsWith('sales/records/')) {
-        if (failActions && endpoint === 'sales/records/actions/') return route.fulfill({ status: 503, json: { error: { detail: '模拟动作服务不可用' } } });
+
         data = { results: [], count: endpoint === 'sales/records/actions/' ? 2 : 0 };
       } else throw new Error('Unexpected API: ' + endpoint);
       return route.fulfill({ json: data });
@@ -85,7 +86,7 @@ async function main() {
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
     assert.deepEqual(navLabels, ['工作台', 'Global Insights', 'Channels', '客户', '商机', '报价', '订单', '工单']);
     assert.equal(await page.locator('#workspace-nav .workspace-customer-nav a').count(), 4);
-    assert.deepEqual(await page.locator('#workspace-profile a').allTextContents(), ['Company Setting', 'Emails Setting']);
+    assert.deepEqual(await page.locator('#workspace-profile a').allTextContents(), ['Company Setting', 'Emails Connections']);
     assert.equal(await page.locator('#workspace-nav a[href="/world/"]').textContent(), 'Global Insights');
     const profileBox = await page.locator('#workspace-profile').boundingBox();
     assert(profileBox.y > 650, 'Profile should stay near the sidebar bottom');
@@ -171,7 +172,7 @@ async function main() {
     assert.equal(await page.locator('#assistant-general').count(), 0);
     assert.equal(await page.locator('#assistant-company').textContent(), '通用聊天');
     await page.locator('#assistant-close').click();
-    await page.locator('.workspace-customer-actions a').filter({ hasText: '创建报价' }).click();
+    await page.locator('.channel-mail-actions a').filter({ hasText: '创建报价' }).click();
     await page.locator('#record-form').waitFor();
     assert.equal(await page.locator('#record-form select[name=company]').inputValue(), company.id);
     assert.equal(await page.locator('#company-filter').inputValue(), company.id);
@@ -205,7 +206,8 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待复核邮件' }).click();
     await page.locator('#review-dialog[open]').waitFor();
     await page.locator('#review-dialog .close-dialog').click();
-    await page.locator('#workspace-status a').filter({ hasText: '待复核邮件' }).click();
+    await page.goto(base + '/#gmail');
+    await page.locator('#email-reviews-open').click();
     await page.locator('#review-dialog[open]').waitFor();
     await page.locator('#review-dialog .close-dialog').click();
     await page.goto(base);
@@ -216,13 +218,13 @@ async function main() {
     await page.goto(base + '/business/?company=unavailable#quotes');
     await page.locator('#business-notice').filter({ hasText: '无权访问' }).waitFor();
     await page.goto(base);
-    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Connections' }).click();
     await page.locator('#email-settings-page').waitFor();
-    assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Emails Setting');
+    assert.equal(await page.locator('#workspace-profile a[aria-current=page]').textContent(), 'Emails Connections');
     assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
     assert.equal(await page.locator('#list-page').isVisible(), false);
     await page.locator('#gmail-accounts').filter({ hasText: '尚未连接 Google 邮箱' }).waitFor();
-    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Setting' }).click();
+    await page.locator('#workspace-profile a').filter({ hasText: 'Emails Connections' }).click();
     await page.locator('#email-settings-page').waitFor();
     assert.equal(await page.locator('#gmail-dialog').isVisible(), false);
     await page.reload();
@@ -276,12 +278,12 @@ async function main() {
     await page.getByLabel('Company name', { exact: false }).waitFor();
     assert.equal(await page.locator('#company-save').textContent(), 'Save changes');
     await page.context().clearCookies();
-    failActions = true;
+    failOverview = true;
     await page.goto(base);
-    await page.locator('#workspace-load-error').filter({ hasText: '模拟动作服务不可用' }).waitFor();
-    assert.match(await page.locator('.workspace-task').filter({ hasText: '待确认动作' }).textContent(), /暂不可用/);
+    await page.locator('#workspace-load-error').filter({ hasText: '模拟业务概览不可用' }).waitFor();
+    assert.match(await page.locator('.workspace-task').filter({ hasText: '待跟进' }).textContent(), /暂不可用/);
     await page.evaluate(async () => {
-      const { enableAssistant } = await import('/static/assistant-widget.js?v=20260920-workspace-chat');
+      const { enableAssistant } = await import('/static/assistant-widget.js?v=20260921-product');
       enableAssistant(false);
     });
     assert.equal(await page.locator('#assistant-launcher').isVisible(), false);

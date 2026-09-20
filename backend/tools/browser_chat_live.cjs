@@ -1,7 +1,7 @@
 /**
  * 职责：对临时 Django 服务执行真实助手网页提问及引用验收。
  * 实现：浏览器显式使用 zh-CN 与既有中文断言一致；有客户数据的测试替换启动入口以挂载工作空间助手，通用模式使用真实主页，业务 API 全部访问测试服务器。
- * 关联：chat_browser_e2e.py 提供隔离用户/会话并执行 Agent；模型模拟发生在 Python 边界。
+ * 关联：0919 界面及共享语言资源统一缓存版本；chat_browser_e2e.py 提供隔离用户/会话并执行 Agent；模型模拟发生在 Python 边界。
  * 目录：main 建立会话并验证真实完成结果。
  * 变量索引：无模块业务变量；测试 URL、模式、临时 cookie 从环境读取且不打印。
  */
@@ -24,8 +24,8 @@ async function main() {
     await page.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.origin !== process.env.CHAT_TEST_URL) return route.abort();
-      if (!general && url.pathname === '/static/app.js') {
-        const body = `import { getAssistant, enableAssistant } from '/static/assistant-widget.js?v=20260920-workspace-chat';
+      if (!general && url.pathname === '/static/app.js?v=20260921-product') {
+        const body = `import { getAssistant, enableAssistant } from '/static/assistant-widget.js?v=20260921-product';
           await fetch('/api/v1/session/');
           enableAssistant();
           window.chatTest = getAssistant();

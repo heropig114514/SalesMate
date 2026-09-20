@@ -2,11 +2,11 @@
  * 职责：定义世界消息的独立数据边界，为演示和未来授权推送提供同一入口。
  * 实现：严格校验必要字段、来源链接和版本；同 ID 更新不增加计数，过期版本不覆盖新内容。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享语言/API 资源随需求界面统一版本；world-news.js 订阅 change；未来传输适配器调用 receive，不在本模块打开网络连接。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 订阅 change；未来传输适配器调用 receive，不在本模块打开网络连接。
  * 目录：validateNews、validateNews.text（有界文本校验）、NewsFeed、NewsFeed.constructor、NewsFeed.list、NewsFeed.get、NewsFeed.receive。
  * 变量索引：INDUSTRIES 为行业标签与共享主题颜色引用；NewsFeed.mode 固定数据模式；NewsFeed.items 保存已校验快照。
  */
-import { t } from './i18n.js?v=20260920-requirements';
+import { t } from './i18n.js?v=20260921-product';
 
 export const INDUSTRIES = Object.freeze({
   semiconductor: { label: t('半导体'), color: 'var(--industry-semiconductor)' },

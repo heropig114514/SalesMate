@@ -1,11 +1,11 @@
 /** 职责：将活动与商机金额投影到真实世界地图。
  * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，按钮支持键盘选择。
- * 关联：共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；world-events.js 提供显式演示国家；不请求在线瓦片。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；world-events.js 提供显式演示国家；不请求在线瓦片。
  * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
  * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
  */
-import { DEMO_COUNTRIES } from "./world-events.js?v=20260920-requirements";
-import { language } from "./i18n.js?v=20260920-requirements";
+import { DEMO_COUNTRIES } from "./world-events.js?v=20260921-product";
+import { language } from "./i18n.js?v=20260921-product";
 /** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：仅展示演示业务，不定位用户。 */
 export class WorldMap {
   /** 功能：初始化地图。输入：element 与 onSelect 回调。输出：实例。逻辑：真实地理投影及本地底图。约束：Leaflet 缺失明确报错。 */

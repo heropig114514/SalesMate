@@ -2,12 +2,12 @@
  * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
  * 实现：fetch 禁止业务缓存，发送 JSON 或 multipart 与当前语言头，写请求附 CSRF 和账号数据版本；响应校验版本，支持幂等键及取消只读观察。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享语言/API 资源随需求界面统一版本；app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
  * 目录：csrfToken（读取 cookie）；errorMessage（提取错误文本）；request（执行请求）；escapeHtml（转义文本）。
  * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
  */
-import { t, language } from './i18n.js?v=20260920-requirements';
-import { accountVersion, observeAccountVersion } from './account-cache.js';
+import { t, language } from './i18n.js?v=20260921-product';
+import { accountVersion, observeAccountVersion } from './account-cache.js?v=20260921-product';
 
 const BASE = '/api/v1/';
 

@@ -55,3 +55,10 @@ node backend/tools/browser_onboarding.cjs
 产品支持逐条添加/编辑/移除及 UTF-8 CSV 批量导入（下载模板），规格与场景多项用 `|` 分隔。CSV 最多 1 MiB，产品总数最多 200；解析失败不部分导入。规格书和方案支持 PDF / UTF-8 TXT（每份最多 5 MiB），通过登录鉴权的私有 URL 在线阅读或下载。产品和方案行需显式保存；上传成功的文件已经保存到当前账号。
 
 这些资料是独立的用户提供背景信息；本次不把它们注入评分输入、不改变评分算法，不自动创建交易报价、授权 Gmail、调用模型或发送邮件。详情和接口见 [引导资料契约](../docs/onboarding.md)。
+
+
+## 0919 产品界面补齐
+
+逐项对照与实现边界见 [产品需求验收表](../docs/product-ui-0919.md)。Channel 新增会话气泡、当前客户回复草稿和 Evidence 来源预览；Dashboard/Channels/Customers 去除重复状态栏及指定统计卡。现有全局聊天、评分算法和外部发送确认保持原契约。
+
+新增验收：`node backend/tools/browser_product0919.cjs`（模拟 API、桌面/手机/英文、来源转义、缺失引用及只读交互）。

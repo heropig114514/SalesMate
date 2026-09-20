@@ -1,5 +1,5 @@
 /* 职责：定义轻量销售工作台的布局、状态与响应式样式。
-实现：邮箱设置独立呈现连接账号，邮件卡片、三栏详情、登录及助手消费共享深色变量；工作空间悬浮聊天样式由 assistant-widget.css 管理，客户详情不设独立聊天入口；详情自动更新状态独立显示，主导航与跨页外壳由 workspace.css 统一。
+实现：邮箱设置独立呈现连接账号，邮件卡片、会话式详情（channel-detail.css 扩展）、登录及助手消费共享深色变量；工作空间悬浮聊天样式由 assistant-widget.css 管理，客户详情不设独立聊天入口；详情自动更新状态独立显示，主导航与跨页外壳由 workspace.css 统一。
 关联：index.html 与 app.js 使用相同语义类名；notice.js 管理底部提示计时，提示支持悬停阅读与手动关闭，避免遮挡顶部邮箱入口。
 目录：无函数或类声明；样式区域为基础、账号、邮箱设置、列表、详情、登录与对话框、响应式和智能筛选。
 变量索引：消费 design-system.css 的正文、边界、强调及语义色，无本地变量。 */
@@ -698,20 +698,6 @@ main {
   font-size: 11px;
 }
 
-.analysis-status {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 25px;
-}
-
-.analysis-status .text-btn {
-  margin-left: auto;
-  font-size: 11px;
-}
 
 .detail-grid {
   display: grid;
@@ -1436,13 +1422,7 @@ dialog .fine {
     overflow-wrap: anywhere;
   }
 
-  .analysis-status {
-    gap: 8px;
-  }
 
-  .analysis-status .text-btn {
-    margin-left: 0;
-  }
 
 }
 

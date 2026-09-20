@@ -1,6 +1,6 @@
 /** 职责：验证全球洞察的新活动界面和既有资讯校验，并提供本地静态预览。
  * 实现：真实浏览器加载仓库资源、固定演示日期，禁止外部请求；检查筛选联动、地图、日历导出、邀约草稿、资讯详情和移动布局。
- * 关联：world-news.js/world-map.js/world-feed.js；只使用静态数据，不访问生产 API。
+ * 关联：0919 界面及共享语言资源统一缓存版本；world-news.js/world-map.js/world-feed.js；只使用静态数据，不访问生产 API。
  * 目录：servePage、createPreviewServer、main。
  * 变量索引：FRONTEND 为资源根目录；OUTPUT 为忽略的截图目录。
  */
@@ -125,7 +125,7 @@ async function main() {
     const regression = await page.evaluate(async () => {
       const entry = document.querySelector('script[src*="world-news.js"]').src;
       const { receiveWorldNews } = await import(entry);
-      const { DEMO_PUSH } = await import("/static/world-demo.js");
+      const { DEMO_PUSH } = await import("/static/world-demo.js?v=20260921-product");
       const first = receiveWorldNews({ type: "news.upsert", item: DEMO_PUSH }),
         duplicate = receiveWorldNews({ type: "news.upsert", item: DEMO_PUSH });
       let rejected = false;

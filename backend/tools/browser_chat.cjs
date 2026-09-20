@@ -2,7 +2,7 @@
  * 职责：验证助手提问、快速完成竞态、轮询、嵌套引用折叠、重试和上下文切换。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
  * 实现：仅使用无公司绑定的工作空间会话；加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
- * 关联：assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
+ * 关联：0919 界面及共享语言资源统一缓存版本；assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
  * 目录：main 执行浏览器场景；内联回调处理测试路由和断言。
  * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录。
  */
@@ -94,7 +94,7 @@ async function main() {
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.evaluate(async () => {
-      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260920-workspace-chat');
+      const { getAssistant, enableAssistant } = await import('/static/assistant-widget.js?v=20260921-product');
       enableAssistant();
       window.chatTest = getAssistant();
       window.chatTest.open();

@@ -2,7 +2,7 @@
  * 职责：提供工作空间聊天、来源引用、持久化会话和可编辑草稿。
  * 实现：显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享语言/API 资源随需求界面统一版本；assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
  * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.initializeView、AssistantPanel.open、
  * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
  * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
@@ -12,10 +12,10 @@
  * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
  * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
  */
-import { t, h, locale } from './i18n.js?v=20260920-requirements';
+import { t, h, locale } from './i18n.js?v=20260921-product';
 
-import { escapeHtml as esc } from "./api.js?v=20260920-requirements";
-import { salesRequest, allRows } from "./sales-api.js?v=20260920-requirements";
+import { escapeHtml as esc } from "./api.js?v=20260921-product";
+import { salesRequest, allRows } from "./sales-api.js?v=20260921-product";
 
 /** 功能：管理工作空间助手的会话和草稿交互。
  * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
@@ -132,7 +132,7 @@ export class AssistantPanel {
   }
 
   /** 功能：展开或收起当前聊天界面。输入：opener 可选触发元素，默认读取悬浮按钮；隐式当前上下文。
-   * 输出：无。逻辑：展开后读取持久化会话及草稿，焦点移至收起入口，展开状态同步到悬浮按钮。
+   * 输出：发起读取时返回读取 Promise，其余返回 undefined。逻辑：展开后读取持久化会话及草稿，焦点移至收起入口，允许回复草稿等待读取结束再填入。
    * 约束：读取不会新建会话或触发分析。 */
   open(opener = null) {
     if (this.isOpen) {
@@ -145,9 +145,9 @@ export class AssistantPanel {
     document.body.classList.add("assistant-open");
     this.syncLayout();
     this.nodes.close.focus();
-    if (this.busy) this.needsLoad = true;
-    else this.run(() => this.load(this.conversation?.id));
     console.info("assistant_panel_opened");
+    if (this.busy) this.needsLoad = true;
+    else return this.run(() => this.load(this.conversation?.id));
   }
 
   /** 功能：收起并恢复背景交互。输入：restoreFocus 默认 true。

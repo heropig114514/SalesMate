@@ -1,4 +1,4 @@
-/* 职责：集中定义产品 Nocturne 深色主题及跨页面基础控件。
+/* 职责：集中定义产品 Nocturne 深色主题及跨页面基础控件（顶栏不再展示工作空间角标）。
  * 实现：参考 frontend_example 的蓝灰底、紫色强调、细边框；语义色区分失败、警告和成功。
  * 关联：所有 HTML 在页面布局样式之前加载；页面模块只消费变量，不再维护独立色板。
  * 目录：无函数或类；区域为设计变量、交互基线、顶栏组件、语言选择及响应式布局。
@@ -60,14 +60,11 @@ salesmate-header { display: block; height: calc(var(--header-height) - var(--lan
 .product-tabs a { display: block; padding: 8px 15px; color: var(--muted); font-size: 12px; border-radius: 0; text-decoration: none; white-space: nowrap; }
 .product-tabs a:hover { background: var(--surface); color: var(--ink); }
 .product-tabs a[aria-current=page] { color: var(--accent); background: var(--soft); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 500; }
-.product-context { justify-self: end; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 9px; }
-.product-context::before { content: ''; width: 6px; height: 6px; border: 1px solid var(--accent); border-radius: 50%; }
 @media(max-width:760px) {
   .product-header { grid-template-columns: auto 1fr; gap: 12px; padding: 0 16px; }
   .product-brand { font-size: 16px; gap: 7px; }
   .product-tabs { justify-self: end; }
   .product-tabs a { padding: 8px; font-size: 11px; }
-  .product-context { display: none; }
 }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto!important; animation: none!important; transition: none!important; } }
 
@@ -77,4 +74,4 @@ salesmate-header { display: block; height: calc(var(--header-height) - var(--lan
 /* 英文标题允许自然换行；保留原有密度，避免长状态挤出卡片。 */
 html[lang=en] .product-tabs a { white-space: normal; text-align: center; }
 html[lang=en] .workspace-task span, html[lang=en] .stat-card { overflow-wrap: anywhere; }
-@media (max-width: 640px) { .language-bar { padding-inline: .75rem; } html[lang=en] .product-context { display: none; } }
+@media (max-width: 640px) { .language-bar { padding-inline: .75rem; } }

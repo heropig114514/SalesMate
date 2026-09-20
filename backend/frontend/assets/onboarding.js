@@ -1,11 +1,11 @@
 /** 职责：提供个人、公司、产品、方案四步引导及后续编辑。
  * 实现：账号资料通过版本化 API 保存；草稿仅驻留当前页；手动产品与 CSV 进入同一编辑列表，文件经私有接口读取。
- * 关联：共享语言/API 资源随需求界面统一版本；company-settings.js 负责公司步骤；onboarding.css 管理布局；accounts/onboarding 接口持久化。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；company-settings.js 负责公司步骤；onboarding.css 管理布局；accounts/onboarding 接口持久化。
  * 目录：text、field、tags、fileLink、status、save、chooseStep、personalForm、renderProducts、renderSolutions、upload、parseCSV、importProducts、mountOnboarding。
  * 变量索引：$ 查询 DOM；text 选择语言；industries 对齐收件箱行业；regions 为区域选项；steps 为四步标签；data 当前账号快照；step 当前步骤；wizard 首次引导标志；busy 防重提交；editing 当前编辑产品索引。
  */
-import { language, t } from "./i18n.js?v=20260920-requirements";
-import { request, escapeHtml as e } from "./api.js?v=20260920-requirements";
+import { language, t } from "./i18n.js?v=20260921-product";
+import { request, escapeHtml as e } from "./api.js?v=20260921-product";
 const $ = (id) => document.getElementById(id);
 /** 功能：选择界面语言。输入：zh/en 两种文案。输出：文本。逻辑：沿用语言偏好。约束：不翻译用户输入。 */
 const text = (zh, en) => (language === "en" ? en : zh);

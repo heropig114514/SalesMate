@@ -2,7 +2,7 @@
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
  * 实现：读取后端字段契约渲染表单，写请求携带版本；外部动作先展示冻结内容再单独确认。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
+ * 关联：0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
@@ -11,11 +11,11 @@
  * metadata 为资源契约，companies 为授权目录，user 为当前身份，current 为路由，page 为页码，
  * qqEnabled 为服务端 QQ 能力开关，generation 为异步加载代次，relations 为当前已读关系名称缓存。
  */
-import { t, h, locale } from './i18n.js?v=20260920-requirements';
+import { t, h, locale } from './i18n.js?v=20260921-product';
 
-import { request, escapeHtml as esc } from "./api.js?v=20260920-requirements";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260920-account-reset";
-import { salesRequest, allRows, uploadFile } from "./sales-api.js?v=20260920-requirements";
+import { request, escapeHtml as esc } from "./api.js?v=20260921-product";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260921-product";
+import { salesRequest, allRows, uploadFile } from "./sales-api.js?v=20260921-product";
 
 const $ = (id) => document.getElementById(id);
 const labels = {
@@ -942,14 +942,13 @@ function renderRows(resource, rows) {
 }
 
 /** 功能：显示当前权限范围内统计。输入：overview 后端汇总。
- * 输出：无。逻辑：全量授权目录的四个计数卡与分币种净额，不随客户筛选改变。
+ * 输出：无。逻辑：全量授权目录的三个计数卡（客户、工单与跟进）与分币种净额，不随客户筛选改变。
  * 约束：不把不同币种相加，不将确认订单净额标记为实际收入。 */
 function renderStats(overview) {
   $("business-stats").innerHTML = [
     [t("全部可见客户"), overview.customers],
     [t("待处理工单"), overview.open_tickets],
     [t("待跟进"), overview.open_follow_ups],
-    [t("未读提醒"), overview.unread_notifications],
   ]
     .map(
       ([name, value]) =>

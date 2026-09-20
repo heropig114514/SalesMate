@@ -1,0 +1,68 @@
+/* 职责：0919 产品要求的 Channel 会话布局与 Evidence 来源预览。
+ * 实现：桌面邮件、客户画像和可展开助手三栏；收发气泡分侧，移动端单列，预览浮层限制在视口内。
+ * 关联：app.js 生成详情与方向类，evidence-preview.js 控制预览；assistant-widget 保留唯一会话及窄屏模态行为。
+ * 目录：无函数或类；区域为邮件、回复草稿、画像、助手位置、来源预览与响应式。
+ * 变量索引：--channel-assistant-width 为桌面助手宽度，其他颜色及间距来自共享主题。 */
+.channel-detail { --channel-assistant-width: clamp(280px, 25vw, 400px); }
+.channel-detail .detail-page { padding: 18px 24px 32px; max-width: none; }
+.channel-detail .detail-title { gap: 12px; margin: 0 0 12px; }
+.channel-detail .detail-title h1 { font-size: 20px; }
+.channel-detail .detail-title .back-link { margin: 0; font-size: 22px; }
+.channel-detail .detail-title .actions { margin-left: auto; flex-wrap: wrap; }
+.channel-detail .detail-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) var(--channel-assistant-width); gap: 14px; }
+.channel-detail .detail-grid > * { min-width: 0; }
+.channel-detail .section-title { padding: 16px; flex-wrap: wrap; }
+.channel-detail .analysis-panel .context-panel { display: grid; grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+.channel-detail .analysis-panel .context-card { margin: 0; }
+.priority-details > summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.priority-details[open] > summary { margin-bottom: 16px; }
+.analysis-alert { padding: 10px; color: var(--danger); border: 1px solid var(--line); border-radius: 6px; }
+.channel-detail #emails { padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+.channel-detail .email-card { width: 92%; margin: 0; border: 1px solid var(--line); border-radius: 10px 10px 10px 2px; padding: 12px; }
+.channel-detail .email-outbound { align-self: flex-end; background: var(--soft); border-color: var(--line-strong); border-radius: 10px 10px 2px 10px; }
+.channel-detail .email-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.8; }
+.channel-detail .email-top strong { overflow-wrap: anywhere; }
+.channel-detail .email-top > div { min-width: 0; }
+.channel-mail-actions { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px; border-top: 1px solid var(--line); font-size: 12px; }
+.channel-mail-actions a { color: var(--accent); }
+.channel-assistant-slot { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 20px; min-height: 320px; }
+.channel-assistant-slot h2 { font-size: 16px; margin: 16px 0 8px; }
+.channel-assistant-slot p { line-height: 1.8; margin-bottom: 18px; }
+.evidence-preview { position: fixed; z-index: 1700; width: min(440px, calc(100vw - 24px)); max-height: min(520px, calc(100dvh - 24px)); overflow: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 16px; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 12px 48px var(--shadow-color); font-size: 13px; }
+.evidence-preview[hidden] { display: none; }
+.evidence-preview header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.evidence-preview header button { padding: 3px 10px; font-size: 20px; }
+.evidence-preview dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
+.evidence-preview dt, .evidence-preview .fine { color: var(--muted); }
+.evidence-preview dd { margin: 0; overflow-wrap: anywhere; }
+.evidence-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; background: var(--bg); border-radius: 6px; padding: 12px; font: inherit; line-height: 1.8; }
+.evidence-preview code { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(min-width: 1200px) {
+  .channel-detail .assistant-panel { left: auto; right: 24px; top: calc(var(--header-height) + 196px); bottom: 20px; width: var(--channel-assistant-width); max-height: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; border-radius: 12px; }
+  .channel-detail .assistant-context { grid-column: 1; grid-row: 2; margin: 0 16px 12px; max-width: none; }
+  .channel-detail .assistant-body { display: flex; flex-direction: column; grid-row: 3; max-height: none; }
+  .channel-detail .assistant-welcome { margin: 12px 0; }
+  .channel-detail .assistant-composer { grid-row: 4; }
+  .channel-detail .assistant-send-row { flex-wrap: wrap; gap: 8px; }
+  .channel-detail .assistant-send-row > span { width: 100%; }
+  .channel-detail .assistant-header { padding: 12px; }
+  .channel-detail .assistant-heading > div { gap: 6px; }
+}
+@media(max-width: 1199px) {
+  .channel-detail .detail-grid { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .channel-assistant-slot { grid-column: 1 / -1; min-height: 0; }
+}
+@media(max-width: 700px) {
+  .channel-detail .detail-page { padding: 16px; }
+  .channel-detail .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .channel-detail .detail-title { flex-wrap: wrap; }
+  .channel-detail .detail-title .actions { width: 100%; margin: 0; }
+  .channel-detail .email-card { width: 96%; }
+}
+
+.channel-reply-composer { padding: 16px; border-top: 1px solid var(--line); }
+.channel-reply-composer > label { display: block; margin-bottom: 8px; font-size: 12px; }
+.channel-reply-composer textarea { width: 100%; resize: vertical; min-height: 110px; font: inherit; }
+.channel-reply-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 8px 0; }
+.channel-reply-actions small { margin-right: auto; color: var(--muted); }
+.channel-reply-actions button { font-size: 12px; padding: 7px 10px; }

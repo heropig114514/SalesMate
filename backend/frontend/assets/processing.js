@@ -2,16 +2,16 @@
  * 职责：显示同步批次进度、按邮箱核对原文及邮件人工复核。
  * 实现：按邮箱查询全部已保存邮件并标明来源、时间与分类；请求代次隔离旧响应；复核保持人工确认与版本约束。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享语言/API 资源随需求界面统一版本；app.js 提供列表刷新和轮询入口；api.js 管理 Session/CSRF；index.html 提供对话框。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 提供列表刷新和轮询入口；api.js 管理 Session/CSRF；index.html 提供对话框。
  * 目录：refreshReviewBadge、openMailboxEmails、loadReviews、updateRunProgress、initProcessingUI。
- * 变量索引：reviewState 保存邮箱范围、请求代次、页码与当前记录；runLabels 为批次状态的当前语言映射；classificationLabels 为分类展示说明。
+ * 变量索引：reviewState 保存最近批次、邮箱范围、请求代次、页码与当前记录；runLabels 为批次状态的当前语言映射；classificationLabels 为分类展示说明。
  */
-import { t, h, locale } from './i18n.js?v=20260920-requirements';
+import { t, h, locale } from './i18n.js?v=20260921-product';
 
-import { request, escapeHtml as e } from './api.js?v=20260920-requirements';
-import { mailSourceLabel } from './mail-source.js';
+import { request, escapeHtml as e } from './api.js?v=20260921-product';
+import { mailSourceLabel } from './mail-source.js?v=20260921-product';
 
-const reviewState = { page: 1, records: [], changed: null, retry: null, mailboxId: null, sequence: 0 };
+const reviewState = { page: 1, records: [], changed: null, retry: null, mailboxId: null, sequence: 0, runs: [] };
 const runLabels = { queued: t('等待处理'), running: t('正在处理'), partial: t('部分完成'), completed: t('邮件处理完成'), failed: t('处理失败') };
 const classificationLabels = { business: t('业务邮件'), non_business: t('非业务邮件 · 客户页隐藏'), needs_review: t('待复核 · 客户页未展示') };
 
@@ -54,12 +54,14 @@ async function loadReviews() {
   await refreshReviewBadge();
 }
 
-/** 功能：渲染整个批次的实时计数。输入：runs 为后端批次数组。输出：无。
- * 逻辑：显示邮件与画像独立进度、Gmail/QQ 冻结范围、失败邮件及显式重试按钮。约束：不根据公司分页推测完成情况。 */
-export function updateRunProgress(runs) {
+/** 功能：渲染整个批次的实时计数。输入：runs 为后端批次数组，省略时重绘最近批次。输出：无。
+ * 逻辑：常规列表只保留运行中或失败批次，显式 #processing 展示已完成批次；显示邮件与画像独立进度、Gmail/QQ 冻结范围、失败邮件及显式重试按钮。约束：不根据公司分页推测完成情况。 */
+export function updateRunProgress(runs = reviewState.runs) {
+  reviewState.runs = runs;
+  const visible = location.hash === "#processing" ? runs : runs.filter(run => run.status !== "completed" || run.analysis_pending_count > 0 || run.analysis_failed_count > 0 || run.failed_count > 0 || run.error || run.email_errors.length);
   const panel = document.getElementById('sync-progress');
-  panel.hidden = !runs.length;
-  panel.innerHTML = runs.map(run => h`<article class="sync-run"><strong>${e(runLabels[run.status] || run.status)}</strong>${run.sync_options?.until ? h`<p>本次范围：${run.sync_options.recent_days ? t`最近 ${e(run.sync_options.recent_days)} 天` : t("不限天数")} · ${run.sync_options.max_messages ? t`最多 ${e(run.sync_options.max_messages)} 封` : t("不限封数")}（收件箱与已发送合计）</p>` : ""}<p>${run.total_count} 封邮件：完成 ${run.completed_count} · 处理中 ${run.running_count} · 等待 ${run.pending_count} · 失败 ${run.failed_count}</p><p>客户画像：完成 ${run.analysis_completed_count} · 等待/处理中 ${run.analysis_pending_count} · 失败 ${run.analysis_failed_count}</p>${run.error ? `<p class="failure">${e(run.error.message)}</p>` : ''}${run.email_errors.length ? h`<details><summary>查看失败邮件</summary>${run.email_errors.map(item => `<p>${e(item.gmail_message_id)} · ${e(item.stage)} · ${e(item.message)}</p>`).join('')}</details>` : ''}${['failed', 'partial'].includes(run.status) ? h`<button type="button" class="secondary" data-retry-run="${e(run.run_id)}">重试未完成邮件</button>` : ''}</article>`).join('');
+  panel.hidden = !visible.length;
+  panel.innerHTML = visible.map(run => h`<article class="sync-run"><strong>${e(runLabels[run.status] || run.status)}</strong>${run.sync_options?.until ? h`<p>本次范围：${run.sync_options.recent_days ? t`最近 ${e(run.sync_options.recent_days)} 天` : t("不限天数")} · ${run.sync_options.max_messages ? t`最多 ${e(run.sync_options.max_messages)} 封` : t("不限封数")}（收件箱与已发送合计）</p>` : ""}<p>${run.total_count} 封邮件：完成 ${run.completed_count} · 处理中 ${run.running_count} · 等待 ${run.pending_count} · 失败 ${run.failed_count}</p><p>客户画像：完成 ${run.analysis_completed_count} · 等待/处理中 ${run.analysis_pending_count} · 失败 ${run.analysis_failed_count}</p>${run.error ? `<p class="failure">${e(run.error.message)}</p>` : ''}${run.email_errors.length ? h`<details><summary>查看失败邮件</summary>${run.email_errors.map(item => `<p>${e(item.gmail_message_id)} · ${e(item.stage)} · ${e(item.message)}</p>`).join('')}</details>` : ''}${['failed', 'partial'].includes(run.status) ? h`<button type="button" class="secondary" data-retry-run="${e(run.run_id)}">重试未完成邮件</button>` : ''}</article>`).join('');
 }
 
 /** 功能：注册复核与重试交互。输入：onChanged 刷新列表，onRetry 恢复指定邮箱轮询。输出：无。
