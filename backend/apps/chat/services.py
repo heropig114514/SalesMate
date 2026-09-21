@@ -1,5 +1,5 @@
 """职责：提供聊天事务、员工隔离、幂等保存与显式恢复。
-实现：按员工锁串行化工作空间任务；旧公司会话仅保留历史，回报只验结构，终态结果精确比较。
+实现：实验模式跨账号读取和续写会话，续写仍使用原会话归属；按员工锁串行化工作空间任务；旧公司会话仅保留历史，回报只验结构，终态结果精确比较。
 关联：chat.views/Worker 调用，复用 sales Conversation/Message 与 crm 认证。
 目录：
 - lock_owner：取得既有员工锁。
@@ -17,6 +17,8 @@
 变量索引：
 - logger：仅记录任务标识、员工与状态的日志。
 """
+
+from common.laboratory import enabled, owner_scope
 
 import logging
 
@@ -47,13 +49,13 @@ def lock_owner(owner):
 # 功能：读取可用于通用或客户问答的会话。
 # 输入：`owner` 当前员工，`conversation_id` UUID。
 # 输出：Conversation，其公司可为空；越权返回 404。
-# 逻辑：员工必须拥有会话；存在公司时还须拥有公司，不将业务共享扩展为邮箱授权。
+# 逻辑：正式模式核验员工与公司归属；实验模式开放跨账号会话。
 # 约束：归档公司或会话不接受新任务和上下文读取。
 def conversation_for(owner, conversation_id):
     conversation = (
         Conversation.objects.select_related("company")
-        .filter(pk=conversation_id, owner=owner, archived=False)
-        .filter(Q(company__isnull=True) | Q(company__owner=owner))
+        .filter(owner_scope(owner), pk=conversation_id, archived=False)
+        .filter(Q() if enabled() else (Q(company__isnull=True) | Q(company__owner=owner)))
         .first()
     )
     if (
@@ -69,15 +71,15 @@ def conversation_for(owner, conversation_id):
 # 功能：验证回答请求的全链路归属。
 # 输入：`owner` 当前员工，`request_id` UUID，`lock` 是否取得请求行锁。
 # 输出：带会话和消息的 AnswerRequest；越权或绑定异常返回 404。
-# 逻辑：检查请求、会话、用户消息及可选助手消息的身份；公司可空，非空时必须属于员工且与会话绑定一致。
+# 逻辑：检查消息与请求原归属和会话绑定；正式模式再限制调用者归属，实验模式允许跨账号。
 # 约束：锁定查询只锁请求表，避免可空助手关联导致数据库锁错误。
 def request_for(owner, request_id, lock=False):
     query = (
         AnswerRequest.objects.select_related(
             "company", "conversation", "user_message", "assistant_message"
         )
-        .filter(pk=request_id, owner=owner)
-        .filter(Q(company__isnull=True) | Q(company__owner=owner))
+        .filter(owner_scope(owner), pk=request_id)
+        .filter(Q() if enabled() else (Q(company__isnull=True) | Q(company__owner=owner)))
     )
     if lock:
         query = query.select_for_update(of=("self",))
@@ -88,12 +90,12 @@ def request_for(owner, request_id, lock=False):
     if (
         request.conversation.company_id != request.company_id
         or request.user_message.conversation_id != request.conversation_id
-        or request.user_message.owner_id != owner.pk
+        or request.user_message.owner_id != request.owner_id
         or request.user_message.role != "user"
         or (
             request.assistant_message_id
             and (
-                request.assistant_message.owner_id != owner.pk
+                request.assistant_message.owner_id != request.owner_id
                 or request.assistant_message.conversation_id != request.conversation_id
             )
         )
@@ -115,7 +117,7 @@ def require_workspace(conversation):
 # 功能：创建一次用户提问及回答请求。
 # 输入：`owner` 认证用户，`data` 含 conversation_id/content/client_key。
 # 输出：AnswerRequest 与是否首次创建的布尔值。
-# 逻辑：仅工作空间接受新任务；客户端幂等键先于活动任务检查，同内容重传返回原请求。
+# 逻辑：仅工作空间接受新任务；实验模式先解析原归属再只锁该账号并重读会话，客户端幂等键先于活动任务检查，同内容重传返回原请求。
 # 约束：普通历史消息不会被自动升级为模型请求；活动会话拒绝第二个新问题。
 @transaction.atomic
 def submit(owner, data):
@@ -123,6 +125,9 @@ def submit(owner, data):
     conversation_id = contracts.identifier(data["conversation_id"])
     client_key = contracts.identifier(data["client_key"])
     content = contracts.text(data["content"], "content")
+    conversation = conversation_for(owner, conversation_id)
+    if enabled():
+        owner = conversation.owner
     lock_owner(owner)
     conversation = conversation_for(owner, conversation_id)
     require_workspace(conversation)
@@ -163,10 +168,12 @@ def submit(owner, data):
 # 功能：为失败回答创建可追踪的新尝试。
 # 输入：`owner` 当前员工，`request_id` 原请求 UUID。
 # 输出：新请求与首次创建标志；重复点击返回原后继。
-# 逻辑：仅工作空间允许重试；保留原用户消息及失败记录，拒绝活动任务或已有后续问题。
+# 逻辑：仅工作空间允许重试；实验模式先解析并锁定原请求归属，拒绝活动任务或已有后续问题。
 # 约束：不自动重试，不复活原 request_id，不覆盖历史回答。
 @transaction.atomic
 def retry(owner, request_id):
+    if enabled():
+        owner = request_for(owner, request_id).owner
     lock_owner(owner)
     old = request_for(owner, request_id, lock=True)
     require_workspace(old.conversation)
@@ -237,7 +244,7 @@ def retire_legacy_requests(owner=None):
 # 功能：原子领取当前员工的一条任务并冻结历史。
 # 输入：`owner` Agent 服务令牌绑定员工。
 # 输出：工作空间五字段请求或 None，不输出 company_id。
-# 逻辑：员工锁防止重复领取；旧公司任务显式结束，历史截止于原问题之前，最近 20 条恢复时间正序。
+# 逻辑：按所选账号领取 pending 请求并冻结该请求原归属的会话历史；不跨账号混领队列。
 # 约束：旧公司及撤销/归档请求不阻挡后续任务，不隐式重派；模型不在事务内调用。
 @transaction.atomic
 def claim(owner):
@@ -263,7 +270,7 @@ def claim(owner):
         message = request.user_message
         history = (
             Message.objects.filter(
-                owner=owner,
+                owner=request.owner,
                 conversation=request.conversation,
                 archived=False,
                 role__in=["user", "assistant"],
@@ -326,7 +333,7 @@ def context_for(owner, request_id, scope):
 # 功能：保存 Agent 的一次最终结果。
 # 输入：`owner` 令牌绑定员工，`data` 严格回报对象。
 # 输出：request_id/saved/duplicate/assistant_message_id。
-# 逻辑：回报只校验 Schema，终态精确去重；引用匹配本请求上下文或工具记录时附正文，否则仅存元数据。
+# 逻辑：回报校验 Schema 并对终态精确去重；实验模式可跨账号回报，助手消息仍归属原请求；引用登记后附正文，否则只存元数据。
 # 约束：不根据来源标识查询其他记录，不判断正文含义或版本绑定；权限、状态和幂等仍强制，失败不创建助手消息。
 @transaction.atomic
 def save_answer(owner, data):
@@ -370,7 +377,7 @@ def save_answer(owner, data):
                 metadata_only += 1
         if result["status"] == "completed":
             request.assistant_message = Message.objects.create(
-                owner=owner,
+                owner=request.owner,
                 conversation=request.conversation,
                 role="assistant",
                 content=result["assistant_text"],
@@ -451,14 +458,14 @@ def request_data(request):
 # 功能：人工确认后终止中断任务。
 # 输入：`owner` 指定员工，`request_id` 明确任务 UUID。
 # 输出：已失败请求。
-# 逻辑：终态不变，processing 变为 failed，拒绝旧 Agent 随后的任何新结果。
+# 逻辑：正式模式限定所选员工，实验模式允许明确指定其他账号请求；终态不变，processing 变为 failed，旧 Agent 不得再写结果。
 # 约束：只能由管理命令在维护者确认中断后调用，不隐式回队或重新调用模型。
 @transaction.atomic
 def interrupt(owner, request_id):
     lock_owner(owner)
     request = (
         AnswerRequest.objects.select_for_update()
-        .filter(pk=request_id, owner=owner)
+        .filter(owner_scope(owner), pk=request_id)
         .first()
     )
     if request is None:

@@ -1,5 +1,5 @@
 """职责：将已授权工具绑定到现有业务处理器。
-实现：使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
+实现：实验模式知识条目跨账号读取；使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
 关联：services 完成工具认证与输入验证后调用；这里不触发 DRF 二次认证、不构造网络回环。
 目录：
 - request_context：建立限定业务上下文。
@@ -7,6 +7,8 @@
 变量索引：
 - 无
 """
+
+from common.laboratory import owner_scope
 
 from types import SimpleNamespace
 from django.db.models import Q
@@ -39,7 +41,7 @@ def request_context(actor, query=None, data=None, revision=None):
 # 功能：执行业务适配。
 # 输入：`actor`、`spec` 白名单声明、`args` 校验后参数、`key` 可选幂等 UUID。
 # 输出：既有 Response。
-# 逻辑：experiment 委托精确批次读取，support_* 委托资料与文件工具，记录读写复用原处理器，证据查询限定 owner。
+# 逻辑：实验模式知识查询覆盖所有账号；其余按固定 kind 分派到业务视图，输入和返回值保持原契约。
 # 约束：调用前必须由 services 认证与校验；不分派任意路径、任意方法或动作批准。
 def execute(actor, spec, args, key=None):
     kind = spec["kind"]
@@ -131,7 +133,7 @@ def execute(actor, spec, args, key=None):
             proposal_data(ToolProposal.objects.get(pk=args["id"], owner=actor))
         )
     if kind in {"knowledge_search", "knowledge_get"}:
-        query = KnowledgeEntry.objects.filter(owner=actor, active=True).order_by(
+        query = KnowledgeEntry.objects.filter(owner_scope(actor), active=True).order_by(
             "-created_at", "id"
         )
         if kind == "knowledge_get":

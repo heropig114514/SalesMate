@@ -1,5 +1,7 @@
 # Agent 与 Django 集成
 
+当前算法联调服务器启用[公开实验模式](laboratory-access.md)：所有业务数据（含非 KGSEED）免登录、跨账号可读写，Tool/MCP 无需令牌。下文原鉴权约束仅在关闭实验开关后生效，保留的外部动作与密钥边界见该说明。
+
 更新：2026-09-13。当前 Agent 已通过 `agent/clients/backend_api.py` 接入真实 Django 后端。业务流程和 JSON 结构以 [Agent README](../../agent/README.md) 为准，HTTP 传输以 [OpenAPI](../contracts/openapi.yaml) 为准。
 
 ## 职责边界

@@ -1,5 +1,5 @@
 """职责：向所有有效登录账号提供已批准虚构批次的跨账号数据视图与可写能力说明。
-实现：模型白名单、精确清单主键及当前指纹共同限制读取；保留归属与外键，提供分页、导出和附件。
+实现：模型白名单与精确清单主键限制读取；正式模式同时核验当前指纹，实验模式返回现存记录；保留归属与外键，提供分页、导出和附件。
 关联：seed_kg_lab 建立清单，experiment_writes 原子维护；网页和 agent_tools 复用校验，普通业务权限保持原样。
 目录：
 - load_batch：定位获准且未清理的完整批次。
@@ -41,6 +41,7 @@ from rest_framework.views import APIView
 
 from apps.crm.access import Conflict
 from common.fixture_integrity import fingerprint
+from common.laboratory import enabled
 from .models import AuditEvent
 
 APPROVED_BATCHES = ("KGSEED_20260921_01",)
@@ -137,8 +138,8 @@ def model_fields(label):
 # 功能：验证并投影清单中的单表记录。
 # 输入：`entry` 已批准的清单事件、`label` 模型名称。
 # 输出：原始主键、归属、批次、当前 fingerprint、真实 read_only 能力及字段组成的记录列表。
-# 逻辑：只按清单主键读取；逐行复核内容指纹，外键归属通过确定路径追溯。
-# 约束：缺失或修改的记录触发 409，不默默返回部分数据；不导出密码或文件存储路径。
+# 逻辑：只按清单主键读取，外键归属通过确定路径追溯；实验模式返回当前内容和指纹，正式模式逐行校验清单。
+# 约束：正式模式缺失或修改返回 409；实验模式允许常规业务入口修改或删除合成行，清理前仍须核验原清单；不导出密码或存储路径。
 def table_rows(entry, label):
     from .experiment_writes import capabilities
     if label not in TABLES:
@@ -152,7 +153,7 @@ def table_rows(entry, label):
     fields = model_fields(label)
     rows = []
     for record in query:
-        if fingerprint(record) != expected[str(record.pk)]:
+        if not enabled() and fingerprint(record) != expected[str(record.pk)]:
             logger.warning("experiment_row_changed batch=%s model=%s pk=%s", entry.object_id, label, record.pk)
             raise Conflict("实验数据已被修改，请维护者核验后重新发布；本次读取已停止。")
         owner = record
@@ -169,8 +170,8 @@ def table_rows(entry, label):
             data[field["name"]] = value
         rows.append({"pk": str(record.pk), "owner": {"id": owner.pk, "username": owner.username},
                      "batch": entry.object_id, "synthetic": True, "read_only": not capabilities(label)["update"],
-                     "fingerprint": expected[str(record.pk)], "fields": data})
-    if len(rows) != len(expected):
+                     "fingerprint": fingerprint(record), "fields": data})
+    if not enabled() and len(rows) != len(expected):
         logger.warning("experiment_rows_missing batch=%s model=%s expected=%s actual=%s", entry.object_id, label, len(expected), len(rows))
         raise Conflict("实验数据部分缺失，请维护者核验；本次读取已停止。")
     return rows

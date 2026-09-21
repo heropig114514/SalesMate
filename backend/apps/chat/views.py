@@ -1,5 +1,5 @@
 """职责：暴露浏览器聊天操作和固定 Agent 三接口。
-实现：Session/CSRF 与 Agent 凭证分离，视图只负责结构校验、分页及事务服务分派。
+实现：实验模式免登录并跨账号读取，正式模式 Session/CSRF 与 Agent 凭证分离，视图只负责结构校验、分页及事务服务分派。
 关联：config.urls 注册独立路径，复用既有统一异常与 OpenAPI。
 目录：
 - SubmitView：显式提交聊天问题。
@@ -21,6 +21,8 @@
 - ContextView.authentication_classes：证据读取的独立服务认证。
 - AnswerView.authentication_classes：结果写入的独立服务认证。
 """
+
+from common.laboratory import owner_scope
 
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 from rest_framework.response import Response
@@ -59,7 +61,7 @@ class RequestListView(APIView):
     # 功能：读取稳定排序的请求列表。
     # 输入：`request` 查询参数 conversation/page/page_size。
     # 输出：现有 count/results 分页结构。
-    # 逻辑：复用分页限制，以创建时间和 UUID 排序，非法分页数字转换成 400。
+    # 逻辑：正式模式按用户过滤，实验模式读取所选会话全部请求；使用既有分页及绑定校验，非法分页返回 400。
     # 约束：每条结果再次核验绑定，不输出原始快照。
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="chat_requests_list")
     def get(self, request):
@@ -67,7 +69,7 @@ class RequestListView(APIView):
             request.user, contracts.identifier(request.query_params.get("conversation"))
         )
         query = AnswerRequest.objects.filter(
-            owner=request.user, conversation=conversation
+            owner_scope(request.user), conversation=conversation
         ).order_by("created_at", "id")
         try:
             rows, pagination = paged(query, request)

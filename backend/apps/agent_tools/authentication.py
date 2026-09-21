@@ -1,6 +1,6 @@
 """职责：验证限定业务工具权限的独立凭证。
-实现：只接受 Tool 认证，数据库验证用户、撤销与有效期。
-关联：工具入口允许此认证与浏览器 Session；授权创建和提案确认仅允许 Session。
+实现：实验模式提供免登录身份；正式模式只接受 Tool，验证撤销、期限和工具范围。
+关联：工具入口允许此认证与浏览器 Session；正式模式授权创建和提案确认仅允许 Session。
 目录：
 - ToolAuthentication：独立工具认证。
 - ToolAuthentication.authenticate：校验摘要及授权状态。
@@ -19,14 +19,17 @@ from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from .models import ToolCredential
+from common.laboratory import enabled, identity
 
 
 # 功能：核验有效委托。
 # 输入：`credential` 授权记录、`name` 可选工具名。
 # 输出：无，失效或越权抛认证/权限异常。
-# 逻辑：到期、撤销、停用和白名单逐项检查。
+# 逻辑：实验模式免授权检查；正式模式逐项检查到期、撤销、停用和白名单。
 # 约束：不接受通配符，不从模型输入读取员工身份。
 def check_credential(credential, name=None):
+    if enabled():
+        return
     if (
         credential.revoked_at
         or credential.expires_at <= timezone.now()
@@ -38,15 +41,18 @@ def check_credential(credential, name=None):
 
 
 # 功能：区分业务委托与既有 Worker 身份。
-# 逻辑：仅接受独立 Tool token，不复用 Agent token。
+# 逻辑：实验模式提供公开身份，正式模式仅接受独立 Tool token。
 # 约束：令牌不进入日志或查询参数。
 class ToolAuthentication(BaseAuthentication):
     # 功能：认证工具请求。
     # 输入：`request` HTTP 请求。
     # 输出：用户与授权记录，或 None。
-    # 逻辑：摘要查询后核验当前状态。
-    # 约束：携带其他 Authorization 方案时明确拒绝，不回退 Session。
+    # 逻辑：实验模式使用公开身份；正式模式摘要查询后核验当前状态。
+    # 约束：正式模式其他 Authorization 方案明确拒绝；实验模式该头仅用于可识别身份归属。
     def authenticate(self, request):
+        actor = identity(request)
+        if actor is not None:
+            return actor, None
         parts = get_authorization_header(request).split()
         if not parts:
             return None

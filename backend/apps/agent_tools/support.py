@@ -1,5 +1,5 @@
 """职责：为算法调用方提供资料、目录和文件的数据工具，不运行模型或评分。
-实现：复用账号资料 API；目录修改保留账号锁和 revision；普通文件要求 TXT 后缀，实验入口可显式接受已核验 text/plain。
+实现：实验模式开放跨账号资料文件查询，资料单例仍按所选实验身份定位；复用账号资料 API；目录修改保留账号锁和 revision；普通文件要求 TXT 后缀，实验入口可显式接受已核验 text/plain。
 关联：registry 调用 support_specs，dispatch 调用 execute_support；experiments 复用分块编码；services 提供幂等和调用日志。
 目录：
 - support_specs：声明资料、目录及文件工具。
@@ -12,6 +12,8 @@
 - CHUNK_BYTES：一次二进制读取的最大字节数。
 - CHUNK_TEXT：一次文本读取的最大字符数。
 """
+
+from common.laboratory import owner_scope
 
 import base64
 import binascii
@@ -31,7 +33,7 @@ from apps.accounts.onboarding import (
     DocumentView, MAX_BYTES, ProductSerializer, SetupSerializer, SetupView,
     SolutionSerializer, snapshot,
 )
-from apps.accounts.models import SetupDocument
+from apps.accounts.models import SetupDocument, SalesSetup
 from apps.crm.access import check_version
 from apps.sales import files, models
 from apps.sales.priority_views import SellerProfileSerializer, SellerProfileView
@@ -46,7 +48,7 @@ CHUNK_TEXT = 16000
 # 功能：定义可授权的软件辅助工具。
 # 输入：`tool` 为注册表声明工厂。
 # 输出：工具声明列表。
-# 逻辑：写入均复用一次性幂等调用；资料修改需要读取到的 revision，分块文件不需要浏览器会话。
+# 逻辑：写入复用统一调用；正式模式资料修改需要读取到的 revision，分块文件不需要浏览器会话。
 # 约束：不提供评分、任意路径、外部抓取或自动授权；删除仅用于未被引用的本人引导附件。
 def support_specs(tool):
     entries = []
@@ -86,7 +88,7 @@ def support_specs(tool):
 # 功能：读取或修改一个资料目录。
 # 输入：`request` 为限定账号上下文，`spec` 为工具声明，`args` 为已校验参数。
 # 输出：分页/条目、setup_revision 或删除回执。
-# 逻辑：写入先锁定账号，再比较全目录版本；通过 SetupView 统一校验所有引用，读取不加写锁。
+# 逻辑：按所选身份读取目录并应用操作；revision 可省略时由统一版本策略决定，正式模式仍要求当前版本。
 # 约束：不修改交易 Product；更新不允许更换条目 id；失败整体回滚，无隐式重试。
 @transaction.atomic
 def catalog_operation(request, spec, args):
@@ -106,7 +108,7 @@ def catalog_operation(request, spec, args):
         raise NotFound("资料条目不存在。")
     if operation == "get":
         return Response({"item": row, "setup_revision": current["revision"]})
-    check_version(args["revision"], current["revision"])
+    check_version(args.get("revision"), current["revision"])
     if operation == "create":
         rows.append(args["data"])
         index = len(rows) - 1
@@ -125,13 +127,13 @@ def catalog_operation(request, spec, args):
 # 功能：读取或维护私有引导文件。
 # 输入：`request`、`operation`、`args` 已通过 Schema 校验。
 # 输出：元数据、分页、分块或删除/上传回执。
-# 逻辑：上传复用原 PDF/TXT 校验；删除在账号锁内核对所有资料引用。
-# 约束：仅当前账号文件，无公共链接；不解析 PDF、不自动读取所有分块；错误不泄露他人存在性。
+# 逻辑：上传复用原 PDF/TXT 校验；正式模式核对本人资料引用，实验模式核对所有账号引用。
+# 约束：正式模式仅当前账号文件；实验模式跨账号读写仍拒绝删除被引用文件；不解析 PDF、不自动读取所有分块。
 @transaction.atomic
 def document_operation(request, operation, args):
     if operation in {"upload", "delete"}:
         get_user_model().objects.select_for_update().get(pk=request.user.pk)
-    query = SetupDocument.objects.filter(owner=request.user).order_by("id")
+    query = SetupDocument.objects.filter(owner_scope(request.user)).order_by("id")
     if operation == "upload":
         try:
             content = base64.b64decode(args["content_base64"], validate=True)
@@ -148,8 +150,10 @@ def document_operation(request, operation, args):
     record = get_object_or_404(query, pk=args["id"])
     if operation == "read":
         return Response(read_content(record, bytes(record.content), args))
-    current = snapshot(request.user)
-    references = [{"collection": key, "id": row["id"]} for key in ("products", "solutions") for row in current[key] if row.get("document_id") == str(record.pk)]
+    setups = SalesSetup.objects.filter(owner_scope(request.user))
+    references = [{"collection": key, "id": row.get("id"), "owner": setup.owner_id}
+                  for setup in setups for key in ("products", "solutions")
+                  for row in getattr(setup, key) if row.get("document_id") == str(record.pk)]
     if operation == "delete":
         if references:
             from apps.crm.access import Conflict
@@ -191,7 +195,7 @@ def read_content(record, content, args, *, allow_plain_text=False):
 # 功能：执行已授权的软件辅助工具。
 # 输入：`request`、`spec` 固定声明、`args` 校验参数。
 # 输出：业务 Response。
-# 逻辑：资料调用现有 View；附件读取使用 owner 限制和既有存储边界。
+# 逻辑：资料工具分派到对应操作；附件由统一归属策略查询，正式模式限本人、实验模式跨账号。
 # 约束：不能绕过调用层白名单；不执行模型、任意 URL 或路径；文件句柄在读取结束关闭。
 def execute_support(request, spec, args):
     if spec["kind"] == "support_profile":
@@ -201,7 +205,7 @@ def execute_support(request, spec, args):
         return catalog_operation(request, spec, args)
     if spec["kind"] == "support_document":
         return document_operation(request, spec["operation"], args)
-    record = get_object_or_404(models.Attachment, pk=args["id"], owner=request.user, archived=False)
+    record = get_object_or_404(models.Attachment.objects.filter(owner_scope(request.user)), pk=args["id"], archived=False)
     with files.open_file(request.user, record) as source:
         content = source.read(files.MAX_BYTES + 1)
     if len(content) > files.MAX_BYTES or len(content) != record.size or hashlib.sha256(content).hexdigest() != record.sha256:

@@ -1,5 +1,5 @@
 """职责：管理客户目录、联系人及明确的人工邮件归组。
-实现：owner 锁与 revision 保护批量搬移；合并保留历史分析，并传播成交归属变化对其他客户评分的影响。
+实现：实验模式使用公开跨账号业务范围；owner 锁与 revision 保护批量搬移；合并保留历史分析，并传播成交归属变化对其他客户评分的影响。
 关联：crm.ingestion 使用 CompanyAlias 的精确映射，sales API 仅向共享用户返回业务目录。
 目录：
 - directory_row：生成不含私人邮件的客户目录项。
@@ -10,6 +10,8 @@
 变量索引：
 - logger：记录人工归组数量与对象标识，不记录邮件内容。
 """
+
+from common.laboratory import owner_scope
 
 import logging
 import uuid
@@ -128,7 +130,7 @@ def save_contact(actor, company_id, expected, data):
 # 功能：将明确选择的邮件移动到同员工的目标公司。
 # 输入：`actor`、`source_id`、`target_id`、`source_revision`、`target_revision`、`keys` 邮件去重键数组。
 # 输出：移动条数和两公司新版本。
-# 逻辑：先锁 owner，再按 UUID 顺序锁公司；目标联系人按邮箱复用，邮件本体保持不变。
+# 逻辑：按当前模式查询并锁定两公司，实验模式可跨账号；联系人按邮箱复用，设置保持各公司原归属，邮件正文不变。
 # 约束：不授予共享用户搬移私人邮件；不自动转移交易或改变未来域名路由。
 @transaction.atomic
 def move_emails(actor, source_id, target_id, source_revision, target_revision, keys):
@@ -144,7 +146,7 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
     get_user_model().objects.select_for_update().get(pk=actor.pk)
     list(
         Company.objects.select_for_update()
-        .filter(owner=actor, pk__in=[source_id, target_id])
+        .filter(owner_scope(actor), pk__in=[source_id, target_id])
         .order_by("id")
     )
     source, target = company_for(actor, source_id), company_for(actor, target_id)
@@ -174,7 +176,7 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
         company.save(update_fields=["revision"])
         enqueue_analysis(company, "grouping_changed")
         settings, _ = models.CompanySettings.objects.get_or_create(
-            company=company, defaults={"owner": actor}
+            company=company, defaults={"owner": company.owner}
         )
         audit(
             actor,
@@ -199,7 +201,7 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
 # 输入：`actor`、`source_id`、`target_id`、`source_revision`、`target_revision`。
 # 输出：目标公司目录项。
 # 逻辑：拒绝冲突字段，转移业务关系；历史分析留在来源，成交订单归属变化同步更新其他公司的评分背景版本。
-# 约束：只允许公司所有者；团队共享授权不自动扩大，来源存在共享授权时须先撤销。
+# 约束：正式模式只允许公司所有者，实验模式跨账号；团队共享授权不自动扩大，来源存在共享授权时须先撤销。
 @transaction.atomic
 def merge_companies(actor, source_id, target_id, source_revision, target_revision):
     get_user_model().objects.select_for_update().get(pk=actor.pk)
@@ -241,7 +243,7 @@ def merge_companies(actor, source_id, target_id, source_revision, target_revisio
         .first()
     )
     target_settings, _ = models.CompanySettings.objects.get_or_create(
-        company=target, defaults={"owner": actor}
+        company=target, defaults={"owner": target.owner}
     )
     if source_settings:
         if (

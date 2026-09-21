@@ -1,5 +1,5 @@
 """职责：保存四步引导中的个人、产品、方案信息并提供私有附件读取。
-实现：资料条目包含稳定 id 和可选交易产品关联；严格结构校验、owner 隔离及 If-Match 乐观锁；PDF/文本附件只经过认证接口读取。
+实现：实验模式允许跨账号附件读取和产品/附件关联；资料单例仍按公开选择的身份定位；资料条目包含稳定 id 和可选交易产品关联；严格结构校验、owner 隔离及 If-Match 乐观锁；PDF/文本附件只经过认证接口读取。
 关联：SalesSetup、SetupDocument；公司资料继续使用 company-profile 接口，不修改评分输入。
 目录：
 - StrictSerializer：拒绝未声明字段。
@@ -45,6 +45,8 @@
 - SetupSerializer.completed：完成或跳过全部引导的状态。
 - DocumentView.parser_classes：仅支持 multipart 上传。
 """
+
+from common.laboratory import owner_scope
 
 import logging
 import uuid
@@ -133,8 +135,8 @@ class SetupSerializer(StrictSerializer):
     # 功能：校验跨字段边界与私有文件引用。
     # 输入：`attrs` 为字段校验后的数据；context 中 user 是当前用户。
     # 输出：验证后的数据；价格倒置或他人附件抛 ValidationError。
-    # 逻辑：验证条目 UUID 唯一、交易产品为本人未归档记录；批量核对全部附件归属。
-    # 约束：不查询或泄露其他账号文件内容。
+    # 逻辑：验证条目 UUID 唯一和未归档产品；正式模式限制产品与附件归属，实验模式允许跨账号关联。
+    # 约束：这里只核验引用，不读取文件内容；实际下载使用对应文件接口。
     def validate(self, attrs):
         from apps.sales.models import Product
 
@@ -144,14 +146,14 @@ class SetupSerializer(StrictSerializer):
             if len({row["id"] for row in rows}) != len(rows):
                 raise serializers.ValidationError("资料条目 id 不得重复。")
         linked = {row["linked_product_id"] for row in products if row.get("linked_product_id")}
-        if Product.objects.filter(owner=self.context["user"], archived=False, pk__in=linked).count() != len(linked):
+        if Product.objects.filter(owner_scope(self.context["user"]), archived=False, pk__in=linked).count() != len(linked):
             raise serializers.ValidationError("关联产品不存在、已归档或不属于当前账号。")
         for product in products:
             low, high = product["price_min"], product["price_max"]
             if low is not None and high is not None and low > high:
                 raise serializers.ValidationError("参考价格下限不能大于上限。")
         ids = {row["document_id"] for row in products + attrs.get("solutions", []) if row.get("document_id")}
-        if SetupDocument.objects.filter(owner=self.context["user"], pk__in=ids).count() != len(ids):
+        if SetupDocument.objects.filter(owner_scope(self.context["user"]), pk__in=ids).count() != len(ids):
             raise serializers.ValidationError("附件不存在或不属于当前账号。")
         return attrs
 
@@ -252,11 +254,11 @@ class DocumentView(APIView):
     # 功能：读取当前账号的附件。
     # 输入：`request` 的身份及 download 查询项；`document_id` 为 UUID。
     # 输出：PDF/文本响应；无权访问统一为 404。
-    # 逻辑：owner 限制查询，设置内联或下载、nosniff、沙盒与禁止缓存。
-    # 约束：不允许跨账号访问；浏览器是否具备 PDF 阅读器由客户端决定。
+    # 逻辑：正式模式按 owner 限制，实验模式公开业务文件；设置内联或下载、nosniff、沙盒与禁止缓存。
+    # 约束：正式模式拒绝跨账号访问；浏览器是否具备 PDF 阅读器由客户端决定。
     @extend_schema(responses=OpenApiTypes.BINARY, tags=["accounts"])
     def get(self, request, document_id=None):
-        record = get_object_or_404(SetupDocument, pk=document_id, owner=request.user)
+        record = get_object_or_404(SetupDocument.objects.filter(owner_scope(request.user)), pk=document_id)
         response = HttpResponse(bytes(record.content), content_type=record.content_type)
         response["Content-Disposition"] = content_disposition_header("download" in request.query_params, record.name)
         response["Content-Security-Policy"] = "sandbox; default-src 'none'"

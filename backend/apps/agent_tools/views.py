@@ -1,6 +1,6 @@
 """职责：提供工具发现、调用、用户委托和人工确认 HTTP 接口。
-实现：独立 Tool 或 Session 调用，文件 JSON 使用有界解析；凭证支持显式工具清单或模板快照，管理与提案批准只接受用户 Session/CSRF。
-关联：services 管理幂等和权限；复用 SalesView 的安全错误映射；不修改原业务认证。
+实现：显式实验模式下无需登录或单独令牌；正式模式保留原授权。独立 Tool 或 Session 调用，文件 JSON 使用有界解析；凭证支持显式工具清单或模板快照，正式模式管理与提案批准只接受用户 Session/CSRF。
+关联：services 管理幂等和权限；复用 SalesView 的安全错误映射；使用 common.laboratory 统一实验身份。
 目录：
 - ToolView：工具认证边界。
 - CatalogView：工具目录。
@@ -21,10 +21,10 @@
 变量索引：
 - ToolView.authentication_classes：Tool 与浏览器认证。
 - CallView.parser_classes：文件 JSON 有界解析，保留原表单解析器。
-- CredentialView.authentication_classes：仅用户 Session。
-- CredentialDetailView.authentication_classes：仅用户 Session。
-- ProposalView.authentication_classes：仅用户 Session。
-- DecisionView.authentication_classes：仅用户 Session。
+- CredentialView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
+- CredentialDetailView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
+- ProposalView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
+- DecisionView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
 """
 
 import hashlib
@@ -33,6 +33,7 @@ from datetime import timedelta
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 from rest_framework.authentication import SessionAuthentication
+from common.laboratory import LaboratoryAuthentication
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -47,8 +48,8 @@ from .parsers import ToolJSONParser
 
 
 # 功能：限定工具身份。
-# 逻辑：Tool 凭证优先，浏览器保留 CSRF。
-# 约束：不复用 Worker 的 Agent 认证。
+# 逻辑：实验模式由 ToolAuthentication 提供公开身份；正式模式 Tool 凭证优先，浏览器保留 CSRF。
+# 约束：正式模式不复用 Worker 的 Agent 认证。
 class ToolView(SalesView):
     authentication_classes = [ToolAuthentication, SessionAuthentication]
 
@@ -125,10 +126,10 @@ class CallView(ToolView):
 
 
 # 功能：用户委托工具权限。
-# 逻辑：只接受当前登录用户主动创建。
+# 逻辑：实验模式使用公开选择的身份管理委托；正式模式只接受当前 Session 用户。
 # 约束：Tool token 不能发放新权限。
 class CredentialView(SalesView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
     # 功能：查询自己的授权。
     # 输入：`request` 分页。
@@ -215,10 +216,10 @@ class CredentialView(SalesView):
 
 
 # 功能：用户撤销委托。
-# 逻辑：无硬删除，保留提案关联。
+# 逻辑：实验模式使用公开选择的身份撤销委托；正式模式要求当前用户 Session，归属仍按所选身份定位。
 # 约束：只能撤销自己的授权。
 class CredentialDetailView(SalesView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
     # 功能：撤销一份 token。
     # 输入：`request`、`credential_id`。
@@ -240,10 +241,10 @@ class CredentialDetailView(SalesView):
 
 
 # 功能：向用户展示待确认内容。
-# 逻辑：查询自己的提案。
+# 逻辑：实验模式按公开选择的身份读取提案；正式模式要求对应用户 Session。
 # 约束：凭证不能通过此接口读取或批准。
 class ProposalView(SalesView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
     # 功能：读取提案。
     # 输入：`request` 分页、`proposal_id` 可选路径标识。
@@ -264,10 +265,10 @@ class ProposalView(SalesView):
 
 
 # 功能：接受独立用户确认。
-# 逻辑：继承 Session/CSRF，输入不能更改提案内容。
+# 逻辑：实验模式按公开选择的身份提交决定；正式模式要求用户 Session 和 CSRF，实际执行仍委托 decide。
 # 约束：不注册为 Agent 工具。
 class DecisionView(SalesView):
-    authentication_classes = [SessionAuthentication]
+    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
     # 功能：确认或取消一次提案。
     # 输入：`request` 含 decision，`proposal_id`。

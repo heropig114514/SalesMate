@@ -14,6 +14,7 @@
 - ClientTests.test_transport_errors_and_redirects：验证不重试、不泄露 token。
 - ClientTests.test_configuration_and_fixed_endpoints：拒绝不安全地址与未知接口。
 - ProtocolTests：真实子进程 MCP 验证。
+- ProtocolTests.test_anonymous_stdio：验证无令牌 MCP 与可省略幂等键。
 - ProtocolTests.test_stdio_catalog_call_and_error：验证 SDK 握手、分页、写参数及错误标志。
 变量索引：
 - ROOT：项目根目录。
@@ -39,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 # 功能：模拟固定协议。
-# 逻辑：只接收本机合成授权。
+# 逻辑：模拟带合成授权的正式模式和无授权的实验模式。
 # 约束：不访问 Django 或真实业务。
 class Handler(BaseHTTPRequestHandler):
     # 功能：关闭测试访问日志。
@@ -51,12 +52,12 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # 功能：模拟两页目录。
-    # 输入：HTTP 路径和 Authorization。
+    # 输入：HTTP 路径及可选 Authorization。
     # 输出：一页工具描述。
     # 逻辑：读工具和写工具分两页。
     # 约束：页数仅用于协议测试。
     def do_GET(self):
-        if self.headers.get("Authorization") != "Tool fixture-token":
+        if self.headers.get("Authorization") not in (None, "Tool fixture-token"):
             return self.reply(401, {})
         second = "page=2" in self.path
         spec = {
@@ -69,6 +70,7 @@ class Handler(BaseHTTPRequestHandler):
                 "additionalProperties": False,
             },
             "executionMode": "write" if second else "read",
+            "idempotency_required": bool(self.headers.get("Authorization")),
             "annotations": {"readOnlyHint": not second},
         }
         self.reply(
@@ -261,6 +263,33 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 )
                 denied = await client.call_tool("denied", {})
                 self.assertTrue(denied.is_error)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    # 功能：验证匿名 MCP 真实握手及写入参数。
+    # 输入：本机实验 HTTP fixture 和空令牌配置。
+    # 输出：Schema 不要求幂等键，写调用得到结构化成功响应。
+    # 逻辑：启动真实 stdio 子进程，通过 MCP SDK 完成目录和调用。
+    # 约束：HTTP 业务由 fixture 模拟，后端权限另由集成测试验证。
+    async def test_anonymous_stdio(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            params = StdioServerParameters(command=sys.executable,
+                args=["-m", "integrations.salesmate_tools.mcp_server"], cwd=str(ROOT),
+                env={**os.environ, "SALESMATE_TOOLS_URL": f"http://127.0.0.1:{server.server_port}",
+                     "SALESMATE_TOOLS_TOKEN": "", "SALESMATE_TOOLS_USER": ""})
+            async with Client(params) as client:
+                first = await client.list_tools()
+                second = await client.list_tools(cursor=first.next_cursor)
+                self.assertNotIn("idempotency_key", second.tools[0].input_schema["required"])
+                result = await client.call_tool("customers.create", {"name": "Anonymous"})
+                self.assertFalse(result.is_error)
+                self.assertEqual(result.structured_content["echo"]["arguments"], {"name": "Anonymous"})
+                self.assertNotIn("idempotency_key", result.structured_content["echo"])
         finally:
             server.shutdown()
             server.server_close()

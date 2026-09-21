@@ -1,5 +1,5 @@
 """职责：提供员工同步进度、明确重试及邮件人工复核接口。
-实现：Session 身份限定邮箱 owner；可查看某邮箱全部已保存邮件，复核使用 If-Match 避免覆盖并发判断。
+实现：实验模式使用公开跨账号业务范围；Session 身份限定邮箱 owner；可查看某邮箱全部已保存邮件，复核使用 If-Match 避免覆盖并发判断。
 关联：urls 注册显式路径，processing 和 classification 承担数据库事务。
 目录：
 - ReviewRequestSerializer：声明人工确认载荷。
@@ -14,6 +14,8 @@
 - ReviewRequestSerializer.review_status：两个允许的人工决定。
 - OBJECT：OpenAPI 通用对象表示。
 """
+
+from common.laboratory import owner_scope
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework.exceptions import NotFound, ValidationError
@@ -44,11 +46,11 @@ class SyncRunView(APIView):
     # 功能：查询同步和画像整体进度。
     # 输入：`request` 为员工会话，`run_id` 为批次 UUID。
     # 输出：批次计数和逐封安全错误。
-    # 逻辑：owner 限定后调用派生统计。
+    # 逻辑：正式模式限定邮箱 owner，实验模式按批次 ID 跨账号查询，再生成派生统计。
     # 约束：不存在与越权均返回 404，无写入副作用。
     @extend_schema(responses=OBJECT, tags=["processing"])
     def get(self, request, run_id):
-        run = MailboxSyncRun.objects.filter(pk=run_id, mailbox__owner=request.user).first()
+        run = MailboxSyncRun.objects.filter(owner_scope(request.user, "mailbox__owner"), pk=run_id).first()
         if run is None:
             raise NotFound("批次不存在。")
         return Response(run_data(run))
@@ -70,11 +72,11 @@ class EmailReviewsView(APIView):
     # 功能：按邮箱和状态列出可复核邮件。
     # 输入：`request` 可带 status/page，`mailbox_id` 可限定一个邮箱。
     # 输出：最多 20 项、总数和待复核数量。
-    # 逻辑：先授权后筛选；all 保留原复核范围，saved 额外包含未经人工复核的业务邮件，均按接收时间倒序。
+    # 逻辑：正式模式按邮箱 owner 过滤，实验模式跨账号；all 保留复核范围，saved 包含业务邮件，按接收时间倒序。
     # 约束：不解析正文为 HTML；非法状态或分页返回 400。
     @extend_schema(responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("status", str, enum=["pending", "non_business", "all", "saved"]), OpenApiParameter("page", int)])
     def get(self, request, mailbox_id=None):
-        query = Email.objects.filter(mailbox__owner=request.user)
+        query = Email.objects.filter(owner_scope(request.user, "mailbox__owner"))
         if mailbox_id:
             query = query.filter(mailbox=mailbox_for(request.user, mailbox_id))
         pending_count = query.filter(business_classification="needs_review").count()

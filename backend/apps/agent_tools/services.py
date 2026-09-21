@@ -1,6 +1,6 @@
 """职责：执行工具授权、严格输入、幂等回执和真人确认协议。
-实现：查询不写业务；写调用以数据库唯一回执串行化；高影响操作只创建冻结提案。
-关联：registry 定义能力，dispatch 复用业务逻辑；仅 Session 视图可以调用 decide。
+实现：写调用与唯一回执原子保存；正式模式管理操作产生提案，实验模式直接执行且幂等键可省略。
+关联：registry 定义能力，dispatch 复用业务逻辑；正式模式仅 Session 视图可以调用 decide，实验模式使用公开身份。
 目录：
 - catalog：返回当前身份的工具目录。
 - authorize：复核工具授权。
@@ -15,6 +15,8 @@
 import hashlib
 import json
 import logging
+import uuid
+from common.laboratory import enabled
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -32,10 +34,10 @@ logger = logging.getLogger("salesmate.agent_tools")
 # 功能：列出可用工具。
 # 输入：`actor` 已登录用户、`credential` 可选工具凭证、`category` 可选分类。
 # 输出：公开工具描述列表。
-# 逻辑：同一名单决定发现和执行，不暴露内部处理器。
+# 逻辑：正式模式以凭证名单过滤，实验模式发布完整目录；不暴露内部处理器。
 # 约束：不通过目录授予权限，不返回业务数据或凭证。
 def catalog(actor, credential=None, category=None):
-    if not actor.is_active:
+    if not enabled() and not actor.is_active:
         raise PermissionDenied("用户已停用。")
     if credential:
         check_credential(credential)
@@ -51,10 +53,11 @@ def catalog(actor, credential=None, category=None):
                 "executionMode",
                 "category",
                 "annotations",
+                "idempotency_required",
             }
         }
         for name, spec in build_registry().items()
-        if (not credential or name in credential.allowed_tools)
+        if (enabled() or not credential or name in credential.allowed_tools)
         and (not category or spec["category"] == category)
     ]
 
@@ -62,12 +65,12 @@ def catalog(actor, credential=None, category=None):
 # 功能：复核执行身份。
 # 输入：`actor`、`credential`、`name` 工具名称。
 # 输出：无。
-# 逻辑：确认用户有效且授权属于相同用户，再复核白名单。
+# 逻辑：实验模式不检查用户状态或工具白名单；正式模式检查身份和授权归属。
 # 约束：业务实体权限继续由实际处理器检查。
 def authorize(actor, credential, name):
-    if not actor.is_active:
+    if not enabled() and not actor.is_active:
         raise PermissionDenied("用户已停用。")
-    if credential:
+    if credential and not enabled():
         if credential.owner_id != actor.pk:
             raise PermissionDenied("工具授权归属不一致。")
         check_credential(credential, name)
@@ -97,7 +100,7 @@ def response_data(response):
 # 输入：`actor`、`credential`、`name`、`arguments`、`idempotency_key` 可选 UUID。
 # 输出：带工具名和回执的结果。
 # 逻辑：先校验和授权，写操作与回执同事务；仅锁凭证自身，避免先锁用户再等待回执形成倒序锁；确认工具仅冻结提案。
-# 约束：所有写入要求幂等键；失败回滚、不重试；缓存回执是用户自己的历史，不当作当前数据。
+# 约束：正式模式写入要求幂等键，实验模式省略时生成并返回 call_id；失败回滚、不重试；缓存回执是用户自己的历史，不当作当前数据。
 def invoke(actor, credential, name, arguments, idempotency_key=None):
     spec = build_registry().get(name)
     if spec is None:
@@ -112,10 +115,12 @@ def invoke(actor, credential, name, arguments, idempotency_key=None):
     )
     try:
         if spec["executionMode"] == "read":
-            if idempotency_key is not None:
+            if idempotency_key is not None and not enabled():
                 raise ValidationError("只读工具不接受幂等键。")
             result = {"tool": name, **response_data(execute(actor, spec, arguments))}
         else:
+            if enabled() and idempotency_key is None:
+                idempotency_key = str(uuid.uuid4())
             validate(idempotency_key, UUID)
             digest = hashlib.sha256(
                 json.dumps(
@@ -195,7 +200,7 @@ def invoke(actor, credential, name, arguments, idempotency_key=None):
 # 输入：`proposal` 已授权提案。
 # 输出：工具输入、期限、状态和用户确认接口。
 # 逻辑：以冻结输入供界面完整预览。
-# 约束：确认接口只接受 Session；工具凭证不能代替用户批准。
+# 约束：正式模式确认接口只接受 Session；实验模式公开身份可选择原提案归属。
 def proposal_data(proposal):
     return plain(
         {
@@ -207,7 +212,7 @@ def proposal_data(proposal):
             "expired": proposal.expires_at <= timezone.now(),
             "result": proposal.result,
             "decision_path": f"/api/v1/agent-tools/proposals/{proposal.pk}/decision/",
-            "confirmation_authentication": "user_session_csrf",
+            "confirmation_authentication": "laboratory_identity" if enabled() else "user_session_csrf",
         }
     )
 
@@ -216,7 +221,7 @@ def proposal_data(proposal):
 # 输入：`actor` 已登录用户、`proposal_id`、`decision` 为 approve/cancel。
 # 输出：提案状态及真实业务结果。
 # 逻辑：锁定提案，核对期限、原授权与最新权限，执行冻结参数。
-# 约束：调用方必须为 Session-only 视图；版本冲突回滚并保持 pending，不修改冻结输入。
+# 约束：正式模式调用方必须为 Session-only 视图，实验模式由公开身份调用；版本冲突回滚并保持 pending，不修改冻结输入。
 @transaction.atomic
 def decide(actor, proposal_id, decision):
     if decision not in {"approve", "cancel"}:

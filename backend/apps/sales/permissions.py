@@ -1,5 +1,5 @@
 """职责：限定销售业务共享、个人会话和团队管理的授权范围。
-实现：共享公司仅授予业务记录访问，邮箱与原 Agent 接口维持 owner 隔离。
+实现：正式模式执行 owner/团队规则；实验模式开放业务模型全表读写和团队管理。
 关联：序列化关系字段和事务服务共用本模块；不按客户端自报 owner 授权。
 目录：
 - visible_company_ids：返回用户可访问的公司标识查询。
@@ -12,6 +12,7 @@
 """
 
 from django.db.models import Q
+from common.laboratory import enabled
 from rest_framework.exceptions import NotFound, PermissionDenied
 
 from apps.crm.models import Company
@@ -34,9 +35,11 @@ PRIVATE_MODELS = (
 # 功能：返回用户可访问的公司标识查询。
 # 输入：`user` 为已认证用户。
 # 输出：公司主键 QuerySet。
-# 逻辑：公司所有者或未归档团队的有效成员可以读取明确共享的公司业务。
+# 逻辑：实验模式返回全部公司；正式模式仅返回所有者或有效团队共享公司。
 # 约束：返回范围不能用于读取私人邮件或 L1–L4 输入。
 def visible_company_ids(user):
+    if enabled():
+        return Company.objects.values_list("pk", flat=True)
     teams = models.Team.objects.filter(archived=False).filter(
         Q(owner=user) | Q(memberships__user=user, memberships__archived=False)
     )
@@ -53,10 +56,12 @@ def visible_company_ids(user):
 # 功能：验证公司业务读写权限。
 # 输入：`user`、`company` 和 `write`，默认只读。
 # 输出：原 Company；无权限返回与不存在一致的 404。
-# 逻辑：写权限同时要求团队成员为 editor/manager 且公司授权为 editor。
+# 逻辑：实验模式直接允许；正式模式写权限要求团队角色和公司授权均可编辑。
 # 约束：不升级邮箱权限；所有者始终保有业务管理权。
 def company_access(user, company, write=False):
     if company.owner_id == user.pk:
+        return company
+    if enabled():
         return company
     teams = models.Team.objects.filter(archived=False).filter(
         Q(owner=user) | Q(memberships__user=user, memberships__archived=False)
@@ -83,9 +88,11 @@ def company_access(user, company, write=False):
 # 功能：返回用户管理的团队标识。
 # 输入：`user` 为当前用户。
 # 输出：团队主键查询集。
-# 逻辑：团队所有者和有效 manager 可管理成员。
+# 逻辑：实验模式开放全部团队；正式模式限所有者和有效 manager。
 # 约束：已归档团队不接受成员变更。
 def managed_team_ids(user):
+    if enabled():
+        return models.Team.objects.values_list("pk", flat=True)
     return (
         models.Team.objects.filter(archived=False)
         .filter(
@@ -104,9 +111,11 @@ def managed_team_ids(user):
 # 功能：生成模型级可见查询集。
 # 输入：`model` 为白名单模型类，`user` 为当前用户。
 # 输出：按个人或业务共享权限过滤的 QuerySet，包含归档记录供显式筛选。
-# 逻辑：行项目经单据关联公司，团队成员记录经团队授权；未声明模型拒绝访问。
-# 约束：不执行写入，连接仅返回 owner 范围，序列化器必须排除凭证字段。
+# 逻辑：实验模式返回调用方已选定业务模型的全表；正式模式按单据、团队和共享规则过滤。
+# 约束：不执行写入；正式模式连接仅返回 owner 范围，所有模式序列化器都排除凭证字段。
 def scope(model, user):
+    if enabled():
+        return model.objects.all()
     if model in PRIVATE_MODELS:
         return model.objects.filter(owner=user)
     if model is models.Team:
@@ -151,10 +160,10 @@ def scope(model, user):
 # 功能：确认对象编辑权限。
 # 输入：`instance` 为已有记录，`user` 为认证操作者。
 # 输出：无；无权限抛 404 或 PermissionDenied。
-# 逻辑：所有者、团队管理者或获得公司编辑权的成员依模型职责授权。
+# 逻辑：实验模式直接允许；正式模式按所有者、团队和公司编辑权授权。
 # 约束：授权不能通过修改 owner、公司或单据归属来转移。
 def require_edit(instance, user):
-    if instance.owner_id == user.pk:
+    if enabled() or instance.owner_id == user.pk:
         return
     if isinstance(instance, models.Membership) and instance.team_id in managed_team_ids(
         user

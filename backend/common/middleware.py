@@ -1,5 +1,5 @@
 """职责：为每个 HTTP 请求生成服务端关联 ID 并记录完成日志。
-实现：调用下游后写入响应头，记录路径、状态和耗时；不读取正文、查询参数或授权头。
+实现：调用下游后写入关联 ID 与实验模式标记响应头，记录路径、状态和耗时；不读取正文、查询参数或授权头。
 关联：位于 MIDDLEWARE 首位，向健康检查、异常处理器和客户端提供同一 request_id。
 
 目录：
@@ -10,6 +10,8 @@
 变量索引：
 - logger：salesmate.http 日志记录器，输出请求完成事件。
 """
+
+from common.laboratory import enabled
 
 import json
 import logging
@@ -35,7 +37,7 @@ class RequestLoggingMiddleware:
 
     # 功能：执行请求并记录服务端生成的关联信息。
     # 输入：`request` 为 Django HttpRequest，需要具有 method 与 path 属性。
-    # 输出：返回下游响应，并写入 X-Request-ID 响应头。
+    # 输出：返回下游响应，写入 X-Request-ID；实验模式 API 同时写入 X-Lab-Open-Access。
     # 逻辑：生成 UUID4 写入 request.request_id；下游返回后按 5xx/其他状态选择 ERROR/INFO，记录 JSON 转义路径及毫秒耗时。
     # 约束：会修改请求与响应并写日志；不采信传入的请求 ID。下游直接抛出的异常不在此捕获，此时不执行后续完成日志。
     def __call__(self, request):
@@ -43,6 +45,8 @@ class RequestLoggingMiddleware:
         started = perf_counter()
         response = self.get_response(request)
         response["X-Request-ID"] = request.request_id
+        if enabled() and request.path.startswith("/api/"):
+            response["X-Lab-Open-Access"] = "true"
         # 5xx 作为服务端错误记录；路径单独取值并 JSON 转义，不拼接查询字符串。
         level = logging.ERROR if response.status_code >= 500 else logging.INFO
         logger.log(

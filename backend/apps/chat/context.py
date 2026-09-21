@@ -1,5 +1,5 @@
 """职责：把本人知识投影为工作空间聊天的有限、可追溯初始证据。
-实现：仅读取员工显式导入的知识；客户资料由请求绑定的只读工具按需查询。
+实现：读取显式导入知识，正式模式限本人、实验模式跨账号；客户资料由请求绑定的只读工具按需查询。
 关联：chat.services 在员工锁内首次调用并冻结结果；不执行模型或外部网络。
 目录：
 - item：生成严格四字段证据条目。
@@ -7,6 +7,8 @@
 变量索引：
 - 无
 """
+
+from common.laboratory import owner_scope
 
 from .models import KnowledgeEntry
 
@@ -32,10 +34,10 @@ def item(source_id, source_type, title, content):
 # 功能：组装有界、员工隔离的本次证据。
 # 输入：`request` 为已授权工作空间 AnswerRequest；调用方持有员工锁。
 # 输出：严格 internal AnswerContext，不可用资料以缺口描述。
-# 逻辑：只读取本人知识，沿用至多 4 条知识的既定预算；初始客户证据始终为空。
+# 逻辑：按模式选择本人或全账号知识，沿用至多 4 条知识的既定预算；初始客户证据始终为空。
 # 约束：不自动选择公司或读取邮件，不执行外部检索，工具查询的来源另行持久化。
 def build_context(request):
-    entries = KnowledgeEntry.objects.filter(owner=request.owner, active=True).order_by(
+    entries = KnowledgeEntry.objects.filter(owner_scope(request.owner), active=True).order_by(
         "-created_at", "id"
     )
     # 提问匹配优先使用完整问题词段；未匹配条目仍按版本时间排序提供，Agent 判断是否相关。

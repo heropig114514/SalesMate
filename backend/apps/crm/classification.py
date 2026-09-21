@@ -1,5 +1,5 @@
 """职责：维护邮件业务分类及人工复核的有效判断。
-实现：无采购阶段的入站邮件进入复核，人工结果优先；分类变化沿血缘失效并自动修正。
+实现：实验模式使用公开跨账号业务范围；无采购阶段的入站邮件进入复核，人工结果优先；分类变化沿血缘失效并自动修正。
 关联：ingestion 更新机器分类，processing_views 按邮箱展示带来源的原文与复核；selectors 只投影业务邮件。
 目录：
 - automatic_classification：把抽取状态映射为业务分类。
@@ -9,6 +9,8 @@
 变量索引：
 - logger：只记录实体、分类和操作类型的诊断日志。
 """
+
+from common.laboratory import owner_scope
 import logging
 
 from django.db import transaction
@@ -71,7 +73,7 @@ def review_data(email):
 # 功能：保存人工确认并使受影响画像失效。
 # 输入：`owner` 为登录员工，`email_id` 为邮件键，`decision` 为确认状态，`expected` 为复核版本。
 # 输出：更新后的复核表示。
-# 逻辑：锁公司与邮件，保存人工优先决定并传播血缘失效；业务先补缺失 L1，非业务按剩余来源重算。
+# 逻辑：按当前模式查找邮件，实验模式跨账号；锁公司与邮件后保存人工决定并传播失效，保留补抽取及剩余来源重算流程。
 # 约束：同一决定不改变版本，但再次确认业务可明确重排失败补抽取；无剩余业务邮件则停止画像。
 @transaction.atomic
 def review_email(owner, email_id, decision, expected):
@@ -79,7 +81,7 @@ def review_email(owner, email_id, decision, expected):
     from .lineage import invalidate_email, request_repair, schedule_analysis
     if decision not in {"confirmed_business", "confirmed_non_business"}:
         raise ValidationError("review_status 必须为 confirmed_business 或 confirmed_non_business。")
-    candidate = Email.objects.filter(pk=email_id, mailbox__owner=owner).first()
+    candidate = Email.objects.filter(owner_scope(owner, "mailbox__owner"), pk=email_id).first()
     if candidate is None:
         raise NotFound("邮件不存在。")
     company = company_for(owner, candidate.company_id, lock=True)

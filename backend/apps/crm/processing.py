@@ -1,5 +1,5 @@
 """职责：管理邮箱批次、逐封进度和恢复所需的持久状态。
-实现：行锁串行化请求并冻结用户范围，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
+实现：实验模式允许跨账号显式重试，Worker 领取范围保持所选身份；行锁串行化请求并冻结用户范围，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
 关联：Gmail 与 QQ 共用持久队列，worker 分发提供方；processing_views 提供进度和显式重试。
 目录：
 - request_run：创建有界邮箱批次并拒绝重复活动批次。
@@ -14,6 +14,8 @@
 - logger：批次状态转换诊断日志。
 - RUN_LEASE_SECONDS：邮箱批次租期 600 秒，每次进度事件续期。
 """
+
+from common.laboratory import owner_scope
 from datetime import timedelta
 import logging
 import uuid
@@ -209,10 +211,10 @@ def run_data(run):
 # 功能：为明确失败的邮件建立新批次。
 # 输入：`owner` 为员工，`run_id` 为终态批次。
 # 输出：新重试批次；无失败或仍活动时拒绝。
-# 逻辑：只重试失败邮件；尚未登记邮件的批次重跑冻结窗口，旧批次无窗口且无明确 ID 时拒绝。
+# 逻辑：正式模式限定原员工邮箱，实验模式允许跨账号读取失败批次；显式重试复用原消息标识，保留历史记录。
 # 约束：保留旧批次审计历史和原 dedupe_key，不覆盖正常邮件。
 def retry_run(owner, run_id):
-    run = MailboxSyncRun.objects.filter(pk=run_id, mailbox__owner=owner).first()
+    run = MailboxSyncRun.objects.filter(owner_scope(owner, "mailbox__owner"), pk=run_id).first()
     if run is None:
         raise NotFound("批次不存在。")
     if run.status not in {"failed", "partial"}:

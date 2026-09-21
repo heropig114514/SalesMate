@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
+实现：实验模式免登录并开放跨账号业务；OAuth 凭据领取保留机器认证；Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
 关联：sync_scope 要求 Gmail/QQ 同步范围；urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -86,6 +86,7 @@ from apps.sales.services import audit
 
 from . import gmail_oauth, ingestion, jobs, results, rules, selectors
 from .access import AgentAuthentication, InvalidState, check_version, company_for, mailbox_for
+from common.laboratory import enabled, owner_scope
 from .models import Company, Email, Mailbox
 from .sync_scope import SyncRequestSerializer
 from .response_schemas import (SubmissionResultSerializer, JobResponseSerializer, CachedAnalysisResponseSerializer,
@@ -128,7 +129,7 @@ class LoginSerializer(StrictSerializer):
 
 
 # 功能：提供受 CSRF 保护的浏览器会话入口。
-# 逻辑：GET 可按本机调试配置建立会话并获取 CSRF；POST 验证登录，DELETE 注销。
+# 逻辑：GET 可按本机调试配置建立会话或返回实验身份并获取 CSRF；POST 验证登录，DELETE 注销。
 # 约束：匿名登录也执行 Django csrf_protect，不以 DRF 匿名 CSRF 豁免代替安全验证。
 @method_decorator(csrf_protect, name="dispatch")
 class SessionView(APIView):
@@ -138,7 +139,7 @@ class SessionView(APIView):
     # 输入：`request` 为浏览器请求。
     # 输出：登录状态、用户名、CSRF 令牌、debug_auto_login 及 onboarding_required 标志。
     # 逻辑：DEBUG 与显式开关开启且直连来自回环地址时，为匿名请求建立指定普通用户会话。
-    # 约束：保留已有身份；不创建用户，不接受停用或管理员账号；配置错误返回 409 并记录诊断。
+    # 约束：本地自动登录不创建用户且拒绝停用/管理员；实验模式身份由认证层解析，默认实验账号按需创建。
     @extend_schema(responses=OBJECT, tags=["session"])
     def get(self, request):
         debug_auto_login = bool(settings.DEBUG and getattr(settings, "LOCAL_DEBUG_AUTO_LOGIN", False)
@@ -154,8 +155,9 @@ class SessionView(APIView):
             logger.info("debug_session_created user_id=%s", user.pk)
         return Response({"authenticated": request.user.is_authenticated,
                          "username": request.user.get_username() if request.user.is_authenticated else None,
-                         "debug_auto_login": debug_auto_login,
-                         "onboarding_required": bool(request.user.is_authenticated and SalesSetup.objects.filter(owner=request.user, completed=False).exists()),
+                         "debug_auto_login": debug_auto_login or enabled(),
+                         "lab_open_access": enabled(),
+                         "onboarding_required": bool(not enabled() and request.user.is_authenticated and SalesSetup.objects.filter(owner=request.user, completed=False).exists()),
                          "csrf_token": get_token(request)})
 
     # 功能：创建已认证用户会话。
@@ -227,18 +229,18 @@ def process_if_rules(owner, company_id):
 
 
 # 功能：提供公司列表、详情、建档和显式重分析。
-# 逻辑：所有对象先按 Session 用户归属筛选；旧事实通过独立版本升级入口处理。
+# 逻辑：所有对象先按 当前模式的公司范围筛选；实验模式全局可见；旧事实通过独立版本升级入口处理。
 # 约束：不开放未验证的发送和 Gmail 同步能力。
 class CompanyViewSet(ViewSet):
     queryset = Company.objects.none()
     # 功能：查询公司列表及统计。
     # 输入：`request`.query_params 为行业、规模、信号、关键词和分页。
     # 输出：分页公司投影。
-    # 逻辑：调用授权集合上的列表 selector。
+    # 逻辑：调用当前模式下的列表 selector；实验模式不按账号过滤。
     # 约束：未登录由默认 IsAuthenticated 拒绝。
     @extend_schema(operation_id="companies_list", responses=OBJECT, tags=["companies"], parameters=[OpenApiParameter(name, str) for name in ["q", "industry", "size_band", "signal", "crm_status", "page", "page_size"]])
     def list(self, request):
-        return Response(selectors.list_companies(Company.objects.filter(owner=request.user), request.query_params))
+        return Response(selectors.list_companies(Company.objects.filter(owner_scope(request.user)), request.query_params))
 
     # 功能：返回客户工作区全部展示数据。
     # 输入：`request` 为当前会话；`pk` 为公司 UUID。
@@ -257,7 +259,7 @@ class CompanyViewSet(ViewSet):
     # 功能：显式请求公司分析。
     # 输入：`request` 为已登录用户；`pk` 为公司 UUID。
     # 输出：任务 ID、provider 和当前任务状态。
-    # 逻辑：拒绝无业务邮件或 agent 模式不兼容事实，在事务中合并任务；不自动重抽取。
+    # 逻辑：按访问模式取得公司并入队；规则处理使用公司原 owner，保证跨账号触发不会改变任务归属。
     # 约束：失败不会返回伪成功；agent 模式只入队。
     @extend_schema(request=None, responses=OBJECT, tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -270,7 +272,7 @@ class CompanyViewSet(ViewSet):
             if settings.ANALYSIS_PROVIDER == "agent" and upgrade_summary(company)["incompatible_emails"]:
                 raise InvalidState("客户含旧版邮件事实，请先通过 extraction-upgrade 接口显式升级后再分析。")
             job = jobs.enqueue(company, "customer_detail_opened")
-        process_if_rules(request.user, company.pk)
+        process_if_rules(company.owner, company.pk)
         job.refresh_from_db()
         return Response({"job_id": str(job.pk), "status": job.status, "provider": settings.ANALYSIS_PROVIDER})
 
@@ -295,7 +297,7 @@ class CompanyViewSet(ViewSet):
     # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
     # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。
     # 输出：新的公司投影和 revision。
-    # 逻辑：先锁 owner 再锁公司，保存权威行业、人数及地区；行业变化还会更新其他公司的相似赢单输入版本。
+    # 逻辑：按访问模式取得公司后保存 CRM 字段并审计；设置记录与规则处理使用公司原 owner，行业变化刷新同归属评分背景。
     # 约束：人数非空必须有来源；不从邮件猜测权威字段，缺失 country 保留原值。
     @extend_schema(request=RegisterSerializer, responses=OBJECT, parameters=VERSION_HEADERS[:1], tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -315,13 +317,13 @@ class CompanyViewSet(ViewSet):
             company.revision += 1
             company.external_version += 1
             company.save(update_fields=["name", "crm_status", "customer", "revision", "external_version"])
-            company_settings, _ = CompanySettings.objects.get_or_create(company=company, defaults={"owner": request.user})
+            company_settings, _ = CompanySettings.objects.get_or_create(company=company, defaults={"owner": company.owner})
             audit(request.user, company_settings, "company_registered", {"fields": sorted(data)})
             jobs.enqueue(company, "external_updated")
             if previous_industry != company.customer.get("industry_from_crm"):
                 from apps.sales.priority import refresh_owner_priority
                 refresh_owner_priority(company.owner_id, exclude=[company.pk])
-        process_if_rules(request.user, company.pk)
+        process_if_rules(company.owner, company.pk)
         company.refresh_from_db()
         return versioned(selectors.company_row(company), company.revision)
 
@@ -334,12 +336,12 @@ class MailboxViewSet(ViewSet):
     # 功能：列出当前用户邮箱。
     # 输入：`request` 提供会话用户。
     # 输出：邮箱 ID、地址及 SyncState 数组。
-    # 逻辑：只查询 owner 匹配的记录。
+    # 逻辑：正式模式只查询 owner，实验模式列出所有邮箱元数据。
     # 约束：不返回任何授权令牌。
     @extend_schema(responses=MailboxResponseSerializer(many=True), tags=["mailboxes"])
     def list(self, request):
         mailboxes = Mailbox.objects.select_related("gmail_credential").filter(
-            owner=request.user
+            owner_scope(request.user)
         )
         return Response([gmail_oauth.mailbox_status(item) for item in mailboxes])
 
@@ -477,8 +479,8 @@ class DemoViewSet(ViewSet):
 
 
 # 功能：承载 README 中 Agent 主动调用的后端协议。
-# 逻辑：独立 AgentAuthentication 验证服务身份，所有实体按绑定 owner 隔离。
-# 约束：浏览器会话不能调用这些路由；业务数据中不接收 Gmail access_token。
+# 逻辑：正式模式独立 AgentAuthentication 验证服务身份；实验模式业务免登录，实体范围由公共访问策略决定。
+# 约束：正式模式浏览器会话不能调用这些路由；OAuth 凭据领取始终要求 Agent 服务令牌。
 class AgentViewSet(ViewSet):
     authentication_classes = [AgentAuthentication]
 

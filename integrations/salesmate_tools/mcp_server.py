@@ -36,7 +36,7 @@ class Bridge:
     # 功能：返回授权工具。
     # 输入：`context` 协议上下文、`params` 可选游标。
     # 输出：MCP ListToolsResult。
-    # 逻辑：每页 100，写 Schema 增加必需 idempotency_key。
+    # 逻辑：每页 100，写 Schema 增加 idempotency_key；是否必填由服务端当前模式声明。
     # 约束：只读工具不接受 key，目录不发布 Session-only 确认或授权接口。
     async def list_tools(self, context, params):
         cursor = params.cursor if params else None
@@ -56,7 +56,8 @@ class Bridge:
                     "format": "uuid",
                     "description": "调用者为一次逻辑变更生成 UUID；结果未知时复用原值与原参数。",
                 }
-                schema["required"].append("idempotency_key")
+                if spec.get("idempotency_required", True):
+                    schema["required"].append("idempotency_key")
             result.append(
                 types.Tool(
                     name=spec["name"],

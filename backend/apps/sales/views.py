@@ -1,5 +1,5 @@
 """职责：提供销售关系记录、客户归组、附件及外部动作的会话认证 API。
-实现：活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
+实现：实验模式默认认证提供公开身份，通知命令允许跨账号维护；活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
 关联：catalog 为管理页提供字段契约，services/grouping/actions/files 实现业务边界。
 目录：
 - ResourceDetailView：单条资源查询路由。
@@ -44,6 +44,8 @@
 - SalesView.permission_classes：必须登录。
 - FileView.parser_classes：附件 multipart 及表单解析器。
 """
+
+from common.laboratory import owner_scope
 
 import logging
 from decimal import Decimal
@@ -303,7 +305,7 @@ class CommandView(SalesView):
     # 功能：执行状态、归档、审批或通知已读命令。
     # 输入：`request` 含 command/value 和 If-Match，`resource`、`record_id`。
     # 输出：版本更新后的记录。
-    # 逻辑：命令与模型双重匹配；提醒已读在行锁事务中更新并审计。
+    # 逻辑：按模型和命令分派；通知已读通过模式对应的归属查询并锁行，实验模式可跨账号，修改版本并写审计。
     # 约束：未知命令或多余字段明确拒绝。
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, resource, record_id):
@@ -332,7 +334,7 @@ class CommandView(SalesView):
         elif command == "read" and resource == "notifications":
             with transaction.atomic():
                 record = models.Notification.objects.select_for_update().get(
-                    pk=record.pk, owner=request.user
+                    owner_scope(request.user), pk=record.pk
                 )
                 check_version(expected, record.revision)
                 record.read_at, record.revision = timezone.now(), record.revision + 1

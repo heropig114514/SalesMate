@@ -1,5 +1,5 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
+实现：实验模式动态发布可省略版本/幂等键的全目录并直接执行内部管理操作；派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
 关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
@@ -11,6 +11,7 @@
 """
 
 from apps.sales.serializers import SERIALIZERS
+from common.laboratory import enabled
 from django.conf import settings
 from apps.sales.services import TRANSITIONS
 from apps.sales.views import LABELS
@@ -51,19 +52,24 @@ HUMAN_WRITES = {"aliases", "teams", "memberships", "grants"}
 # 功能：生成工具描述。
 # 输入：`name`、`description`、`kind`、`schema`、`mode` 执行模式及 `binding` 固定路由信息。
 # 输出：内部工具字典。
-# 逻辑：公开结构与内部绑定分离。
+# 逻辑：公开结构与内部绑定分离；实验模式跳过内部管理提案确认，版本参数及幂等键不再必填。
 # 约束：确认模式不表示已经执行业务操作。
 def tool(name, description, kind, schema, mode="read", **binding):
+    if enabled():
+        description += " 实验开放模式：免登录、跨账号访问，revision/expected/idempotency_key 均可省略，内部管理操作直接执行。"
+        mode = "write" if mode == "confirm" else mode
+        schema["required"] = [key for key in schema.get("required", []) if key not in {"revision", "expected"}]
     return {
         "name": name,
         "description": description,
         "inputSchema": schema,
         "executionMode": mode,
+        "idempotency_required": mode != "read" and not enabled(),
         "category": name.split(".")[0],
         "annotations": {
             "readOnlyHint": mode == "read",
             "destructiveHint": mode == "confirm",
-            "idempotentHint": True,
+            "idempotentHint": mode == "read" or not enabled(),
             "openWorldHint": kind in {"calendar", "sync"},
         },
         "kind": kind,

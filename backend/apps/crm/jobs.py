@@ -1,5 +1,5 @@
 """职责：管理持久化分析任务、领取租约和回报。
-实现：所有者锁与任务行锁保证公司级互斥，未完成 L1 修复阻塞画像；固定 revision、随机凭证，过期显式失败。
+实现：实验模式可不带租约直接保存业务结果，显式 Worker 租约保持原状态校验；所有者锁与任务行锁保证公司级互斥，未完成 L1 修复阻塞画像；固定 revision、随机凭证，过期显式失败。
 关联：ingestion 入队，rules 或独立 Agent 消费，results 验证租约。
 目录：
 - enqueue：合并公司尚未领取的同类分析工作。
@@ -21,6 +21,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
 from .access import Conflict, InvalidState, company_for, plain
+from common.laboratory import enabled
 from .models import Analysis, Job
 
 logger = logging.getLogger("salesmate.jobs")
@@ -108,10 +109,12 @@ def claim(owner, limit, lease_seconds, company_id=None):
 
 # 功能：核验任务领取凭证和上下文版本。
 # 输入：`company` 为锁定公司；`job_id`、`token` 为请求头；`require_revision` 控制是否检查当前 revision。
-# 输出：锁定 Job；无效或过期抛 Conflict。
-# 逻辑：按公司限制范围，核查运行状态、令牌、截止时间和 revision。
+# 输出：锁定 Job；实验模式省略租约时返回 None，无效或过期显式租约抛 Conflict。
+# 逻辑：实验模式无租约头时允许直接提交；提供租约的 Worker 仍检查状态、期限及版本，正式模式必须提供租约。
 # 约束：调用方处于事务中；租约凭证不得进入日志。
 def require_lease(company, job_id, token, require_revision=True):
+    if enabled() and not job_id and not token:
+        return None
     if not job_id or not token:
         raise Conflict("必须提供 X-Job-ID 与 X-Lease-Token。")
     try:

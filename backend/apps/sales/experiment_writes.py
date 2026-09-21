@@ -1,5 +1,5 @@
 """职责：为共享虚构业务数据提供有审计、可清理的新增、修改和删除。
-实现：固定模型及字段边界、清单行锁、指纹乐观锁、同批次外键和禁止隐式级联；清单与数据原子提交。
+实现：实验模式省略客户端旧指纹及外部漂移检查，正式模式保持严格比较；固定模型及字段边界、清单行锁、指纹乐观锁、同批次外键和禁止隐式级联；清单与数据原子提交。
 关联：网页与 Tool/MCP 共用 mutate；experiments 发布能力；seed_kg_lab 使用同一清单锁清理。
 目录：
 - write_fields：枚举允许用户提交的业务字段。
@@ -29,6 +29,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 
 from apps.crm.access import Conflict
 from common.fixture_integrity import fingerprint
+from common.laboratory import enabled
 from .experiments import load_batch, table_rows
 from .models import AuditEvent
 
@@ -82,7 +83,7 @@ def capabilities(label):
 # 功能：验证新增及修改后的关系仍位于共享实验内。
 # 输入：`record` 待保存实例、`entry` 锁定清单。
 # 输出：无；不合法关系抛出 400。
-# 逻辑：用户归属不可提交，其余外键必须精确登记；同一行的客户相关关系必须一致。
+# 逻辑：用户归属不可提交，其余外键必须精确登记；正式模式核对关联指纹，同一行的客户关系必须一致。
 # 约束：不允许引用私有真实行，不依据名字前缀授权；历史不可编辑关系保持原值。
 def validate_relations(record, entry):
     members = {(row["model"], row["pk"]): row["fingerprint"] for row in entry.changes["rows"]}
@@ -94,7 +95,7 @@ def validate_relations(record, entry):
         if (field.related_model._meta.label, str(value)) not in members:
             raise ValidationError({name: "关联记录必须属于同一共享虚构批次。"})
         related = field.related_model.objects.get(pk=value)
-        if fingerprint(related) != members[(field.related_model._meta.label, str(value))]:
+        if not enabled() and fingerprint(related) != members[(field.related_model._meta.label, str(value))]:
             raise Conflict("关联记录已在维护入口之外变化，请先核验。")
         if field.related_model._meta.label == "crm.Company":
             companies.add(str(value))
@@ -123,10 +124,10 @@ def delete_leaf(record):
 # 功能：原子维护共享批次中的单条业务记录。
 # 输入：`actor` 已认证账号、`operation` 为 create/update/delete、`batch` 精确批次、`label` 模型、`data` 业务字段、`pk` 和 `expected` 为修改/删除的主键及旧指纹。
 # 输出：包含操作、主键、批次、操作者与最新记录的 JSON 对象。
-# 逻辑：按批次归属、清单、目标顺序锁定，检查当前指纹与客户端旧值；保存后刷新清单与审计并保留原清单。
+# 逻辑：按批次归属、清单、目标顺序锁定，核对清单完整性；实验模式不要求客户端 expected；正式模式检查旧指纹；保存后刷新清单与审计并保留原清单。
 # 约束：无自动重试；数据库冲突转 409；不执行邮件、分析或队列任务；历史 truth 保留并标注可能过期。
 def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
-    if not actor.is_authenticated or not actor.is_active:
+    if not enabled() and (not actor.is_authenticated or not actor.is_active):
         raise PermissionDenied("需要有效登录账号。")
     if operation not in {"create", "update", "delete"} or not capabilities(label).get(operation):
         raise PermissionDenied("此模型或操作未开放；身份、授权、文件和执行证据保持只读。")
@@ -159,10 +160,10 @@ def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
                 if member is None:
                     raise NotFound("记录不在共享批次中。")
                 record = model.objects.select_for_update().filter(pk=pk).first()
-                if record is None or fingerprint(record) != member["fingerprint"]:
+                if record is None or (not enabled() and fingerprint(record) != member["fingerprint"]):
                     raise Conflict("记录已在共享维护入口之外变化，请先核验。")
-                previous = member["fingerprint"]
-                if expected != previous:
+                previous = fingerprint(record)
+                if not enabled() and expected != previous:
                     raise Conflict("记录已更新，请重新读取后再提交，避免覆盖其他人的修改。")
             identity = str(record.pk)
             if "original_rows" not in manifest:

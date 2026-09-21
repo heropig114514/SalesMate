@@ -6,6 +6,8 @@
 - 无
 
 变量索引：
+- LAB_OPEN_ACCESS：显式启用所有业务 API 免登录和跨账号实验访问，默认关闭。
+- LAB_DEFAULT_USER：匿名实验写入的归属及审计账号名。
 - BASE_DIR：软件根目录 backend，作为前端、契约、静态文件和媒体路径基准。
 - PROJECT_DIR：项目根目录，共享 .env 所在位置。
 - env：具有类型转换能力的环境变量读取器。
@@ -65,6 +67,8 @@ if not SECRET_KEY.strip():
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a non-empty secret.")
 
 DEBUG = False
+LAB_OPEN_ACCESS = env.bool("LAB_OPEN_ACCESS", default=False)
+LAB_DEFAULT_USER = env.str("LAB_DEFAULT_USER", default="algorithm-lab")
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
@@ -149,8 +153,8 @@ GOOGLE_OAUTH_REDIRECT_URI = env.str(
 )
 
 REST_FRAMEWORK = {
-    # 默认业务接口要求会话身份；健康检查在视图中显式声明匿名访问。
-    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    # 实验认证仅在显式开关下提供公开身份；关闭时恢复 Session，健康检查独立匿名。
+    "DEFAULT_AUTHENTICATION_CLASSES": ["common.laboratory.LaboratoryAuthentication", "rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -167,7 +171,7 @@ SPECTACULAR_SETTINGS = {
         "ReadinessStatusEnum": ["ok", "unavailable"],
     },
     "SERVE_INCLUDE_SCHEMA": False,
-    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny" if LAB_OPEN_ACCESS else "rest_framework.permissions.IsAdminUser"],
     "SERVE_AUTHENTICATION": ["rest_framework.authentication.SessionAuthentication"],
 }
 LOGGING = {

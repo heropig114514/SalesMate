@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交；到期提醒在账号共享锁下重读。
+实现：实验模式跳过所有者和团队管理角色限制；业务关系、金额和状态约束保留。新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交；到期提醒在账号共享锁下重读。
 国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
@@ -18,6 +18,8 @@
 - TRANSITIONS：各类单据允许的显式状态边。
 - IMMUTABLE_RELATIONS：已有实体禁止变更的归属关系。
 """
+
+from common.laboratory import enabled
 
 from contextlib import ExitStack
 import logging
@@ -146,7 +148,7 @@ def company_of(instance):
 # 功能：验证跨实体关系、金额、草稿和负责人约束。
 # 输入：`instance` 为待保存的模型，`actor` 为用户，`changed` 为本次字段集合，`creating` 为是否新增。
 # 输出：无；业务约束不满足抛 ValidationError/PermissionDenied，参数化金额错误使用当前语言。
-# 逻辑：验证公司共享编辑权、个人会话归属、冻结单据、同币种及折扣边界；新会话必须无预选公司。
+# 逻辑：实验模式跳过所有者与管理角色判断、允许跨账号产品；保留冻结单据、同币种、数量折扣及客户关系约束，新会话仍无预选公司。
 # 约束：仅在授权事务内调用；不自动改价、换汇或推断交易事实。
 def validate_record(instance, actor, changed, creating):
     if creating and isinstance(instance, models.Conversation) and instance.company_id is not None:
@@ -180,11 +182,11 @@ def validate_record(instance, actor, changed, creating):
         isinstance(
             instance, (models.CompanyAlias, models.CompanySettings, models.CompanyGrant)
         )
-        and instance.company.owner_id != actor.pk
+        and not enabled() and instance.company.owner_id != actor.pk
     ):
         raise PermissionDenied("客户归组、生命周期和共享授权仅由所有者维护。")
     if isinstance(instance, (models.Message, models.Draft)) and (
-        instance.conversation.owner_id != actor.pk or instance.conversation.archived
+        (not enabled() and instance.conversation.owner_id != actor.pk) or instance.conversation.archived
     ):
         raise PermissionDenied("会话不可写。")
     if isinstance(instance, models.Membership):
@@ -193,11 +195,11 @@ def validate_record(instance, actor, changed, creating):
         instance.owner_id = instance.team.owner_id
         if instance.user_id == instance.team.owner_id:
             raise ValidationError("团队所有者具有固有管理权，不创建重复成员记录。")
-        if instance.role == "manager" and instance.team.owner_id != actor.pk:
+        if instance.role == "manager" and not enabled() and instance.team.owner_id != actor.pk:
             raise PermissionDenied("只有团队所有者可以授予管理角色。")
         if (
             not creating
-            and instance.team.owner_id != actor.pk
+            and not enabled() and instance.team.owner_id != actor.pk
             and models.Membership.objects.filter(
                 pk=instance.pk, role="manager"
             ).exists()
@@ -257,7 +259,7 @@ def validate_record(instance, actor, changed, creating):
         ):
             raise ValidationError("数量须大于零，整行折扣不得超过数量乘单价。")
         if instance.product_id and (
-            instance.product.owner_id != parent.owner_id
+            (not enabled() and instance.product.owner_id != parent.owner_id)
             or instance.product.currency != parent.currency
             or instance.product.archived
         ):
@@ -392,7 +394,7 @@ def save_record(serializer, actor, expected=None):
 # 功能：归档或恢复记录。
 # 输入：`instance`、`actor`、`expected` 旧版本，`archived` 为目标布尔值。
 # 输出：更新后的实例。
-# 逻辑：保留历史数据并递增版本，商机及行项目变化更新当前公司，订单和产品归档传播评分依赖。
+# 逻辑：事务内取得原记录和归属锁，实验模式不要求团队管理身份或旧版本；保留运行中动作、关联单据等状态检查，保存审计。
 # 约束：不可归档不可变消息、提醒或执行记录；冻结单据不得通过归档明细改变金额。
 @transaction.atomic
 def archive_record(instance, actor, expected, archived):
@@ -407,7 +409,7 @@ def archive_record(instance, actor, expected, archived):
     if (
         isinstance(instance, models.Membership)
         and instance.role == "manager"
-        and actor.pk != instance.team.owner_id
+        and not enabled() and actor.pk != instance.team.owner_id
     ):
         raise PermissionDenied("仅团队所有者可以归档或恢复管理者。")
     if (
