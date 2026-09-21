@@ -1,5 +1,5 @@
-"""职责：保存分析输入、判断与评分并验证并发和来源。
-实现：在公司行锁下验证 revision、租约、引用及不可变键；正式评分解释与分数原子保存并核验邮件证据。
+"""职责：保存分析输入、判断与评分并验证并发和 CRM／实验来源。
+实现：在公司行锁下验证 revision、租约、引用及不可变键及实验资料新鲜度；正式评分解释与分数原子保存并核验邮件证据。
 关联：API 与规则占位共用该入口，selectors 从这些快照投影页面。
 目录：
 - save_input：保存 L2 原始输入快照。
@@ -25,6 +25,8 @@ from .jobs import require_lease
 from .models import Analysis, AnalysisInput, Score
 from .priority_results import validate_priority_sources
 from .selectors import context_pair
+from .enrichment import snapshot_current
+from integrations.company_enrichment import input_version, employee_size, source_refs
 from .serializers import AnalysisInputSerializer, AnalysisSerializer, ScoreSerializer, FACT_FIELDS
 
 logger = logging.getLogger("salesmate.analysis")
@@ -38,8 +40,8 @@ DEAL_PROBABILITY_PATTERN = re.compile(
 # 功能：保存 L2 原始输入快照。
 # 输入：`owner` 为认证用户；`payload` 为 AnalysisInput；`expected` 为读取版本；`job_id`、`token` 为租约凭证。
 # 输出：原始快照载荷。
-# 逻辑：核查当前成员、外部版本、未解析数量与事实全集，并为当前 revision 登记精确抽取来源边。
-# 约束：后端不重算 input_version；相同版本的实质内容不可变，built_at 不作为业务内容比较。
+# 逻辑：核查当前成员、外部版本、未解析数量与事实全集，复核独立实验资料及其输入版本，并登记精确抽取来源边。
+# 约束：启用补充资料时核验包含其内容的 input_version；旧客户端保持原协议；built_at 不参与实质内容比较。
 @transaction.atomic
 def save_input(owner, payload, expected, job_id, token):
     serializer = AnalysisInputSerializer(data=payload)
@@ -67,6 +69,10 @@ def save_input(owner, payload, expected, job_id, token):
         "quotes": context["quotes"],
         "orders": context["orders"],
     }
+    if "company_enrichment" in data["business_context"]:
+        expected_business["company_enrichment"] = context["company_enrichment"]
+        if data["input_version"] != input_version(context["emails"], data["merge_version"], context["external_snapshot_version"], context["company_enrichment"]):
+            raise Conflict("补充资料或输入版本已变化，请重新读取公司上下文。")
     if data["company"] != expected_company or data["business_context"] != expected_business:
         raise Conflict("L2 公司资料或业务上下文与当前后端快照不一致。")
     completed_emails = [item for item in emails.values() if item["extract_status"] == "completed"]
@@ -118,7 +124,8 @@ def save_input(owner, payload, expected, job_id, token):
         raise Conflict("相同 input_version 对应不同内容或后端 revision。")
     from .lineage import bind_sources
     bind_sources(snapshot, company)
-    logger.info("analysis_input_saved company_id=%s revision=%s created=%s", company.pk, company.revision, created)
+    logger.info("analysis_input_saved company_id=%s revision=%s created=%s enrichment_status=%s", company.pk, company.revision, created,
+                data["business_context"].get("company_enrichment", {}).get("status", "not_requested"))
     return snapshot.payload
 
 
@@ -143,7 +150,7 @@ def validate_refs(value, allowed):
 # 功能：保存经验证的 L3 分析。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 指定用户、分析、版本与任务；`provider` 标识 rules 或 agent。
 # 输出：已保存 Analysis 原始载荷。
-# 逻辑：当前 revision 与未失效快照一致后检查来源、时间、缺失信息和强信号门槛。
+# 逻辑：当前 revision 与仍有效的实验快照一致后检查来源、时间、缺失信息和强信号；允许独立实验人数，保留其来源标签。
 # 约束：失败不覆盖成功，不接受未知来源或详情中的成交概率；原文业务百分比可以保留。
 @transaction.atomic
 def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
@@ -157,6 +164,8 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     if snapshot is None:
         raise Conflict("请先保存当前 revision 的 AnalysisInput。")
     _, context = context_pair(company)
+    if not snapshot_current(snapshot, company, context["company_enrichment"]):
+        raise Conflict("补充资料已变化，请重新构建 AnalysisInput。")
     base_time = parse_datetime(data["analysis_base_time"])
     if any(
         item["sent_at"] is not None and parse_datetime(item["sent_at"]) > base_time
@@ -172,6 +181,7 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
         allowed.add(str(customer_id))
     for key, id_field in [("tickets", "ticket_id"), ("quotes", "quote_id"), ("orders", "order_id")]:
         allowed.update(str(item[id_field]) for item in context[key])
+    allowed.update(source_refs(snapshot.payload["business_context"]))
     validate_refs(data, allowed)
     if data["status"] == "completed":
         if DEAL_PROBABILITY_PATTERN.search(
@@ -193,8 +203,11 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
             raise ValidationError("复购信号缺少历史订单。")
         if signal == "new_lead_no_profile" and (company.crm_status != "unregistered" or sum(e["direction"] == "inbound" for e in context["emails"]) != 1):
             raise ValidationError("新线索信号必须为首次来信且未建档。")
-        if view["size_band"] != "unknown" and context["customer"]["employee_count"] is None:
-            raise ValidationError("规模档位缺少权威人数。")
+        count, source = employee_size(snapshot.payload["business_context"])
+        if view["size_band"] != "unknown" and count is None:
+            raise ValidationError("规模档位缺少 CRM 或已验证的实验人数。")
+        if source == "synthetic_sample":
+            view["size_source"] = source
     result, created = Analysis.objects.get_or_create(snapshot=snapshot, prompt_version=data["analysis_prompt_version"], defaults={"payload": data, "provider": provider})
     if not created and result.payload != data:
         if result.payload["status"] == "failed" and data["status"] == "completed":
@@ -210,7 +223,7 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
 # 功能：保存与当前成功分析对应的评分。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 为身份、Score、后端版本与任务凭证。
 # 输出：Score 原始载荷。
-# 逻辑：绑定当前输入未失效的成功分析；正式结果独立于旧特征，解释来源验证后与分数原子保存；按规则版本和 scored_at 去重。
+# 逻辑：绑定当前输入及实验来源仍有效的成功分析；正式结果独立于旧特征，解释来源验证后与分数原子保存；按规则版本和 scored_at 去重。
 # 约束：无有效分析不接收分数；只有旧版本继续校验旧特征，相同键的解释也不可覆盖。
 @transaction.atomic
 def save_score(owner, payload, expected, job_id, token):
@@ -222,7 +235,7 @@ def save_score(owner, payload, expected, job_id, token):
     require_lease(company, job_id, token)
     analysis = Analysis.objects.filter(snapshot__company=company, snapshot__revision=company.revision, snapshot__invalidation__isnull=True,
                                        snapshot__input_version=data["input_version"], payload__status="completed").order_by("-id").first()
-    if analysis is None:
+    if analysis is None or not snapshot_current(analysis.snapshot, company):
         raise InvalidState("当前输入尚无成功分析。")
     view = analysis.payload["list_view"]
     if data["score_version"] != "score-v2" and data["score"] is not None and (view["signal"] == "unknown" or any(item["value"] is None for item in view["score_features"].values())):
@@ -241,7 +254,7 @@ def save_score(owner, payload, expected, job_id, token):
 # 功能：查询指定版本的分析缓存元数据。
 # 输入：`company` 为授权公司；`input_version` 为 Agent 输入键；`prompt_version` 可限定提示词版本。
 # 输出：README CachedAnalysis，未命中可附旧结果时间。
-# 逻辑：命中要求未失效、当前 revision、输入版本、成功状态及可选提示词一致。
+# 逻辑：命中要求未失效、当前 revision、输入版本、成功状态及可选提示词一致，实验资料还须与当前来源一致。
 # 约束：旧结果 hit 为 false，不冒充新分析。
 def cached_analysis(company, input_version, prompt_version=None):
     query = Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot")
@@ -249,7 +262,7 @@ def cached_analysis(company, input_version, prompt_version=None):
     if prompt_version:
         exact = exact.filter(prompt_version=prompt_version)
     result = exact.order_by("-id").first()
-    hit = result is not None
+    hit = result is not None and snapshot_current(result.snapshot, company)
     result = result or query.order_by("-id").first()
     return {"company_id": str(company.pk), "input_version": result.snapshot.input_version if result else input_version,
             "analysis_prompt_version": result.prompt_version if result else None,

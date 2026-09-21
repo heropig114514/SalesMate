@@ -2776,6 +2776,9 @@ components:
         priority_context:
           type: object
           additionalProperties: {}
+        company_enrichment:
+          type: object
+          additionalProperties: {}
       required:
       - company_id
       - customer

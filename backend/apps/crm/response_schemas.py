@@ -10,6 +10,7 @@
 - MailboxResponseSerializer：描述浏览器邮箱列表行。
 - MailboxSyncClaimResponseSerializer：描述 Agent 领取的员工邮箱同步请求。
 变量索引：
+- CompanyContextResponseSerializer.company_enrichment：后端匹配的实验资料、状态和来源版本，无需额外 Tool 授权。
 - CompanyContextResponseSerializer.priority_context：公司级 customer、deal、seller 正式评分资料；未知字段保持缺失。
 - SubmissionResultSerializer.dedupe_key：本次提交的邮件天然键。
 - SubmissionResultSerializer.company_id：后端归组分配的公司 UUID。
@@ -108,7 +109,7 @@ class GroupingResponseSerializer(s.Serializer):
 
 
 # 功能：描述公司邮件与业务快照。
-# 逻辑：邮件回显 L1 标准载荷，priority_context 提供权威公司商机与销售方资料。
+# 逻辑：邮件回显 L1 标准载荷，priority_context 提供权威公司商机与销售方资料，company_enrichment 独立标记实验来源。
 # 约束：评分上下文不重复邮件、不混入已保存的 L2 载荷，不凭空补未知数据。
 class CompanyContextResponseSerializer(s.Serializer):
     company_id = s.UUIDField()
@@ -119,6 +120,7 @@ class CompanyContextResponseSerializer(s.Serializer):
     quotes = s.ListField(child=s.DictField())
     orders = s.ListField(child=s.DictField())
     priority_context = s.DictField()
+    company_enrichment = s.DictField(required=False)
 
 
 # 功能：描述浏览器邮箱列表行。

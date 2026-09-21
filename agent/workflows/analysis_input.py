@@ -1,10 +1,72 @@
-"""L2：把后端提供的公司邮件和业务数据整理为一份 AnalysisInput。"""
+"""职责：构建 L2 邮件事实与独立公司补充资料。
+实现：保持原有 L1/L4 规则，资料经后端核验后独立传递，人数优先 CRM。
+关联：后端公司上下文、共享 enrichment 契约与分析编排；不新增授权令牌。
+目录：
+- Metrics：存储确定性邮件指标。
+- Metrics.to_dict：输出隔离的指标字典。
+- AnalysisInput：存储 L2 原始事实和独立业务资料。
+- AnalysisInput.to_dict：输出待归档 L2。
+- ValidationError：表示 L2 构建失败。
+- ValidationError.to_dict：序列化 L2 错误。
+- build_analysis_input：读取和构建公司 L2 快照。
+- merge_facts：完整归并已完成邮件事实。
+- calculate_metrics：计算确定性邮件指标。
+- compute_input_version：计算可复用的分析输入键。
+- parse_rfc3339：解析带时区时间。
+- _validate_grouping：核对归组身份及成员。
+- _validate_context：核对归组与公司快照。
+- _validate_email：核对 L1 邮件封装。
+- _validate_facts：核对 extract-v7 事实。
+- _latest_summary：选择最新已解析邮件摘要。
+- _time_endpoint：选择邮件时间端点。
+- _response_gap_days：计算最近有效回复间隔。
+- _email_time_key：生成稳定邮件排序键。
+- _fact_sort_key：生成稳定事实排序键。
+- _clock_text：读取明确时区的构建时钟。
+- _mapping：要求对象类型。
+- _list：要求数组类型。
+- _string_list：核对字符串数组。
+- _nonblank：判断非空字符串。
+- _mailbox：检查邮箱基本形式。
+变量索引：
+- AnalysisInput.built_at：L2 构建时间。
+- AnalysisInput.business_context：CRM 与独立实验补充资料。
+- AnalysisInput.company：原始公司资料。
+- AnalysisInput.company_id：后端公司标识。
+- AnalysisInput.external_snapshot_version：CRM 外部快照版本。
+- AnalysisInput.facts：完整邮件事实。
+- AnalysisInput.input_version：绑定资料的缓存版本。
+- AnalysisInput.latest_message_summary：最近已解析摘要。
+- AnalysisInput.member_dedupe_keys：邮件成员键。
+- AnalysisInput.merge_version：归并规则版本。
+- AnalysisInput.metrics：确定性邮件指标。
+- AnalysisInput.priority_context：不归档的 L4 评分上下文。
+- AnalysisInput.unparsed_message_count：未完成抽取数量。
+- CRM_STATUSES：合法 CRM 状态。
+- DIRECTIONS：合法邮件方向。
+- EXTRACT_PROMPT_VERSION：L1 Skill 的固定协议版本。
+- EXTRACT_STATUSES：合法抽取状态。
+- FACT_FIELDS：完整 L1 事实字段。
+- INTENT_HINTS：合法采购意向。
+- Metrics.crm_status：CRM 建档状态。
+- Metrics.first_contact_at：最早邮件时间。
+- Metrics.has_history_order：是否有历史订单。
+- Metrics.inbound_count：来信数量。
+- Metrics.last_inbound_at：最近来信时间。
+- Metrics.last_outbound_at：最近外发时间。
+- Metrics.outbound_count：外发数量。
+- Metrics.response_gap_days：最近有效响应天数。
+- Metrics.substantive_inbound_count：实质更新来信数量。
+- ORDINARY_FACT_FIELDS：可归并的多值事实字段。
+- ValidationError.code：错误码。
+- ValidationError.field：可选错误字段。
+- ValidationError.message：错误说明。
+- __all__：公开导出的符号。
+"""
 
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -12,6 +74,7 @@ from typing import Any, Callable, Mapping
 
 from agent.clients.backend_api import BackendClient
 from agent.skills import load_skill
+from integrations.company_enrichment import input_version as enrichment_input_version
 
 
 EXTRACT_PROMPT_VERSION = load_skill("email-fact-extraction").version
@@ -46,6 +109,9 @@ INTENT_HINTS = frozenset({
 CRM_STATUSES = frozenset({"unregistered", "registered"})
 
 
+# 功能：存储确定性邮件指标。
+# 逻辑：dataclass 保存计数、时间和 CRM 状态。
+# 约束：不访问后端。
 @dataclass
 class Metrics:
     inbound_count: int
@@ -58,10 +124,18 @@ class Metrics:
     has_history_order: bool
     crm_status: str
 
+    # 功能：输出隔离的指标字典。
+    # 输入：无外部参数，读取实例字段。
+    # 输出：独立字典。
+    # 逻辑：深复制实例字段。
+    # 约束：不修改实例。
     def to_dict(self) -> dict[str, Any]:
         return copy.deepcopy(self.__dict__)
 
 
+# 功能：存储 L2 原始事实和独立业务资料。
+# 逻辑：dataclass 保留版本、来源、指标及本地评分上下文。
+# 约束：补充资料不写入邮件事实。
 @dataclass
 class AnalysisInput:
     company_id: str
@@ -78,6 +152,11 @@ class AnalysisInput:
     metrics: Metrics
     priority_context: dict[str, Any] | None = None
 
+    # 功能：输出待归档 L2。
+    # 输入：无外部参数，读取实例字段。
+    # 输出：独立 JSON 字典。
+    # 逻辑：复制持久字段并排除仅用于 L4 的 priority_context。
+    # 约束：不改写业务数据和来源。
     def to_dict(self) -> dict[str, Any]:
         return {
             "company_id": self.company_id,
@@ -95,12 +174,20 @@ class AnalysisInput:
         }
 
 
+# 功能：表示 L2 构建失败。
+# 逻辑：保存错误码、说明与可选字段路径。
+# 约束：不抛出异常或写后端。
 @dataclass
 class ValidationError:
     code: str
     message: str
     field: str | None = None
 
+    # 功能：序列化 L2 错误。
+    # 输入：无外部参数，读取实例字段。
+    # 输出：error 字典。
+    # 逻辑：仅在 field 非空时附加定位字段。
+    # 约束：不包含凭证。
     def to_dict(self) -> dict[str, Any]:
         error: dict[str, Any] = {"code": self.code, "message": self.message}
         if self.field is not None:
@@ -108,6 +195,11 @@ class ValidationError:
         return {"error": error}
 
 
+# 功能：读取和构建公司 L2 快照。
+# 输入：`company_id` 为请求的公司标识；`backend` 为已配置员工身份的后端客户端；`merge_version` 为归并规则版本；`clock` 为返回带时区 datetime 的时钟。
+# 输出：AnalysisInput 或 ValidationError。
+# 逻辑：依次读取归组与上下文，校验 L1、归并事实、计算指标及含补充资料的版本；保留独立补充对象。
+# 约束：后端负责补充资料真实性；读取和构建异常转为明确错误；L4 通信仍限最近 20 封。
 def build_analysis_input(
     company_id: str,
     *,
@@ -147,6 +239,7 @@ def build_analysis_input(
             emails,
             merge_version,
             context["external_snapshot_version"],
+            context.get("company_enrichment"),
         )
         built_at = _clock_text(clock)
     except ValueError as error:
@@ -207,6 +300,8 @@ def build_analysis_input(
             "tickets": copy.deepcopy(context["tickets"]),
             "quotes": copy.deepcopy(context["quotes"]),
             "orders": copy.deepcopy(context["orders"]),
+            **({"company_enrichment": copy.deepcopy(context["company_enrichment"])}
+               if "company_enrichment" in context else {}),
         },
         latest_message_summary=_latest_summary(emails),
         member_dedupe_keys=list(grouping["member_dedupe_keys"]),
@@ -219,6 +314,11 @@ def build_analysis_input(
     )
 
 
+# 功能：完整归并已完成邮件事实。
+# 输入：`emails` 为标准邮件列表。
+# 输出：字段到事实列表的字典。
+# 逻辑：逐字段保留值、来源和证据，稳定排序后去除临时来源索引。
+# 约束：不覆盖历史事实，不将补充资料归为 L1。
 def merge_facts(emails: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """保留所有已完成邮件的事实、来源、原文证据和事实时间。"""
     merged = {field: [] for field in ORDINARY_FACT_FIELDS}
@@ -245,6 +345,11 @@ def merge_facts(emails: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
     return merged
 
 
+# 功能：计算确定性邮件指标。
+# 输入：`emails` 为标准邮件列表；`crm_status` 为CRM 状态；`orders` 为历史订单。
+# 输出：Metrics。
+# 逻辑：按方向、有效抽取、时间和订单计算计数与响应间隔。
+# 约束：不推测缺失时间或订单。
 def calculate_metrics(
     emails: list[dict[str, Any]],
     *,
@@ -273,27 +378,26 @@ def calculate_metrics(
     )
 
 
+# 功能：计算可复用的分析输入键。
+# 输入：`emails` 为标准邮件列表；`merge_version` 为归并规则版本；`external_snapshot_version` 为原 CRM 快照版本；`enrichment` 为可选的后端补充资料。
+# 输出：sha256 字符串。
+# 逻辑：委托共享版本函数绑定邮件、归并、CRM 及可选实验资料内容。
+# 约束：未提供补充资料时保留旧哈希结构。
 def compute_input_version(
     emails: list[dict[str, Any]],
     merge_version: str,
     external_snapshot_version: str,
+    enrichment: Mapping[str, Any] | None = None,
 ) -> str:
     """生成分析缓存和幂等使用的稳定版本。"""
-    members = sorted(
-        [
-            email["dedupe_key"],
-            email["extract_prompt_version"],
-            email["extract_status"],
-        ]
-        for email in emails
-    )
-    payload = [members, merge_version, external_snapshot_version]
-    encoded = json.dumps(
-        payload, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+    return enrichment_input_version(emails, merge_version, external_snapshot_version, enrichment)
 
 
+# 功能：解析带时区时间。
+# 输入：`value` 为待检查值。
+# 输出：datetime。
+# 逻辑：接受 ISO 时间及 Z 后缀，检查时区。
+# 约束：无效值抛 ValueError，不使用本地时区补齐。
 def parse_rfc3339(value: object) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("时间必须是非空 RFC3339 字符串。")
@@ -306,6 +410,11 @@ def parse_rfc3339(value: object) -> datetime:
     return result
 
 
+# 功能：核对归组身份及成员。
+# 输入：`raw` 为待校验原始值；`company_id` 为请求的公司标识。
+# 输出：归组字典。
+# 逻辑：检查公司、CRM 枚举、联系人和邮件天然键，复制必要字段。
+# 约束：重复成员及非法邮箱立即失败。
 def _validate_grouping(raw: object, company_id: str) -> dict[str, Any]:
     grouping = _mapping(raw, "Grouping")
     if grouping.get("company_id") != company_id:
@@ -346,6 +455,11 @@ def _validate_grouping(raw: object, company_id: str) -> dict[str, Any]:
     }
 
 
+# 功能：核对归组与公司快照。
+# 输入：`raw` 为待校验原始值；`grouping` 为已校验归组。
+# 输出：独立上下文字典。
+# 逻辑：检查邮件成员集合、CRM 人数和业务集合，复制后端补充资料及可选评分上下文。
+# 约束：补充资料由后端核验，不在 Agent 重做实体匹配。
 def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any]:
     context = _mapping(raw, "CompanyContext")
     if context.get("company_id") != grouping["company_id"]:
@@ -384,11 +498,18 @@ def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any
         "tickets": copy.deepcopy(tickets),
         "quotes": copy.deepcopy(quotes),
         "orders": copy.deepcopy(orders),
+        **({"company_enrichment": copy.deepcopy(context["company_enrichment"])}
+           if "company_enrichment" in context else {}),
         "priority_context": copy.deepcopy(dict(priority_context))
         if priority_context is not None else None,
     }
 
 
+# 功能：核对 L1 邮件封装。
+# 输入：`raw` 为待校验原始值；`index` 为邮件索引。
+# 输出：邮件字典。
+# 逻辑：检查天然键、方向、抽取版本与状态、时间和对应 facts。
+# 约束：非 completed 邮件不能带事实；非法结构抛 ValueError。
 def _validate_email(raw: object, index: int) -> dict[str, Any]:
     email = _mapping(raw, f"emails[{index}]")
     dedupe_key = email.get("dedupe_key")
@@ -434,6 +555,11 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
     return result
 
 
+# 功能：核对 extract-v7 事实。
+# 输入：`raw` 为待校验原始值；`email_index` 为事实所属邮件索引。
+# 输出：规范事实字典。
+# 逻辑：检查精确字段、摘要、意向与证据，复制去重的多值事实。
+# 约束：不修改抽取版本、枚举或证据要求。
 def _validate_facts(raw: object, email_index: int) -> dict[str, Any]:
     facts = _mapping(raw, f"emails[{email_index}].facts")
     if set(facts) != set(FACT_FIELDS):
@@ -475,6 +601,11 @@ def _validate_facts(raw: object, email_index: int) -> dict[str, Any]:
     return normalized
 
 
+# 功能：选择最新已解析邮件摘要。
+# 输入：`emails` 为标准邮件列表。
+# 输出：摘要或 None。
+# 逻辑：按时间和天然键选择最大 completed 邮件。
+# 约束：不使用未解析邮件生成新摘要。
 def _latest_summary(emails: list[dict[str, Any]]) -> str | None:
     completed = [email for email in emails if email["extract_status"] == "completed"]
     if not completed:
@@ -483,6 +614,11 @@ def _latest_summary(emails: list[dict[str, Any]]) -> str | None:
     return latest["facts"]["message_summary"]
 
 
+# 功能：选择邮件时间端点。
+# 输入：`emails` 为标准邮件列表；`latest` 为是否选择最新端点。
+# 输出：原始时间字符串或 None。
+# 逻辑：过滤无时间邮件，按 latest 选择最大或最小时间键。
+# 约束：不填补未知时间。
 def _time_endpoint(emails: list[dict[str, Any]], *, latest: bool) -> str | None:
     candidates = [email for email in emails if email.get("sent_at") is not None]
     if not candidates:
@@ -491,6 +627,11 @@ def _time_endpoint(emails: list[dict[str, Any]], *, latest: bool) -> str | None:
     return selected["sent_at"]
 
 
+# 功能：计算最近有效回复间隔。
+# 输入：`emails` 为标准邮件列表。
+# 输出：天数或 None。
+# 逻辑：同线程中取来信之后首封外发，以最近来信确定一对，半向上舍入到两位。
+# 约束：不修改既定时间配对及舍入规则。
 def _response_gap_days(emails: list[dict[str, Any]]) -> float | None:
     pairs: list[tuple[datetime, datetime, str]] = []
     for inbound in emails:
@@ -515,6 +656,11 @@ def _response_gap_days(emails: list[dict[str, Any]]) -> float | None:
     return float(days.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+# 功能：生成稳定邮件排序键。
+# 输入：`email` 为单封邮件。
+# 输出：时间与天然键元组。
+# 逻辑：转 UTC，无时间置最小瞬间，天然键打破平局。
+# 约束：无时间邮件排列在前。
 def _email_time_key(email: Mapping[str, Any]) -> tuple[datetime, str]:
     timestamp = email.get("sent_at")
     instant = (
@@ -525,6 +671,11 @@ def _email_time_key(email: Mapping[str, Any]) -> tuple[datetime, str]:
     return instant, str(email.get("dedupe_key", ""))
 
 
+# 功能：生成稳定事实排序键。
+# 输入：`item` 为单条归并事实。
+# 输出：排序元组。
+# 逻辑：按是否无时间、UTC 时间、天然键和原索引排序。
+# 约束：不修改事实内容。
 def _fact_sort_key(item: Mapping[str, Any]) -> tuple[bool, datetime, str, int]:
     timestamp = item.get("fact_time")
     return (
@@ -537,6 +688,11 @@ def _fact_sort_key(item: Mapping[str, Any]) -> tuple[bool, datetime, str, int]:
     )
 
 
+# 功能：读取明确时区的构建时钟。
+# 输入：`clock` 为返回带时区 datetime 的时钟。
+# 输出：ISO 时间字符串。
+# 逻辑：调用 clock 并检查 datetime 时区。
+# 约束：无效时钟抛校验异常。
 def _clock_text(clock: Callable[[], datetime]) -> str:
     value = clock()
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
@@ -544,18 +700,33 @@ def _clock_text(clock: Callable[[], datetime]) -> str:
     return value.isoformat()
 
 
+# 功能：要求对象类型。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：Mapping。
+# 逻辑：检查 Mapping 后返回原值。
+# 约束：非法值抛 ValueError，path 定位错误。
 def _mapping(value: object, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{path} 必须是对象。")
     return value
 
 
+# 功能：要求数组类型。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：list。
+# 逻辑：检查 list 后返回原值。
+# 约束：非法值抛 ValueError，path 定位错误。
 def _list(value: object, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise ValueError(f"{path} 必须是数组。")
     return value
 
 
+# 功能：核对字符串数组。
+# 输入：`value` 为待检查值；`path` 为错误定位路径；`allow_empty` 为既有空数组选项。
+# 输出：字符串列表。
+# 逻辑：检查非空字符串和重复元素；允许空数组。
+# 约束：allow_empty 保留既有签名，不改变空数组行为。
 def _string_list(value: object, path: str, *, allow_empty: bool = False) -> list[str]:
     items = _list(value, path)
     result = []
@@ -570,10 +741,20 @@ def _string_list(value: object, path: str, *, allow_empty: bool = False) -> list
     return result
 
 
+# 功能：判断非空字符串。
+# 输入：`value` 为待检查值。
+# 输出：bool。
+# 逻辑：检查类型与去空白后的真值。
+# 约束：不改变原字符串。
 def _nonblank(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+# 功能：检查邮箱基本形式。
+# 输入：`value` 为待检查值。
+# 输出：bool。
+# 逻辑：要求单个 @、两端非空且不含空白。
+# 约束：不验证 DNS 或邮箱可达性。
 def _mailbox(value: object) -> bool:
     return (
         isinstance(value, str)

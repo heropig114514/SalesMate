@@ -862,3 +862,7 @@ python -m unittest agent.tests.test_mvp_pipeline
 - 实际筛选、排序、分页、CRM 建档和前端渲染由后端与前端实现。
 
 软件 Worker 为 `sync_gmail` 提供可选 progress 观察回调和显式重试 message_ids；观察模式在读取前登记消息并逐封隔离读取错误。原 CLI 默认参数保持不变。详见 [处理适配](../backend/docs/processing-integration.md)。
+
+## 公司实验资料补充
+
+L2 直接复制后端 CompanyContext.company_enrichment，并将完整补充对象纳入 input_version；无需新增 Tool 凭证、分页检索或在 Agent 重做实体匹配。L3 的 `analysis-v4` 支持该快照登记的实验来源，CRM 人数优先，缺失时使用实验人数并标注 `synthetic_sample`。L1/L4 和模型预算不变。详见 [后端对接契约](../backend/docs/company-enrichment.md)。

@@ -1,5 +1,5 @@
 """职责：生成公司、上下文与页面查询投影。
-实现：业务分类约束邮件范围，正式评分上下文按 owner 构建；agent 模式只展示 score-v2，血缘失效结果不展示。
+实现：业务分类约束邮件范围，正式评分上下文按 owner 构建；agent 模式只展示 score-v2，血缘或实验来源失效结果不展示，公司分析上下文附带已匹配的共享资料。
 关联：API 在授权后调用；ingestion 和 results 使用同一快照表示；sales 设置人工主要联系人及客户归档。
 目录：
 - latest_extraction：选择邮件最近创建的抽取版本。
@@ -19,6 +19,7 @@ from django.db.models import Q
 from apps.sales.models import CompanySettings
 
 from .models import Analysis
+from .enrichment import resolve, snapshot_current
 
 
 # 功能：选择邮件最近创建的抽取版本。
@@ -43,9 +44,9 @@ def email_data(email):
 
 
 # 功能：构建一致的 Grouping 和 CompanyContext。
-# 输入：`company` 为已授权且在 Agent 输入场景已锁定的公司；`include_priority` 默认 True，列表内部可显式跳过评分背景查询。
+# 输入：`company` 为已授权且在 Agent 输入场景已锁定的公司；`include_priority` 默认 True，列表内部可显式跳过评分背景和实验资料查询。
 # 输出：Grouping、CompanyContext 二元组。
-# 逻辑：仅业务邮件进入成员键；主要联系人使用人工设置；按需附加同 owner 商机、历史订单和销售方目标画像。
+# 逻辑：仅业务邮件进入成员键；主要联系人使用人工设置；按需附加同 owner 商机、历史订单、销售方目标画像与跨账号获准实验资料。
 # 约束：revision 由 HTTP ETag 传递，协议 JSON 字段保持 README 名称。
 def context_pair(company, include_priority=True):
     emails = list(company.emails.filter(business_classification="business").select_related("contact", "mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
@@ -71,16 +72,19 @@ def context_pair(company, include_priority=True):
     if include_priority:
         from apps.sales.priority import priority_context
         context["priority_context"] = priority_context(company)
+        context["company_enrichment"] = resolve(company)
     return grouping, context
 
 
 # 功能：选择最近存储的成功分析及其最新评分。
 # 输入：`company` 为已授权公司。
 # 输出：Analysis 或 None，Score 或 None。
-# 逻辑：只选择未被血缘失效的结果；agent 模式的分数只取 score-v2，同一分析下不回退旧算法。
+# 逻辑：只选择未被血缘失效且实验资料仍一致的结果；agent 模式的分数只取 score-v2，同一分析下不回退旧算法。
 # 约束：失败结果不能覆盖成功画像；旧快照继续标记 stale，隐藏邮件导致结果不可展示。
 def latest_result(company):
     analysis = Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot").order_by("-id").first()
+    if analysis and not snapshot_current(analysis.snapshot, company):
+        return None, None
     if analysis:
         visible = set(company.emails.filter(business_classification="business").values_list("dedupe_key", flat=True))
         if set(analysis.snapshot.payload.get("member_dedupe_keys", [])) - visible:

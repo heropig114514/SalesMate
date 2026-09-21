@@ -1,4 +1,54 @@
-"""L3：基于一份 AnalysisInput 生成客户画像、分析和列表信号。"""
+"""职责：生成和验证 L3 画像、规模与可追溯来源。
+实现：保持原有 L1/L4 规则，资料经后端核验后独立传递，人数优先 CRM。
+关联：后端公司上下文、共享 enrichment 契约与分析编排；不新增授权令牌。
+目录：
+- AnalysisValidationError：表示模型输出契约错误。
+- bailian_analysis_provider：调用模型生成 L3。
+- generate_analysis：生成并验证 L3 分析。
+- validate_analysis_payload：验证模型负责的列表与详情。
+- _validate_business_rules：复核信号门槛和人数档位。
+- _size_band：确定员工规模档位。
+- _authoritative_size_source：确定规模来源标签。
+- _conflict_field：规范冲突字段名称。
+- _validate_list_view：核对列表输出。
+- _validate_detail_view：核对七维详情和上下文完整性。
+- _dimension_group：校验维度组。
+- _dimension：校验事实和推断维度。
+- _allowed_source_refs：收集本次输入允许引用的来源。
+- _evidence_block：校验证据块。
+- _source_refs：规范并核对引用列表。
+- _analysis_model_input：精简模型输入。
+- _decode_model_json：解析模型 JSON。
+- _canonical_source_ref：规范可确认的引用前缀。
+- _contains_deal_probability：检测不允许的成交概率表述。
+- _as_document：将输入转为 L2 字典。
+- _clock_text：读取明确时区的构建时钟。
+- _object：要求对象类型。
+- _array：要求数组类型。
+- _keys：核对精确字段集合。
+- _nonblank：判断非空字符串。
+- _enum：核对非空枚举。
+- _strings：校验无重复字符串数组。
+变量索引：
+- ANALYSIS_DIMENSIONS：四个分析维度。
+- ANALYSIS_PROMPT：L3 Skill 指令正文。
+- ANALYSIS_PROMPT_VERSION：当前 L3 缓存隔离版本。
+- CONFIDENCES：推断置信度枚举。
+- CONFLICT_FIELDS：允许冲突事实字段。
+- CONFLICT_FIELD_ALIASES：模型常用冲突字段别名。
+- CONFLICT_KINDS：冲突类别。
+- INDUSTRIES：行业枚举。
+- PROFILE_DIMENSIONS：三个画像维度。
+- SCORE_FEATURES：兼容输出特征名称。
+- SIGNALS：列表信号枚举。
+- SIZE_BANDS：规模档位枚举。
+- _CUSTOMER_ANALYSIS_SKILL：加载的 L3 Skill。
+- _DEAL_PROBABILITY_PATTERN：成交概率限制的既定正则。
+- _JSON_FENCE：单层 JSON 围栏正则。
+- _SOURCE_REF_PREFIXES：允许规范化的已知引用前缀。
+- __all__：公开导出的符号。
+- logger：脱敏诊断日志。
+"""
 
 from __future__ import annotations
 
@@ -11,6 +61,7 @@ from typing import Any, Callable, Mapping
 
 from agent.llm.bailian import generate_json
 from agent.skills import load_skill
+from integrations.company_enrichment import employee_size, source_refs
 from agent.workflows.l1_email import MULTI_VALUE_FACT_FIELDS
 
 
@@ -60,10 +111,18 @@ _SOURCE_REF_PREFIXES = (
 )
 
 
+# 功能：表示模型输出契约错误。
+# 逻辑：继承 ValueError，供既定重试边界区分业务校验。
+# 约束：无网络和数据库副作用。
 class AnalysisValidationError(ValueError):
     """百炼返回的 L3 数据不符合 MVP 契约。"""
 
 
+# 功能：调用模型生成 L3。
+# 输入：`analysis_input` 为L2 输入对象；`validation_error` 为可选上次校验说明。
+# 输出：JSON 文本。
+# 逻辑：发送精简输入、允许来源及可选上次错误，使用 Skill 固定预算并记录耗时。
+# 约束：异常记录脱敏上下文后重新抛出，不在此重试。
 def bailian_analysis_provider(
     analysis_input: Mapping[str, Any],
     *,
@@ -111,6 +170,11 @@ def bailian_analysis_provider(
     return result
 
 
+# 功能：生成并验证 L3 分析。
+# 输入：`analysis_input` 为L2 输入对象；`analysis_provider` 为模型调用函数；`clock` 为返回带时区 datetime 的时钟。
+# 输出：completed 或 failed 分析字典。
+# 逻辑：构建时间和版本，调用 provider；仅默认 provider 的 JSON 或契约失败按既有行为纠正一次。
+# 约束：自定义 provider 或网络异常不自动重试；不保存后端。
 def generate_analysis(
     analysis_input: object,
     *,
@@ -235,6 +299,11 @@ def generate_analysis(
     }
 
 
+# 功能：验证模型负责的列表与详情。
+# 输入：`candidate` 为模型解析结果；`analysis_input` 为L2 输入对象。
+# 输出：规范 list_view/detail_view 字典。
+# 逻辑：要求两段封闭结构、无成交概率，校验允许来源、信号和完整性。
+# 约束：错误抛 AnalysisValidationError；不验证后端凭证。
 def validate_analysis_payload(
     candidate: object,
     analysis_input: Mapping[str, Any],
@@ -256,6 +325,11 @@ def validate_analysis_payload(
     return {"list_view": list_view, "detail_view": detail_view}
 
 
+# 功能：复核信号门槛和人数档位。
+# 输入：`list_view` 为已校验列表结果；`analysis_input` 为L2 输入对象。
+# 输出：无返回值。
+# 逻辑：核对订单、采购、报价、新线索、人数档位及工单集合。
+# 约束：人数优先 CRM，否则使用已验证实验资料；档位阈值保持原值。
 def _validate_business_rules(
     list_view: Mapping[str, Any],
     analysis_input: Mapping[str, Any],
@@ -293,9 +367,7 @@ def _validate_business_rules(
     ):
         raise AnalysisValidationError("new_lead_no_profile 不符合未建档首次来信条件。")
 
-    customer = business.get("customer", {})
-    customer = customer if isinstance(customer, Mapping) else {}
-    employee_count = customer.get("employee_count")
+    employee_count, _ = employee_size(business)
     expected_band = _size_band(employee_count)
     if list_view["size_band"] != expected_band:
         raise AnalysisValidationError("size_band 与后端员工人数不一致。")
@@ -310,6 +382,11 @@ def _validate_business_rules(
         raise AnalysisValidationError("ticket_signals 包含不存在的工单。")
 
 
+# 功能：确定员工规模档位。
+# 输入：`value` 为待检查值。
+# 输出：档位字符串。
+# 逻辑：按 50、100、200、500 的原阈值划分人数。
+# 约束：非法人数返回 unknown，不做估计。
 def _size_band(value: object) -> str:
     if type(value) is not int or value < 0:
         return "unknown"
@@ -324,21 +401,22 @@ def _size_band(value: object) -> str:
     return "gte_500"
 
 
+# 功能：确定规模来源标签。
+# 输入：`analysis_input` 为L2 输入对象。
+# 输出：crm、synthetic_sample、已有标签或 unknown。
+# 逻辑：委托共享人数选择规则，CRM 优先于 matched 实验资料。
+# 约束：不相信模型自行填写的来源。
 def _authoritative_size_source(analysis_input: Mapping[str, Any]) -> str:
-    """只使用后端客户档案中的员工人数来源，未知时返回稳定占位。"""
+    """按 CRM 优先顺序使用后端已验证人数，实验补充保留独立标签。"""
     business = analysis_input.get("business_context")
-    business = business if isinstance(business, Mapping) else {}
-    customer = business.get("customer")
-    customer = customer if isinstance(customer, Mapping) else {}
-    employee_count = customer.get("employee_count")
-    if type(employee_count) is not int or employee_count < 0:
-        return "unknown"
-    source = customer.get("employee_count_source")
-    if isinstance(source, str) and source.strip():
-        return source.strip()
-    return "crm"
+    return employee_size(business if isinstance(business, Mapping) else {})[1]
 
 
+# 功能：规范冲突字段名称。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：规范字段名。
+# 逻辑：将既有公司别名映射为 L1 字段，再核对枚举。
+# 约束：不增加事实类别。
 def _conflict_field(value: object, path: str) -> str:
     """规范常见模型别名，并确保最终字段符合后端 L1 事实枚举。"""
     field = _nonblank(value, path)
@@ -346,6 +424,11 @@ def _conflict_field(value: object, path: str) -> str:
     return _enum(normalized, CONFLICT_FIELDS, path)
 
 
+# 功能：核对列表输出。
+# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`analysis_input` 为L2 输入对象。
+# 输出：独立列表字典。
+# 逻辑：检查封闭字段、枚举、来源、工单与特征；人数来源使用确定性规则。
+# 约束：模型自由改写来源不会制造虚假来源。
 def _validate_list_view(
     value: object,
     allowed_refs: set[str],
@@ -413,7 +496,7 @@ def _validate_list_view(
         "industry": industry,
         "industry_evidence": industry_evidence,
         "size_band": size_band,
-        # 规模来源是后端客户档案中的确定性字段。模型仍需输出该键，
+        # 规模来源由 CRM 或经后端核验的实验资料确定。模型仍需输出该键，
         # 但空值或自由改写不会再让整份画像失败或制造虚假来源。
         "size_source": _authoritative_size_source(analysis_input),
         "headline_summary": _nonblank(
@@ -423,6 +506,11 @@ def _validate_list_view(
     }
 
 
+# 功能：核对七维详情和上下文完整性。
+# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`expected_unparsed` 为真实未解析邮件数。
+# 输出：详情字典。
+# 逻辑：验证冲突至少两来源、三画像四分析及未解析计数。
+# 约束：缺失邮件须明确说明，不生成新事实。
 def _validate_detail_view(
     value: object,
     allowed_refs: set[str],
@@ -480,6 +568,11 @@ def _validate_detail_view(
     }
 
 
+# 功能：校验维度组。
+# 输入：`value` 为待检查值；`dimensions` 为要求的维度名称；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
+# 输出：维度字典。
+# 逻辑：要求 dimensions 指定的精确字段并逐项校验。
+# 约束：path 定位错误，不增加维度。
 def _dimension_group(
     value: object,
     dimensions: tuple[str, ...],
@@ -494,6 +587,11 @@ def _dimension_group(
     }
 
 
+# 功能：校验事实和推断维度。
+# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
+# 输出：规范维度字典。
+# 逻辑：逐项检查文本、依据、置信度及非空允许来源。
+# 约束：引用必须来自当前输入。
 def _dimension(value: object, allowed_refs: set[str], path: str) -> dict[str, Any]:
     dimension = _object(value, path)
     _keys(dimension, {"facts", "inferences", "missing_fields"}, path)
@@ -534,6 +632,11 @@ def _dimension(value: object, allowed_refs: set[str], path: str) -> dict[str, An
     }
 
 
+# 功能：收集本次输入允许引用的来源。
+# 输入：`analysis_input` 为L2 输入对象。
+# 输出：来源集合。
+# 逻辑：合并公司、邮件、联系人、业务记录及 matched 实验来源。
+# 约束：排除空字符串，不向后端请求额外数据。
 def _allowed_source_refs(analysis_input: Mapping[str, Any]) -> set[str]:
     refs = {str(analysis_input.get("company_id", ""))}
     refs.update(str(value) for value in analysis_input.get("member_dedupe_keys", []))
@@ -544,6 +647,7 @@ def _allowed_source_refs(analysis_input: Mapping[str, Any]) -> set[str]:
                 refs.add(str(contact["contact_email"]))
     business = analysis_input.get("business_context", {})
     if isinstance(business, Mapping):
+        refs.update(source_refs(business))
         customer = business.get("customer", {})
         if isinstance(customer, Mapping) and customer.get("customer_id"):
             refs.add(str(customer["customer_id"]))
@@ -559,6 +663,11 @@ def _allowed_source_refs(analysis_input: Mapping[str, Any]) -> set[str]:
     return refs
 
 
+# 功能：校验证据块。
+# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
+# 输出：证据字典。
+# 逻辑：核对 text/source_refs 并规范来源。
+# 约束：来源必须属于允许集合。
 def _evidence_block(value: object, allowed_refs: set[str], path: str) -> dict[str, Any]:
     block = _object(value, path)
     _keys(block, {"text", "source_refs"}, path)
@@ -568,6 +677,11 @@ def _evidence_block(value: object, allowed_refs: set[str], path: str) -> dict[st
     }
 
 
+# 功能：规范并核对引用列表。
+# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合；`path` 为错误定位路径。
+# 输出：引用字符串列表。
+# 逻辑：去除可确认的已知前缀，验证集合成员后稳定去重。
+# 约束：不存在的来源立即报错。
 def _source_refs(value: object, allowed: set[str], path: str) -> list[str]:
     refs = [
         _canonical_source_ref(_nonblank(ref, f"{path}[{index}]"), allowed)
@@ -579,6 +693,11 @@ def _source_refs(value: object, allowed: set[str], path: str) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
+# 功能：精简模型输入。
+# 输入：`analysis_input` 为L2 输入对象。
+# 输出：模型输入字典。
+# 逻辑：去除重复事实证据和缓存字段，保留独立业务补充资料。
+# 约束：不修改原 L2 或扩大来源范围。
 def _analysis_model_input(analysis_input: Mapping[str, Any]) -> dict[str, Any]:
     """移除仅供缓存和证据复核使用的重复字段，缩短 L3 模型输入。"""
     compact_facts: dict[str, list[dict[str, Any]]] = {}
@@ -614,12 +733,22 @@ def _analysis_model_input(analysis_input: Mapping[str, Any]) -> dict[str, Any]:
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
+# 功能：解析模型 JSON。
+# 输入：`raw_text` 为模型返回文本。
+# 输出：解析对象。
+# 逻辑：支持既有单层 JSON Markdown 围栏后交由 json.loads。
+# 约束：不修补非法 JSON。
 def _decode_model_json(raw_text: str) -> object:
     """接受 JSON Object，兼容模型偶发添加的单层 Markdown 代码围栏。"""
     match = _JSON_FENCE.fullmatch(raw_text)
     return json.loads(match.group(1) if match else raw_text)
 
 
+# 功能：规范可确认的引用前缀。
+# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合。
+# 输出：来源字符串。
+# 逻辑：先接受原字符串，再仅在去前缀精确命中允许集合时替换。
+# 约束：不模糊匹配或猜测主键。
 def _canonical_source_ref(value: str, allowed: set[str]) -> str:
     """仅在去掉模型常加的类型前缀后能精确命中来源时进行规范化。"""
     if value in allowed:
@@ -632,6 +761,11 @@ def _canonical_source_ref(value: str, allowed: set[str]) -> str:
     return value
 
 
+# 功能：检测不允许的成交概率表述。
+# 输入：`value` 为待检查值。
+# 输出：bool。
+# 逻辑：递归扫描字符串、Mapping 和数组。
+# 约束：保持原正则，不禁止普通业务百分比。
 def _contains_deal_probability(value: object) -> bool:
     if isinstance(value, str):
         return _DEAL_PROBABILITY_PATTERN.search(value) is not None
@@ -642,6 +776,11 @@ def _contains_deal_probability(value: object) -> bool:
     return False
 
 
+# 功能：将输入转为 L2 字典。
+# 输入：`value` 为待检查值。
+# 输出：dict。
+# 逻辑：可调用 to_dict 后要求 Mapping，复制顶层。
+# 约束：非对象抛 AnalysisValidationError。
 def _as_document(value: object) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
@@ -650,6 +789,11 @@ def _as_document(value: object) -> dict[str, Any]:
     return dict(value)
 
 
+# 功能：读取明确时区的构建时钟。
+# 输入：`clock` 为返回带时区 datetime 的时钟。
+# 输出：ISO 时间字符串。
+# 逻辑：调用 clock 并检查 datetime 时区。
+# 约束：无效时钟抛校验异常。
 def _clock_text(clock: Callable[[], datetime]) -> str:
     value = clock()
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
@@ -657,29 +801,54 @@ def _clock_text(clock: Callable[[], datetime]) -> str:
     return value.isoformat()
 
 
+# 功能：要求对象类型。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：Mapping。
+# 逻辑：检查 Mapping 后返回原对象。
+# 约束：错误以 path 定位并抛 AnalysisValidationError。
 def _object(value: object, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AnalysisValidationError(f"{path} 必须是对象。")
     return value
 
 
+# 功能：要求数组类型。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：list。
+# 逻辑：检查 list 后返回原数组。
+# 约束：错误以 path 定位并抛 AnalysisValidationError。
 def _array(value: object, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise AnalysisValidationError(f"{path} 必须是数组。")
     return value
 
 
+# 功能：核对精确字段集合。
+# 输入：`value` 为待检查值；`expected` 为要求的精确字段集合；`path` 为错误定位路径。
+# 输出：无返回值。
+# 逻辑：比较实际键和 expected。
+# 约束：缺失或多余键抛 AnalysisValidationError。
 def _keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
     if set(value) != expected:
         raise AnalysisValidationError(f"{path} 字段必须与契约完全一致。")
 
 
+# 功能：要求非空字符串。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：原字符串。
+# 逻辑：验证类型与去空白后非空，返回原文。
+# 约束：无效值抛 AnalysisValidationError。
 def _nonblank(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AnalysisValidationError(f"{path} 必须是非空字符串。")
     return value
 
 
+# 功能：核对非空枚举。
+# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合；`path` 为错误定位路径。
+# 输出：字符串。
+# 逻辑：验证字符串后检查 allowed 集合。
+# 约束：未知枚举抛 AnalysisValidationError。
 def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     text = _nonblank(value, path)
     if text not in allowed:
@@ -687,6 +856,11 @@ def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     return text
 
 
+# 功能：校验无重复字符串数组。
+# 输入：`value` 为待检查值；`path` 为错误定位路径。
+# 输出：字符串数组。
+# 逻辑：逐项验证非空字符串并比较去重大小。
+# 约束：重复值抛 AnalysisValidationError。
 def _strings(value: object, path: str) -> list[str]:
     items = _array(value, path)
     result = [_nonblank(item, f"{path}[{index}]") for index, item in enumerate(items)]

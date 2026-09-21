@@ -38,7 +38,7 @@
 - AgentViewSet.failed_extractions：返回失败抽取的去重键或单封邮件完整重做输入。
 - AgentViewSet.grouping：读取公司归组对象。
 - AgentViewSet.context：读取邮件与 CRM 业务上下文。
-- AgentViewSet.latest_analysis_input：查询当前 revision 最新 AnalysisInput。
+- AgentViewSet.latest_analysis_input：查询当前 revision 且实验来源仍有效的最新 AnalysisInput。
 - AgentViewSet.cached_analysis：查询分析缓存元数据。
 - AgentViewSet.save_analysis_input：保存 L2 快照。
 - AgentViewSet.save_analysis：保存 L3 分析。
@@ -566,17 +566,18 @@ class AgentViewSet(ViewSet):
         check_version(expected(request), company.revision)
         return versioned(selectors.context_pair(company)[1], company.revision)
 
-    # 功能：查询当前 revision 最新 AnalysisInput。
+    # 功能：查询当前 revision 且实验来源仍有效的最新 AnalysisInput。
     # 输入：`request`.query_params.company_id。
     # 输出：原样快照及 ETag；尚无当前快照返回 404。
-    # 逻辑：排除已被业务变化淘汰的快照。
+    # 逻辑：排除业务血缘失效或实验来源变化的快照。
     # 约束：不把旧快照冒充详情页当前输入。
     @extend_schema(responses=AnalysisInputSerializer, tags=["agent"], parameters=[OpenApiParameter("company_id", str, required=True)])
     @action(detail=False, methods=["get"], url_path="latest-analysis-input")
     def latest_analysis_input(self, request):
         company = company_for(request.user, request.query_params.get("company_id"))
-        snapshot = company.inputs.filter(revision=company.revision).order_by("-id").first()
-        if snapshot is None:
+        snapshot = company.inputs.filter(revision=company.revision, invalidation__isnull=True).order_by("-id").first()
+        from .enrichment import snapshot_current
+        if snapshot is None or not snapshot_current(snapshot, company):
             raise NotFound("当前上下文尚未归并。")
         return versioned(snapshot.payload, company.revision)
 
