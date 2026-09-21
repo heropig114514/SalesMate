@@ -1,5 +1,5 @@
 """职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：实验模式免登录并开放跨账号业务；OAuth 凭据领取保留机器认证；Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
+实现：实验模式免登录并开放跨账号业务；OAuth 凭据领取保留机器认证；Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队且详情附兼容状态；邮箱连接列表仅限当前 owner；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
 关联：sync_scope 要求 Gmail/QQ 同步范围；urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
 目录：
 - AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
@@ -244,22 +244,24 @@ class CompanyViewSet(ViewSet):
 
     # 功能：返回客户工作区全部展示数据。
     # 输入：`request` 为当前会话；`pk` 为公司 UUID。
-    # 输出：列表摘要、分组、邮件、上下文、分析和评分。
+    # 输出：列表摘要、分组、邮件、上下文、分析、评分及事实升级状态。
     # 逻辑：公司行锁保证本次多表读取的一致性，GET 本身不创建任务。
     # 约束：页面打开后的分析触发通过独立 POST 执行。
     @extend_schema(operation_id="companies_retrieve", responses=OBJECT, tags=["companies"])
     @transaction.atomic
     def retrieve(self, request, pk=None):
         company = company_for(request.user, pk, lock=True)
+        from .extraction_upgrades import upgrade_summary
         grouping, context = selectors.context_pair(company)
         analysis, score = selectors.latest_result(company)
         return versioned({**selectors.company_row(company), "grouping": grouping, "context": context,
-                          "analysis": analysis.payload if analysis else None, "score_detail": score.payload if score else None}, company.revision)
+                          "analysis": analysis.payload if analysis else None, "score_detail": score.payload if score else None,
+                          "extraction_upgrade": upgrade_summary(company)}, company.revision)
 
     # 功能：显式请求公司分析。
     # 输入：`request` 为已登录用户；`pk` 为公司 UUID。
     # 输出：任务 ID、provider 和当前任务状态。
-    # 逻辑：按访问模式取得公司并入队；规则处理使用公司原 owner，保证跨账号触发不会改变任务归属。
+    # 逻辑：按共享事实契约预检后入队；不兼容时提示网页与工具升级入口，规则处理保留公司原 owner。
     # 约束：失败不会返回伪成功；agent 模式只入队。
     @extend_schema(request=None, responses=OBJECT, tags=["companies"])
     @action(detail=True, methods=["post"])
@@ -270,7 +272,7 @@ class CompanyViewSet(ViewSet):
                 raise InvalidState("没有已确认业务邮件，不能生成客户画像。")
             from .extraction_upgrades import upgrade_summary
             if settings.ANALYSIS_PROVIDER == "agent" and upgrade_summary(company)["incompatible_emails"]:
-                raise InvalidState("客户含旧版邮件事实，请先通过 extraction-upgrade 接口显式升级后再分析。")
+                raise InvalidState("客户含不兼容的旧版邮件事实，请点击“升级邮件事实”，或调用 customers.upgrade_extractions / extraction-upgrade 接口后再分析。")
             job = jobs.enqueue(company, "customer_detail_opened")
         process_if_rules(company.owner, company.pk)
         job.refresh_from_db()
@@ -336,12 +338,12 @@ class MailboxViewSet(ViewSet):
     # 功能：列出当前用户邮箱。
     # 输入：`request` 提供会话用户。
     # 输出：邮箱 ID、地址及 SyncState 数组。
-    # 逻辑：正式模式只查询 owner，实验模式列出所有邮箱元数据。
+    # 逻辑：邮箱连接始终只查询当前 owner，避免把实验共享邮箱显示为自己的连接。
     # 约束：不返回任何授权令牌。
     @extend_schema(responses=MailboxResponseSerializer(many=True), tags=["mailboxes"])
     def list(self, request):
         mailboxes = Mailbox.objects.select_related("gmail_credential").filter(
-            owner_scope(request.user)
+            owner=request.user
         )
         return Response([gmail_oauth.mailbox_status(item) for item in mailboxes])
 

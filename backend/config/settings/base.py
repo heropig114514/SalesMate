@@ -6,6 +6,7 @@
 - 无
 
 变量索引：
+- WORKSPACE_OWNER_ONLY：显式恢复个人空间，优先禁止匿名实验访问、团队与实验批次共享。
 - LAB_OPEN_ACCESS：显式启用所有业务 API 免登录和跨账号实验访问，默认关闭。
 - LAB_DEFAULT_USER：匿名实验写入的归属及审计账号名。
 - BASE_DIR：软件根目录 backend，作为前端、契约、静态文件和媒体路径基准。
@@ -67,7 +68,8 @@ if not SECRET_KEY.strip():
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a non-empty secret.")
 
 DEBUG = False
-LAB_OPEN_ACCESS = env.bool("LAB_OPEN_ACCESS", default=False)
+WORKSPACE_OWNER_ONLY = env.bool("WORKSPACE_OWNER_ONLY", default=False)
+LAB_OPEN_ACCESS = env.bool("LAB_OPEN_ACCESS", default=False) and not WORKSPACE_OWNER_ONLY
 LAB_DEFAULT_USER = env.str("LAB_DEFAULT_USER", default="algorithm-lab")
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])

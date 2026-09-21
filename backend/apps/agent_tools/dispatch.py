@@ -1,5 +1,5 @@
 """职责：将已授权工具绑定到现有业务处理器。
-实现：实验模式知识条目跨账号读取；使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
+实现：工具支持事实升级预览及显式排队；实验模式知识条目跨账号读取；使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
 关联：services 完成工具认证与输入验证后调用；这里不触发 DRF 二次认证、不构造网络回环。
 目录：
 - request_context：建立限定业务上下文。
@@ -41,7 +41,7 @@ def request_context(actor, query=None, data=None, revision=None):
 # 功能：执行业务适配。
 # 输入：`actor`、`spec` 白名单声明、`args` 校验后参数、`key` 可选幂等 UUID。
 # 输出：既有 Response。
-# 逻辑：实验模式知识查询覆盖所有账号；其余按固定 kind 分派到业务视图，输入和返回值保持原契约。
+# 逻辑：实验模式知识查询覆盖所有账号；事实升级固定 GET/POST 方法，其余按 kind 分派到业务视图。
 # 约束：调用前必须由 services 认证与校验；不分派任意路径、任意方法或动作批准。
 def execute(actor, spec, args, key=None):
     kind = spec["kind"]
@@ -74,6 +74,9 @@ def execute(actor, spec, args, key=None):
         return sales.DirectoryView().post(request)
     if kind == "customer_context":
         return crm.CompanyViewSet().retrieve(request, args["company_id"])
+    if kind in {"extraction_status", "upgrade_extractions"}:
+        request.method = "GET" if kind == "extraction_status" else "POST"
+        return crm.CompanyViewSet().extraction_upgrade(request, args["company_id"])
     if kind == "analyze":
         return crm.CompanyViewSet().analyze(request, args["company_id"])
     if kind == "register":

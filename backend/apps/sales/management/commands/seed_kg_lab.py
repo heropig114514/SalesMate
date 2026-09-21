@@ -1,5 +1,5 @@
 """职责：生成可精确撤销的百级业务夹具，供 KG 建模和页面联调。
-实现：明确批次、固定事件时间、事务写入、主键清单及内容指纹；验证和删除拒绝漂移及外部引用。
+实现：合成来源与实际事实结构分别标注；明确批次、固定事件时间、事务写入、主键清单及内容指纹；验证和删除拒绝漂移及外部引用。
 关联：复用现有 ORM、规则抽取和只读投影；common.fixture_integrity 与实验共享统一行指纹；不调用外部服务或入队 Worker，不修改既有记录。
 目录：
 - attachment_path：限定附件文件位于批次目录。
@@ -208,7 +208,7 @@ class FixtureBuilder:
     # 功能：创建三封合成邮件及两代可追溯分析。
     # 输入：`index` 场景号、`scene` 客户业务对象字典。
     # 输出：扩展 scene，保存 mailbox、emails、snapshots。
-    # 逻辑：使用现有规则提取和模板，仅标注 synthetic provider；旧快照失效，新快照保留。
+    # 逻辑：使用现有规则提取和模板，分别保存实际事实结构版本和合成来源；旧快照失效，新快照保留。
     # 约束：无 LLM 调用，评分值为未知且版本隔离；不把模拟关系当作真实 Agent 执行记录。
     def mail_and_analysis(self, index, scene):
         company, contact = scene["company"], scene["contact"]
@@ -224,6 +224,7 @@ class FixtureBuilder:
                                           message_id=f"{self.batch}-{index}-{step}",
                                           sent_at=(self.time - timedelta(days=12 - step * 3, minutes=index)).isoformat())
             payload["synthetic_batch"] = self.batch
+            payload["extract_schema_version"] = payload["extract_prompt_version"]
             payload["extract_prompt_version"] = f"{self.batch}:fixture-extract-v1"
             email = self.add("crm.Email", mailbox=mailbox, company=company, contact=contact, payload=payload,
                              dedupe_key=payload["dedupe_key"], sent_at=payload["sent_at"], received_at=payload["received_at"],

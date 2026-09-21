@@ -1,5 +1,5 @@
 """职责：向已授权公司分析提供共享实验资料并判定快照是否仍有效。
-实现：复用实验清单投影，在后端一次完成唯一精确匹配、指纹与来源归档。
+实现：个人隔离不读取共享实验资料；复用实验清单投影，在后端一次完成唯一精确匹配、指纹与来源归档。
 关联：selectors 提供上下文，results 保存时重读，Agent 原样归并；不依赖额外 Tool 凭证。
 目录：
 - resolve：解析当前公司对应的获准实验资料。
@@ -13,6 +13,7 @@ import logging
 from django.db import connection, transaction
 from rest_framework.exceptions import NotFound
 
+from common.laboratory import owner_only
 from apps.sales import experiments
 from integrations.company_enrichment import digest
 from .access import Conflict
@@ -23,7 +24,7 @@ logger = logging.getLogger("salesmate.enrichment")
 # 功能：解析当前公司对应的获准实验资料。
 # 输入：`company` 为调用者已授权读取的 Company。
 # 输出：含 status、match_basis、source、facts、enrichment_version 的独立对象。
-# 逻辑：独立读取在只读重复读事务中核验清单；完整域名优先，受标记限制的全名次之，候选不唯一返回 ambiguous。
+# 逻辑：个人隔离不读取共享资料，返回无匹配；独立读取在只读重复读事务中核验清单；完整域名优先，受标记限制的全名次之，候选不唯一返回 ambiguous。
 # 约束：只读批准清单；批次缺失或完整性失败显式 unavailable 并记录原因，普通无匹配返回 not_found；不修改 CRM。
 @transaction.atomic
 def resolve(company):
@@ -32,7 +33,7 @@ def resolve(company):
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
     rows = []
     failure = None
-    for batch in experiments.APPROVED_BATCHES:
+    for batch in (() if owner_only() else experiments.APPROVED_BATCHES):
         try:
             rows.extend(experiments.table_rows(experiments.load_batch(batch), "crm.Company"))
         except (NotFound, Conflict) as error:

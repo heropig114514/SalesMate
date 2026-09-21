@@ -1,7 +1,8 @@
 """职责：集中控制实验环境的免登录身份与跨账号业务访问。
-实现：显式开关开启时使用会话、已有令牌或公开身份选择头，匿名请求归入独立实验账号。
+实现：个人空间隔离优先于实验开关；显式开关开启时使用会话、已有令牌或公开身份选择头，匿名请求归入独立实验账号。
 关联：Session、Agent、Tool 认证和业务 scope 共用；关闭开关恢复各入口原鉴权。
 目录：
+- owner_only：读取个人空间隔离策略。
 - enabled：读取实验模式开关。
 - identity：解析无需证明身份的实验操作者。
 - owner_scope：按当前模式构造业务归属查询。
@@ -28,13 +29,22 @@ from rest_framework.exceptions import NotFound
 logger = logging.getLogger("salesmate.laboratory")
 
 
+# 功能：读取个人空间隔离策略。
+# 输入：无外部参数，读取 Django settings。
+# 输出：bool。
+# 逻辑：显式启用时关闭跨账号实验和团队共享。
+# 约束：仅提供策略，不自行读取业务记录。
+def owner_only():
+    return getattr(settings, "WORKSPACE_OWNER_ONLY", False)
+
+
 # 功能：读取实验模式开关。
 # 输入：无外部参数，读取 Django settings。
 # 输出：bool。
-# 逻辑：默认关闭，仅显式配置开启。
+# 逻辑：默认关闭；个人空间隔离开启时，即便遗留实验开关为真也不会开放。
 # 约束：不依赖 DEBUG，不连接数据库。
 def enabled():
-    return getattr(settings, "LAB_OPEN_ACCESS", False)
+    return not owner_only() and getattr(settings, "LAB_OPEN_ACCESS", False)
 
 
 # 功能：解析无需证明身份的实验操作者。

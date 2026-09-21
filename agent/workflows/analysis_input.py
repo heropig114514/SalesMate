@@ -1,5 +1,5 @@
 """职责：构建 L2 邮件事实与独立公司补充资料。
-实现：保持原有 L1/L4 规则，资料经后端核验后独立传递，人数优先 CRM。
+实现：合成来源与事实结构分别识别，事实字段校验保持严格；保持原有 L1/L4 规则，资料经后端核验后独立传递，人数优先 CRM。
 关联：后端公司上下文、共享 enrichment 契约与分析编排；不新增授权令牌。
 目录：
 - Metrics：存储确定性邮件指标。
@@ -72,6 +72,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Callable, Mapping
 
+from integrations.extraction_contract import compatible_extraction
 from agent.clients.backend_api import BackendClient
 from agent.skills import load_skill
 from integrations.company_enrichment import input_version as enrichment_input_version
@@ -508,7 +509,7 @@ def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any
 # 功能：核对 L1 邮件封装。
 # 输入：`raw` 为待校验原始值；`index` 为邮件索引。
 # 输出：邮件字典。
-# 逻辑：检查天然键、方向、抽取版本与状态、时间和对应 facts。
+# 逻辑：检查天然键、方向、声明的事实结构与状态、时间和对应 facts；合成来源版本原样保留。
 # 约束：非 completed 邮件不能带事实；非法结构抛 ValueError。
 def _validate_email(raw: object, index: int) -> dict[str, Any]:
     email = _mapping(raw, f"emails[{index}]")
@@ -522,7 +523,7 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
     if status not in EXTRACT_STATUSES:
         raise ValueError(f"emails[{index}].extract_status 无效。")
     extract_version = email.get("extract_prompt_version")
-    if extract_version != EXTRACT_PROMPT_VERSION:
+    if not compatible_extraction(email, EXTRACT_PROMPT_VERSION):
         raise ValueError(f"emails[{index}] 不是受支持的 L1 结构。")
 
     sent_at = email.get("sent_at")

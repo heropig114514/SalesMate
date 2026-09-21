@@ -1,5 +1,5 @@
 """职责：向所有有效登录账号提供已批准虚构批次的跨账号数据视图与可写能力说明。
-实现：模型白名单与精确清单主键限制读取；正式模式同时核验当前指纹，实验模式返回现存记录；保留归属与外键，提供分页、导出和附件。
+实现：个人空间隔离时停用共享批次入口；模型白名单与精确清单主键限制读取；正式模式同时核验当前指纹，实验模式返回现存记录；保留归属与外键，提供分页、导出和附件。
 关联：seed_kg_lab 建立清单，experiment_writes 原子维护；网页和 agent_tools 复用校验，普通业务权限保持原样。
 目录：
 - load_batch：定位获准且未清理的完整批次。
@@ -41,7 +41,7 @@ from rest_framework.views import APIView
 
 from apps.crm.access import Conflict
 from common.fixture_integrity import fingerprint
-from common.laboratory import enabled
+from common.laboratory import enabled, owner_only
 from .models import AuditEvent
 
 APPROVED_BATCHES = ("KGSEED_20260921_01",)
@@ -102,10 +102,10 @@ logger = logging.getLogger("salesmate.experiments")
 # 功能：定位获准且未清理的完整批次。
 # 输入：`batch` 完整批次名称。
 # 输出：保存当前清单及原始身份的 AuditEvent；未开放返回 404，清单异常返回 409。
-# 逻辑：只读取固定事件及精确名称，核对生成器、来源、归属和清理状态。
+# 逻辑：个人空间隔离时拒绝共享批次；其余只读取固定事件及名称并核验清单。
 # 约束：不按名称前缀推断合成身份，不扩大到其他账号的非清单记录。
 def load_batch(batch):
-    if batch not in APPROVED_BATCHES:
+    if owner_only() or batch not in APPROVED_BATCHES:
         raise NotFound("实验批次未开放。")
     entries = list(AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id=batch).select_related("owner")[:2])
     if not entries:
@@ -233,7 +233,7 @@ class ExperimentView(APIView):
     # 功能：分派目录、分页、完整导出和文件下载。
     # 输入：`request` 当前登录请求，`batch` 可选批次，`label` 可选模型，`pk` 可选文件主键。
     # 输出：含 write 字段契约的 JSON 目录/分页、JSON 下载或附件；无权限及漂移使用明确错误。
-    # 逻辑：REPEATABLE READ 保证一次多表导出的一致性；筛选只作用于已验证的清单投影。
+    # 逻辑：个人隔离返回空批次目录，详情仍由 load_batch 拒绝；多表导出使用一致快照。
     # 约束：仅 PostgreSQL；不写业务表，查询日志不含正文、密码或令牌。
     @extend_schema(operation_id="experiments_table", responses=OpenApiTypes.OBJECT, tags=["experiments"],
                    parameters=[OpenApiParameter(name, str) for name in ("q", "owner", "pk", "page", "page_size")])
@@ -246,7 +246,7 @@ class ExperimentView(APIView):
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             if batch is None:
                 existing = set(AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id__in=APPROVED_BATCHES).values_list("object_id", flat=True))
-                response = Response({"batches": [batch_summary(load_batch(value)) for value in APPROVED_BATCHES if value in existing]})
+                response = Response({"batches": [batch_summary(load_batch(value)) for value in APPROVED_BATCHES if value in existing and not owner_only()]})
             else:
                 entry = load_batch(batch)
                 if pk is not None:

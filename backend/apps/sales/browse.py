@@ -1,5 +1,5 @@
 """职责：在现有销售页面合并展示原授权业务与获准共享的实验记录。
-实现：先校验精确批次清单，普通查询排除同批主键后分页合并；共享行直接投影校验结果。
+实现：个人空间隔离时不合并实验批次；先校验精确批次清单，普通查询排除同批主键后分页合并；共享行直接投影校验结果。
 关联：business.js 使用本只读入口；原 views、permissions 及写接口不扩权；experiments 提供完整来源详情。
 目录：
 - shared_records：加载并投影指定业务资源的获准实验行。
@@ -27,6 +27,7 @@ from rest_framework.response import Response
 
 from apps.crm.models import Company
 from . import grouping, models
+from common.laboratory import owner_only
 from .experiments import APPROVED_BATCHES, TABLES, load_batch, table_rows
 from .permissions import scope, visible_company_ids
 from .serializers import SERIALIZERS
@@ -40,9 +41,11 @@ logger = logging.getLogger("salesmate.sales.browse")
 # 功能：读取业务页面对应的合成记录。
 # 输入：`resource` 为 RESOURCES 中的业务资源键。
 # 输出：带 id、experiment 元数据及业务字段的列表。
-# 逻辑：逐批校验原行，关系字段转换为界面字段名；客户联系人和归档设置也仅取同清单记录。
+# 逻辑：个人隔离时没有共享行；其余逐批校验原行，关系字段转换为界面字段名；客户联系人和归档设置也仅取同清单记录。
 # 约束：不调用含反向关系的业务序列化器处理共享行，避免顺带读取清单外明细或联系人。
 def shared_records(resource):
+    if owner_only():
+        return []
     label = RESOURCES[resource]
     existing = models.AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id__in=APPROVED_BATCHES).values_list("object_id", flat=True)
     result = []
