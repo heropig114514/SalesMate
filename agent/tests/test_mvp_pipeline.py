@@ -20,6 +20,8 @@
 - AnalysisAndScoreTests.test_l2_contains_company_and_business_context：Verify l2 contains company and business context。
 - AnalysisAndScoreTests.test_l3_generates_three_profile_and_four_analysis_dimensions：验证当前 L3 版本、三个画像和四个分析维度。
 - AnalysisAndScoreTests.test_l3_provider_sends_compact_skill_input：Verify l3 provider sends compact skill input。
+- AnalysisAndScoreTests.test_l3_provider_compacts_company_enrichment_metadata：验证模型输入排除补充资料维护元数据。
+- AnalysisAndScoreTests.test_l3_provider_compacts_unavailable_enrichment：验证不可用补充资料只传递状态和原因。
 - AnalysisAndScoreTests.test_l3_accepts_single_json_code_fence_without_model_retry：Verify l3 accepts single json code fence without model retry。
 - AnalysisAndScoreTests.test_l3_derives_size_source_from_backend_context：Verify l3 derives size source from backend context。
 - AnalysisAndScoreTests.test_l3_normalizes_and_validates_conflict_fields_before_submission：Verify l3 normalizes and validates conflict fields before submission。
@@ -375,6 +377,77 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertTrue(system_prompt)
         self.assertEqual(generate.call_args.kwargs["max_tokens"], 4000)
         self.assertEqual(ANALYSIS_PROMPT_VERSION, "analysis-v4")
+
+    # 功能：验证 L3 模型只接收公司补充资料中的业务事实和可引用标识。
+    # 输入：在固定 L2 上加入包含后端校验元数据的 matched 补充对象。
+    # 输出：模型输入保留事实、来源 ID 和虚构标记，但不包含 owner、指纹、批次及版本。
+    # 逻辑：调用默认 provider 的提示构建边界并解析发送的 ANALYSIS_INPUT。
+    # 约束：完整补充对象仍留在原 L2 中，本测试不连接外部模型。
+    @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
+    def test_l3_provider_compacts_company_enrichment_metadata(self, generate):
+        enriched = copy.deepcopy(self.input)
+        enriched["business_context"]["company_enrichment"] = {
+            "status": "matched",
+            "match_basis": "exact_domain",
+            "source": {
+                "source_id": "experiment:batch:crm.Company:company-1",
+                "batch": "batch",
+                "model": "crm.Company",
+                "record_pk": "company-1",
+                "synthetic": True,
+                "owner": {"id": 8, "username": "fixture-owner"},
+                "fingerprint": "private-integrity-value",
+            },
+            "facts": {"employee_count": 81, "industry": "精密量测"},
+            "enrichment_version": "sha256:internal-version",
+        }
+
+        bailian_analysis_provider(enriched)
+
+        user_text = generate.call_args.args[1]
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        self.assertEqual(
+            model_input["business_context"]["company_enrichment"],
+            {
+                "status": "matched",
+                "facts": {"employee_count": 81, "industry": "精密量测"},
+                "source": {
+                    "source_id": "experiment:batch:crm.Company:company-1",
+                    "synthetic": True,
+                },
+            },
+        )
+        self.assertIn("experiment:batch:crm.Company:company-1", user_text)
+        self.assertEqual(
+            enriched["business_context"]["company_enrichment"]["source"]["owner"],
+            {"id": 8, "username": "fixture-owner"},
+        )
+
+    # 功能：验证不可用补充资料不会把内部完整性信息发送给模型。
+    # 输入：在固定 L2 上加入 unavailable 补充对象及空事实。
+    # 输出：模型输入仅保留状态和公开失败原因。
+    # 逻辑：调用默认 provider 并检查精简后的 ANALYSIS_INPUT。
+    # 约束：不把 unavailable 状态解释成客户事实。
+    @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
+    def test_l3_provider_compacts_unavailable_enrichment(self, generate):
+        enriched = copy.deepcopy(self.input)
+        enriched["business_context"]["company_enrichment"] = {
+            "status": "unavailable",
+            "match_basis": None,
+            "source": None,
+            "facts": {},
+            "reason": "integrity_error",
+            "enrichment_version": "sha256:internal-version",
+        }
+
+        bailian_analysis_provider(enriched)
+
+        user_text = generate.call_args.args[1]
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        self.assertEqual(
+            model_input["business_context"]["company_enrichment"],
+            {"status": "unavailable", "reason": "integrity_error"},
+        )
 
     # 功能：Verify l3 accepts single json code fence without model retry。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。

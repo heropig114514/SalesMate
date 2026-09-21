@@ -18,6 +18,7 @@
 - _evidence_block：校验证据块。
 - _source_refs：规范并核对引用列表。
 - _analysis_model_input：精简模型输入。
+- _analysis_business_context：移除仅供后端校验的补充资料元数据。
 - _decode_model_json：解析模型 JSON。
 - _canonical_source_ref：规范可确认的引用前缀。
 - _contains_deal_probability：检测不允许的成交概率表述。
@@ -52,6 +53,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -722,12 +724,46 @@ def _analysis_model_input(analysis_input: Mapping[str, Any]) -> dict[str, Any]:
         "company_id": analysis_input.get("company_id"),
         "built_at": analysis_input.get("built_at"),
         "company": analysis_input.get("company", {}),
-        "business_context": analysis_input.get("business_context", {}),
+        "business_context": _analysis_business_context(
+            analysis_input.get("business_context", {})
+        ),
         "latest_message_summary": analysis_input.get("latest_message_summary"),
         "unparsed_message_count": analysis_input.get("unparsed_message_count", 0),
         "facts": compact_facts,
         "metrics": analysis_input.get("metrics", {}),
     }
+
+
+# 功能：移除仅供后端校验的补充资料元数据。
+# 输入：`value` 为 L2 business_context。
+# 输出：适合发送给 L3 模型的独立业务上下文。
+# 逻辑：保留原业务集合；matched 补充资料仅暴露事实、独立来源 ID 和虚构标记，其他状态仅暴露状态及失败原因。
+# 约束：完整来源、指纹与版本仍保留在 L2 快照中；不改变引用白名单或后端保存载荷。
+def _analysis_business_context(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    compact = copy.deepcopy(dict(value))
+    enrichment = value.get("company_enrichment")
+    if not isinstance(enrichment, Mapping):
+        return compact
+
+    status = enrichment.get("status")
+    compact_enrichment: dict[str, Any] = {"status": status}
+    if status == "matched":
+        facts = enrichment.get("facts")
+        source = enrichment.get("source")
+        compact_enrichment["facts"] = (
+            copy.deepcopy(dict(facts)) if isinstance(facts, Mapping) else {}
+        )
+        if isinstance(source, Mapping):
+            compact_enrichment["source"] = {
+                "source_id": source.get("source_id"),
+                "synthetic": source.get("synthetic") is True,
+            }
+    elif isinstance(enrichment.get("reason"), str):
+        compact_enrichment["reason"] = enrichment["reason"]
+    compact["company_enrichment"] = compact_enrichment
+    return compact
 
 
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.IGNORECASE | re.DOTALL)

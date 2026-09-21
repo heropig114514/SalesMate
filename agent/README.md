@@ -865,4 +865,4 @@ python -m unittest agent.tests.test_mvp_pipeline
 
 ## 公司实验资料补充
 
-L2 直接复制后端 CompanyContext.company_enrichment，并将完整补充对象纳入 input_version；无需新增 Tool 凭证、分页检索或在 Agent 重做实体匹配。L3 的 `analysis-v4` 支持该快照登记的实验来源，CRM 人数优先，缺失时使用实验人数并标注 `synthetic_sample`。L1/L4 和模型预算不变。详见 [后端对接契约](../backend/docs/company-enrichment.md)。
+L2 直接复制后端 CompanyContext.company_enrichment，并将完整补充对象纳入 input_version；无需新增 Tool 凭证、分页检索或在 Agent 重做实体匹配。L3 的 `analysis-v4` 支持该快照登记的实验来源，CRM 人数优先，缺失时使用实验人数并标注 `synthetic_sample`。发送给模型时只保留补充事实、`source_id`、虚构标记及必要状态，不发送 owner、指纹、批次和版本等后端维护元数据。L1/L4 和模型预算不变。详见 [后端对接契约](../backend/docs/company-enrichment.md)。
