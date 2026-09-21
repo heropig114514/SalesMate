@@ -1,6 +1,6 @@
 /**
  * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
- * 实现：URL 保存客户身份；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
+ * 实现：URL 保存客户身份及共享实验上下文；实验客户使用只读来源入口；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
@@ -26,11 +26,11 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：展示工作台、全球洞察、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：客户仅传递到业务相关链接。 */
+ * 逻辑：展示工作台、全球洞察、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
   if (profile) {
     profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button>`;
@@ -58,8 +58,8 @@ export function mountWorkspace(active = 'home') {
   }
 }
 
-/** 功能：同步客户上下文和跨模块操作。输入：company 为 id/name 对象或 null，active 为页面。
- * 输出：无。逻辑：业务页生成当前客户的操作入口；邮件与分析页不显示重复客户导航；清除入口明确返回全量目录。
+/** 功能：同步客户上下文和跨模块操作。输入：company 为 id/name 及可选 experiment 来源对象或 null，active 为页面。
+ * 输出：无。逻辑：业务页生成客户导航，实验客户的邮件入口替换为来源与关联；清除入口返回全量目录。
  * 约束：不把客户保存到 localStorage，不通过导航修改业务数据。 */
 export function setWorkspaceContext(company, active = activePage) {
   context = company;
@@ -68,7 +68,7 @@ export function setWorkspaceContext(company, active = activePage) {
   const panel = document.getElementById('workspace-context');
   panel.hidden = !company || active === 'inbox';
   if (panel.hidden) { panel.innerHTML = ''; return; }
-  panel.innerHTML = h`<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a><a href="/#company/${encodeURIComponent(company.id)}">邮件与分析</a><a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
+  panel.innerHTML = h`<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a>${company.experiment ? `<a href="/experiments/#${new URLSearchParams({ table: "crm.Company", pk: company.id })}">${language === "en" ? "Synthetic sources" : "实验来源与关联"}</a>` : `<a href="/#company/${encodeURIComponent(company.id)}">${t("邮件与分析")}</a>`}<a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
 }
 
 /** 功能：更新首页待办摘要。输入：无，读取当前登录身份。输出：无。

@@ -1864,6 +1864,62 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/sales/browse/{resource}/:
+    get:
+      operationId: sales_browse
+      parameters:
+      - in: query
+        name: archived
+        schema:
+          type: string
+      - in: query
+        name: company
+        schema:
+          type: string
+      - in: query
+        name: page
+        schema:
+          type: string
+      - in: query
+        name: page_size
+        schema:
+          type: string
+      - in: path
+        name: resource
+        schema:
+          type: string
+        required: true
+      - in: query
+        name: status
+        schema:
+          type: string
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/browse/overview/:
+    get:
+      operationId: sales_browse_overview
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/sales/calendar/{operation}/:
     get:
       operationId: v1_sales_calendar_retrieve

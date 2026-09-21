@@ -1,6 +1,6 @@
 # KG 实验数据共享
 
-实验站点的顶栏「实验数据」进入 `/experiments/`。所有有效登录账号均可跨账号读取 **KGSEED_20260921_01** 批次的 44 张表、6,000 条虚构记录。无需把账号加入某个团队，也不需要管理员权限。
+所有有效登录账号均可跨账号读取 **KGSEED_20260921_01** 批次的 44 张表、6,000 条虚构记录。现有「客户、商机、报价、订单、工单」等销售列表直接合并显示对应实验行，标注“虚构实验 · 只读 · 归属”。顶部「实验数据」仍可进入 `/experiments/` 浏览全部 44 表及血缘。无需加入团队，也不需要管理员权限。
 
 网页、内置聊天 Agent、工具 API 与 MCP 共同使用同一份批次清单。原客户工作台和业务写入继续使用既有授权范围；共享不转移 `owner`，不赋予模型重分析、发送、审批、修改或删除权限。个人资料表的 100 个禁用测试账号也是虚构数据的一部分，密码等登录字段不会返回。
 
@@ -11,6 +11,10 @@
 3. 「查看详情」展示完整允许字段、原始主键、归属、批次、只读和虚构标记。外键链接可继续查看关联记录。
 4. 「快照来源血缘」可追踪分析输入到邮件与抽取；「AI 回答生成记录」「回答引用证据」「工具读取证据」可查看回答证据链。
 5. 「下载完整 JSON」返回全部表的记录、字段结构和场景关联清单。二进制文档在 JSON 中保留大小与摘要，实际内容使用详情中的「下载文件」入口取得。
+
+在现有销售列表中，普通业务记录和实验记录按主键去重、统一分页。点击实验记录打开只读详情，不显示编辑、审批或发送操作；选中实验客户时不显示新建业务按钮，写表单的候选客户仍来自原业务权限范围。客户上下文中的私人邮件入口改为实验来源入口。计数卡包含共享实验并单独注明数量；金额沿用原业务权限范围，不加入额外共享的模拟交易。
+
+页面合并读取使用 Session 认证的 `GET /api/v1/sales/browse/{resource}/` 和 `GET /api/v1/sales/browse/overview/`。列表支持 `company`、`status`、`archived`、`page`、`page_size`，默认 20 条、最多 100 条；仅接受 GET/HEAD/OPTIONS。原 `sales/directory/`、`sales/records/`、客户私有详情和写接口保持原授权契约。普通记录先显示，共享实验随后显示，拥有者或团队原已可见的同批记录不会重复；共享详情只展开清单内的联系人、设置和字段，不带出后来关联的普通私有记录。
 
 分析、评分和向量沿用原夹具值。它们是模拟记录，不能当作真实模型推理、语义嵌入或模型质量评测结果。
 
@@ -74,6 +78,7 @@ MCP 使用已有 stdio 桥接，无需新增公网端口。安装 `integrations/
 ```sh
 python manage.py test tests.integration.test_experiments tests.integration.test_sales tests.integration.test_crm --noinput
 python manage.py test tests.integration.test_experiment_tools tests.integration.test_chat_tools --noinput
+python manage.py test tests.integration.test_business_browse --noinput
 python manage.py test tests.contracts.test_schema --noinput
 python tools/check_docs.py
 ```

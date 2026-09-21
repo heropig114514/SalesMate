@@ -1,20 +1,20 @@
 /**
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
- * 实现：读取后端字段契约渲染表单，写请求携带版本；外部动作先展示冻结内容再单独确认。
+ * 实现：合并浏览原授权业务与获准实验行，实验详情只读并标记原归属；写入仍使用原字段契约和权限。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
- * syncBusinessContext、loadPage、renderRows、renderStats、boot。
+ * syncBusinessContext、loadPage、experimentLabel、experimentDetail、renderRows、renderStats、boot。
  * 变量索引：$ 为 DOM 查询；labels 为字段界面名；states 为状态界面名；
- * metadata 为资源契约，companies 为授权目录，user 为当前身份，current 为路由，page 为页码，
+ * metadata 为资源契约，companies 为原业务表单目录，browseCompanies 为含共享实验的筛选目录，BROWSE_RESOURCES 为合并浏览资源白名单，user 为当前身份，current 为路由，page 为页码，
  * qqEnabled 为服务端 QQ 能力开关，generation 为异步加载代次，relations 为当前已读关系名称缓存。
  */
-import { t, h, locale } from './i18n.js?v=20260921-product';
+import { t, h, locale, language } from './i18n.js?v=20260921-product';
 
 import { request, escapeHtml as esc } from "./api.js?v=20260921-product";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260921-markdown";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260921-shared-browse";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js?v=20260921-product";
 
 const $ = (id) => document.getElementById(id);
@@ -127,12 +127,14 @@ const states = {
 };
 let metadata = {},
   companies = [],
+  browseCompanies = [],
   user = null,
   qqEnabled = false,
   current = "directory",
   page = 1,
   generation = 0;
 const relations = new Map();
+const BROWSE_RESOURCES = new Set(["directory", "audit", "customers", "aliases", "contact-profiles", "teams", "memberships", "grants", "products", "tickets", "opportunities", "quotes", "quote-lines", "orders", "order-lines", "follow-ups", "conversations", "messages", "drafts", "actions", "files", "notifications"]);
 
 /** 功能：给授权记录选择可辨识的业务名称。输入：row 记录。
  * 输出：纯文本名称。逻辑：客户未命名时使用已有域名或联系人，草稿显示主题或内容摘要。
@@ -167,7 +169,7 @@ function label(name) {
 }
 
 /** 功能：将值转换为可读文本。输入：value、可选 key。
- * 输出：纯文本。逻辑：状态、行业枚举、关系、数组及时间按明确类型展示，业务正文原样保留。
+ * 输出：纯文本。逻辑：客户名称来自含共享实验的只读目录；状态、关系及时间按类型展示，业务正文原样保留。
  * 约束：返回值插入 HTML 时仍须转义；不渲染可执行 HTML。 */
 function display(value, key = "") {
   if (value === null || value === undefined || value === "") return t("未填写");
@@ -179,8 +181,8 @@ function display(value, key = "") {
       .map(([name, item]) => `${label(name)}：${display(item, name)}`)
       .join("\n");
   if (["company", "company_id"].includes(key))
-    return companies.find((item) => item.id === value)
-      ? nameOf(companies.find((item) => item.id === value))
+    return browseCompanies.find((item) => item.id === value)
+      ? nameOf(browseCompanies.find((item) => item.id === value))
       : String(value);
   if (relations.has(String(value))) return relations.get(String(value));
   if (["status", "role", "priority", "kind", "provider", "tool"].includes(key))
@@ -780,36 +782,36 @@ function qqConnectionForm() {
 }
 
 /** 功能：刷新授权客户目录并保持筛选。输入：无参数。
- * 输出：无。逻辑：完整分页读取含归档目录，重建名称缓存。
+ * 输出：无。逻辑：分别读取原业务表单目录与含共享实验的浏览目录，筛选与写入候选不混用。
  * 约束：请求失败不展示伪造空目录。 */
 async function refreshDirectory() {
   const selected = $("company-filter").value;
-  companies = await allRows("directory/?archived=all");
+  [companies, browseCompanies] = await Promise.all([allRows("directory/?archived=all"), allRows("browse/directory/?archived=all")]);
   $("company-filter").innerHTML =
     h('<option value="">全部客户</option>') +
-    companies
+    browseCompanies
       .map(
         (c) =>
-          `<option value="${esc(c.id)}">${esc(nameOf(c))}${c.archived ? t("（已归档）") : ""}</option>`,
+          `<option value="${esc(c.id)}">${esc(nameOf(c))}${c.archived ? t("（已归档）") : ""}${c.experiment ? ` · ${esc(experimentLabel(c))}` : ""}</option>`,
       )
       .join("");
   $("company-filter").value = selected;
 }
 
 /** 功能：同步授权客户筛选、URL 和共享客户导航。输入：当前 company-filter、current。
- * 输出：无。逻辑：只保留目录中可见的客户，更新同源链接并让刷新恢复筛选。
+ * 输出：无。逻辑：保留合并目录中的客户及只读来源，更新同源链接和刷新筛选。
  * 约束：不写业务数据；不使用设备缓存跨账号保留客户身份。 */
 function syncBusinessContext() {
-  const selected = companies.find(company => company.id === $("company-filter").value);
+  const selected = browseCompanies.find(company => company.id === $("company-filter").value);
   const url = new URL(location.href);
   if (selected) url.searchParams.set("company", selected.id);
   else url.searchParams.delete("company");
   history.replaceState({}, "", url);
-  setWorkspaceContext(selected ? { id: selected.id, name: nameOf(selected) } : null, current);
+  setWorkspaceContext(selected ? { id: selected.id, name: nameOf(selected), experiment: selected.experiment } : null, current);
 }
 
 /** 功能：按当前路由加载一页记录。输入：无参数，读取 current/page/筛选。
- * 输出：无。逻辑：URL 筛选联动共享导航并刷新待办，异步代次防止慢响应覆盖新页面。
+ * 输出：无。逻辑：业务及共享实验使用合并只读入口和计数；选中实验客户时隐藏创建操作，异步代次防止旧响应覆盖。
  * 约束：只读加载不执行外部动作或模型分析。 */
 async function loadPage() {
   void refreshWorkspace();
@@ -829,7 +831,8 @@ async function loadPage() {
   $("company-filter").closest("label").hidden = !supportsCompany;
   if (!supportsCompany) $("company-filter").value = "";
   syncBusinessContext();
-  const creatable = resource !== "audit" && resource !== "notifications";
+  const selected = browseCompanies.find(item => item.id === $("company-filter").value);
+  const creatable = resource !== "audit" && resource !== "notifications" && !selected?.experiment;
   $("create-business").hidden = !creatable;
   $("create-business").textContent =
     resource === "connections"
@@ -859,7 +862,7 @@ async function loadPage() {
       metadata[resource]?.fields.some((f) => f.name === "company"))
   )
     query.set("company", company);
-  const path =
+  const path = BROWSE_RESOURCES.has(resource) ? `browse/${resource}/` :
     resource === "directory"
       ? "directory/"
       : resource === "audit"
@@ -868,7 +871,7 @@ async function loadPage() {
   $("business-content").innerHTML = h('<div class="empty">正在读取…</div>');
   const [result, overview] = await Promise.all([
     salesRequest(`${path}?${query}`),
-    salesRequest("overview/"),
+    salesRequest("browse/overview/"),
   ]);
   if (turn !== generation) return;
   renderRows(resource, result.results);
@@ -893,11 +896,43 @@ async function loadPage() {
         : resource === "messages"
           ? t("已持久化的会话消息；回复以实际保存记录为准。")
           : t("记录按当前账号及公司授权范围展示。");
+  if (BROWSE_RESOURCES.has(resource)) $("list-description").textContent = language === "en"
+    ? `Includes ${result.shared_count} shared synthetic records. Marked records are read-only and retain their original owner.`
+    : `含 ${result.shared_count} 条共享虚构记录；带标记的记录仅供实验，只读并保留原归属。`;
+}
+
+/** 功能：生成共享记录来源标签。输入：row 含服务端 experiment 元数据的行。输出：纯文本标签。
+ * 逻辑：根据界面语言显示虚构、只读及原用户名。约束：调用方插入 HTML 时必须转义。 */
+function experimentLabel(row) {
+  return language === "en" ? `Synthetic · Read only · Owner: ${row.experiment.owner.username}`
+    : `虚构实验 · 只读 · 归属：${row.experiment.owner.username}`;
+}
+
+/** 功能：在现有业务页展示已核验的共享记录详情。输入：row 列表记录与实验定位信息。输出：只读对话框。
+ * 逻辑：重新读取精确批次主键，保留原字段；提供来源浏览、文件下载和客户业务导航。
+ * 约束：不进入原业务编辑处理器；撤销或漂移时明确报错，全部动态内容转义。 */
+async function experimentDetail(row) {
+  const { batch, model } = row.experiment;
+  const base = `experiments/${encodeURIComponent(batch)}/${encodeURIComponent(model)}/`;
+  const data = await request(`${base}?pk=${encodeURIComponent(row.id)}`);
+  const record = data.results.find(item => item.pk === row.id);
+  if (!record) throw new Error(language === "en" ? "This shared record is no longer available." : "此共享记录已不可用。");
+  const source = `/experiments/#${new URLSearchParams({ table: model, pk: row.id })}`;
+  const links = [`<a href="${esc(source)}">${language === "en" ? "Explore source and relations" : "查看来源与关联"}</a>`];
+  if (model === "crm.Company") {
+    for (const resource of ["opportunities", "quotes", "orders", "tickets", "follow-ups"])
+      links.push(`<a href="${esc(businessHref(resource, row.id))}">${esc(t(metadata[resource].label))}</a>`);
+  }
+  if (["sales.Attachment", "accounts.SetupDocument"].includes(model))
+    links.push(`<a href="/api/v1/${base}${encodeURIComponent(row.id)}/download/">${language === "en" ? "Download" : "下载文件"}</a>`);
+  showDialog(nameOf(row), `<p class="badge">${esc(experimentLabel(row))}</p><p class="muted">${esc(batch)}</p>
+    <div class="actions">${links.join("")}</div><dl class="details">${Object.entries(record.fields).map(([key, value]) =>
+      `<dt>${esc(label(key))}</dt><dd>${esc(display(value, key))}</dd>`).join("")}</dl>`);
 }
 
 /** 功能：渲染业务表格和详情入口。输入：resource、rows。
- * 输出：无。逻辑：展示业务名称、客户、状态和更新时间；审计只读。
- * 约束：空结果明确显示，不填充演示数据；业务内容全部转义。 */
+ * 输出：无。逻辑：显示共享实验归属标签，点击共享行进入只读详情；普通行仍使用原业务详情。
+ * 约束：不在浏览器伪造数据，不为共享行渲染编辑入口；业务内容全部转义。 */
 function renderRows(resource, rows) {
   if (!rows.length) {
     $("business-content").innerHTML =
@@ -908,7 +943,7 @@ function renderRows(resource, rows) {
     h`<table><thead><tr><th>${resource === "audit" ? t("操作事件") : t("名称 / 内容")}</th><th>客户 / 关联</th><th>状态</th><th>记录时间</th><th>操作</th></tr></thead><tbody>${rows
       .map(
         (row) =>
-          `<tr><td><strong>${esc(resource === "directory" ? nameOf(row) : row.name || row.title || row.number || row.subject || row.group_key || row.account || row.event || (row.content ? row.content.slice(0, 65) : t(metadata[resource]?.label || "")))}</strong>${row.currency ? `<small>${esc(row.currency)} ${esc(row.total ?? row.amount ?? row.unit_price ?? "")}</small>` : ""}${
+          `<tr><td><strong>${esc(resource === "directory" ? nameOf(row) : row.name || row.title || row.number || row.subject || row.group_key || row.account || row.event || (row.content ? row.content.slice(0, 65) : t(metadata[resource]?.label || "")))}</strong>${row.experiment ? `<small class="badge">${esc(experimentLabel(row))}</small>` : ""}${row.currency ? `<small>${esc(row.currency)} ${esc(row.total ?? row.amount ?? row.unit_price ?? "")}</small>` : ""}${
             resource === "directory"
               ? `<small>${esc(
                   row.contacts
@@ -923,6 +958,8 @@ function renderRows(resource, rows) {
   for (const button of $("business-content").querySelectorAll("[data-record]"))
     button.onclick = () =>
       perform(async () => {
+        const selectedRow = rows.find(row => row.id === button.dataset.record);
+        if (selectedRow.experiment) { await experimentDetail(selectedRow); return; }
         if (resource === "directory")
           await customerDetail(button.dataset.record);
         else if (resource === "audit") {
@@ -942,17 +979,17 @@ function renderRows(resource, rows) {
 }
 
 /** 功能：显示当前权限范围内统计。输入：overview 后端汇总。
- * 输出：无。逻辑：全量授权目录的三个计数卡（客户、工单与跟进）与分币种净额，不随客户筛选改变。
+ * 输出：无。逻辑：客户、工单及跟进计数包含去重后的共享实验行，并列出实验数量；金额仍为原业务范围。
  * 约束：不把不同币种相加，不将确认订单净额标记为实际收入。 */
 function renderStats(overview) {
   $("business-stats").innerHTML = [
-    [t("全部可见客户"), overview.customers],
-    [t("待处理工单"), overview.open_tickets],
-    [t("待跟进"), overview.open_follow_ups],
+    [t("全部可见客户"), overview.customers, overview.shared_counts.customers],
+    [t("待处理工单"), overview.open_tickets, overview.shared_counts.open_tickets],
+    [t("待跟进"), overview.open_follow_ups, overview.shared_counts.open_follow_ups],
   ]
     .map(
-      ([name, value]) =>
-        `<div class="stat"><span>${name}</span><strong>${value}</strong></div>`,
+      ([name, value, shared]) =>
+        `<div class="stat"><span>${name}</span><strong>${value}</strong><small>${language === "en" ? `Includes ${shared} synthetic records` : `含 ${shared} 条虚构实验记录`}</small></div>`,
     )
     .join("");
   document.querySelector(".footnote").textContent = t`已确认订单净额：${
@@ -964,10 +1001,11 @@ function renderStats(overview) {
       .map(([c, v]) => `${c} ${v}`)
       .join(" / ") || t("暂无")
   }。各币种分别统计；库存由人工维护。`;
+  document.querySelector(".footnote").textContent += language === "en" ? " Amounts use your original business access scope." : " 金额沿用原业务权限范围，不加入额外共享的模拟交易。";
 }
 
 /** 功能：初始化登录态、元数据及页面交互。输入：无参数，读取当前路由。
- * 输出：无。逻辑：读取 QQ 能力开关并验证 URL 客户后挂载共享导航，恢复筛选并可打开明确请求的新建表单。
+ * 输出：无。逻辑：读取能力开关与两种目录，URL 可定位共享实验客户；只读客户不自动打开新建表单。
  * 约束：初始化仅执行读取；用户数据不保存到浏览器本地存储。 */
 async function boot() {
   const session = await request("session/");
@@ -984,7 +1022,7 @@ async function boot() {
   mountWorkspace(current);
   await refreshDirectory();
   const initialCompany = new URLSearchParams(location.search).get("company");
-  if (initialCompany && !companies.some(company => company.id === initialCompany)) throw new Error(t("链接中的客户不存在或当前账号无权访问。请从客户导航重新选择。"));
+  if (initialCompany && !browseCompanies.some(company => company.id === initialCompany)) throw new Error(t("链接中的客户不存在或当前账号无权访问。请从客户导航重新选择。"));
   $("company-filter").value = initialCompany || "";
   $("close-editor").onclick = () => $("editor").close();
   $("refresh-business").onclick = (event) =>
