@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- 职责：在现有网站提供所有登录用户可读的虚构实验数据浏览器。
 实现：experiments.js 加载表目录、归属、字段与外键，支持检索、分页、下载及关联跳转。
-关联：复用 product-header 顶栏与会话，实验 API 独立校验精确批次，不提供写操作。
+关联：复用 product-header 顶栏与会话，实验 API 独立校验精确批次，维护通过统一 Tool API。
 目录：无函数或类；experiment-tables 为表目录，experiment-rows 为记录列表，record-dialog 为详情。
 变量索引：无；DOM id 仅作为脚本定位入口。 -->
 <html lang="zh-CN">
@@ -9,7 +9,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>SalesMate · 实验数据</title>
   <link rel="stylesheet" href="/static/design-system.css?v=20260921-product">
-  <link rel="stylesheet" href="/static/experiments.css?v=20260921-kg">
+  <link rel="stylesheet" href="/static/experiments.css?v=20260921-kg-write">
 </head>
 <body>
   <salesmate-header></salesmate-header>
@@ -19,12 +19,12 @@
     <p id="experiment-status" role="status" aria-live="polite">正在读取实验目录…</p>
     <p id="login-link" hidden><a href="/">前往工作台登录</a>，登录后返回本页。</p>
     <section id="experiment-content" hidden>
-      <div class="experiment-banner"><span>虚构数据 · 全体登录账号可读 · 只读</span><span id="batch-owner"></span><span id="batch-name"></span></div>
+      <div class="experiment-banner"><span>虚构数据 · 全体登录账号可读 · 业务记录可新增、修改、删除</span><span id="batch-owner"></span><span id="batch-name"></span></div>
       <p class="muted" id="experiment-notice"></p>
       <div class="experiment-layout">
         <aside><h2>数据表 <span id="table-count"></span></h2><nav id="experiment-tables" aria-label="实验数据表"></nav></aside>
         <section class="experiment-panel">
-          <div class="panel-heading"><div><h2 id="table-title"></h2><p class="muted" id="table-name"></p></div><span id="row-count"></span></div>
+          <div class="panel-heading"><div><h2 id="table-title"></h2><p class="muted" id="table-name"></p></div><div><span id="row-count"></span> <button id="create-record" type="button" hidden>新增共享虚构记录</button></div></div>
           <form id="experiment-filter"><label>搜索内容<input id="search-query" type="search" placeholder="客户名、邮件内容或主键"></label><label>归属账号<input id="owner-query" placeholder="例如 tst1"></label><button type="submit">搜索</button><button type="button" id="clear-filter">清除筛选</button></form>
           <div class="table-scroll"><table><thead><tr><th>记录</th><th>归属</th><th>主键</th><th>操作</th></tr></thead><tbody id="experiment-rows"></tbody></table></div>
           <div class="experiment-pagination"><button id="previous-page" type="button">上一页</button><span id="page-label"></span><button id="next-page" type="button">下一页</button></div>
@@ -33,7 +33,8 @@
       </div>
     </section>
   </main>
-  <dialog id="record-dialog" aria-labelledby="record-title"><div class="panel-heading"><h2 id="record-title">记录详情</h2><button id="close-record" type="button">关闭</button></div><p id="record-owner"></p><div id="record-links"></div><a id="record-download" hidden>下载文件</a><pre id="record-json"></pre></dialog>
-  <script type="module" src="/static/experiments.js?v=20260921-kg"></script>
+  <dialog id="record-dialog" aria-labelledby="record-title"><div class="panel-heading"><h2 id="record-title">记录详情</h2><button id="close-record" type="button">关闭</button></div><p id="record-owner"></p><div id="record-links"></div><a id="record-download" hidden>下载文件</a><div><button id="edit-record" type="button" hidden>修改记录</button> <button id="delete-record" type="button" hidden>删除记录</button></div><pre id="record-json"></pre></dialog>
+  <dialog id="editor-dialog" aria-labelledby="editor-title"><div class="panel-heading"><h2 id="editor-title"></h2><button id="close-editor" type="button">取消</button></div><p id="editor-status" role="status"></p><form id="editor-form"><div id="editor-fields"></div><button id="save-record" type="submit">保存共享记录</button></form></dialog>
+  <script type="module" src="/static/experiments.js?v=20260921-kg-write"></script>
 </body>
 </html>

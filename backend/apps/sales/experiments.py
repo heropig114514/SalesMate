@@ -1,6 +1,6 @@
-"""职责：向所有有效登录账号提供已批准虚构批次的跨账号只读数据视图。
-实现：模型白名单、精确清单主键及原始指纹共同限制读取；保留归属与外键，提供分页、导出和附件。
-关联：读取 seed_kg_lab 保存的 AuditEvent 清单；experiments.html 展示结果；agent_tools 复用同一校验，不改变业务写权限。
+"""职责：向所有有效登录账号提供已批准虚构批次的跨账号数据视图与可写能力说明。
+实现：模型白名单、精确清单主键及当前指纹共同限制读取；保留归属与外键，提供分页、导出和附件。
+关联：seed_kg_lab 建立清单，experiment_writes 原子维护；网页和 agent_tools 复用校验，普通业务权限保持原样。
 目录：
 - load_batch：定位获准且未清理的完整批次。
 - model_fields：返回允许展示的字段及关系说明。
@@ -100,7 +100,7 @@ logger = logging.getLogger("salesmate.experiments")
 
 # 功能：定位获准且未清理的完整批次。
 # 输入：`batch` 完整批次名称。
-# 输出：保存原始清单的 AuditEvent；未开放返回 404，清单异常返回 409。
+# 输出：保存当前清单及原始身份的 AuditEvent；未开放返回 404，清单异常返回 409。
 # 逻辑：只读取固定事件及精确名称，核对生成器、来源、归属和清理状态。
 # 约束：不按名称前缀推断合成身份，不扩大到其他账号的非清单记录。
 def load_batch(batch):
@@ -136,10 +136,11 @@ def model_fields(label):
 
 # 功能：验证并投影清单中的单表记录。
 # 输入：`entry` 已批准的清单事件、`label` 模型名称。
-# 输出：原始主键、归属、批次标记及字段组成的记录列表。
+# 输出：原始主键、归属、批次、当前 fingerprint、真实 read_only 能力及字段组成的记录列表。
 # 逻辑：只按清单主键读取；逐行复核内容指纹，外键归属通过确定路径追溯。
 # 约束：缺失或修改的记录触发 409，不默默返回部分数据；不导出密码或文件存储路径。
 def table_rows(entry, label):
+    from .experiment_writes import capabilities
     if label not in TABLES:
         raise NotFound("该表未开放实验读取。")
     expected = {row["pk"]: row["fingerprint"] for row in entry.changes["rows"] if row["model"] == label}
@@ -167,7 +168,8 @@ def table_rows(entry, label):
                 value = value.tolist()
             data[field["name"]] = value
         rows.append({"pk": str(record.pk), "owner": {"id": owner.pk, "username": owner.username},
-                     "batch": entry.object_id, "synthetic": True, "read_only": True, "fields": data})
+                     "batch": entry.object_id, "synthetic": True, "read_only": not capabilities(label)["update"],
+                     "fingerprint": expected[str(record.pk)], "fields": data})
     if len(rows) != len(expected):
         logger.warning("experiment_rows_missing batch=%s model=%s expected=%s actual=%s", entry.object_id, label, len(expected), len(rows))
         raise Conflict("实验数据部分缺失，请维护者核验；本次读取已停止。")
@@ -206,15 +208,18 @@ def file_content(entry, label, pk):
 # 功能：提供表目录、归属与来源声明。
 # 输入：`entry` 已批准的批次事件。
 # 输出：批次元数据、表字段结构与登记数量。
-# 逻辑：数量来自精确清单；实际行在分页和导出时验证。
+# 逻辑：数量来自当前清单；发布逐模型 write 能力、变更数量及原始场景真值状态，实际行在分页和导出时验证。
 # 约束：不将 synthetic 分析或非语义向量描述为真实模型输出，不返回内部文件清单。
 def batch_summary(entry):
+    from .experiment_writes import capabilities
     counts = Counter(row["model"] for row in entry.changes["rows"])
     return {"batch": entry.object_id, "owner": {"id": entry.owner_id, "username": entry.owner.username},
-            "synthetic": True, "read_only": True, "visibility": "authenticated_users",
+            "synthetic": True, "read_only": False, "visibility": "authenticated_users",
+            "mutation_count": len(entry.changes.get("mutations", [])),
+            "scenario_links_status": "original_before_edits" if entry.changes.get("mutations") else "original",
             "notice": "人工生成的实验数据；AI 结论、工具执行和向量均为模拟记录，不代表真实模型运行。",
             "tables": [{"model": label, "name": title, "table": apps.get_model(label)._meta.db_table,
-                        "count": counts[label], "fields": model_fields(label)} for label, (title, _) in TABLES.items()],
+                        "count": counts[label], "fields": model_fields(label), "write": capabilities(label)} for label, (title, _) in TABLES.items()],
             "total": sum(counts[label] for label in TABLES)}
 
 
@@ -226,7 +231,7 @@ class ExperimentView(APIView):
 
     # 功能：分派目录、分页、完整导出和文件下载。
     # 输入：`request` 当前登录请求，`batch` 可选批次，`label` 可选模型，`pk` 可选文件主键。
-    # 输出：JSON 目录/分页、JSON 下载或附件；无权限及漂移使用明确错误。
+    # 输出：含 write 字段契约的 JSON 目录/分页、JSON 下载或附件；无权限及漂移使用明确错误。
     # 逻辑：REPEATABLE READ 保证一次多表导出的一致性；筛选只作用于已验证的清单投影。
     # 约束：仅 PostgreSQL；不写业务表，查询日志不含正文、密码或令牌。
     @extend_schema(operation_id="experiments_table", responses=OpenApiTypes.OBJECT, tags=["experiments"],
@@ -253,6 +258,7 @@ class ExperimentView(APIView):
                     response = HttpResponse(body, content_type="application/json; charset=utf-8")
                     response["Content-Disposition"] = f'attachment; filename="{batch}.json"'
                 else:
+                    from .experiment_writes import capabilities
                     rows = table_rows(entry, label)
                     query = request.query_params
                     if query.get("pk"):
@@ -269,7 +275,7 @@ class ExperimentView(APIView):
                         raise ValidationError("页码和每页数量必须为整数。") from None
                     if page < 1 or not 1 <= size <= 200:
                         raise ValidationError("页码须大于零，每页数量须在 1–200 之间。")
-                    response = Response({"batch": batch, "model": label, "fields": model_fields(label),
+                    response = Response({"batch": batch, "model": label, "fields": model_fields(label), "write": capabilities(label),
                                          "count": len(rows), "page": page, "page_size": size,
                                          "results": rows[(page - 1) * size:page * size]})
         logger.info("experiment_read actor_id=%s batch=%s model=%s download=%s", request.user.pk, batch or "catalog", label or "all", bool(pk or (batch and not label)))

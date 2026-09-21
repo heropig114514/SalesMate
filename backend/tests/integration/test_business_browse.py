@@ -62,14 +62,14 @@ class BusinessBrowseTests(TestCase):
     # 功能：验证所有已映射业务表对普通其他账号可见。
     # 输入：完整夹具、未共享客户、登录读取者。
     # 输出：每个资源计数等于清单；原业务仍隔离，外部连接及匿名请求拒绝。
-    # 逻辑：逐资源读取并核对 experiment 来源，额外查询私有主键验证不泄露。
+    # 逻辑：逐资源核对 experiment 来源与布尔维护标记，额外查询私有主键验证不泄露。
     # 约束：不把 Session 测试解释为浏览器视觉验证。
     def test_all_resources_and_foreign_privacy(self):
         self.assertEqual(self.client.get("/api/v1/sales/directory/").data["count"], 0)
         for resource, model in RESOURCES.items():
             data = self.get(resource, {"archived": "all"})
             self.assertEqual(data["count"], self.manifest["table_counts"][model], resource)
-            self.assertTrue(all(row["experiment"]["read_only"] and row["experiment"]["synthetic"] for row in data["results"]))
+            self.assertTrue(all(isinstance(row["experiment"]["read_only"], bool) and row["experiment"]["synthetic"] for row in data["results"]))
             self.assertEqual({row["experiment"]["owner"]["id"] for row in data["results"]}, {self.owner.pk})
         self.assertEqual(self.get("directory", {"company": str(self.private.pk)})["count"], 0)
         self.assertEqual(self.client.get("/api/v1/sales/browse/connections/").status_code, 404)

@@ -16,7 +16,8 @@
 - verify_manifest：校验清单完整性、行指纹及附件。
 - external_references：检查清单之外的外键引用。
 - run_seed：事务生成或验证重放批次。
-- run_delete：先核验再逆序删除精确清单中的记录。
+- deletion_order：根据当前外键关系生成子记录优先的删除序列。
+- run_delete：先核验再按当前依赖删除精确清单中的记录。
 - Command：管理命令入口。
 - Command.add_arguments：声明显式参数与写入确认开关。
 - Command.handle：校验环境并路由生成、验证或删除预览。
@@ -417,10 +418,38 @@ def run_seed(actor, batch, count):
         raise
 
 
+# 功能：按当前关系计算清单的删除顺序。
+# 输入：`manifest` 已校验的批次清单。
+# 输出：子记录优先的模型与主键序列。
+# 逻辑：读取实际外键构建依赖图，拓扑排序避免编辑关系后原创建顺序失效。
+# 约束：循环引用明确报错，不隐式断开关系；调用方在同一事务持有清单与行锁。
+def deletion_order(manifest):
+    rows = {(row["model"], row["pk"]): row for row in manifest["rows"]}
+    dependencies = {key: set() for key in rows}
+    for key in rows:
+        record = apps.get_model(key[0]).objects.get(pk=key[1])
+        for field in record._meta.concrete_fields:
+            if field.is_relation:
+                parent = (field.related_model._meta.label, str(getattr(record, field.attname)))
+                if parent in rows and parent != key:
+                    dependencies[parent].add(key)
+    result = []
+    while dependencies:
+        leaves = {key for key, children in dependencies.items() if not children}
+        if not leaves:
+            raise CommandError("批次存在循环引用，请先调整关系再清理；未删除任何记录。")
+        for key in sorted(leaves):
+            result.append(rows[key])
+            del dependencies[key]
+        for children in dependencies.values():
+            children.difference_update(leaves)
+    return result
+
+
 # 功能：删除预览或执行精确批次清理。
 # 输入：`actor` 员工、`batch` 批次、`apply` 是否明确执行。
 # 输出：删除数量或预览说明。
-# 逻辑：锁定员工及夹具行、校验指纹、拒绝外部引用，逆创建顺序删除；提交后清理精确附件。
+# 逻辑：锁定员工、清单及夹具行，校验指纹并拒绝外部引用，按当前依赖删除；提交后清理精确附件。
 # 约束：数据库提交后保留清理状态和文件清单，文件失败可显式重跑；不自动重试、不删除其他批次。
 def run_delete(actor, batch, apply):
     with transaction.atomic():
@@ -428,6 +457,8 @@ def run_delete(actor, batch, apply):
         entry = load_manifest(actor, batch)
         if not entry:
             raise CommandError("没有找到该账号的批次清单。")
+        # 与共享维护使用同一清单行锁，等待后必须重新读取 JSON，避免清理使用旧指纹。
+        entry = AuditEvent.objects.select_for_update().get(pk=entry.pk)
         manifest = entry.changes
         if manifest.get("cleanup_state") != "files_pending":
             for row in manifest["rows"]:
@@ -436,9 +467,10 @@ def run_delete(actor, batch, apply):
             blockers = external_references(manifest)
             if blockers:
                 raise CommandError("夹具被其他记录引用，拒绝删除：" + "; ".join(blockers))
+            ordered = deletion_order(manifest)
             if not apply:
                 return {"action": "delete_preview", "batch": batch, "table_counts": counts, "files": len(manifest["files"])}
-            for row in reversed(manifest["rows"]):
+            for row in ordered:
                 apps.get_model(row["model"]).objects.filter(pk=row["pk"]).delete()
             manifest["cleanup_state"] = "files_pending"
             entry.changes = manifest

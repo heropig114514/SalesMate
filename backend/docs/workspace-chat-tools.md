@@ -8,9 +8,9 @@
 
 以下接口统一使用 `Authorization: Agent <员工绑定服务令牌>`，不接受普通 Tool token 或浏览器 Session 替代。令牌确定员工；输入不允许 owner_id、employee_id 或其他身份覆盖。Agent 凭证本身标识员工，不区分调用进程是否命名为聊天 Worker。工具目录和工具执行同时检查本人请求处于 processing，且会话仍可访问。
 
-明确开放 `customers.search`、`customers.context`、`experiments.catalog`、`experiments.rows`、`experiments.file_read`，还会检查工具实时注册为 read。其他只读工具也不会自动开放；写工具、确认工具、授权管理、发信和日历动作不在此入口范围。
+明确开放 `customers.search`、`customers.context`、`experiments.catalog`、`experiments.rows`、`experiments.file_read`，五个读取工具要求实时注册为 read；另开放 `experiments.create/update/delete` 并要求 write。其它工具不自动开放；真实业务写工具、确认工具、授权管理、发信和日历动作不在此入口范围。
 
-客户搜索复用 `visible_company_ids`，客户详情复用原公司 owner 权限。团队共享搜索命中不意味着可以读取私人邮件或画像。共享实验工具复用网页精确批次清单与指纹校验，只读获准的虚构记录并保留 owner；不会因此开放普通私有客户详情。后端不改变 L1–L4。实验调用参数及 MCP 接入见 [实验数据共享](experiment-data.md)。
+客户搜索复用 `visible_company_ids`，客户详情复用原公司 owner 权限。团队共享搜索命中不意味着可以读取私人邮件或画像。共享实验工具复用网页精确批次清单与指纹校验，读取及维护获准虚构记录并保留 owner；不会因此开放普通私有客户详情。后端不改变 L1–L4。实验调用参数及 MCP 接入见 [实验数据共享](experiment-data.md)。
 
 ## 2. 接口列表
 
@@ -21,7 +21,7 @@
 | `POST requests/claim/` | 领取待回答请求，原接口 | 空 JSON 对象 |
 | `POST context/` | 获取原固定上下文，原接口 | request_id、scope |
 | `GET tools/` | 发现本请求可用工具和 JSON Schema | 查询参数 request_id；page/page_size 可选 |
-| `POST tool-reads/` | 执行只读工具并登记证据 | request_id、name、arguments |
+| `POST tool-reads/` | 执行读取或实验维护并登记证据 | request_id、name、arguments |
 | `POST answers/` | 保存最终回答，原接口 | 原六字段回报 |
 | `GET requests/<request_id>/` | 核对保存状态、消息 ID 和最终引用 | 路径 UUID |
 
@@ -173,3 +173,5 @@ python backend/manage.py spectacular --file backend/contracts/openapi.yaml --val
 前端移除客户专属聊天入口，旧客户聊天链接只打开工作空间。邮件草稿可以来自本人工作空间；发信动作仍必须明确选择客户并另行审阅批准，其他员工或另一客户历史草稿不可使用。
 
 CI 保留并更新工作空间契约测试：直接解析五字段领取、action:tool → 真实 HTTP 查询 → action:answer、共享 Worker 多员工隔离，以及网页实际提问和引用回读。后端不验证模型内容含义、提示词版本枚举或引用真实性；继续验证 Schema、身份、权限、请求状态与幂等。
+
+实验写入复用请求绑定接口，使用当前请求 UUID 与完整参数派生幂等键，数据变更和回执证据在同一事务提交。更新/删除要求最近读取的 fingerprint，错误不会伪装为成功。详细字段、边界与清理见 [实验数据共享](experiment-data.md)。

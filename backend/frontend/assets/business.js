@@ -1,6 +1,6 @@
 /**
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
- * 实现：合并浏览原授权业务与获准实验行，实验详情只读并标记原归属；写入仍使用原字段契约和权限。
+ * 实现：合并浏览原授权业务与获准实验行，实验详情标记原归属并链接共享维护；普通写入仍使用原权限。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
@@ -897,18 +897,18 @@ async function loadPage() {
           ? t("已持久化的会话消息；回复以实际保存记录为准。")
           : t("记录按当前账号及公司授权范围展示。");
   if (BROWSE_RESOURCES.has(resource)) $("list-description").textContent = language === "en"
-    ? `Includes ${result.shared_count} shared synthetic records. Marked records are read-only and retain their original owner.`
-    : `含 ${result.shared_count} 条共享虚构记录；带标记的记录仅供实验，只读并保留原归属。`;
+    ? `Includes ${result.shared_count} shared synthetic records. Marked records retain their original owner; maintenance is available from details.`
+    : `含 ${result.shared_count} 条共享虚构记录；带标记的记录仅供实验，保留原归属，可维护项可从详情进入。`;
 }
 
 /** 功能：生成共享记录来源标签。输入：row 含服务端 experiment 元数据的行。输出：纯文本标签。
- * 逻辑：根据界面语言显示虚构、只读及原用户名。约束：调用方插入 HTML 时必须转义。 */
+ * 逻辑：根据界面语言显示虚构、维护权限及原用户名。约束：调用方插入 HTML 时必须转义。 */
 function experimentLabel(row) {
-  return language === "en" ? `Synthetic · Read only · Owner: ${row.experiment.owner.username}`
-    : `虚构实验 · 只读 · 归属：${row.experiment.owner.username}`;
+  return language === "en" ? `Synthetic · ${row.experiment.read_only ? "Read only" : "Editable"} · Owner: ${row.experiment.owner.username}`
+    : `虚构实验 · ${row.experiment.read_only ? "只读" : "可维护"} · 归属：${row.experiment.owner.username}`;
 }
 
-/** 功能：在现有业务页展示已核验的共享记录详情。输入：row 列表记录与实验定位信息。输出：只读对话框。
+/** 功能：在现有业务页展示已核验的共享记录详情。输入：row 列表记录与实验定位信息。输出：详情对话框及共享维护链接。
  * 逻辑：重新读取精确批次主键，保留原字段；提供来源浏览、文件下载和客户业务导航。
  * 约束：不进入原业务编辑处理器；撤销或漂移时明确报错，全部动态内容转义。 */
 async function experimentDetail(row) {
@@ -918,7 +918,7 @@ async function experimentDetail(row) {
   const record = data.results.find(item => item.pk === row.id);
   if (!record) throw new Error(language === "en" ? "This shared record is no longer available." : "此共享记录已不可用。");
   const source = `/experiments/#${new URLSearchParams({ table: model, pk: row.id })}`;
-  const links = [`<a href="${esc(source)}">${language === "en" ? "Explore source and relations" : "查看来源与关联"}</a>`];
+  const links = [`<a href="${esc(source)}">${language === "en" ? (record.read_only ? "Explore source and relations" : "Edit / delete shared record") : (record.read_only ? "查看来源与关联" : "编辑 / 删除共享记录")}</a>`];
   if (model === "crm.Company") {
     for (const resource of ["opportunities", "quotes", "orders", "tickets", "follow-ups"])
       links.push(`<a href="${esc(businessHref(resource, row.id))}">${esc(t(metadata[resource].label))}</a>`);
@@ -931,8 +931,8 @@ async function experimentDetail(row) {
 }
 
 /** 功能：渲染业务表格和详情入口。输入：resource、rows。
- * 输出：无。逻辑：显示共享实验归属标签，点击共享行进入只读详情；普通行仍使用原业务详情。
- * 约束：不在浏览器伪造数据，不为共享行渲染编辑入口；业务内容全部转义。 */
+ * 输出：无。逻辑：显示共享实验归属标签，点击共享行进入带维护链接的详情；普通行仍使用原业务详情。
+ * 约束：不在浏览器伪造数据，共享行的维护委托专用实验入口；业务内容全部转义。 */
 function renderRows(resource, rows) {
   if (!rows.length) {
     $("business-content").innerHTML =

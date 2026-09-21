@@ -1,4 +1,4 @@
-"""职责：验证实验共享的跨账号读取、精确批次边界、归属、导出和只读行为。
+"""职责：验证实验共享的跨账号读取、维护能力标记、精确批次边界、归属与 GET 接口边界。
 实现：隔离 PostgreSQL 内创建两组真实关联夹具和普通非夹具数据，使用实际 HTTP 视图。
 关联：sales.experiments、seed_kg_lab 与既有业务权限；不访问外部服务，不写真实数据库。
 目录：
@@ -28,6 +28,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.crm.models import Company
+from apps.sales.experiment_writes import WRITE_MODELS
 from apps.sales.experiments import APPROVED_BATCHES, TABLES
 from apps.sales.management.commands.seed_kg_lab import run_seed, verify_manifest
 from apps.sales.models import AuditEvent, Product
@@ -67,7 +68,7 @@ class ExperimentTests(TestCase):
     # 功能：验证全部 44 表跨账号可读且归属保持原值。
     # 输入：setUp 创建的夹具与第二个普通账号。
     # 输出：断言表数量、每表行数、归属及原记录指纹。
-    # 逻辑：逐表通过真实 API 读取，确认每条记录标记只读和虚构。
+    # 逻辑：逐表通过真实 API 读取，确认每条记录标记真实可写能力和虚构。
     # 约束：不把普通权限测试等同于真实浏览器视觉验证。
     def test_cross_account_all_tables_and_ownership(self):
         summary = self.client.get("/api/v1/experiments/").data["batches"][0]
@@ -77,7 +78,7 @@ class ExperimentTests(TestCase):
             response = self.client.get(self.url(label))
             self.assertEqual(response.status_code, 200, (label, response.data))
             self.assertEqual(response.data["count"], self.manifest["table_counts"][label])
-            self.assertTrue(all(row["synthetic"] and row["read_only"] for row in response.data["results"]))
+            self.assertTrue(all(row["synthetic"] and row["read_only"] == (label not in WRITE_MODELS) for row in response.data["results"]))
         companies = self.client.get(self.url("crm.Company")).data["results"]
         self.assertEqual({row["owner"]["username"] for row in companies}, {self.owner.username})
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])

@@ -9,6 +9,8 @@
 - ExperimentToolTests.test_file_blocks_and_frozen_grants：验证文件块和旧凭据不隐式扩权。
 - ExperimentToolTests.test_chat_agent_http_evidence_round_trip：经真实 HTTP 完成实验读取与回答引用。
 - ExperimentToolTests.test_chat_agent_http_evidence_round_trip.decide：按工具结果返回确定性模型决策。
+- ExperimentToolTests.test_chat_agent_write_http_round_trip：经真实工作流修改共享记录并保存回执引用。
+- ExperimentToolTests.test_chat_agent_write_http_round_trip.decide：根据读取指纹选择维护并引用回执。
 - ExperimentToolTests.test_real_mcp_stdio：通过真实 MCP SDK 子进程读取全部实验表。
 - ExperimentToolTests.test_real_mcp_stdio.check：核对协议目录、调用与错误回执。
 变量索引：
@@ -39,10 +41,11 @@ from apps.agent_tools.presets import permission_presets
 from apps.agent_tools.registry import build_registry
 from apps.chat import services
 from apps.crm.models import AgentCredential, Company
+from apps.sales.experiment_writes import WRITE_MODELS
 from apps.sales.experiments import APPROVED_BATCHES, TABLES
 from apps.sales.management.commands.seed_kg_lab import run_seed, verify_manifest
 from apps.sales.models import AuditEvent, Conversation
-from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, WORKSPACE_READ_TOOLS
+from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS
 
 
 # 功能：验证共享批次在两个真实身份协议下的边界。
@@ -86,7 +89,7 @@ class ExperimentToolTests(LiveServerTestCase):
 
     # 功能：验证全部模型可读而清单外数据及未授权操作不可读。
     # 输入：两账号夹具、私有伪装记录和原始清单。
-    # 输出：44 表共 120 条夹具可读、字段脱敏、原归属保留，越界请求拒绝。
+    # 输出：44 表共 120 条夹具可读、维护标记符合 WRITE_MODELS、字段脱敏、原归属保留，越界请求拒绝。
     # 逻辑：逐表读取并核对原始计数；修改一行后确认 409，撤销清单后确认 404。
     # 约束：仅在测试库故意修改和删除；读取不得修改夹具指纹。
     def test_all_tables_and_boundaries(self):
@@ -97,7 +100,7 @@ class ExperimentToolTests(LiveServerTestCase):
         for label in TABLES:
             data = self.call("experiments.rows", {"batch": self.batch, "model": label})["data"]
             self.assertEqual(data["count"], self.manifest["table_counts"][label])
-            self.assertTrue(all(row["synthetic"] and row["read_only"] for row in data["results"]))
+            self.assertTrue(all(row["synthetic"] and row["read_only"] == (label not in WRITE_MODELS) for row in data["results"]))
             if label == "accounts.User":
                 self.assertNotIn("password", data["results"][0]["fields"])
             if label == "crm.Company":
@@ -140,7 +143,7 @@ class ExperimentToolTests(LiveServerTestCase):
     # 功能：验证其他账号的内置 Agent 经真实 HTTP 读取实验数据并保存引用。
     # 输入：普通读取者的通用会话和确定性模型决策。
     # 输出：三个实验工具均成功；回答和引用归属读取者，来源正文保留原批次归属。
-    # 逻辑：实际领取请求、发现五工具、查目录、查表、读文件、回报回答，再核对持久化来源。
+    # 逻辑：实际领取请求、发现八工具、查目录、查表、读文件、回报回答，再核对持久化来源。
     # 约束：模型边界模拟，不证明真实模型的规划质量；其余传输、授权和证据登记均真实。
     def test_chat_agent_http_evidence_round_trip(self):
         conversation = Conversation.objects.create(owner=self.reader)
@@ -152,12 +155,12 @@ class ExperimentToolTests(LiveServerTestCase):
         # 功能：根据真实工具结果选择下一步或引用回答。
         # 输入：`messages` 是工作流提供的提示，`max_tokens` 是未改变的模型预算。
         # 输出：标准 JSON 工具决策或带真实来源标识的最终回答。
-        # 逻辑：先目录，再附件表，再按返回主键读取文本；最后从展示的证据中引用文件块。
+        # 逻辑：确认八工具候选后查目录、附件表及文本，最后引用实际展示的文件块证据。
         # 约束：不构造伪造来源；模拟仅作用于语言模型边界。
         def decide(messages, *, max_tokens):
             payload = json.loads(messages[-1]["content"])
             count = len(payload["tool_results"])
-            self.assertEqual({item["name"] for item in payload["available_tools"]}, WORKSPACE_READ_TOOLS)
+            self.assertEqual({item["name"] for item in payload["available_tools"]}, WORKSPACE_TOOLS)
             if count == 0:
                 decision = {"action": "tool", "name": "experiments.catalog", "arguments": {}}
             elif count == 1:
@@ -182,14 +185,58 @@ class ExperimentToolTests(LiveServerTestCase):
         self.assertEqual(request.citations.get().source_type, "experiment_file")
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])
 
-    # 功能：验证 MCP 宿主能以另一个普通账号读取全部共享实验表。
+    # 功能：验证工作空间模型决策能驱动真实实验修改并保存回答。
+    # 输入：已认证的新账号、真实 HTTP 后端和测试模型决策函数。
+    # 输出：客户名称变更、回执被引用且原归属保持不变。
+    # 逻辑：按目录、精确行、修改、回答的四步运行完整工作流。
+    # 约束：仅替换 LLM 决策，不模拟授权、数据库或 HTTP。
+    def test_chat_agent_write_http_round_trip(self):
+        conversation = Conversation.objects.create(owner=self.reader)
+        request, _ = services.submit(self.reader, {"conversation_id": str(conversation.pk),
+            "client_key": str(uuid.uuid4()), "content": "请修改 KGSEED 实验客户名称为算法组修改。"})
+        backend = DjangoBackendClient(self.live_server_url + "/api/v1/agent/", "experiment-agent-test")
+        self.addCleanup(backend.close)
+        company = self.manifest["truth"][0]["company_id"]
+
+        # 功能：使用真实工具目录与读取指纹构造下一步。
+        # 输入：`messages` 工作流上下文、`max_tokens` 未改变的模型预算。
+        # 输出：工具调用或引用实际维护回执的回答 JSON。
+        # 逻辑：三次工具操作后停止，不从旧清单伪造指纹。
+        # 约束：此函数替代模型规划，不替代任何业务执行。
+        def decide(messages, *, max_tokens):
+            payload = json.loads(messages[-1]["content"])
+            results = payload["tool_results"]
+            if not results:
+                decision = {"action": "tool", "name": "experiments.catalog", "arguments": {}}
+            elif len(results) == 1:
+                decision = {"action": "tool", "name": "experiments.rows", "arguments": {"batch": self.batch, "model": "crm.Company", "pk": company}}
+            elif len(results) == 2:
+                row = results[-1]["data"]["results"][0]
+                decision = {"action": "tool", "name": "experiments.update", "arguments": {"batch": self.batch, "model": "crm.Company",
+                    "pk": row["pk"], "expected": row["fingerprint"], "data": {"name": "算法组修改"}}}
+            else:
+                evidence = next(item for item in payload["authorized_evidence"] if item["source_type"] == "experiment_mutation")
+                decision = {"action": "answer", "assistant_text": "共享虚构客户已修改。[1]",
+                    "citations": [{key: evidence[key] for key in ("source_id", "source_type", "title_or_label")}]}
+            return json.dumps(decision, ensure_ascii=False)
+
+        result = process_chat_once(backend=backend, chat_provider=decide)
+        self.assertEqual(result["status"], "completed", result)
+        self.assertEqual(Company.objects.get(pk=company).name, "算法组修改")
+        self.assertEqual(Company.objects.get(pk=company).owner_id, self.owner.pk)
+        self.assertEqual(request.citations.get().source_type, "experiment_mutation")
+
+    # 功能：验证 MCP 宿主能以另一个普通账号读取全部共享实验表并维护业务记录。
     # 输入：LiveServer 地址、测试专用令牌和可选安装的 MCP SDK。
-    # 输出：三个工具发布、44 表总计 120 条、非法表 is_error 的断言。
+    # 输出：六个工具发布、44 表总计 120 条、真实 CRUD 与非法表 is_error 的断言。
     # 逻辑：启动真实 stdio bridge 子进程，SDK 握手后经真实 HTTP 和 PostgreSQL 逐表读取。
     # 约束：需安装 integrations/salesmate_tools/requirements.txt；未安装显式跳过，不误报协议已验证。
     @skipUnless(importlib.util.find_spec("mcp"), "需要单独安装固定版本 MCP SDK 才能验证 stdio")
     def test_real_mcp_stdio(self):
         from mcp import Client, StdioServerParameters
+
+        self.credential.allowed_tools = sorted(EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS)
+        self.credential.save(update_fields=["allowed_tools"])
 
         params = StdioServerParameters(command=sys.executable,
             args=["-m", "integrations.salesmate_tools.mcp_server"], cwd=str(Path(__file__).resolve().parents[3]),
@@ -199,12 +246,12 @@ class ExperimentToolTests(LiveServerTestCase):
         # 功能：完成真实协议发现与数据读取断言。
         # 输入：无显式参数，读取外层 params、self.manifest 和实时测试服务。
         # 输出：无返回值；不符预期时断言失败。
-        # 逻辑：SDK 上下文管理 stdio 生命周期，逐表检查工具回执与清单数量。
+        # 逻辑：SDK 管理 stdio，逐表核对数量后创建、修改、删除一条共享客户，最后检查非法表拒绝。
         # 约束：不模拟 HTTP、权限或协议；测试结束关闭 SDK 子进程。
         async def check():
             async with Client(params) as client:
                 catalog = await client.list_tools()
-                self.assertEqual({item.name for item in catalog.tools}, EXPERIMENT_TOOLS)
+                self.assertEqual({item.name for item in catalog.tools}, EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS)
                 self.assertIsNone(catalog.next_cursor)
                 summary = await client.call_tool("experiments.catalog", {})
                 self.assertFalse(summary.is_error)
@@ -217,6 +264,17 @@ class ExperimentToolTests(LiveServerTestCase):
                     self.assertEqual(data["count"], self.manifest["table_counts"][label])
                     total += data["count"]
                 self.assertEqual(total, 120)
+                created = await client.call_tool("experiments.create", {"batch": self.batch, "model": "crm.Company",
+                    "data": {"group_key": "manual:mcp-shared", "name": "MCP 新增虚构"}, "idempotency_key": str(uuid.uuid4())})
+                self.assertFalse(created.is_error, created)
+                row = created.structured_content["data"]["record"]
+                updated = await client.call_tool("experiments.update", {"batch": self.batch, "model": "crm.Company",
+                    "pk": row["pk"], "expected": row["fingerprint"], "data": {"name": "MCP 修改虚构"}, "idempotency_key": str(uuid.uuid4())})
+                self.assertFalse(updated.is_error, updated)
+                row = updated.structured_content["data"]["record"]
+                deleted = await client.call_tool("experiments.delete", {"batch": self.batch, "model": "crm.Company",
+                    "pk": row["pk"], "expected": row["fingerprint"], "idempotency_key": str(uuid.uuid4())})
+                self.assertFalse(deleted.is_error, deleted)
                 denied = await client.call_tool("experiments.rows", {"batch": self.batch, "model": "crm.AgentCredential"})
                 self.assertTrue(denied.is_error)
 

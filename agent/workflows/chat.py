@@ -1,4 +1,4 @@
-"""职责：按请求编排客户与共享实验只读查询，核验模型回答引用。
+"""职责：按请求编排客户与共享实验数据工具调用，核验模型回答引用。
 实现：实时工具目录、固定候选集合、原有读取与上下文预算共同约束模型调用。
 关联：DjangoBackendClient 提供请求绑定 HTTP；workspace-chat Skill 定义选择规则，后端持久化证据。
 目录：
@@ -21,16 +21,16 @@
 - _is_direct_tool_action：识别直接业务操作请求。
 - bailian_chat_provider：调用百炼生成一次 JSON 回答。
 - _workspace_failure：生成当前工作空间版本失败结果。
-- _workspace_arguments：验证固定只读工具及模型参数。
+- _workspace_arguments：验证固定读取及实验维护工具及模型参数。
 - _workspace_uuid：校验 UUID 字符串。
-- _workspace_catalog：解析请求实际发布的只读目录。
+- _workspace_catalog：解析请求实际发布的数据工具目录。
 - _workspace_schema_arguments：核对参数键与实时 Schema。
 - _workspace_decision：解析模型动作。
 - _workspace_tool_result：校验读取回执并生成提示摘要。
 - _workspace_append_evidence：追加不同身份的读取证据。
 - _workspace_excerpt：截取与问题相关的原文片段。
 - _workspace_prompt_evidence：选择预算内的来源。
-- answer_workspace_request：处理工作空间问题和只读工具循环。
+- answer_workspace_request：处理工作空间问题和读取及实验维护工具循环。
 - _chat_report_is_saved：核对响应丢失后的权威终态。
 - process_chat_once：领取并处理至多一个聊天请求。
 变量索引：
@@ -65,7 +65,7 @@ from typing import Any, Mapping
 
 from agent.clients.backend_api import BackendContractError, BackendRequestError
 from agent.skills import load_skill
-from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, WORKSPACE_READ_TOOLS
+from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS
 
 
 _WORKSPACE_CHAT_SKILL = load_skill("workspace-chat")
@@ -431,7 +431,7 @@ def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
     return {**stable_failure_result(request_id, code), "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION}
 
 
-# 功能：验证固定只读工具及模型参数。
+# 功能：验证固定读取及实验维护工具及模型参数。
 # 输入：`name` 模型选择的工具名称、`value` 模型生成的参数对象。
 # 输出：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
 # 逻辑：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
@@ -440,12 +440,12 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
     """校验客户参数与实验分页预算；实验字段类型继续由后端实时 Schema 验证。"""
     if (
         not isinstance(name, str)
-        or name not in WORKSPACE_READ_TOOLS
+        or name not in WORKSPACE_TOOLS
         or not isinstance(value, dict)
     ):
-        raise ChatValidationError("工作空间只允许已登记的客户及实验只读工具。")
+        raise ChatValidationError("工作空间只允许已登记的客户及实验读取及实验维护工具。")
     arguments = dict(value)
-    if name in EXPERIMENT_TOOLS:
+    if name in EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS:
         if name == "experiments.rows":
             size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
             if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
@@ -494,13 +494,13 @@ def _workspace_uuid(value: object) -> None:
         raise ChatValidationError("公司 ID 必须是 UUID。") from None
 
 
-# 功能：解析请求实际发布的只读目录。
+# 功能：解析请求实际发布的数据工具目录。
 # 输入：`raw` 后端目录响应、`request_id` 当前已领取的请求标识。
-# 输出：核对协议与请求，筛选五个固定候选并检查封闭 Schema，返回名称索引。
-# 逻辑：核对协议与请求，筛选五个固定候选并检查封闭 Schema，返回名称索引。
-# 约束：未发布工具不可执行，不接受写模式。
+# 输出：核对协议与请求，筛选固定候选并检查封闭 Schema，返回名称索引。
+# 逻辑：核对协议与请求，筛选固定候选并检查封闭 Schema，返回名称索引。
+# 约束：未发布工具不可执行，仅实验维护接受 write，其余要求 read。
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
-    """仅采用固定集合中由本次 processing 请求实际发布的 read 工具。"""
+    """仅采用固定集合中由本次 processing 请求实际发布且执行模式匹配的工具。"""
     if not isinstance(raw, Mapping) or (
         raw.get("contract_version") != "chat-tools-v1"
         or raw.get("request_id") != request_id
@@ -512,19 +512,19 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
         if not isinstance(entry, Mapping):
             raise ChatValidationError("工作空间工具目录项无效。")
         name = entry.get("name")
-        if name not in WORKSPACE_READ_TOOLS:
+        if name not in WORKSPACE_TOOLS:
             continue
         schema = entry.get("inputSchema")
         if (
             name in catalog
-            or entry.get("executionMode") != "read"
+            or entry.get("executionMode") != ("write" if name in EXPERIMENT_WRITE_TOOLS else "read")
             or not isinstance(schema, Mapping)
             or schema.get("type") != "object"
             or not isinstance(schema.get("properties"), Mapping)
             or not isinstance(schema.get("required"), list)
             or schema.get("additionalProperties") is not False
         ):
-            raise ChatValidationError("工作空间工具声明与只读契约不一致。")
+            raise ChatValidationError("工作空间工具声明与执行模式契约不一致。")
         catalog[name] = {
             "name": name,
             "description": entry.get("description", ""),
@@ -566,7 +566,7 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
             request_id=request_id,
         )
         return "answer", candidate
-    raise ChatValidationError("模型动作必须是只读工具查询或最终回答。")
+    raise ChatValidationError("模型动作必须是读取及实验维护工具查询或最终回答。")
 
 
 # 功能：校验读取回执并生成提示摘要。
@@ -620,14 +620,17 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
         if not isinstance(data.get("batches"), list):
             raise ChatValidationError("实验目录缺少批次数组。")
         summary = {"batches": [{key: batch[key] for key in ("batch", "owner", "synthetic", "read_only", "notice", "total")}
-                    | {"tables": [{key: table[key] for key in ("model", "name", "count")} for table in batch["tables"]]}
+                    | {"tables": [{key: table[key] for key in ("model", "name", "count")} | {"write": {key: table.get("write", {}).get(key, False) for key in ("create", "update", "delete")}} for table in batch["tables"]]}
                     for batch in data["batches"]]}
     elif name == "experiments.rows":
         if not isinstance(data.get("results"), list):
             raise ChatValidationError("实验分页缺少记录数组。")
         summary = {key: data[key] for key in ("batch", "model", "count", "page", "page_size")}
-        summary["results"] = [{key: row[key] for key in ("pk", "owner", "synthetic", "read_only")}
+        summary["write"] = data.get("write", {})
+        summary["results"] = [{key: row[key] for key in ("pk", "owner", "synthetic", "read_only", "fingerprint") if key in row}
                               for row in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]]
+    elif name in EXPERIMENT_WRITE_TOOLS:
+        summary = {key: data[key] for key in ("batch", "model", "pk", "operation", "synthetic", "audit")}
     elif name == "experiments.file_read":
         summary = {key: value for key, value in data.items() if key != "content"}
     else:
@@ -701,6 +704,7 @@ def _workspace_prompt_evidence(
         "customer_search_page": 1,
         "internal_knowledge": 2,
         "customer_search": 3,
+        "experiment_mutation": 0,
         "experiment_file": 0,
         "experiment_page": 1,
         "experiment_catalog": 1,
@@ -729,24 +733,24 @@ def _workspace_prompt_evidence(
     return visible, prompt
 
 
-# 功能：处理工作空间问题和只读工具循环。
+# 功能：处理工作空间问题和读取及实验维护工具循环。
 # 输入：`request` 后端领取对象、`backend` 请求绑定客户端、`chat_provider` 单次模型调用函数。
 # 输出：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
 # 逻辑：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
 # 约束：backend 是真实边界，chat_provider 是模型边界；保存证据在后端执行，参数与预算保持不变。
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
-    """最多六次只读查询；每次由模型选择，最终回答仅引用后端登记的证据。"""
+    """最多六次数据工具调用；每次由模型选择，最终回答仅引用后端登记的证据。"""
     request_id = _recognizable_request_id(request)
     code = "invalid_request"
     try:
         request = parse_conversation_request(request)
         history = trim_recent_history(request["recent_history"])
         request_id = request["request_id"]
-        if _is_direct_tool_action(request["question"]):
+        if _is_direct_tool_action(request["question"]) and not re.search(r"kgseed|实验|虚构|synthetic", request["question"], re.I):
             return {
                 "request_id": request_id,
                 "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
-                "assistant_text": "该操作未执行，当前工作空间聊天只支持只读查询和文字建议。",
+                "assistant_text": "该操作未执行，工作空间只允许维护明确指定的共享虚构数据，不执行真实业务外部动作。",
                 "citations": [], "status": "completed", "error": None,
             }
         code = "context_unavailable"
@@ -780,7 +784,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                             "evidence_items_available": len(evidence),
                             "evidence_items_shown": len(prompt_evidence),
                             "available_tools": list(catalog.values()) if catalog is not None else [
-                                {"name": name} for name in sorted(WORKSPACE_READ_TOOLS)
+                                {"name": name} for name in sorted(WORKSPACE_TOOLS)
                             ],
                             "tool_results": observations,
                             "remaining_reads": _WORKSPACE_MAX_TOOL_READS - turn,
@@ -809,7 +813,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     **payload, "status": "completed", "error": None,
                 }
             if turn >= _WORKSPACE_MAX_TOOL_READS:
-                raise ChatValidationError("只读查询次数已达上限，模型仍未回答。")
+                raise ChatValidationError("数据工具调用次数已达上限，模型仍未回答。")
             name, arguments = payload["name"], payload["arguments"]
             if catalog is None:
                 code = "context_unavailable"
@@ -826,7 +830,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             _workspace_schema_arguments(arguments, catalog[name]["inputSchema"])
             signature = (name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
             if signature in signatures:
-                raise ChatValidationError("模型重复请求同一只读查询。")
+                raise ChatValidationError("模型重复请求同一数据工具调用。")
             signatures.add(signature)
             code = "context_unavailable"
             try:

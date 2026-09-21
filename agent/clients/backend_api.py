@@ -20,7 +20,7 @@
 - BackendClient.save_sync_state：条件更新邮箱游标。
 - BackendClient.claim_answer_request：领取一条工作空间聊天回答请求。
 - BackendClient.get_answer_context：读取请求绑定的客户和知识上下文。
-- BackendClient.get_chat_tools：发现本请求只读工具。
+- BackendClient.get_chat_tools：发现本请求读取及实验维护工具。
 - BackendClient.get_chat_request_status：读取本人请求状态。
 - BackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
 - BackendClient.report_answer：回报带 Prompt 版本的聊天结果。
@@ -50,7 +50,7 @@
 - DjangoBackendClient.save_sync_state：条件更新邮箱游标。
 - DjangoBackendClient.claim_answer_request：映射工作空间聊天领取接口并移除过渡期空公司字段。
 - DjangoBackendClient.get_answer_context：映射聊天上下文接口。
-- DjangoBackendClient.get_chat_tools：发现本请求只读工具。
+- DjangoBackendClient.get_chat_tools：发现本请求读取及实验维护工具。
 - DjangoBackendClient.get_chat_request_status：读取本人请求状态。
 - DjangoBackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
 - DjangoBackendClient.report_answer：映射聊天回答保存接口。
@@ -88,7 +88,7 @@ from urllib.parse import quote, urlencode
 import requests
 
 from agent.skills import load_skill
-from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS
+from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
@@ -224,7 +224,7 @@ class BackendClient(Protocol):
     # 约束：声明或异常构造不执行 HTTP 请求。
     def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
 
-    # 功能：发现请求实际获准的只读工具目录。
+    # 功能：发现请求实际获准的读取及实验维护工具目录。
     # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
     # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
     # 逻辑：仅声明协议，由具体客户端实现传输。
@@ -238,8 +238,8 @@ class BackendClient(Protocol):
     # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
-    # 功能：执行客户或共享实验只读查询并取得登记证据。
-    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定只读工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
+    # 功能：执行客户读取或共享实验维护并取得登记证据。
+    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定读取及实验维护工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
     # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
     # 逻辑：仅声明协议，由具体客户端实现传输。
     # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
@@ -834,7 +834,7 @@ class DjangoBackendClient:
             )
         return document
 
-    # 功能：发现请求实际获准的只读工具目录。
+    # 功能：发现请求实际获准的读取及实验维护工具目录。
     # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
     # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
     # 逻辑：一次 GET 并检查协议版本、请求、页码与数量。
@@ -881,18 +881,18 @@ class DjangoBackendClient:
             raise BackendContractError("Chat request status 与本次请求不一致。")
         return document
 
-    # 功能：执行客户或共享实验只读查询并取得登记证据。
-    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定只读工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
+    # 功能：执行客户读取或共享实验维护并取得登记证据。
+    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定读取及实验维护工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
     # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
     # 逻辑：核对固定名称与参数对象，一次 POST 并核对响应归属及证据数组。
     # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        """调用请求绑定的只读工具；工具结果和证据由后端共同确认。"""
+        """调用请求绑定的读取及实验维护工具；工具结果和证据由后端共同确认。"""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool 请求")
-        if name not in WORKSPACE_READ_TOOLS:
-            raise BackendContractError("Chat tool 仅支持已登记的客户及实验只读查询。")
+        if name not in WORKSPACE_TOOLS:
+            raise BackendContractError("Chat tool 仅支持已登记的客户读取及实验维护。")
         if not isinstance(arguments, Mapping):
             raise BackendContractError("Chat tool arguments 必须是对象。")
         response, _ = self._request(
@@ -904,7 +904,7 @@ class DjangoBackendClient:
         if document.get("request_id") != request_id or document.get("tool") != name:
             raise BackendContractError("Chat tool 响应与本次请求或工具不一致。")
         if document.get("status") != "completed":
-            raise BackendContractError("Chat tool 未确认只读查询完成。")
+            raise BackendContractError("Chat tool 未确认工具操作完成。")
         if not isinstance(document.get("data"), Mapping):
             raise BackendContractError("Chat tool data 必须是对象。")
         self._object_list(document.get("evidence_items"), "Chat tool evidence_items")

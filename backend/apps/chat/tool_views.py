@@ -1,13 +1,13 @@
-"""职责：发布 Agent 聊天工具目录、请求绑定读取与回答状态查询。
+"""职责：发布 Agent 聊天工具目录、请求绑定读取及实验维护与回答状态查询。
 实现：只接受员工绑定 Agent 认证，错误分为请求级和工具级，所有响应禁止缓存。
-关联：tool_reads 复用业务查询并冻结证据；services 负责请求授权和最终回答状态。
+关联：tool_reads 复用业务读取与实验维护并冻结证据；services 负责请求授权和最终回答状态。
 目录：
 - AgentChatView：认证、错误及缓存策略。
 - AgentChatView.handle_exception：输出稳定且不泄露异常正文的请求错误。
 - AgentChatView.finalize_response：禁止客户端缓存私有结果。
 - ToolCatalogView：读取工具目录。
 - ToolCatalogView.get：解析分页并调用请求目录服务。
-- ToolReadView：执行请求绑定查询。
+- ToolReadView：执行请求绑定数据操作。
 - ToolReadView.post：校验调用并保留业务 HTTP 状态。
 - AgentRequestView：核对聊天回报的权威状态。
 - AgentRequestView.get：只返回授权请求的浏览器安全投影。
@@ -66,7 +66,7 @@ class AgentChatView(APIView):
 
 
 # 功能：提供请求绑定的实际工具发现接口。
-# 逻辑：只发布当前注册且授权的 read 工具 Schema。
+# 逻辑：只发布当前请求获准的读取及实验维护工具 Schema。
 # 约束：需有效 processing 请求，不返回整个业务目录。
 class ToolCatalogView(AgentChatView):
     # 功能：读取一页工具描述。
@@ -96,11 +96,11 @@ class ToolCatalogView(AgentChatView):
         return Response(tool_reads.catalog_for(request.user, query))
 
 
-# 功能：执行一次只读工具并返回本次稳定来源。
+# 功能：执行一次读取或实验维护工具并返回本次稳定来源。
 # 逻辑：只从已认证身份推导 owner，原样传递参数给请求绑定服务。
-# 约束：不接受幂等键、身份参数或写入指令。
+# 约束：不接受客户端幂等键或身份参数；实验维护的幂等键由请求及参数派生。
 class ToolReadView(AgentChatView):
-    # 功能：读取客户工具。
+    # 功能：执行获准的数据工具。
     # 输入：`request`.data 为 request_id/name/arguments 对象。
     # 输出：成功业务数据和证据，或 scope=tool 的明确失败；HTTP 状态保留。
     # 逻辑：服务事务成功后再返回，不把工具 404 转为空列表或聊天失败。

@@ -32,7 +32,7 @@ Agent 目录包含工作空间聊天的 Skill、模型适配、工作流、一�
 
 ### 1.1 工作空间聊天（唯一聊天流程）
 
-`workflows/chat.py` 只执行 `skills/workspace-chat/SKILL.md`（`workspace-chat-v2`），不再按客户绑定或环境变量切换聊天模式。员工从工作空间发起问题，Agent 内部请求不包含预选 `company_id`；当前后端直接省略该字段；HTTP 适配层仍接受过渡期的 `company_id: null` 并移除它，非空值会被拒绝。普通问题可直接回答；需要客户资料时，模型选择 `customers.search` 与 `customers.context`，后者的 `company_id` 仅用于本次客户查询。Agent 从本次请求发布的工具目录核对参数，最多执行 6 次只读查询。共享实验问题可使用 `experiments.catalog`、`experiments.rows`、`experiments.file_read`，保留合成标记、批次及原归属，读取证据由后端登记。后端按员工和请求验证权限，并登记每次读取的证据。Agent 只引用本轮实际展示的授权来源；较长客户详情以标记过的节选进入模型，完整来源仍由后端保存。
+`workflows/chat.py` 只执行 `skills/workspace-chat/SKILL.md`（`workspace-chat-v3`），不再按客户绑定或环境变量切换聊天模式。员工从工作空间发起问题，Agent 内部请求不包含预选 `company_id`；当前后端直接省略该字段；HTTP 适配层仍接受过渡期的 `company_id: null` 并移除它，非空值会被拒绝。普通问题可直接回答；需要客户资料时，模型选择 `customers.search` 与 `customers.context`，后者的 `company_id` 仅用于本次客户查询。Agent 从本次请求发布的工具目录核对参数，最多执行 6 次工具调用。共享实验问题可使用 `experiments.catalog`、`experiments.rows`、`experiments.file_read`，保留合成标记、批次及原归属，读取证据由后端登记。明确的虚构数据维护请求还可使用 `experiments.create/update/delete`，参数取实际目录，修改删除携带最新指纹，回执由后端保存并可引用。后端按员工和请求验证权限，并登记每次读取的证据。Agent 只引用本轮实际展示的授权来源；较长客户详情以标记过的节选进入模型，完整来源仍由后端保存。
 
 `llm/bailian.py` 的 `generate_chat_json()` 请求 JSON Object。模型输出可选择下一次只读查询或最终回答；引用须对应本轮授权来源，正文编号与引用列表须一致。无证据时可以进行普通对话、澄清或明确说明资料不足。直接要求发送邮件、安排日历或写入业务数据时返回未执行说明。工具级参数错误或详情不可用可以在同一请求内修正或回答；请求级错误结束本轮。
 
@@ -67,7 +67,7 @@ python -m agent.main --process-chat-once
 
 Agent 本目录的单元测试继续使用 fake session/backend，不代表真实模型或生产网页验收。后端新增集成测试使用真实 PostgreSQL 和临时 Django HTTP 服务运行原 Agent HTTP 客户端/工作流，模型输出模拟；浏览器测试使用真实页面与模拟 API。
 
-Web Demo 仍需部署对应后端迁移、配置模型与后端地址、启动 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。Agent 只产出 `workspace-chat-v2` 结果；前端已移除客户专属聊天入口；新后端 Worker 启动时明确结束旧公司活动任务并保留历史，不转换或重派旧问题。失败请求不能重置后复用原 `request_id`。
+Web Demo 仍需部署对应后端迁移、配置模型与后端地址、启动 `python backend/manage.py chat_worker`，并完成真实模型及网页联合验收。Agent 只产出 `workspace-chat-v3` 结果；前端已移除客户专属聊天入口；新后端 Worker 启动时明确结束旧公司活动任务并保留历史，不转换或重派旧问题。失败请求不能重置后复用原 `request_id`。
 
 ### 1.5 聊天离线测试
 
@@ -109,7 +109,7 @@ agent/
 │   ├── customer-analysis/
 │   │   └── SKILL.md                # L3 画像指令、版本和输出上限
 │   └── workspace-chat/
-│       └── SKILL.md                # workspace-chat-v2 只读客户工具选择与回答
+│       └── SKILL.md                # workspace-chat-v3 只读客户工具选择与回答
 ├── workflows/
 │   ├── l1_email.py                 # L1 单封邮件事实抽取
 │   ├── gmail_sync.py               # 前端 Gmail 同步服务函数
@@ -140,7 +140,7 @@ agent/
 |---|---|---|---|
 | `email-fact-extraction` | L1 | 一封解析后的邮件主题与当前正文 | 带原文证据的邮件事实 |
 | `customer-analysis` | L3 | 一份公司级 `AnalysisInput` | 客户画像、分析、信号与评分特征 |
-| `workspace-chat` (`workspace-chat-v2`) | 工作空间聊天 | 当前问题、最近历史、内部知识及后端请求绑定的只读工具结果 | 客户搜索/详情查询选择和有来源的回答 |
+| `workspace-chat` (`workspace-chat-v3`) | 工作空间聊天 | 当前问题、最近历史、内部知识及后端请求绑定的只读工具结果 | 客户搜索/详情查询选择和有来源的回答 |
 
 `agent.skills.list_skills()` 可返回可路由 Skill 的名称、描述、版本、指令与输出上限。修改 Skill 正文且会改变模型行为时必须同步递增其 `metadata.version`。未来邮件发送、会议排期或其他写入动作须另行设计权限和确认流程；当前 `workspace-chat` 不执行这些动作。
 

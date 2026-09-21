@@ -1,14 +1,14 @@
 /** 职责：在既有网站中浏览获准共享的虚构实验数据及关联来源。
- * 实现：仅发 GET；URL 保存模型与关联主键；全部数据用 textContent 输出，失败明确显示。
- * 关联：sales.experiments API、experiments.html、product-header.js；不调用分析、发送或编辑接口。
- * 目录：getJson、message、tableUrl、recordTitle、showRecord、loadRows、route、start。
+ * 实现：GET 浏览与带幂等键的 Tool 维护共用 Session；URL 保存关联主键；正文以纯文本呈现。
+ * 关联：sales.experiments 与 experiment_writes、experiments.html、product-header.js；不执行外部动作。
+ * 目录：getJson、message、tableUrl、recordTitle、showRecord、editRecord、saveRecord、deleteRecord、mutateRecord、loadRows、route、start。
  * 变量索引：ui 为 DOM 定位函数；state 保存批次、页码、当前记录及请求代次。
  */
 import './product-header.js?v=20260921-product';
 import { request } from './api.js?v=20260921-product';
 
 const ui = id => document.getElementById(id);
-const state = { batch: null, table: null, page: 1, sequence: 0, rows: [] };
+const state = { batch: null, table: null, page: 1, sequence: 0, rows: [], editing: null, busy: false, pending: null };
 
 /** 功能：读取同源实验接口。输入：url 相对路径。输出：解析后的 JSON。
  * 逻辑：复用统一请求器的会话、缓存版本和错误解释。约束：不创建会话、不重试失败请求。 */
@@ -36,12 +36,16 @@ function recordTitle(row) {
   return String(fields.title || fields.name || fields.company_name || fields.subject || fields.number || fields.tool || fields.username || fields.source || fields.content || fields.event || fields.email || fields.address || `${state.table.name} ${row.pk}`).slice(0, 160);
 }
 
-/** 功能：展示只读详情和关联跳转。输入：row 已读取记录。输出：弹窗及可用的文件下载链接。
+/** 功能：展示详情、维护入口和关联跳转。输入：row 已读取记录。输出：弹窗及可用的文件下载链接。
  * 逻辑：外键按模型结构链接到精确主键查询；缺少授权记录时由目标页显示空结果。
- * 约束：不展开非清单记录，不显示编辑或动作执行按钮。 */
+ * 约束：仅按服务端 write 能力显示维护按钮，不展开非清单记录。 */
 function showRecord(row) {
   ui('record-title').textContent = recordTitle(row);
-  ui('record-owner').textContent = `虚构 · 归属：${row.owner.username}（${row.owner.id}） · ${row.batch} · 只读`;
+  ui('record-owner').textContent = `虚构 · 归属：${row.owner.username}（${row.owner.id}） · ${row.batch} · ${row.read_only ? '只读' : '全体登录账号可维护'}`;
+  ui('edit-record').hidden = !state.table.write.update;
+  ui('delete-record').hidden = !state.table.write.delete;
+  ui('edit-record').onclick = () => { ui('record-dialog').close(); editRecord(row); };
+  ui('delete-record').onclick = () => deleteRecord(row);
   ui('record-json').textContent = JSON.stringify(row.fields, null, 2);
   const links = ui('record-links');
   links.replaceChildren();
@@ -57,6 +61,94 @@ function showRecord(row) {
   download.hidden = !['sales.Attachment', 'accounts.SetupDocument'].includes(state.table.model);
   download.href = `${tableUrl(state.table.model)}${encodeURIComponent(row.pk)}/download/`;
   ui('record-dialog').showModal();
+}
+
+/** 功能：构建新增或编辑表单。输入：row 现有记录，null 表示新增。输出：字段控件及编辑状态。
+ * 逻辑：只展示目录声明的可写字段，关系使用主键，JSON 保持结构化文本；新增允许省略有默认值字段。
+ * 约束：归属、主键和系统字段不由浏览器提交，最终校验在服务端。 */
+function editRecord(row = null) {
+  state.editing = row;
+  state.pending = null;
+  ui('editor-title').textContent = `${row ? '修改' : '新增'}共享虚构${state.table.name}`;
+  ui('editor-status').textContent = '归属保持不变；修改会记录当前操作者。关联字段须使用同批次记录的主键。';
+  const container = ui('editor-fields'); container.replaceChildren();
+  for (const field of state.table.write.fields) {
+    const label = document.createElement('label');
+    label.textContent = `${field.name}${field.required ? ' *' : ''}${field.relation ? ` → ${field.relation}` : ''}`;
+    const input = document.createElement(field.type === 'JSONField' || field.type === 'TextField' ? 'textarea' : 'input');
+    input.name = field.name; input.dataset.type = field.type;
+    input.placeholder = field.nullable ? '留空使用空值' : field.required ? '必填' : '新增时留空使用默认值';
+    if (field.type === 'BooleanField') input.placeholder = 'true / false';
+    if (field.choices.length) input.placeholder = field.choices.map(choice => choice[0]).join(' / ');
+    const value = row?.fields[field.name];
+    input.value = value == null ? '' : field.type === 'JSONField' ? JSON.stringify(value, null, 2) : String(value);
+    if (field.max_length) input.maxLength = field.max_length;
+    label.append(input); container.append(label);
+  }
+  ui('editor-dialog').showModal();
+}
+
+/** 功能：提交表单中的共享记录维护。输入：event 表单事件。输出：成功关闭弹窗，失败保留用户输入。
+ * 逻辑：按字段类型解析，更新只提交变化字段，旧指纹防止覆盖并发修改。
+ * 约束：不自动重试，错误不吞没，不修改受保护字段。 */
+async function saveRecord(event) {
+  event.preventDefault();
+  if (state.busy) return;
+  try {
+    const data = {};
+    for (const field of state.table.write.fields) {
+      const input = ui('editor-form').elements.namedItem(field.name);
+      const raw = input.value;
+      const before = state.editing?.fields[field.name];
+      const original = before == null ? '' : field.type === 'JSONField' ? JSON.stringify(before, null, 2) : String(before);
+      if (state.editing && raw === original) continue;
+      if (!state.editing && raw === '' && !field.required) continue;
+      let value = raw;
+      if (raw === '' && field.nullable) value = null;
+      else if (field.type === 'JSONField') value = JSON.parse(raw);
+      else if (field.type === 'BooleanField') {
+        if (!['true', 'false'].includes(raw)) throw new Error(`${field.name} 须为 true 或 false`);
+        value = raw === 'true';
+      } else if (field.type.includes('Integer') || field.type === 'FloatField') {
+        if (!raw.trim() || !Number.isFinite(Number(raw))) throw new Error(`${field.name} 须为数字`);
+        value = Number(raw);
+      }
+      data[field.name] = value;
+    }
+    await mutateRecord(state.editing ? 'update' : 'create', state.editing, data);
+    ui('editor-dialog').close();
+  } catch (error) { ui('editor-status').textContent = error.message; }
+}
+
+/** 功能：确认并删除当前共享记录。输入：row 已读取的目标。输出：成功关闭详情，失败显示原因。
+ * 逻辑：要求用户确认具体记录，服务端拒绝有引用的删除。约束：不自动级联、不批量删除。 */
+async function deleteRecord(row) {
+  if (state.busy || !window.confirm(`删除这条共享虚构记录？\n${recordTitle(row)}\n${row.pk}\n此操作会影响所有账号。`)) return;
+  try { await mutateRecord('delete', row); ui('record-dialog').close(); }
+  catch (error) { ui('record-owner').textContent = error.message; }
+}
+
+/** 功能：调用统一维护接口并刷新清单数量。输入：operation 操作，row 可空旧记录，data 可选业务字段。
+ * 输出：成功后刷新目录与列表。逻辑：每次逻辑提交生成幂等 UUID，相同参数的手动再提交复用，Tool 服务保留操作者及版本。
+ * 约束：失败保留原页面，不自动重放未知结果；按钮在请求期间禁用。 */
+async function mutateRecord(operation, row, data) {
+  state.busy = true;
+  ui('save-record').disabled = true; ui('delete-record').disabled = true;
+  try {
+    const args = { batch: state.batch.batch, model: state.table.model };
+    if (row) Object.assign(args, { pk: row.pk, expected: row.fingerprint });
+    if (data !== undefined) args.data = data;
+    const signature = JSON.stringify({ operation, args });
+    if (state.pending?.signature !== signature) state.pending = { signature, key: crypto.randomUUID() };
+    await request('agent-tools/call/', { method: 'POST', data: { name: `experiments.${operation}`, arguments: args, idempotency_key: state.pending.key } });
+    const catalog = await getJson('/api/v1/experiments/');
+    state.batch = catalog.batches.find(batch => batch.batch === args.batch);
+    state.table = state.batch.tables.find(table => table.model === args.model);
+    ui('batch-name').textContent = `${state.batch.batch} · ${state.batch.total} 条记录`;
+    for (const link of ui('experiment-tables').children) link.lastChild.textContent = String(state.batch.tables.find(table => table.model === link.dataset.model).count);
+    await loadRows();
+    message('共享虚构数据已保存，操作已记录。');
+  } finally { state.busy = false; ui('save-record').disabled = false; ui('delete-record').disabled = false; }
 }
 
 /** 功能：读取并绘制当前表的一页。输入：state 与搜索控件。输出：记录表、总量和分页状态。
@@ -99,6 +191,7 @@ async function loadRows() {
  * 逻辑：只允许目录已声明的模型；切换表清除分页和文本筛选。约束：未知模型不自动回退。 */
 function route() {
   if (!state.batch) return;
+  ui('record-dialog').close(); ui('editor-dialog').close();
   const params = new URLSearchParams(location.hash.slice(1));
   const model = params.get('table') || 'crm.Company';
   state.table = state.batch.tables.find(table => table.model === model);
@@ -108,13 +201,14 @@ function route() {
   ui('table-title').textContent = state.table.name;
   ui('table-name').textContent = `${state.table.model} · ${state.table.table}`;
   ui('table-schema').textContent = JSON.stringify(state.table.fields, null, 2);
+  ui('create-record').hidden = !state.table.write.create;
   for (const link of ui('experiment-tables').children) link.toggleAttribute('aria-current', link.dataset.model === model);
   loadRows();
 }
 
 /** 功能：加载实验目录并挂载事件。输入：当前 Session。输出：批次目录与初始表。
  * 逻辑：读取固定已批准批次；登录失败提供原工作台入口；不自动开放未来批次。
- * 约束：仅 GET 请求，不调用模型、不执行客户端任意脚本。 */
+ * 约束：维护使用统一 Tool API 和 CSRF，不调用模型、不执行外部动作。 */
 async function start() {
   try {
     const catalog = await getJson('/api/v1/experiments/');
@@ -139,6 +233,9 @@ async function start() {
     ui('previous-page').onclick = () => { state.page--; loadRows(); };
     ui('next-page').onclick = () => { state.page++; loadRows(); };
     ui('close-record').onclick = () => ui('record-dialog').close();
+    ui('create-record').onclick = () => editRecord();
+    ui('close-editor').onclick = () => ui('editor-dialog').close();
+    ui('editor-form').onsubmit = saveRecord;
     window.addEventListener('hashchange', route);
     route();
   } catch (error) {

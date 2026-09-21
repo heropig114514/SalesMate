@@ -1,4 +1,4 @@
-/* 职责：布局实验数据表目录、只读记录列表与详情。
+/* 职责：布局实验数据表目录、记录列表与维护表单与详情。
  * 实现：宽屏双栏、窄屏单栏，长 JSON 与主键在容器内换行。
  * 关联：experiments.html；复用 design-system.css 的色彩与顶栏。
  * 目录：无函数或类声明；选择器按页面、表格、弹窗、移动端组织。
@@ -29,3 +29,6 @@ dialog { color: #e5e7ed; background: #1a1f2a; border: 1px solid #4c5870; border-
 dialog::backdrop { background: #0009; } #record-links { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; } #record-links a { border: 1px solid #3a4964; border-radius: 6px; padding: 5px 9px; }
 #experiment-status[data-error] { color: #ffb7a8; } [hidden] { display: none !important; }
 @media (max-width: 760px) { .experiment-shell { padding: 18px 12px; } .experiment-layout { grid-template-columns: 1fr; } #experiment-tables { max-height: 220px; } .experiment-layout aside { border-right: 0; } .experiment-heading { align-items: start; flex-direction: column; } }
+
+#editor-fields { display: grid; gap: 14px; margin: 20px 0; }
+#editor-fields textarea { min-height: 95px; padding: 10px; background: #161a23; color: #eee; border: 1px solid #454c5d; border-radius: 7px; font: inherit; resize: vertical; }
