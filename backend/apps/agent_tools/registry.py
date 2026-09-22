@@ -1,5 +1,5 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：发布事实升级预览与显式排队工具；实验模式动态发布可省略版本/幂等键的全目录并直接执行内部管理操作；派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
+实现：商机信号与评分复用 CRUD 工具，不调用算法；发布事实升级预览与显式排队工具；实验模式动态发布可省略版本/幂等键的全目录并直接执行内部管理操作；派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
 关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
@@ -21,6 +21,8 @@ from .support import support_specs
 from .experiments import experiment_specs
 
 RESOURCES = {
+    "opportunity-signals": "opportunity_signals",
+    "opportunity-priorities": "opportunity_priorities",
     "customers": "customer_settings",
     "contact-profiles": "contact_profiles",
     "aliases": "aliases",
@@ -80,10 +82,15 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：组合事实升级、业务、资料文件与共享实验工具；活动资讯可直接归档，原记录确认语义不变；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
+# 逻辑：新增可按商机过滤的信号和评分工具，归档直接执行；组合事实升级、业务、资料文件与共享实验工具；活动资讯可直接归档，原记录确认语义不变；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
 # 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
-    entries = []
+    entries = [
+        tool("seller_context.get", "读取个人、公司、参考产品、方案及卖方目标资料。", "algorithm_read", object_schema({}), view="seller"),
+        tool("opportunity_context.get", "读取单条商机及授权邮件、信号、评分和销售方资料。", "algorithm_read", object_schema({"opportunity_id": UUID}, ["opportunity_id"]), view="opportunity"),
+        tool("priority_board.list", "读取活跃商机及已保存的最新评分。", "algorithm_read", object_schema({**PAGE, "company": UUID, "q": {"type": "string"}}), view="board"),
+        tool("world_insights.get", "读取数据库活动与去重商机金额、客户国家统计。", "algorithm_read", object_schema({**PAGE, "country": {"type": "string"}, "event_type": {"enum": ["exhibition", "sales"]}, "from": {"type": "string", "format": "date-time"}, "to": {"type": "string", "format": "date-time"}}), view="world"),
+    ]
     for resource, prefix in RESOURCES.items():
         serializer = SERIALIZERS[resource]
         names = {field.name for field in serializer.Meta.model._meta.fields}
@@ -96,7 +103,7 @@ def build_registry():
                             "to": {"type": "string", "format": "date-time"}})
             key = "event_type" if resource == "world-events" else "category"
             filters[key] = {"enum": list(serializer().fields[key].choices)}
-        for key in ("company", "conversation", "quote", "order", "team", "status"):
+        for key in ("company", "opportunity", "conversation", "quote", "order", "team", "status"):
             if key in names:
                 filters[key] = {"type": "string"} if key == "status" else UUID
         if names.intersection(
@@ -164,7 +171,7 @@ def build_registry():
                         },
                         ["id", "revision", "archived"],
                     ),
-                    "write" if resource in {"world-events", "world-news"} else "confirm",
+                    "write" if resource in {"world-events", "world-news", "opportunity-signals", "opportunity-priorities"} else "confirm",
                     resource=resource,
                     command="archive",
                 )

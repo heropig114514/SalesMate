@@ -13,7 +13,8 @@
 | `assets/business.js` / `business.css` | 根据服务端字段契约渲染业务表格、编辑及确认表单 |
 | `assets/assistant-widget.js` / `assistant-widget.css` | 各工作空间页面共享的悬浮入口、可收起底部聊天条与移动布局 |
 | `assets/assistant-markdown.js` / `markdown-it.vendor.js` | 基于固定版本 markdown-it 的安全助手正文渲染，独立 ESM 发行包同源加载 |
-| `assets/world-news.js/css` / `world-map.js` / `world-events.js` | 全球洞察的活动列表、金额地图、联动详情与行业资讯 |
+| `assets/world-news.js/css` / `world-map.js` | 数据库全球洞察活动、金额地图、详情与行业资讯 |
+| `priorities.html` / `assets/priority-board.js/css` | 商机评分、解释、信号和证据；展示结果，不计算算法 |
 | `assets/onboarding.js/css` / `company-settings.js` | 个人、公司、产品、方案四步引导及设置；资料通过账号接口持久化 |
 
 顶栏使用 light DOM，沿用全局设计变量和原生链接，不另建路由系统、不查询账户、不产生写入。首页不标记为“社媒情报”；聊天浮窗保持当前页面和产品分区。社媒情报入口对应现有邮件与客户分析；没有增加未接入的社交渠道。
@@ -26,7 +27,7 @@
 - 页面样式只处理对应的布局和状态。保留 DOM ID、`hidden`、原生表单和业务模块事件约定。
 - 聊天依据采用外层总开关和内层原文折叠；引用卡片沿用主题变量，原文区独立滚动。测试分别定位两层 `details`，并验证默认收起及展开可读。
 - 新组件提供键盘焦点、明确链接与选中状态；需要监听全局事件的组件在移除时清理监听器。
-- 保留服务端 QQ 开关、未知数据状态和演示来源标识。全球消息仍是明确标注的虚构演示。
+- 保留服务端 QQ 开关、未知数据状态和虚拟来源标识。全球洞察读取数据库，虚拟批次明确标注。
 - 入口及有变化的共享模块使用一致的资源版本查询参数，避免部署后加载旧组件。
 - 此实现无需新增 npm 依赖或编译步骤；后续若引入框架，可按独立业务页面逐步迁移，继续使用这套语义变量和 API。
 
@@ -43,7 +44,7 @@ node backend/tools/browser_world_news.cjs
 node backend/tools/browser_onboarding.cjs
 ```
 
-这些检查使用本地静态资源和模拟 API；QQ 检查显式模拟开关，不能据此声称真实邮箱外部收发已验证。桌面及手机截图写入忽略的 `backend/artifacts` 目录。
+除 `browser_world_news.cjs` 外，这些检查使用本地静态资源和模拟 API；全球洞察检查需要已初始化且运行中的本地实验服务，以及显式 `SALESMATE_TEST_URL`（参见 [联调支持](../docs/development-support.md)）。QQ 检查显式模拟开关，不能据此声称真实邮箱外部收发已验证。桌面及手机截图写入忽略的 `backend/artifacts` 目录。
 
 在 `backend` 目录运行 `python tools/check_docs.py` 和 `python tools/check_doc_changes.py --base HEAD --fail-on-review`。现有检查器覆盖 Python；JS、CSS、HTML 的顶部说明与实现一致性需人工核对。
 

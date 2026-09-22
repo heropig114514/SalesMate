@@ -1,5 +1,5 @@
 """职责：校验全球活动、资讯事实及查询条件，不生成推荐或评分。
-实现：限制来源 URL、时间窗口、国家代码和本人商机关联；支持显式日期与地区过滤。
+实现：实验模式和显式虚拟数据允许缺来源；商机关联使用统一权限范围，限制已有 URL 和时间窗口；支持显式日期与地区过滤。
 关联：销售序列化器调用 validate_insight，ResourceView 使用 filter_insights；数据沿用 Record 权限和版本。
 目录：
 - validate_insight：核对跨字段及引用关系。
@@ -13,17 +13,20 @@ from django.utils.dateparse import parse_datetime
 from django.utils.timezone import is_aware
 from rest_framework.exceptions import ValidationError
 from .models import Opportunity, WorldEvent
+from .permissions import scope
+from common.laboratory import enabled
 
 
 # 功能：校验活动与资讯事实。
 # 输入：`serializer` 为当前序列化器，`attrs` 为验证后的字段。
 # 输出：原字段字典；无效来源、时间或外部账号关联抛 400。
-# 逻辑：更新按旧记录补齐仅用于比较；商机必须为本人未归档记录，URL 必须为无凭证 HTTPS，未验证外站可达性。
+# 逻辑：更新合并旧值比较；商机关联遵循业务 scope，实验模式可跨账号；synthetic 或实验模式可不填来源，已填 URL 仍须无凭证 HTTPS。
 # 约束：不读取外站，不根据客户名称推断关系，不更改商机或评分输入。
 def validate_insight(serializer, attrs):
     url = attrs.get("source_url", getattr(serializer.instance, "source_url", ""))
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    synthetic = attrs.get("data_source", getattr(serializer.instance, "data_source", "manual")) == "synthetic"
+    if (url or not (enabled() or synthetic)) and (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password):
         raise ValidationError("source_url 必须是无凭证的 HTTPS 来源。")
     if serializer.Meta.model is WorldEvent:
         start = attrs.get("starts_at", getattr(serializer.instance, "starts_at", None))
@@ -36,8 +39,8 @@ def validate_insight(serializer, attrs):
         if "opportunity_ids" in attrs:
             ids = [str(value) for value in attrs["opportunity_ids"]]
             attrs["opportunity_ids"] = ids
-            if len(set(ids)) != len(ids) or Opportunity.objects.filter(owner=serializer.context["request"].user, archived=False, pk__in=ids).count() != len(ids):
-                raise ValidationError("opportunity_ids 必须唯一且属于本人未归档商机。")
+            if len(set(ids)) != len(ids) or scope(Opportunity, serializer.context["request"].user).filter(archived=False, pk__in=ids).count() != len(ids):
+                raise ValidationError("opportunity_ids 必须唯一且指向可访问的未归档商机。")
     return attrs
 
 

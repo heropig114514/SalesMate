@@ -1,351 +1,103 @@
-/** 职责：全球洞察的活动筛选、联动详情、行程导出、邀约草稿与行业资讯。
- * 实现：URL 保存筛选/选择，金额和客户均为显式演示；资讯沿用 NewsFeed 校验与详情路由；操作只导出本地日历或可编辑草稿。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；world.html、world-news.css、world-map.js；world-events.js 活动与 world-demo.js 新闻为演示数据源。
- * 目录：text、eventName、countryName、money、daysUntil、visibleEvents、updateURL、selectEvent、renderEvents、renderDetail、renderNews、renderRoute、foldCalendarLine、calendarText、calendarText.escape、downloadItinerary、inviteDraft、receiveWorldNews、start。
- * 变量索引：$ 为 DOM 查询；feed 为资讯快照；state 为类型/时间/地区/选择/视角；map 为地图实例；today 为实际当天日期；categories 为资讯分类；DEMO_* 为导入数据。
+/** 职责：从数据库展示活动地图、资讯和邀约模板。
+ * 实现：显式读取分页，分币种显示，标记虚拟占位；失败显示错误，无静态回退。
+ * 关联：sales/world、world-news、seller-context 接口和 WorldMap。
+ * 目录：$、text、countryName、loadPages、eventRows、money、render、selectEvent、renderDetail、renderNews、renderArticle、foldLine、calendarText、calendarText.escape、calendarText.instant、downloadItinerary、inviteDraft、start。
+ * 变量索引：$ 查询 DOM；state 数据快照和筛选；categories 分类；regionNames 地区名称；map 地图实例。
  */
-import { language } from "./i18n.js?v=20260921-product";
-import { escapeHtml as e } from "./api.js?v=20260921-product";
-import { mountWorkspace } from "./workspace.js?v=20260921-markdown";
-import { WorldMap } from "./world-map.js?v=20260921-product";
-import {
-  DEMO_EVENTS,
-  DEMO_COUNTRIES,
-  NEWS_CATEGORIES,
-} from "./world-events.js?v=20260921-product";
-import { NewsFeed } from "./world-feed.js?v=20260921-product";
-import { DEMO_NEWS } from "./world-demo.js?v=20260921-product";
-const $ = (id) => document.getElementById(id);
-const feed = new NewsFeed("demo", DEMO_NEWS);
-const today = new Date();
-today.setHours(0, 0, 0, 0);
-const categories = NEWS_CATEGORIES;
+import { language } from './i18n.js?v=20260921-product';
+import { request, escapeHtml as e } from './api.js?v=20260921-product';
+import { mountWorkspace } from './workspace.js?v=20260922-support';
+import { WorldMap } from './world-map.js?v=20260922-support';
+const $ = id => document.getElementById(id);
+const state = { events: [], news: [], countries: [], currencies: [], selected: null, country: 'all', currency: '', type: 'all', time: 'all', view: 'global', seller: null };
+const categories = { regulation: ['监管', 'Regulation'], industry: ['产业', 'Industry'], competition: ['竞争', 'Competition'], price: ['价格', 'Price'] };
+const regionNames = new Intl.DisplayNames([language === 'en' ? 'en' : 'zh-CN'], { type: 'region' });
 let map = null;
-const state = {
-  type: "all",
-  time: "all",
-  country: "all",
-  selected: null,
-  view: "global",
-};
-/** 功能：选择文案。输入：zh/en。输出：文本。逻辑：沿用语言设置。约束：不翻译用户内容。 */
-function text(zh, en) {
-  return language === "en" ? en : zh;
+/** 功能：选择文案。输入：zh/en。输出：文本。逻辑：沿用语言。约束：不翻译业务内容。 */
+function text(zh, en) { return language === 'en' ? en : zh; }
+/** 功能：显示国家。输入：code。输出：名称。逻辑：ISO 地区名称。约束：不猜测地址。 */
+function countryName(code) { return regionNames.of(code) || code; }
+/** 功能：读取分页快照。输入：path。输出：合并结果。逻辑：按 count 显式请求下一页。约束：失败抛错，不重试。 */
+async function loadPages(path) {
+  const first = await request(`${path}?page_size=100&page=1`), results = [...first.results];
+  for (let page = 2; results.length < first.count; page++) {
+    const next = await request(`${path}?page_size=100&page=${page}`);
+    if (!next.results.length) throw new Error(text('数据发生变化，请刷新。', 'Data changed; refresh.'));
+    results.push(...next.results);
+  }
+  return { ...first, results };
 }
-/** 功能：活动名称。输入：item。输出：文本。逻辑：使用演示数据双语标题。约束：无修改。 */
-function eventName(item) {
-  return text(item.title, item.en);
+/** 功能：筛选活动。输入：includeCountry。输出：数组。逻辑：类型、未结束时间窗口及国家取交集。约束：不写数据库。 */
+function eventRows(includeCountry = true) {
+  const now = new Date(), end = state.time === '30' ? new Date(now.getTime() + 30 * 86400000) : new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3 + 3, 1);
+  return state.events.filter(item => (state.type === 'all' || item.event_type === state.type) && (!includeCountry || state.country === 'all' || item.country === state.country) && (state.time === 'all' || (new Date(item.ends_at) >= now && new Date(item.starts_at) < end)));
 }
-/** 功能：地区名称。输入：code。输出：名称。逻辑：固定白名单映射。约束：未知保持标识。 */
-function countryName(code) {
-  const country = DEMO_COUNTRIES.find((v) => v.code === code);
-  return country ? text(country.name, country.en) : code;
+/** 功能：金额显示。输入：amounts。输出：字符串。逻辑：分币种展示。约束：不汇率换算，未知不补零。 */
+function money(amounts) { return Object.entries(amounts).map(([currency, amount]) => `${currency} ${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 2 })}`).join(' · ') || text('金额未知', 'Amount unknown'); }
+/** 功能：渲染筛选结果。输入：state。输出：DOM。逻辑：国家数量、列表和地图联动，所选币种缺金额保留 null。约束：空态清除旧详情，地图使用后端去重金额。 */
+function render() {
+  const rows = eventRows(), regional = eventRows(false);
+  if (!rows.some(item => item.id === state.selected)) state.selected = rows[0]?.id || null;
+  $('event-count').textContent = rows.length; $('map-count').textContent = text(`${rows.length} 项活动`, `${rows.length} events`);
+  $('region-filters').innerHTML = `<button data-country="all" aria-pressed="${state.country === 'all'}">${text('全部', 'All')} <span>${regional.length}</span></button>` + state.countries.map(item => `<button data-country="${e(item.code)}" aria-pressed="${state.country === item.code}">${e(countryName(item.code))}<span>${regional.filter(row => row.country === item.code).length}</span></button>`).join('');
+  $('event-list').innerHTML = rows.map(item => `<button class="event-card" aria-pressed="${item.id === state.selected}" data-select="${e(item.id)}"><span class="event-card-main"><span>${e(item.city)} · ${e(item.starts_at.slice(0, 10))}</span><strong>${e(item.title)}</strong><small>${e(money(item.amounts))}${item.data_source === 'synthetic' ? text(' · 虚拟占位', ' · Synthetic') : ''}</small></span></button>`).join('') || `<p>${text('没有匹配活动。', 'No matching events.')}</p>`;
+  map?.setItems(rows.map(item => ({ ...item, lat: item.latitude, lng: item.longitude, amount: Object.hasOwn(item.map_amounts, state.currency) ? Number(item.map_amounts[state.currency]) : null, currency: state.currency, en: item.title })), state.selected);
+  renderDetail(rows.find(item => item.id === state.selected));
+  const params = new URLSearchParams({ type: state.type, time: state.time, country: state.country, view: state.view, currency: state.currency });
+  if (state.selected) params.set('event', state.selected);
+  history.replaceState(null, '', '/world/?' + params);
 }
-/** 功能：展示金额。输入：amount。输出：明确 SGD 金额。逻辑：国际化格式。约束：仅用于演示快照，不换汇。 */
-function money(amount) {
-  return (
-    "SGD " +
-    new Intl.NumberFormat(language === "en" ? "en-SG" : "zh-CN", {
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(amount)
-  );
-}
-/** 功能：计算自然日倒计时。输入：date 为 ISO 日期。输出：整数。逻辑：日期按本地日历读取。约束：负值表示过去。 */
-function daysUntil(date) {
-  return Math.round((new Date(date + "T00:00:00") - today) / 86400000);
-}
-/** 功能：筛选活动。输入：includeCountry 是否启用国家条件。输出：数组。逻辑：类型与时间交集，季度包含起止边界且排除已结束活动。约束：不评分、不排名。 */
-function visibleEvents(includeCountry = true) {
-  const quarterEnd = new Date(
-    today.getFullYear(),
-    Math.floor(today.getMonth() / 3) * 3 + 3,
-    0,
-    23,
-    59,
-    59,
-  );
-  return DEMO_EVENTS.filter(
-    (item) =>
-      (state.type === "all" || item.type === state.type) &&
-      (!includeCountry ||
-        state.country === "all" ||
-        item.country === state.country) &&
-      (state.time === "all" ||
-        (new Date(item.end + "T23:59:59") >= today &&
-          (state.time === "30"
-            ? daysUntil(item.date) <= 30
-            : new Date(item.date + "T00:00:00") <= quarterEnd))),
-  );
-}
-/** 功能：保存筛选 URL。输入：当前 state。输出：无。逻辑：白名单状态写入查询项。约束：不包含私人资料。 */
-function updateURL() {
-  const query = new URLSearchParams();
-  for (const key of ["type", "time", "country", "view"])
-    if (state[key] !== "all" && state[key] !== "global")
-      query.set(key, state[key]);
-  if (state.selected) query.set("event", state.selected);
-  history.replaceState(null, "", "/world/" + (query.size ? "?" + query : ""));
-}
-/** 功能：选择活动。输入：id。输出：无。逻辑：限当前筛选结果，地图/列表/详情同步。约束：不创建行程或发送邀请。 */
-function selectEvent(id) {
-  if (!visibleEvents().some((v) => v.id === id)) return;
-  state.selected = id;
-  updateURL();
-  renderEvents();
-}
-/** 功能：刷新联动界面。输入：state。输出：无。逻辑：失效选择移至当前第一项；空列表清空详情，地区数基于类型和时间条件。约束：筛选不改变地图视角。 */
-function renderEvents() {
-  const items = visibleEvents();
-  if (!items.some((v) => v.id === state.selected))
-    state.selected = items[0]?.id || null;
-  $("event-count").textContent = items.length;
-  $("map-count").textContent = text(
-    `${items.length} 场活动 · 演示商机`,
-    `${items.length} events · Demo pipeline`,
-  );
-  $("region-filters").innerHTML =
-    `<button data-country="all" aria-pressed="${state.country === "all"}">${text("全部地区", "All regions")}<span>${visibleEvents(false).length}</span></button>` +
-    DEMO_COUNTRIES.map(
-      (country) =>
-        `<button data-country="${country.code}" aria-pressed="${state.country === country.code}">${e(countryName(country.code))}<span>${visibleEvents(false).filter((v) => v.country === country.code).length}</span></button>`,
-    ).join("");
-  $("event-list").innerHTML = items.length
-    ? items
-        .map(
-          (item) =>
-            `<button class="event-card" type="button" data-select="${item.id}" aria-pressed="${state.selected === item.id}"><span class="event-date"><b>${item.date.slice(8)}</b><small>${item.date.slice(5, 7)} / ${item.date.slice(0, 4)}</small></span><span class="event-card-main"><span class="event-type">${item.type === "exhibition" ? text("展会", "Exhibition") : text("销售活动", "Sales event")}</span><strong>${e(eventName(item))}</strong><span>${e(item.city)} · ${e(money(item.amount))}</span></span><span aria-hidden="true">↗</span></button>`,
-        )
-        .join("")
-    : `<div class="insights-empty"><h3>${text("当前筛选下暂无活动", "No events match these filters")}</h3><p>${text("可以切换时间窗或地区继续查看。", "Try a different date range or region.")}</p><button id="reset-filters" class="secondary">${text("清除筛选", "Clear filters")}</button></div>`;
-  $("reset-filters")?.addEventListener("click", () => {
-    state.type = "all";
-    state.time = "all";
-    state.country = "all";
-    $("event-type").value = "all";
-    $("event-time").value = "all";
-    renderEvents();
-    updateURL();
-  });
-  renderDetail(items.find((v) => v.id === state.selected));
-  map?.setItems(items, state.selected);
-  updateURL();
-}
-/** 功能：展示活动完整判断。输入：item 或 undefined。输出：无。逻辑：标题、倒计时、金额、原因、现场和建议动作分区。约束：所有业务信息明确是演示，空筛选不保留旧详情。 */
+/** 功能：选择活动。输入：id。输出：无。逻辑：统一渲染。约束：不写数据。 */
+function selectEvent(id) { state.selected = id; render(); }
+/** 功能：展示活动事实。输入：item。输出：详情。逻辑：转义所有业务文本，展示缺项和来源。约束：不生成推荐。 */
 function renderDetail(item) {
-  if (!item) {
-    $("event-detail").innerHTML =
-      `<div class="insights-empty">${text("选择一个活动，查看详情。", "Select an event to see details.")}</div>`;
-    return;
-  }
-  const days = daysUntil(item.date),
-    countdown =
-      days < 0
-        ? text("已开始 / 已结束", "Started / past")
-        : days === 0
-          ? text("今天", "Today")
-          : text(`${days} 天后`, `In ${days} days`);
-  $("event-detail").innerHTML =
-    `<div class="event-detail-head"><span class="event-type">${item.type === "exhibition" ? text("展会", "Exhibition") : text("销售活动", "Sales event")}</span><span class="event-countdown">${countdown}</span></div><h2>${e(eventName(item))}</h2><p class="event-location">⊕ ${e(item.city)}</p><p class="event-period">${item.date} — ${item.end}</p><div class="event-value"><span>${text("关联在手商机 · 演示", "Related pipeline · Demo")}</span><strong>${e(money(item.amount))}</strong><small>${e(item.customers.join(" · "))}</small></div><section><h3><span>01</span>${text("为什么值得去", "Why attend")}</h3><p>${e(language === "en" ? `Meet ${item.customers.join(" and ")} to review their demo inspection projects and confirm requirements.` : item.why)}</p></section><section><h3><span>02</span>${text("现场情况", "On site")}</h3><ul>${(language === "en" ? ["Customer purchasing and engineering teams in this demo scenario.", "Technical discussions and application demonstrations."] : item.onsite).map((v) => `<li>${e(v)}</li>`).join("")}<li>${text("报名截止", "Registration closes")}: ${item.deadline}</li></ul></section><section><h3><span>03</span>${text("建议动作", "Suggested actions")}</h3><ul>${(language === "en" ? [`Arrange a meeting with ${item.customers[0]}.`, "Prepare specifications and a validation plan."] : item.actions).map((v) => `<li>${e(v)}</li>`).join("")}</ul></section><div class="event-actions"><button id="add-itinerary" class="primary" type="button">${text("＋ 加入行程", "＋ Add to itinerary")}</button><button id="create-invite" class="secondary" type="button">${text("生成客户邀约邮件", "Draft customer invitation")}</button></div><p class="event-action-note">${text("行程导出为日历文件；邀约生成后由你审阅。", "Export a calendar file or review an invitation draft.")}</p>`;
-  $("add-itinerary").onclick = () => downloadItinerary(item);
-  $("create-invite").onclick = () => inviteDraft(item);
+  if (!item) { $('event-detail').innerHTML = `<p>${text('请选择活动。', 'Select an event.')}</p>`; return; }
+  const days = Math.ceil((new Date(item.starts_at) - new Date()) / 86400000);
+  $('event-detail').innerHTML = `<div class="event-detail-head"><span>${item.event_type === 'exhibition' ? text('展会', 'Exhibition') : text('销售活动', 'Sales event')}</span><span>${days >= 0 ? text(`${days} 天后`, `In ${days} days`) : text('已开始', 'Started')}</span></div><h2>${e(item.title)}</h2><p>${e(item.city)} · ${e(item.starts_at.slice(0, 10))} — ${e(item.ends_at.slice(0, 10))}</p><p class="badge">${e(item.data_source === 'synthetic' ? text('数据库虚拟占位', 'Synthetic database record') : item.data_source)}</p><div class="event-value"><span>${text('关联在手商机', 'Related pipeline')}</span><strong>${e(money(item.amounts))}</strong><small>${e(item.customers.join(' · '))}</small></div><section><h3>${text('为什么值得去', 'Why attend')}</h3><p>${e(item.description || text('等待补充说明', 'Awaiting details'))}</p></section><section><h3>${text('现场情况', 'On site')}</h3><ul>${item.onsite.map(value => `<li>${e(value)}</li>`).join('')}</ul><p>${text('报名截止', 'Registration closes')}：${e(item.registration_deadline?.slice(0, 10) || '—')}</p></section><section><h3>${text('建议动作', 'Suggested actions')}</h3><ul>${item.suggested_actions.map(value => `<li>${e(value)}</li>`).join('')}</ul></section>${item.source_url ? `<a href="${e(item.source_url)}" target="_blank" rel="noopener noreferrer">${text('原始来源', 'Source')}</a>` : ''}<div class="event-actions"><button id="add-itinerary" class="primary">${text('加入行程', 'Add to itinerary')}</button><button id="create-invite" class="secondary">${text('生成客户邀约邮件', 'Draft invitation')}</button></div><p class="event-action-note">${text('导出日历文件；邀约为可编辑模板，尚未调用 AI。', 'Export calendar file; invitation is an editable template, without AI.')}</p>`;
+  $('add-itinerary').onclick = () => downloadItinerary(item); $('create-invite').onclick = () => inviteDraft(item);
 }
-/** 功能：显示近十四天资讯。输入：feed 快照及真实 today。输出：无。逻辑：只取真实日期范围内前四条并标记分类/发布时间。约束：演示日期不随刷新伪装成新消息。 */
-function renderNews() {
-  const items = feed
-    .list()
-    .filter((item) => {
-      const days = daysUntil(item.published_at.slice(0, 10));
-      return days <= 0 && days >= -14;
-    })
-    .slice(0, 4);
-  $("industry-news").innerHTML = items.length
-    ? items
-        .map(
-          (item) =>
-            `<a class="industry-news-card" href="/world/news/${encodeURIComponent(item.id)}/"><span class="news-category">${e((categories[item.industry] || ["行业", "Industry"])[language === "en" ? 1 : 0])}</span><h3>${e(item.title)}</h3><time datetime="${e(item.published_at)}">${e(item.published_at.slice(0, 10))}</time><span class="news-arrow" aria-hidden="true">↗</span></a>`,
-        )
-        .join("")
-    : `<p class="muted">${text("当前演示快照在近 14 天内没有资讯。", "No demo news within the last 14 days.")}</p>`;
-}
-/** 功能：恢复地图查询或新闻详情。输入：location。输出：无。逻辑：同源详情沿用 NewsFeed 记录；地图恢复白名单筛选。约束：未知消息明确显示缺失。 */
-function renderRoute() {
-  const match = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
-  $("world-explorer").hidden = Boolean(match);
-  $("news-detail").hidden = !match;
-  if (match) {
-    const item = feed.get(match[1]);
-    $("news-detail").innerHTML =
-      `<a href="/world/">← ${text("返回全球洞察", "Back to Global Insights")}</a>` +
-      (item
-        ? `<article><p class="eyebrow">${text("演示资讯", "DEMO NEWS")} · ${item.published_at.slice(0, 10)}</p><h1>${e(item.title)}</h1><p class="article-lead">${e(item.summary)}</p>${item.body.map((v) => `<p>${e(v)}</p>`).join("")}<p class="muted">${text("虚构演示，没有真实报道来源。", "Fictional example, without a real reporting source.")}</p></article>`
-        : `<h1>${text("消息未找到", "News not found")}</h1>`);
-    return;
-  }
-  const query = new URLSearchParams(location.search);
-  state.type = ["exhibition", "sales"].includes(query.get("type"))
-    ? query.get("type")
-    : "all";
-  state.time = ["30", "quarter"].includes(query.get("time"))
-    ? query.get("time")
-    : "all";
-  state.country = DEMO_COUNTRIES.some((c) => c.code === query.get("country"))
-    ? query.get("country")
-    : "all";
-  state.view = ["apac", "europe"].includes(query.get("view"))
-    ? query.get("view")
-    : "global";
-  state.selected = query.get("event");
-  $("event-type").value = state.type;
-  $("event-time").value = state.time;
-  renderEvents();
-  renderNews();
-}
-/** 功能：折叠日历内容行。输入：line 为已转义字符串。输出：带 CRLF 空格续行的文本。
- * 逻辑：按 Unicode 字符累计 UTF-8 字节，不切断多字节字符；续行空格计入 75 字节。
- * 约束：仅生成导出格式，不改变活动字段。 */
-function foldCalendarLine(line) {
-  const encoder = new TextEncoder(); let result = '', length = 0;
-  for (const character of line) {
-    const size = encoder.encode(character).length;
-    if (length + size > 75) { result += '\r\n '; length = 1; }
-    result += character; length += size;
-  }
-  return result;
-}
-/** 功能：构造标准 iCalendar 全天活动。输入：item。输出：ICS 字符串。逻辑：结束日使用排他次日，文本转义防止注入额外行，UTF-8 按 75 字节折行。约束：导出不代表已加入远程日历。 */
+/** 功能：显示近十四天资讯。输入：快照。输出：DOM。逻辑：保留实际发布时间。约束：不更新虚拟时间。 */
+function renderNews() { $('industry-news').innerHTML = state.news.map(item => `<a class="industry-news-card" href="/world/news/${e(item.id)}/"><span>${e((categories[item.category] || ['', ''])[language === 'en' ? 1 : 0])}${item.data_source === 'synthetic' ? text(' · 虚拟', ' · Synthetic') : ''}</span><h3>${e(item.title)}</h3><time>${e(item.published_at.slice(0, 10))}</time></a>`).join('') || `<p>${text('近 14 天暂无资讯。', 'No news in the last 14 days.')}</p>`; }
+/** 功能：显示资讯详情。输入：id。输出：Promise。逻辑：按 ID 读取，不依赖列表。约束：错误不回退。 */
+async function renderArticle(id) { const item = await request('sales/records/world-news/' + encodeURIComponent(id) + '/'); $('news-detail').innerHTML = `<a href="/world/">← ${text('返回全球洞察', 'Back')}</a><article><p>${e(item.data_source)} · ${e(item.published_at.slice(0, 10))}</p><h1>${e(item.title)}</h1><p>${e(item.summary)}</p>${item.content.split('\n').map(line => `<p>${e(line)}</p>`).join('')}${item.source_url ? `<a href="${e(item.source_url)}" target="_blank" rel="noopener noreferrer">${text('原始来源', 'Source')}</a>` : `<p>${text('虚拟或待补充来源', 'Synthetic or source pending')}</p>`}</article>`; }
+/** 功能：折叠 ICS。输入：line。输出：文本。逻辑：UTF-8 每行最多 75 字节。约束：不切断字符。 */
+function foldLine(line) { let result = '', count = 0; for (const character of line) { const size = new TextEncoder().encode(character).length; if (count + size > 75) { result += '\r\n '; count = 1; } result += character; count += size; } return result; }
+/** 功能：生成日历。输入：item。输出：ICS。逻辑：使用数据库起止时间并转义。约束：不调用外部日历。 */
 export function calendarText(item) {
-  /** 功能：转义日历文本。输入：value。输出：安全字段文本。逻辑：转义换行和分隔符。约束：不用于日期字段。 */
-  const escape = (value) =>
-    String(value)
-      .replace(/\\/g, "\\\\")
-      .replace(/\r?\n/g, "\\n")
-      .replace(/[,;]/g, "\\$&");
-  const end = new Date(item.end + "T00:00:00Z");
-  end.setUTCDate(end.getUTCDate() + 1);
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//SalesMate//Demo Events//EN",
-    "BEGIN:VEVENT",
-    `UID:${item.id}@salesmate.example`,
-    "DTSTAMP:" +
-      new Date()
-        .toISOString()
-        .replace(/[-:]/g, "")
-        .replace(/\.\d+Z$/, "Z"),
-    "DTSTART;VALUE=DATE:" + item.date.replace(/-/g, ""),
-    "DTEND;VALUE=DATE:" + end.toISOString().slice(0, 10).replace(/-/g, ""),
-    "SUMMARY:" + escape("[Demo] " + eventName(item)),
-    "LOCATION:" + escape(item.city),
-    "DESCRIPTION:" +
-      escape("Fictional demo event. Verify before arranging travel."),
-    "END:VEVENT",
-    "END:VCALENDAR",
-    "",
-  ].map(foldCalendarLine).join("\r\n");
+  const escape = value => String(value).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/[,;]/g, '\\$&');
+  const instant = value => new Date(value).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//SalesMate//Events//EN', 'BEGIN:VEVENT', `UID:${item.id}@salesmate`, 'DTSTAMP:' + instant(new Date()), 'DTSTART:' + instant(item.starts_at), 'DTEND:' + instant(item.ends_at), 'SUMMARY:' + escape((item.data_source === 'synthetic' ? '[Synthetic] ' : '') + item.title), 'LOCATION:' + escape(item.city), 'DESCRIPTION:' + escape(item.description), 'END:VEVENT', 'END:VCALENDAR', ''].map(foldLine).join('\r\n');
 }
-/** 功能：导出行程文件。输入：item。输出：浏览器下载。逻辑：临时 Blob URL 下载后释放。约束：不调用外部日历、不发送邀请。 */
-function downloadItinerary(item) {
-  const url = URL.createObjectURL(
-    new Blob([calendarText(item)], { type: "text/calendar;charset=utf-8" }),
-  );
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = item.id + ".ics";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  $("world-status").textContent = text(
-    "日历文件已导出，请导入你的日历。",
-    "Calendar file exported. Import it into your calendar.",
-  );
-}
-/** 功能：打开可编辑邀约。输入：item。输出：无。逻辑：根据活动信息生成模板草稿并标明演示，用户可复制。约束：不调用模型、不发送邮件或猜测客户邮箱。 */
-function inviteDraft(item) {
-  $("invite-subject").value = text(
-    `邀约交流：${item.title}`,
-    `Invitation: ${item.en}`,
-  );
-  $("invite-body").value = text(
-    `您好，\n\n我们计划于 ${item.date} 在${item.city}参加“${item.title}”，希望与您预约一次交流，了解贵方当前需求并讨论产品方案。\n\n请问您是否方便参加？也欢迎告知合适的时间。\n\n期待您的回复。\n\n（此草稿基于演示活动，发送前请核对活动与客户信息。）`,
-    `Hello,\n\nWe plan to attend ${item.en} in ${item.city} on ${item.date}. Would you be available to discuss your requirements and our solutions?\n\nPlease let us know a suitable time.\n\nBest regards\n\n(Draft based on a fictional demo event. Verify before sending.)`,
-  );
-  $("invite-status").textContent = "";
-  $("invite-dialog").showModal();
-}
-/** 功能：接收已有资讯推送契约。输入：event。输出：feed 接收结果。逻辑：校验、版本幂等后更新近十四天列表。约束：不模拟自动推送、不改变活动筛选。 */
-export function receiveWorldNews(event) {
-  const result = feed.receive(event);
-  renderNews();
-  return result;
-}
-/** 功能：挂载全球洞察。输入：DOM 和 URL。输出：Promise。逻辑：绑定控件，读取本地底图，失败显示明确提示。约束：未接入真实活动服务，全部金额、客户和活动明确标为演示。 */
+/** 功能：导出日历。输入：item。输出：下载。逻辑：临时 Blob。约束：不发送邀请。 */
+function downloadItinerary(item) { const url = URL.createObjectURL(new Blob([calendarText(item)], { type: 'text/calendar;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = item.id + '.ics'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+/** 功能：填充邀约模板。输入：item。输出：对话框。逻辑：使用本人资料署名。约束：不调用 AI、不猜测收件人、不发送。 */
+function inviteDraft(item) { const person = state.seller?.sales_setup?.personal || {}; $('invite-subject').value = text('邀约交流：', 'Invitation: ') + item.title; $('invite-body').value = text(`您好，\n\n希望与您在 ${item.starts_at.slice(0, 10)} 的“${item.title}”（${item.city}）期间预约交流。请告知方便的时间。\n\n`, `Hello,\n\nWould you be available to meet during ${item.title} in ${item.city} on ${item.starts_at.slice(0, 10)}?\n\n`) + [person.name, person.title, person.email].filter(Boolean).join('\n') + (item.data_source === 'synthetic' ? text('\n\n注意：活动为虚拟占位。', '\n\nThis event is synthetic.') : ''); $('invite-dialog').showModal(); }
+/** 功能：初始化数据库页面。输入：DOM 和 URL。输出：Promise。逻辑：读取后绑定控件，币种优先使用 URL 选择或活动实际关联币种，失败明确展示。约束：不创建占位、不自动重试。 */
 async function start() {
-  mountWorkspace("world");
-  renderRoute();
-  $("event-type").onchange = (event) => {
-    state.type = event.target.value;
-    renderEvents();
-  };
-  $("event-time").onchange = (event) => {
-    state.time = event.target.value;
-    renderEvents();
-  };
-  $("region-filters").onclick = (event) => {
-    const button = event.target.closest("[data-country]");
-    if (button) {
-      state.country = button.dataset.country;
-      renderEvents();
-    }
-  };
-  $("event-list").onclick = (event) => {
-    const button = event.target.closest("[data-select]");
-    if (button) selectEvent(button.dataset.select);
-  };
-  $("map-views").onclick = (event) => {
-    const button = event.target.closest("[data-view]");
-    if (!button) return;
-    state.view = button.dataset.view;
-    map?.setView(state.view);
-    document
-      .querySelectorAll("[data-view]")
-      .forEach((v) => v.setAttribute("aria-pressed", String(v === button)));
-    updateURL();
-  };
-  $("invite-close").onclick = () => $("invite-dialog").close();
-  $("invite-copy").onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(
-        $("invite-subject").value + "\n\n" + $("invite-body").value,
-      );
-      $("invite-status").textContent = text("已复制草稿。", "Draft copied.");
-    } catch (error) {
-      console.error("invite_copy_failed", { name: error.name });
-      $("invite-status").textContent = text(
-        "复制失败，请选中文本手动复制。",
-        "Copy failed. Select the text and copy it manually.",
-      );
-    }
-  };
-  window.addEventListener("popstate", renderRoute);
-  if (location.pathname === "/world/")
-    try {
-      map = new WorldMap($("world-map"), selectEvent);
-      await map.load();
-      map.setView(state.view);
-      map.setItems(visibleEvents(), state.selected);
-      document
-        .querySelectorAll("[data-view]")
-        .forEach((v) =>
-          v.setAttribute("aria-pressed", String(v.dataset.view === state.view)),
-        );
-    } catch (error) {
-      console.error("insights_map_failed", { name: error.name });
-      $("world-error").hidden = false;
-      $("world-error").textContent = text(
-        "地图加载失败。请刷新；活动列表仍可查看。",
-        "Map failed to load. Refresh to try again; the event list remains available.",
-      );
-    }
+  mountWorkspace('world');
+  const article = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
+  $('world-explorer').hidden = Boolean(article); $('news-detail').hidden = !article;
+  try {
+    if (article) { await renderArticle(article[1]); return; }
+    $('world-data-status').textContent = text('正在读取数据库…', 'Loading database…');
+    const [world, news, seller] = await Promise.all([loadPages('sales/world/'), request('sales/records/world-news/?page_size=4&to=' + encodeURIComponent(new Date().toISOString()) + '&from=' + encodeURIComponent(new Date(Date.now() - 14 * 86400000).toISOString())), request('sales/seller-context/')]);
+    Object.assign(state, { events: world.results, countries: world.countries, currencies: world.currencies, news: news.results, seller });
+    const query = new URLSearchParams(location.search);
+    const eventCurrency = state.events.flatMap(item => Object.keys(item.map_amounts)).find(currency => state.currencies.includes(currency));
+    state.currency = state.currencies.includes(query.get('currency')) ? query.get('currency') : eventCurrency || state.currencies[0] || '';
+    state.type = ['sales', 'exhibition'].includes(query.get('type')) ? query.get('type') : 'all'; state.time = ['30', 'quarter'].includes(query.get('time')) ? query.get('time') : 'all';
+    state.country = state.countries.some(item => item.code === query.get('country')) ? query.get('country') : 'all'; state.view = ['apac', 'europe'].includes(query.get('view')) ? query.get('view') : 'global'; state.selected = query.get('event');
+    $('world-data-status').textContent = text(`数据库记录 · ${state.events.filter(item => item.data_source === 'synthetic').length} 项虚拟活动`, `Database records · ${state.events.filter(item => item.data_source === 'synthetic').length} synthetic events`);
+    $('event-type').value = state.type; $('event-time').value = state.time;
+    $('map-currency').innerHTML = state.currencies.map(currency => `<option>${e(currency)}</option>`).join(''); $('map-currency').value = state.currency;
+    $('map-note').textContent = text(`金额按所选币种展示，不换汇；${world.unmapped_customer_count} 个客户未提供可识别国家。`, `No currency conversion; ${world.unmapped_customer_count} customers have no mapped country.`);
+    map = new WorldMap($('world-map'), selectEvent); map.setCountries(state.countries.filter(item => item.customer_count > 0).map(item => item.code)); await map.load(); map.setView(state.view);
+    document.querySelectorAll('[data-view]').forEach(node => node.setAttribute('aria-pressed', node.dataset.view === state.view));
+    $('event-type').onchange = event => { state.type = event.target.value; render(); }; $('event-time').onchange = event => { state.time = event.target.value; render(); }; $('map-currency').onchange = event => { state.currency = event.target.value; render(); };
+    $('region-filters').onclick = event => { const button = event.target.closest('[data-country]'); if (button) { state.country = button.dataset.country; render(); } }; $('event-list').onclick = event => { const button = event.target.closest('[data-select]'); if (button) selectEvent(button.dataset.select); };
+    $('map-views').onclick = event => { const button = event.target.closest('[data-view]'); if (button) { state.view = button.dataset.view; map.setView(state.view); document.querySelectorAll('[data-view]').forEach(node => node.setAttribute('aria-pressed', node.dataset.view === state.view)); render(); } };
+    $('invite-close').onclick = () => $('invite-dialog').close(); $('invite-copy').onclick = async () => { try { await navigator.clipboard.writeText($('invite-subject').value + '\n\n' + $('invite-body').value); $('invite-status').textContent = text('已复制', 'Copied'); } catch (error) { console.error('invite_copy_failed', { type: error.name }); $('invite-status').textContent = text('请手动复制。', 'Copy manually.'); } };
+    render(); renderNews();
+  } catch (error) { console.error('world_load_failed', { type: error.name, status: error.status }); $('world-error').hidden = false; $('world-error').textContent = text('加载失败，请检查登录或接口后刷新：', 'Load failed. Check access and refresh: ') + error.message; $('world-data-status').textContent = text('加载失败', 'Load failed'); }
 }
-void start();
+start();

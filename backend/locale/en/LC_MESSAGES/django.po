@@ -1,5 +1,7 @@
 # SalesMate HTTP interface messages (business content is excluded).
 # Source-language keys are reviewed at the HTTP error boundary, not runtime-translated data.
+# Responsibilities: translate interface labels, including opportunity signals and priority results.
+# Implementation: explicit gettext pairs; related modules: sales/views.py. Declaration index: none. Variable index: none.
 msgid ""
 msgstr ""
 "Project-Id-Version: SalesMate\n"
@@ -19,6 +21,14 @@ msgstr "Global events"
 #: apps/sales/views.py
 msgid "行业资讯"
 msgstr "Global news"
+
+#: apps/sales/views.py
+msgid "商机信号"
+msgstr "Opportunity signals"
+
+#: apps/sales/views.py
+msgid "商机评分"
+msgstr "Opportunity priorities"
 
 
 #: common/exceptions.py

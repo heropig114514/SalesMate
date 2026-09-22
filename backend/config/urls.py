@@ -1,5 +1,5 @@
 """职责：集中声明工作台、业务、本公司设置、世界消息、实验数据、管理、健康检查和 API 文档路由。
-实现：按 urlpatterns 分派请求；实验页通过登录只读 API 展示获准的虚构批次；世界消息地图与详情共用展示模板，业务鉴权由被分派的视图执行。
+实现：商机优先级页读取独立存储结果；按 urlpatterns 分派请求；实验页通过登录只读 API 展示获准的虚构批次；世界消息地图与详情共用展示模板，业务鉴权由被分派的视图执行。
 关联：组合 common.views、apps.accounts、apps.crm、apps.sales、apps.chat、apps.agent_tools 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
 
 目录：
@@ -20,6 +20,7 @@ from common.views import LivenessView, ReadinessView
 from apps.sales.experiments import ExperimentView, ExperimentCatalogView, ExperimentExportView, ExperimentFileView
 
 urlpatterns = [
+    path("priorities/", TemplateView.as_view(template_name="priorities.html"), name="opportunity-priorities"),
     path("experiments/", TemplateView.as_view(template_name="experiments.html"), name="experiments"),
     path("api/v1/experiments/", ExperimentCatalogView.as_view(), name="experiment-catalog"),
     path("api/v1/experiments/<str:batch>/export/", ExperimentExportView.as_view(), name="experiment-export"),

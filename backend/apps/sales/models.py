@@ -1,5 +1,5 @@
 """职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：活动和资讯单独保存来源事实，不计算建议；可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
+实现：商机信号和评分由 algorithm_models 注册；活动和资讯保存 data_source 区分虚拟占位，不计算建议；可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
 关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
 目录：
 - WorldNews：行业资讯事实与来源。
@@ -44,6 +44,8 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
+- WorldEvent.data_source：活动来源标签，synthetic 表示占位。
+- WorldNews.data_source：资讯来源标签，synthetic 表示占位。
 - WorldNews.title：资讯标题。
 - WorldNews.category：资讯类别。
 - WorldNews.industry：来源明确提供的行业。
@@ -711,9 +713,10 @@ class Connection(Record):
 
 
 # 功能：保存活动事实与显式商机关联。
-# 逻辑：继承业务记录的账号、版本、归档与审计字段。
+# 逻辑：继承业务记录字段，以 data_source 显式区分人工、算法和虚拟占位。
 # 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
 class WorldEvent(Record):
+    data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
     event_type = models.CharField(max_length=20, choices=[("exhibition", "展会"), ("sales", "销售活动")])
     country = models.CharField(max_length=2)
@@ -723,7 +726,7 @@ class WorldEvent(Record):
     starts_at = models.DateTimeField(db_index=True)
     ends_at = models.DateTimeField()
     registration_deadline = models.DateTimeField(null=True, blank=True)
-    source_url = models.URLField(max_length=2000)
+    source_url = models.URLField(max_length=2000, blank=True)
     description = models.TextField(blank=True)
     onsite = models.JSONField(default=list, blank=True)
     suggested_actions = models.JSONField(default=list, blank=True)
@@ -731,14 +734,18 @@ class WorldEvent(Record):
 
 
 # 功能：保存行业资讯事实与来源。
-# 逻辑：继承业务记录的账号、版本、归档与审计字段。
+# 逻辑：继承业务记录字段，以 data_source 显式区分人工、算法和虚拟占位。
 # 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
 class WorldNews(Record):
+    data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
     category = models.CharField(max_length=20, choices=[("regulation", "监管"), ("industry", "产业"), ("competition", "竞争"), ("price", "价格")])
     industry = models.CharField(max_length=100, blank=True)
     country = models.CharField(max_length=2, blank=True)
     published_at = models.DateTimeField(db_index=True)
-    source_url = models.URLField(max_length=2000)
+    source_url = models.URLField(max_length=2000, blank=True)
     summary = models.TextField(blank=True)
     content = models.TextField()
+
+
+from .algorithm_models import OpportunitySignal, OpportunityPriority  # noqa: E402,F401

@@ -2349,6 +2349,29 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/sales/opportunity-context/{opportunity_id}/:
+    get:
+      operationId: v1_sales_opportunity_context_retrieve
+      parameters:
+      - in: path
+        name: opportunity_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/sales/overview/:
     get:
       operationId: v1_sales_overview_retrieve
@@ -2368,6 +2391,22 @@ paths:
   /api/v1/sales/people/:
     get:
       operationId: v1_sales_people_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/priority-board/:
+    get:
+      operationId: v1_sales_priority_board_retrieve
       tags:
       - v1
       security:
@@ -2549,6 +2588,22 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/sales/seller-context/:
+    get:
+      operationId: v1_sales_seller_context_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/sales/seller-profile/:
     get:
       operationId: v1_sales_seller_profile_retrieve
@@ -2594,6 +2649,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SellerProfileResponse'
+          description: ''
+  /api/v1/sales/world/:
+    get:
+      operationId: v1_sales_world_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
           description: ''
   /api/v1/session/:
     get:

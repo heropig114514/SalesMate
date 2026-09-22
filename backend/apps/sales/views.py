@@ -1,5 +1,5 @@
 """职责：提供销售关系记录、客户归组、附件及外部动作的会话认证 API。
-实现：实验模式默认认证提供公开身份，通知命令允许跨账号维护；活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
+实现：商机信号/评分通过通用 CRUD 接收算法结果；实验模式默认认证提供公开身份，通知命令允许跨账号维护；活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
 关联：catalog 为管理页提供字段契约，services/grouping/actions/files 实现业务边界。
 目录：
 - ResourceDetailView：单条资源查询路由。
@@ -79,6 +79,8 @@ from .serializers import SERIALIZERS
 
 logger = logging.getLogger("salesmate.api")
 LABELS = {
+    "opportunity-signals": "商机信号",
+    "opportunity-priorities": "商机评分",
     "customers": "客户设置",
     "aliases": "人工归组",
     "contact-profiles": "联系人资料",
@@ -184,7 +186,7 @@ class ResourceView(SalesView):
     # 功能：读取单条或分页列表。
     # 输入：`request`、`resource`、可选 `record_id`。
     # 输出：单条记录或含 results 的分页响应；不支持的字段筛选按请求语言报错，保留原字段名。
-    # 逻辑：活动资讯支持地区、类型与带时区窗口；其他资源支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
+    # 逻辑：信号及评分可按 opportunity 筛选；活动资讯支持地区、类型与带时区窗口；其他资源支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
     # 约束：关联过滤仍经过 scope；不支持 arbitrary ORM 查询表达式。
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_records_read")
     def get(self, request, resource, record_id=None):
@@ -193,7 +195,7 @@ class ResourceView(SalesView):
         if record_id:
             return record_response(query.get(pk=record_id), serializer, request)
         names = {field.name for field in query.model._meta.fields}
-        for name in ("company", "conversation", "quote", "order", "team", "status"):
+        for name in ("company", "opportunity", "conversation", "quote", "order", "team", "status"):
             if name in request.query_params:
                 if name not in names:
                     raise ValidationError(gettext("当前资源不支持 %(name)s 筛选。") % {"name": name})

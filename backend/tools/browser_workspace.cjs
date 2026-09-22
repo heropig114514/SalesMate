@@ -1,7 +1,7 @@
 /**
  * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、精简首页、邮箱设置中的复核入口、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：验证所有页面仅打开工作空间会话；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
+ * 实现：核对已有四个顶部分区和包含商机优先级的共享导航，所有页面仅打开工作空间会话；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟（共享浏览夹具仅含原账号记录，筛选断言跟随 browse 路由）；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
  * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
@@ -15,8 +15,8 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图；手机焦点断言等待背景 inert 就绪。
- * 逻辑：产品分区切换、底部条状布局、导航层级、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
- * 约束：所有业务请求均拦截；仅允许原有客户分析模拟 POST 及显式公司资料 PATCH，禁止其余写入和外部网络。 */
+ * 逻辑：navLabels 核对含商机优先级的新导航及固定目标路径；产品分区切换、底部条状布局、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
+ * 约束：所有业务请求均拦截；查看客户按当前只读契约不触发分析，仅允许显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -51,8 +51,7 @@ async function main() {
           profile = { ...profile, ...req.postDataJSON(), revision: profile.revision + 1 };
           return route.fulfill({ json: profile });
         }
-        assert.equal(endpoint, 'companies/company-a/analyze/', 'Unexpected business mutation');
-        return route.fulfill({ json: {} });
+        throw new Error('Unexpected business mutation: ' + endpoint);
       }
       let data;
       if (endpoint === 'session/') data = { authenticated: true, username: '测试销售', debug_auto_login: true };
@@ -71,7 +70,9 @@ async function main() {
       else if (endpoint === 'sales/overview/' && failOverview) return route.fulfill({ status: 503, json: { error: { detail: '模拟业务概览不可用' } } });
       else if (endpoint === 'sales/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, unread_notifications: 2, confirmed_order_net: {}, open_opportunity_amount: {} };
       else if (endpoint === 'sales/catalog/') data = { resources };
-      else if (endpoint === 'sales/directory/') data = { results: [company], count: 1 };
+      else if (endpoint === 'sales/directory/' || endpoint === 'sales/browse/directory/') data = { results: [company], count: 1 };
+      else if (endpoint === 'sales/browse/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, shared_counts: { customers: 0, open_tickets: 0, open_follow_ups: 0 }, confirmed_order_net: {}, open_opportunity_amount: {} };
+      else if (resources.some(resource => endpoint === 'sales/browse/' + resource.key + '/')) data = { results: [], count: endpoint === 'sales/browse/actions/' ? 2 : 0 };
       else if (endpoint.startsWith('sales/records/')) {
 
         data = { results: [], count: endpoint === 'sales/records/actions/' ? 2 : 0 };
@@ -84,7 +85,8 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).getByText('7', { exact: true }).waitFor();
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
-    assert.deepEqual(navLabels, ['工作台', 'Global Insights', 'Channels', '客户', '商机', '报价', '订单', '工单']);
+    assert.deepEqual(navLabels, ['工作台', 'Global Insights', '商机优先级', 'Channels', '客户', '商机', '报价', '订单', '工单']);
+    assert.equal(await page.locator('#workspace-nav a[href="/priorities/"]').textContent(), '商机优先级');
     assert.equal(await page.locator('#workspace-nav .workspace-customer-nav a').count(), 4);
     assert.deepEqual(await page.locator('#workspace-profile a').allTextContents(), ['Company Setting', 'Emails Connections']);
     assert.equal(await page.locator('#workspace-nav a[href="/world/"]').textContent(), 'Global Insights');
@@ -93,7 +95,7 @@ async function main() {
     assert.equal(await page.locator('#assistant-launcher').isVisible(), true);
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     const productNav = page.getByRole('navigation', { name: '产品分区' });
-    assert.equal(await productNav.getByRole('link').count(), 3);
+    assert.deepEqual(await productNav.getByRole('link').allTextContents(), ['全球洞察', '社媒情报', '销售业务', '实验数据']);
     await productNav.getByRole('link', { name: '社媒情报', exact: true }).click();
     await page.locator('#list-page .page-heading').waitFor();
     assert.equal(new URL(page.url()).hash, '#inbox');
@@ -214,7 +216,7 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).click();
     await page.locator('#status-filter').waitFor();
     assert.equal(await page.locator('#status-filter').inputValue(), 'open');
-    assert(queries.some(url => url.includes('/sales/records/follow-ups/?') && url.includes('status=open')));
+    assert(queries.some(url => url.includes('/sales/browse/follow-ups/?') && url.includes('status=open')));
     await page.goto(base + '/business/?company=unavailable#quotes');
     await page.locator('#business-notice').filter({ hasText: '无权访问' }).waitFor();
     await page.goto(base);
@@ -234,7 +236,7 @@ async function main() {
     await page.locator('#gmail-dialog[open]').waitFor();
     assert.equal(await page.locator('#gmail-authorization-account').isVisible(), false);
     await page.locator('#gmail-dialog .close-dialog').click();
-    assert.deepEqual(writes, ['companies/company-a/analyze/'], 'Empty settings and cancelled authorization must remain read-only');
+    assert.deepEqual(writes, [], 'Customer browsing, empty settings and cancelled authorization must remain read-only');
     await page.locator('#workspace-profile a').filter({ hasText: 'Company Setting' }).click();
     await page.locator('#company-save:not(:disabled)').waitFor();
     assert.equal(new URL(page.url()).search, '', 'Company settings must not carry customer context');
@@ -290,7 +292,7 @@ async function main() {
     assert.equal(await page.locator('#assistant-panel').isVisible(), false);
     assert.equal(await page.locator('#assistant-input').inputValue(), '');
     assert.deepEqual(errors, []);
-    assert.deepEqual(writes, ['companies/company-a/analyze/', 'accounts/company-profile/', 'accounts/company-profile/']);
+    assert.deepEqual(writes, ['accounts/company-profile/', 'accounts/company-profile/']);
     console.log('Workspace browser checks passed: bottom chat strip, nested navigation and Profile, company profile save/reload/conflict/languages, minimize/reopen, preserved draft/URL/layout, legacy links, mobile focus, read-only opening, shared navigation, totals, customer handoff, form prefill, refresh, filters, repeated review, inaccessible customer, error state, desktop/mobile.');
   } finally {
     await browser.close();

@@ -1,6 +1,6 @@
 # 算法侧的软件辅助接口
 
-后端负责存储、权限、版本、文件和业务操作；评分、匹配、推荐、新闻采集及 PDF 文本提取由调用方处理。本次新增 32 个工具，复用既有 HTTP、Python SDK、CLI 和 stdio MCP，不建立第二套业务逻辑。
+后端负责存储、权限、版本、文件和业务操作；评分、匹配、推荐、新闻采集及 PDF 文本提取由调用方处理。资料辅助工具和本次新增的 14 个商机/上下文工具复用既有 HTTP、Python SDK、CLI 和 stdio MCP，不建立第二套业务逻辑。放宽联调模式及最小提交见 [开发支持](development-support.md)，以下版本和授权要求适用于正式模式。
 
 ## 已有能力与新增能力
 
@@ -12,6 +12,8 @@
 | 引导文件 | `setup_documents` | `list/get/upload/read/delete`，PDF/UTF-8 TXT；删除前检查引用 |
 | 已有业务附件 | `files.read` | Tool token 直接分块读，无需 Session 下载；原有文件工具继续可用 |
 | 全球活动、行业资讯 | `world_events`、`world_news` | `list/get/create/update/archive`，支持归档及恢复、地区和时间筛选 |
+| 商机信号、评分结果 | `opportunity_signals`、`opportunity_priorities` | `list/get/create/update/archive`，解释可缺省，开放 JSON 结构 |
+| 算法输入与页面聚合 | `seller_context.get`、`opportunity_context.get`、`priority_board.list`、`world_insights.get` | 统一资料、单商机上下文、最新评分列表及地图聚合 |
 
 `setup_products` 是参考资料目录；`products` 是交易目录。前者的 `linked_product_id` 可显式关联本人未归档交易产品，不自动创建交易产品、不同步价格、不计算匹配分数。方案必须关联自己的已上传文件。资料整份替换时保留条目 `id`；修改前先读取最新快照。历史无 ID 条目在读取时获得确定性 UUID，在下一次对应数组保存时持久化；前端编辑也保留该 ID 和关联。
 
@@ -74,16 +76,16 @@
 
 除工具外，浏览器 Session API 可用 `/api/v1/sales/records/world-events/` 与 `/api/v1/sales/records/world-news/`。工具身份走统一 call 入口，不能直接替代这些原业务路由的 Session。资源的 ID、owner、revision、归档状态和创建更新时间由服务器维护；更新及归档必须提交读取到的 revision。交易相关金额不由活动接口合成。
 
-活动字段：title、event_type（exhibition/sales）、country（两位大写国家地区代码）、city、latitude/longitude、starts_at/ends_at、可空 registration_deadline、source_url、description、onsite、suggested_actions、opportunity_ids。商机关联只接受本人未归档且不重复的 UUID；这是保存时引用校验，后续商机变动不自动清除活动中的历史引用。现场信息和建议由调用方显式提供，服务端只保存。
+活动字段：title、event_type（exhibition/sales）、country（两位大写国家地区代码）、city、latitude/longitude、starts_at/ends_at、可空 registration_deadline、source_url、description、onsite、suggested_actions、opportunity_ids、data_source。商机关联接受权限范围内未归档且不重复的 UUID，实验模式可跨账号；这是保存时引用校验，后续商机变动不自动清除活动中的历史引用。现场信息和建议由调用方显式提供，服务端只保存。
 
-资讯字段：title、category（regulation/industry/competition/price）、industry、country、published_at、source_url、summary、content。来源必须是无凭证 HTTPS URL，服务端不访问或验证来源可达性。时间必须包含时区。内容是纯文本，不执行 HTML。
+资讯字段：title、category（regulation/industry/competition/price）、industry、country、published_at、source_url、summary、content、data_source。实验模式或 data_source=synthetic 允许空来源；已填来源必须是无凭证 HTTPS URL，服务端不访问或验证来源可达性。时间必须包含时区。内容是纯文本，不执行 HTML。
 
 列表支持 page/page_size、q、archived、country、from/to；活动另有 event_type，资讯另有 category。from/to 为带时区 ISO 时间，包含下界、不包含上界；活动按开始时间升序，资讯按发布时间降序。未知筛选字段报错。默认分页 30、最多 100，不隐式拉取全部数据。
 
-当前全球洞察前端仍明确使用演示数据。本次提供真实存储与调用能力，没有将演示页面改成实时资讯、没有实现 SSE/WebSocket，也没有自动采集、评分或推荐任务。
+全球洞察前端已读取数据库，商机优先级页展示保存的结果。虚拟内容通过显式初始化命令入库并标记来源；没有 SSE/WebSocket、自动采集、评分或推荐任务。
 
 ## 运维和验证
 
-部署需执行 `python backend/manage.py migrate`，新增迁移 `sales.0007_world_insights` 只创建两个私有数据表。现有部署脚本已包含 migrate。普通资料与文件工具沿用既有表，无新的第三方密钥要求。
+部署需执行 `python backend/manage.py migrate`。`sales.0007_world_insights` 创建活动和资讯表；`sales.0008_development_support` 增加来源字段、允许空来源，并创建商机信号及评分表。现有部署脚本已包含 migrate。普通资料与文件工具沿用既有表，无新的第三方密钥要求；虚拟数据需要另行显式执行初始化命令。
 
 `tests.integration.test_support_tools` 覆盖真实 HTTP + PostgreSQL CRUD、跨账号隔离、幂等、版本冲突、文件引用保护、分块读取、授权模板；没有连接真实外部数据源。`browser_onboarding.cjs` 使用模拟 API 和真实 Chrome 验证编辑保留关联。原 SDK 的 MCP stdio 测试使用本机 HTTP fixture，协议通过不代表已验证线上账号或外部发信。

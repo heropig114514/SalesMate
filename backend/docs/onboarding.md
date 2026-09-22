@@ -36,4 +36,4 @@ CSV 模板字段为 `name,category,specifications,price_min,price_max,currency,s
 
 后端检查：`python manage.py test tests.integration.test_onboarding tests.integration.test_company_profile tests.integration.test_registration tests.contracts.test_schema`。这些测试使用隔离数据库，覆盖持久化、版本冲突、文件格式/大小、账号隔离、CSRF 和注册引导生命周期。
 
-浏览器检查：`node backend/tools/browser_onboarding.cjs`、`browser_world_news.cjs`、`browser_workspace.cjs`、`browser_i18n.cjs`。页面使用真实 HTML/JS，业务 API 使用模拟响应；不能将其解释为 Gmail、真实新闻、AI 或外部日历已完成联调。
+浏览器检查：`node backend/tools/browser_onboarding.cjs`、`browser_workspace.cjs`、`browser_i18n.cjs` 使用真实 HTML/JS 与模拟业务 API。`browser_world_news.cjs` 已改为读取实际本地实验数据库，须指定本地服务地址并初始化占位数据，见 [联调支持](development-support.md)。这些检查均不代表 Gmail、真实新闻采集、AI 或外部日历已完成联调。

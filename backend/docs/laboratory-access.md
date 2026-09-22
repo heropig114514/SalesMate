@@ -1,6 +1,6 @@
 # 算法联调的公开实验模式
 
-本模式按项目负责人的明确选择开放所有业务数据，包含非 KGSEED 数据。它由 `LAB_OPEN_ACCESS=True` 单独控制，与 Django DEBUG、用户角色和虚构批次标记无关。代码默认关闭。2026-09-21 按用户要求恢复个人空间：`LAB_OPEN_ACCESS=False`、`WORKSPACE_OWNER_ONLY=True`；下文仅描述重新明确启用实验模式时的能力，当前部署不再开放。个人空间隔离优先于实验开关，详见 [账号隔离与事实兼容](workspace-isolation.md)。
+本模式按项目负责人的明确选择开放所有业务数据，包含非 KGSEED 数据。启用需要 `LAB_OPEN_ACCESS=True` 且 `WORKSPACE_OWNER_ONLY=False`，与 Django DEBUG、用户角色和虚构批次标记无关，代码默认关闭。2026-09-21 曾恢复个人空间；2026-09-22 按本次联调要求在本机 `.env` 重新开启，并由本地预览进程使用，尚未部署远端。下面远端 URL 是部署后使用的示例，不能据此认为远端当前已开放。个人空间隔离优先于实验开关，详见 [账号隔离与事实兼容](workspace-isolation.md)。
 
 ## 调用方式
 

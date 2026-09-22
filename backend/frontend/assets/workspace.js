@@ -26,11 +26,11 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：展示工作台、全球洞察、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
+ * 逻辑：展示工作台、全球洞察、商机优先级、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('priorities', language === 'en' ? 'Opportunity Priority' : '商机优先级', '/priorities/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
   if (profile) {
     profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button>`;

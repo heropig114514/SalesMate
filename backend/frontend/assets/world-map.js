@@ -1,12 +1,11 @@
 /** 职责：将活动与商机金额投影到真实世界地图。
  * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，按钮支持键盘选择。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；world-events.js 提供显式演示国家；不请求在线瓦片。
- * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
+ * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；后端客户国家代码决定高亮；不请求在线瓦片。
+ * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setCountries、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
  * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
  */
-import { DEMO_COUNTRIES } from "./world-events.js?v=20260921-product";
 import { language } from "./i18n.js?v=20260921-product";
-/** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：仅展示演示业务，不定位用户。 */
+/** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：业务记录来自接口，不定位用户。 */
 export class WorldMap {
   /** 功能：初始化地图。输入：element 与 onSelect 回调。输出：实例。逻辑：真实地理投影及本地底图。约束：Leaflet 缺失明确报错。 */
   constructor(element, onSelect) {
@@ -14,7 +13,7 @@ export class WorldMap {
     this.onSelect = onSelect;
     this.items = [];
     this.selectedId = null;
-    this.countries = new Set(DEMO_COUNTRIES.map((c) => c.map));
+    this.countries = new Set();
     this.map = L.map(element, {
       crs: L.CRS.EPSG4326,
       minZoom: -1,
@@ -36,7 +35,7 @@ export class WorldMap {
     this.resizeObserver.observe(element);
     window.addEventListener("pagehide", event => { if (!event.persisted) this.destroy(); });
   }
-  /** 功能：加载国界。输入：固定同源 GeoJSON。输出：Promise。逻辑：匹配演示客户国家，使用主题色；新加坡在低精度底图中以实际位置标记。约束：失败不换数据源、不重试。 */
+  /** 功能：加载国界。输入：固定同源 GeoJSON。输出：Promise。逻辑：匹配数据库客户国家，使用主题色；新加坡在低精度底图中以实际位置标记。约束：失败不换数据源、不重试。 */
   async load() {
     const response = await fetch("/static/world-countries.geojson", {
       signal: AbortSignal.timeout(15000),
@@ -57,7 +56,7 @@ export class WorldMap {
         fillOpacity: this.countries.has(feature.properties.name) ? 0.5 : 1,
       }),
     }).addTo(this.map);
-    L.circleMarker([1.352, 103.819], {
+    if (this.countries.has("Singapore")) L.circleMarker([1.352, 103.819], {
       radius: 3,
       color: accent,
       fillOpacity: 0.8,
@@ -102,24 +101,32 @@ export class WorldMap {
     this.resizeObserver.disconnect();
     this.map.remove();
   }
+  /** 功能：设置客户国家。输入：codes。输出：无。逻辑：使用 ISO 英文名称匹配底图，处理底图特有名称。约束：在 load 前设置，不从活动国家推断客户国家。 */
+  setCountries(codes) {
+    const names = new Intl.DisplayNames(['en'], { type: 'region' });
+    const aliases = { US: 'United States of America', KR: 'South Korea', KP: 'North Korea', RU: 'Russia', CZ: 'Czechia' };
+    this.countries = new Set(codes.map(code => aliases[code] || names.of(code)));
+  }
   /** 功能：更新筛选后的活动。输入：items 和 selectedId。输出：无。逻辑：重绘图层，保持视角。约束：不修改数据。 */
   setItems(items, selectedId) {
     this.items = items;
     this.selectedId = selectedId;
     this.draw();
   }
-  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同城市共享金额，取最大额避免重复相加；点开显示该城市第一项或已选项，其他活动仍可从列表选择。约束：无业务评分或排名。 */
+  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同坐标使用后端去重金额；未知金额仅绘制最小位置标记并注明未知；点击显示该城市第一项或已选项。约束：无业务评分或排名，不将未知金额标为零。 */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();
     for (const item of this.items) {
-      if (!groups.has(item.city)) groups.set(item.city, []);
-      groups.get(item.city).push(item);
+      const key = `${item.country}:${item.lat}:${item.lng}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
     }
     for (const items of groups.values()) {
+      const knownAmounts = items.map(value => value.amount).filter(Number.isFinite);
       const item = items.find((v) => v.id === this.selectedId) || items[0],
-        amount = Math.max(...items.map((v) => v.amount)),
-        size = Math.sqrt(amount / 810000) * 62;
+        amount = knownAmounts.length ? Math.max(...knownAmounts) : null,
+        size = Math.sqrt((amount ?? 0) / Math.max(1, ...this.items.map(value => value.amount).filter(Number.isFinite))) * 62;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "event-pin";
@@ -132,14 +139,14 @@ export class WorldMap {
       const name = language === "en" ? item.en : item.title;
       button.setAttribute(
         "aria-label",
-        `${name}, SGD ${amount.toLocaleString()}, ${items.length}`,
+        `${name}, ${item.currency} ${amount === null ? (language === 'en' ? 'Amount unknown' : '金额未知') : amount.toLocaleString()}, ${items.length}`,
       );
       const bubble = document.createElement("span");
       bubble.className = "event-bubble";
       bubble.textContent = items.length > 1 ? String(items.length) : "";
       const label = document.createElement("span");
       label.className = "event-pin-label";
-      label.textContent = item.city.split(" ")[language === "en" ? 1 : 0];
+      label.textContent = item.city;
       button.append(bubble, label);
       button.addEventListener("click", () => this.onSelect(item.id));
       L.marker([item.lat, item.lng], {

@@ -1,5 +1,5 @@
 """职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：新增活动资讯的时间、来源及本人商机关联校验；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
+实现：通用资源同时注册独立商机信号和评分，不执行算法；新增活动资讯的时间、来源及授权商机关联校验；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
 关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
 目录：
 - ZonedDateTimeField：活动资讯时间及字段验证。
@@ -1005,11 +1005,11 @@ class WorldEventSerializer(StrictModelSerializer):
         return validate_insight(self, attrs)
 
     # 功能：声明活动字段。
-    # 逻辑：复用 Record 的只读版本与账号。
+    # 逻辑：复用 Record 的只读版本与账号，显式暴露数据来源。
     # 约束：不接受调用方伪造 owner。
     class Meta:
         model = models.WorldEvent
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids', 'data_source']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
@@ -1032,15 +1032,20 @@ class WorldNewsSerializer(StrictModelSerializer):
         return validate_insight(self, attrs)
 
     # 功能：声明资讯字段。
-    # 逻辑：仅内容可写，账号、归档与版本服务端维护。
+    # 逻辑：内容及来源可写，账号、归档与版本服务端维护。
     # 约束：归档走现有命令接口。
     class Meta:
         model = models.WorldNews
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
+from .algorithm_serializers import OpportunitySignalSerializer, OpportunityPrioritySerializer  # noqa: E402
+
+
 SERIALIZERS = {
+    "opportunity-signals": OpportunitySignalSerializer,
+    "opportunity-priorities": OpportunityPrioritySerializer,
     "world-events": WorldEventSerializer,
     "world-news": WorldNewsSerializer,
     "connections": ConnectionSerializer,
