@@ -2,7 +2,7 @@
  * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
  * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；客户详情默认只读，分析与事实升级分别显式提交；共享悬浮入口保留当前会话，邮箱设置使用独立页面，只有显式连接操作打开授权弹窗；邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
+ * 关联：共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
  * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
  * renderDimension、renderDetail、renderEmails、revealSource、setDetailLiveStatus、loadDetail、upgradeFacts、navigate、loadMailboxes、renderGmailAccounts、openEmailSettings、showGmailAuthorization、
  * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
@@ -19,7 +19,7 @@ import { t, h, locale, language } from './i18n.js?v=20260921-product';
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=20260921-product';
 import { mailSourceLabel } from './mail-source.js?v=20260921-product';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260921-product';
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260922-support';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260922-nav';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js?v=20260921-product';
 import { getAssistant, enableAssistant, openAssistantLink } from './assistant-widget.js?v=20260921-markdown';

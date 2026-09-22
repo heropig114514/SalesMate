@@ -2,13 +2,13 @@
  * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
  * 实现：URL 保存客户身份及共享实验上下文；实验客户使用只读来源入口；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
+ * 关联：顶栏使用移除实验入口后的缓存版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
  * 变量索引：customerResources 为客户下的四类业务入口；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
  */
 import { t, h } from './i18n.js?v=20260921-product';
 
-import './product-header.js?v=20260921-product';
+import './product-header.js?v=20260922-nav';
 import { enableAssistant } from './assistant-widget.js?v=20260921-markdown';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { resetAccountData } from './account-reset.js?v=20260921-product';

@@ -1,13 +1,13 @@
 /** 职责：四步资料设置的公司步骤，按账号读取、编辑和保存。
  * 实现：共享导航和底部助手；显式保存附版本，失败保留输入；冲突要求用户重新读取。
- * 关联：导航依赖更新至商机优先级支持版本；资料条目标识支持使用新资源版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
+ * 关联：共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；资料条目标识支持使用新资源版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
  * 目录：text、showStatus、renderForm、loadProfile、saveProfile、boot。
  * 变量索引：choices 为行业和规模选项；fields 为字段及中英文名称；revision 为当前已读取版本；busy 防止重叠操作；$ 查询 DOM。
  */
 import { mountOnboarding } from './onboarding.js?v=20260921-support';
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
-import { mountWorkspace } from './workspace.js?v=20260922-support';
+import { mountWorkspace } from './workspace.js?v=20260922-nav';
 
 const $ = id => document.getElementById(id);
 const choices = { industry: [['半导体检测','半导体检测','Semiconductor inspection'],['精密量测','精密量测','Precision metrology'],['光学检测','光学检测','Optical inspection'],['工业检测','工业检测','Industrial inspection']], size_band: [['lt_50','少于 50 人','Under 50'],['50_100','50–99 人','50–99'],['100_200','100–199 人','100–199'],['200_500','200–499 人','200–499'],['gte_500','500 人及以上','500+']] };

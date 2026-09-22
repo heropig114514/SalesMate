@@ -1,11 +1,11 @@
 /** 职责：展示数据库商机评分、解释和信号证据。
  * 实现：分页读取最新评分，按需读取授权上下文；任意 JSON 解释（含空数组元素）转为纯文本，虚拟结果明确标记。
- * 关联：priority-board、opportunity-context API；不调用模型、不修改评分。
+ * 关联：共享导航使用移除实验入口后的缓存版本；priority-board、opportunity-context API；不调用模型、不修改评分。
  * 目录：$、display、collection、renderDetail、showSource、select、load。
  * 变量索引：$ DOM 查询；state 保存分页、请求序号和已选上下文。
  */
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
-import { mountWorkspace } from './workspace.js?v=20260922-support';
+import { mountWorkspace } from './workspace.js?v=20260922-nav';
 const $ = id => document.getElementById(id);
 const state = { page: 1, q: '', sequence: 0, detailSequence: 0, context: null };
 /** 功能：格式化开放结构。输入：value。输出：纯文本。逻辑：复杂值使用 JSON。约束：不解释 HTML。 */

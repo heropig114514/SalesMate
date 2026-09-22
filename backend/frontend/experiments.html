@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- 职责：在现有网站提供所有登录用户可读的虚构实验数据浏览器。
 实现：experiments.js 加载表目录、归属、字段与外键，支持检索、分页、下载及关联跳转。
-关联：复用 product-header 顶栏与会话，实验 API 独立校验精确批次，维护通过统一 Tool API。
+关联：入口缓存版本同步顶栏实验入口移除；复用 product-header 顶栏与会话，实验 API 独立校验精确批次，维护通过统一 Tool API。
 目录：无函数或类；experiment-tables 为表目录，experiment-rows 为记录列表，record-dialog 为详情。
 变量索引：无；DOM id 仅作为脚本定位入口。 -->
 <html lang="zh-CN">
@@ -35,6 +35,6 @@
   </main>
   <dialog id="record-dialog" aria-labelledby="record-title"><div class="panel-heading"><h2 id="record-title">记录详情</h2><button id="close-record" type="button">关闭</button></div><p id="record-owner"></p><div id="record-links"></div><a id="record-download" hidden>下载文件</a><div><button id="edit-record" type="button" hidden>修改记录</button> <button id="delete-record" type="button" hidden>删除记录</button></div><pre id="record-json"></pre></dialog>
   <dialog id="editor-dialog" aria-labelledby="editor-title"><div class="panel-heading"><h2 id="editor-title"></h2><button id="close-editor" type="button">取消</button></div><p id="editor-status" role="status"></p><form id="editor-form"><div id="editor-fields"></div><button id="save-record" type="submit">保存共享记录</button></form></dialog>
-  <script type="module" src="/static/experiments.js?v=20260921-kg-write"></script>
+  <script type="module" src="/static/experiments.js?v=20260922-nav"></script>
 </body>
 </html>

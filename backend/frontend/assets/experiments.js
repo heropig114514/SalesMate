@@ -1,10 +1,10 @@
 /** 职责：在既有网站中浏览获准共享的虚构实验数据及关联来源。
  * 实现：GET 浏览与带幂等键的 Tool 维护共用 Session；URL 保存关联主键；正文以纯文本呈现。
- * 关联：sales.experiments 与 experiment_writes、experiments.html、product-header.js；不执行外部动作。
+ * 关联：顶栏使用移除实验入口后的缓存版本；sales.experiments 与 experiment_writes、experiments.html、product-header.js；不执行外部动作。
  * 目录：getJson、message、tableUrl、recordTitle、showRecord、editRecord、saveRecord、deleteRecord、mutateRecord、loadRows、route、start。
  * 变量索引：ui 为 DOM 定位函数；state 保存批次、页码、当前记录及请求代次。
  */
-import './product-header.js?v=20260921-product';
+import './product-header.js?v=20260922-nav';
 import { request } from './api.js?v=20260921-product';
 
 const ui = id => document.getElementById(id);

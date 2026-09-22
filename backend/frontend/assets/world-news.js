@@ -1,12 +1,12 @@
 /** 职责：从数据库展示活动地图、资讯和邀约模板。
  * 实现：显式读取分页，分币种显示，标记虚拟占位；失败显示错误，无静态回退。
- * 关联：sales/world、world-news、seller-context 接口和 WorldMap。
+ * 关联：共享导航使用移除实验入口后的缓存版本；sales/world、world-news、seller-context 接口和 WorldMap。
  * 目录：$、text、countryName、loadPages、eventRows、money、render、selectEvent、renderDetail、renderNews、renderArticle、foldLine、calendarText、calendarText.escape、calendarText.instant、downloadItinerary、inviteDraft、start。
  * 变量索引：$ 查询 DOM；state 数据快照和筛选；categories 分类；regionNames 地区名称；map 地图实例。
  */
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
-import { mountWorkspace } from './workspace.js?v=20260922-support';
+import { mountWorkspace } from './workspace.js?v=20260922-nav';
 import { WorldMap } from './world-map.js?v=20260922-support';
 const $ = id => document.getElementById(id);
 const state = { events: [], news: [], countries: [], currencies: [], selected: null, country: 'all', currency: '', type: 'all', time: 'all', view: 'global', seller: null };
