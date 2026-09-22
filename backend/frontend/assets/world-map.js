@@ -1,5 +1,5 @@
 /** 职责：将活动与商机金额投影到真实世界地图。
- * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，按钮支持键盘选择。
+ * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，圆心固定在地理锚点，标签独立定位；按钮支持键盘选择和聚合金额提示。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；后端客户国家代码决定高亮；不请求在线瓦片。
  * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setCountries、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
  * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
@@ -113,7 +113,7 @@ export class WorldMap {
     this.selectedId = selectedId;
     this.draw();
   }
-  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同坐标使用后端去重金额；未知金额仅绘制最小位置标记并注明未知；点击显示该城市第一项或已选项。约束：无业务评分或排名，不将未知金额标为零。 */
+  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同坐标使用后端去重金额，正金额直径为当前最大金额比例的平方根乘 62；未知/零金额保留位置标记并区分文案；圆心对齐图标中心，标签及聚合金额提示不参与圆心布局；点击显示该城市第一项或已选项。约束：无业务评分或排名，不将未知金额标为零，选中状态不放大金额面积。 */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();
@@ -130,6 +130,7 @@ export class WorldMap {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "event-pin";
+      button.classList.toggle("multiple", items.length > 1);
       button.dataset.eventId = item.id;
       button.style.setProperty("--bubble-size", `${size}px`);
       button.classList.toggle(
@@ -137,6 +138,8 @@ export class WorldMap {
         items.some((v) => v.id === this.selectedId),
       );
       const name = language === "en" ? item.en : item.title;
+      const amountText = amount === null ? (language === 'en' ? 'Amount unknown' : '金额未知') : `${item.currency} ${amount.toLocaleString()}`;
+      button.title = `${item.city} · ${language === 'en' ? 'Local pipeline' : '当地关联商机'}: ${amountText}`;
       button.setAttribute(
         "aria-label",
         `${name}, ${item.currency} ${amount === null ? (language === 'en' ? 'Amount unknown' : '金额未知') : amount.toLocaleString()}, ${items.length}`,
@@ -147,6 +150,10 @@ export class WorldMap {
       const label = document.createElement("span");
       label.className = "event-pin-label";
       label.textContent = item.city;
+      const value = document.createElement("span");
+      value.className = "event-pin-amount";
+      value.textContent = amountText;
+      label.append(value);
       button.append(bubble, label);
       button.addEventListener("click", () => this.onSelect(item.id));
       L.marker([item.lat, item.lng], {

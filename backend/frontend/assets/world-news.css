@@ -1,5 +1,5 @@
 /* 职责：全球洞察的活动列表、金额地图、详情面板和行业资讯布局。
- * 实现：共享主题变量、桌面三列、窄屏堆叠；明确选中与焦点，地图气泡大小由数据计算。
+ * 实现：共享主题变量、桌面三列、窄屏堆叠；金额圆心绝对定位到经纬度锚点，标签独立定位；中心点和聚焦金额提示增强识别，不改变金额面积比例。
  * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.js、world-map.js；沿用共享导航与 Leaflet 本地资源。
  * 目录：无函数或类；区域为页面头、筛选、活动列、地图、详情、资讯与响应式。
  * 变量索引：--bubble-size 为单个气泡直径，由金额平方根计算；其余使用共享主题变量。 */
@@ -266,42 +266,82 @@
   color: var(--ink) !important;
   border-color: var(--line) !important;
 }
+.event-marker {
+  pointer-events: none;
+}
+.event-marker:has(.event-pin:hover),
+.event-marker:has(.event-pin:focus-visible) {
+  z-index: 1000 !important;
+}
 .event-pin {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  display: block;
   width: 100px;
   height: 80px;
   border: 0;
   padding: 0;
   background: transparent;
   color: var(--ink);
+  pointer-events: none;
 }
 .event-bubble {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   width: var(--bubble-size);
   height: var(--bubble-size);
+  box-sizing: border-box;
   border-radius: 50%;
-  flex-shrink: 0;
   display: grid;
   place-items: center;
-  border: 1px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
   box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 12%, transparent);
   font-size: 12px;
+  pointer-events: auto;
+}
+/* 圆心独立于城市名及金额提示；同坐标多活动以居中的数量代替中心点。 */
+.event-pin:not(.multiple)::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1px solid var(--bg);
+  background: var(--ink);
+  pointer-events: auto;
 }
 .event-pin.selected .event-bubble {
   background: color-mix(in srgb, var(--accent) 70%, transparent);
   outline: 4px solid color-mix(in srgb, var(--accent) 15%, transparent);
 }
 .event-pin-label {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--bubble-size) / 2 + 5px);
+  transform: translateX(-50%);
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 4px;
-  margin-top: 5px;
   padding: 2px 6px;
   white-space: nowrap;
   font-size: 10px;
+  pointer-events: auto;
+}
+.event-pin-amount {
+  display: none;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.event-pin:hover .event-pin-amount,
+.event-pin:focus-visible .event-pin-amount,
+.event-pin.selected .event-pin-amount {
+  display: block;
 }
 .event-pin:focus-visible {
   outline: 2px solid var(--accent);
