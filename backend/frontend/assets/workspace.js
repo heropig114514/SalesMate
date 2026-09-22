@@ -1,6 +1,6 @@
 /**
  * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
- * 实现：URL 保存客户身份及共享实验上下文；实验客户使用只读来源入口；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
+ * 实现：左侧不再展示商机优先级入口；URL 保存客户身份及共享实验上下文；实验客户使用只读来源入口；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：顶栏使用移除实验入口后的缓存版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
  * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
@@ -26,11 +26,11 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：展示工作台、全球洞察、商机优先级、Channels 与客户，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
+ * 逻辑：展示工作台、全球洞察、Channels 与客户，移除商机优先级侧栏入口，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
-  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('priorities', language === 'en' ? 'Opportunity Priority' : '商机优先级', '/priorities/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
+  nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
   if (profile) {
     profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button>`;

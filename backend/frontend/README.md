@@ -21,7 +21,7 @@
 
 产品顶栏只展示全球洞察、社媒情报和销售业务，已移除“实验数据”入口。内部 `/experiments/` 页面及其数据接口继续供已有联调链接使用；隐藏入口不修改数据或后端权限。
 
-产品导航为 Dashboard、Channels（原 Emails and analysis）、Customers；商机、报价、订单、工单作为 Customers 的子入口。移除左侧 World news、通知、沟通与资料、设置与协作及旧销售业务分组；邮件客户详情不再显示上方客户导航条。顶部产品分区及业务页面保留原路由，既有数据与功能未删除。
+产品导航为 Dashboard、Channels（原 Emails and analysis）、Customers；商机、报价、订单、工单作为 Customers 的子入口。移除左侧 Opportunity Priority（商机优先级）、World news、通知、沟通与资料、设置与协作及旧销售业务分组；邮件客户详情不再显示上方客户导航条。顶部产品分区及业务页面保留原路由，既有数据与功能未删除。
 
 ## 修改约定
 

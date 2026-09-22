@@ -2,7 +2,7 @@
  * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
  * 实现：合并浏览原授权业务与获准实验行，实验详情标记原归属并链接共享维护；普通写入仍使用原权限。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
+ * 关联：侧栏优先级入口移除后更新导航缓存；共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
  * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
  * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
  * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
@@ -14,7 +14,7 @@
 import { t, h, locale, language } from './i18n.js?v=20260921-product';
 
 import { request, escapeHtml as esc } from "./api.js?v=20260921-product";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260922-nav";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260922-sidebar";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js?v=20260921-product";
 
 const $ = (id) => document.getElementById(id);

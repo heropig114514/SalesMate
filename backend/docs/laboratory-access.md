@@ -1,6 +1,6 @@
 # 算法联调的公开实验模式
 
-本模式按项目负责人的明确选择开放所有业务数据，包含非 KGSEED 数据。启用需要 `LAB_OPEN_ACCESS=True` 且 `WORKSPACE_OWNER_ONLY=False`，与 Django DEBUG、用户角色和虚构批次标记无关，代码默认关闭。2026-09-21 曾恢复个人空间；2026-09-22 按本次联调要求在本机 `.env` 重新开启，并由本地预览进程使用，尚未部署远端。下面远端 URL 是部署后使用的示例，不能据此认为远端当前已开放。个人空间隔离优先于实验开关，详见 [账号隔离与事实兼容](workspace-isolation.md)。
+本模式按项目负责人的明确选择开放所有业务数据，包含非 KGSEED 数据。启用需要 `LAB_OPEN_ACCESS=True` 且 `WORKSPACE_OWNER_ONLY=False`，与 Django DEBUG、用户角色和虚构批次标记无关，代码默认关闭。2026-09-21 曾恢复个人空间；2026-09-22 按联调要求在本机 `.env` 和线上 `/opt/salesmate/shared/runtime.env` 开启，并向线上数据库导入虚拟支持批次。配置随部署重启服务加载，实际状态以 `/api/v1/session/` 的 `lab_open_access` 为准。个人空间隔离优先于实验开关，详见 [账号隔离与事实兼容](workspace-isolation.md)。
 
 ## 调用方式
 

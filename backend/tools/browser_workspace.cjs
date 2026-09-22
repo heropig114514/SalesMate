@@ -1,7 +1,7 @@
 /**
  * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、精简首页、邮箱设置中的复核入口、真实总数展示、跨页客户上下文和表单预填。
  * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：核对三个业务分区及实验数据入口已移除，保留商机优先级共享导航；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟（共享浏览夹具仅含原账号记录，筛选断言跟随 browse 路由）；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
+ * 实现：核对三个业务分区及实验数据入口已移除，侧栏不再提供商机优先级入口；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟（共享浏览夹具仅含原账号记录，筛选断言跟随 browse 路由）；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
  * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
  * 目录：main 执行模拟导航场景。
  * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
@@ -15,7 +15,7 @@ const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图；手机焦点断言等待背景 inert 就绪。
- * 逻辑：navLabels 核对含商机优先级的导航，顶栏限定三个业务分区并排除实验入口；产品分区切换、底部条状布局、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
+ * 逻辑：navLabels 核对侧栏已移除商机优先级，顶栏限定三个业务分区并排除实验入口；产品分区切换、底部条状布局、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
  * 约束：所有业务请求均拦截；查看客户按当前只读契约不触发分析，仅允许显式公司资料 PATCH，禁止其余写入和外部网络。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -85,8 +85,8 @@ async function main() {
     await page.locator('.workspace-task').filter({ hasText: '待跟进' }).getByText('7', { exact: true }).waitFor();
     assert.equal(await page.locator('#workspace-nav a[aria-current=page]').textContent(), '工作台');
     const navLabels = await page.locator('#workspace-nav a').allTextContents();
-    assert.deepEqual(navLabels, ['工作台', 'Global Insights', '商机优先级', 'Channels', '客户', '商机', '报价', '订单', '工单']);
-    assert.equal(await page.locator('#workspace-nav a[href="/priorities/"]').textContent(), '商机优先级');
+    assert.deepEqual(navLabels, ['工作台', 'Global Insights', 'Channels', '客户', '商机', '报价', '订单', '工单']);
+    assert.equal(await page.locator('#workspace-nav a[href="/priorities/"]').count(), 0);
     assert.equal(await page.locator('#workspace-nav .workspace-customer-nav a').count(), 4);
     assert.deepEqual(await page.locator('#workspace-profile a').allTextContents(), ['Company Setting', 'Emails Connections']);
     assert.equal(await page.locator('#workspace-nav a[href="/world/"]').textContent(), 'Global Insights');

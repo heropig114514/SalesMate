@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- 职责：四步基础信息与本公司资料页面的语义骨架。
 实现：共享主导航和底部 Profile；认证成功后读取当前账号资料，用户显式保存。
-关联：入口缓存版本同步顶栏实验入口移除；入口脚本同步商机优先级导航缓存版本；资料条目标识支持使用新资源版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；company-settings.js/css、workspace.js/css、accounts/company-profile API 和底部助手。
+关联：入口缓存同步侧栏优先级移除；入口缓存版本同步顶栏实验入口移除；入口脚本同步商机优先级导航缓存版本；资料条目标识支持使用新资源版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；company-settings.js/css、workspace.js/css、accounts/company-profile API 和底部助手。
 目录：无函数或类；setup-root 为引导容器；company-step 为第二步，company-form 为资料表单，company-controls 控制忙碌状态，company-fields 为字段，company-status 显示保存和错误状态。
 变量索引：无脚本变量；DOM id 由页面控制器引用。 -->
 <html lang="zh-CN">
@@ -34,6 +34,6 @@
 <p id="company-status" role="status" aria-live="polite"></p>
 </section>
 </main>
-<script type="module" src="/static/company-settings.js?v=20260922-nav"></script>
+<script type="module" src="/static/company-settings.js?v=20260922-sidebar"></script>
 </body>
 </html>

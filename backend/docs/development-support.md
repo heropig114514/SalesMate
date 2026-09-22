@@ -15,14 +15,16 @@ python backend/manage.py seed_development_support --username algorithm-lab
 
 批次包含 8 个客户、8 条活跃商机、8 个活动、4 条资讯、8 条信号、8 条固定占位评分，以及交易产品和方案文件；个人/公司/参考产品/方案/卖方资料仅在该账号尚无对应资料记录时初始化。活动、资讯、信号、评分使用 `data_source=synthetic`；客户及商机名称带 `【虚拟】`。占位评分不代表算法已计算。真实结果可新建记录，或显式更新已有占位并改为 `data_source=agent`。
 
-本次已修改本机忽略的 `.env`：
+本机忽略的 `.env` 与线上 `/opt/salesmate/shared/runtime.env` 使用以下联调配置：
 
 ```dotenv
 LAB_OPEN_ACCESS=True
 WORKSPACE_OWNER_ONLY=False
 ```
 
-两个设置需要同时生效，重启服务后才影响已有进程。代码默认值没有改动，也未部署远端。该模式的业务接口免 Cookie、CSRF、Tool token，开放跨账号业务访问；可省略 If-Match/revision 和 Tool 幂等键。可用 `X-Lab-User: algorithm-lab` 选择资料归属，省略时按既有实验模式选取身份。详见 [实验访问说明](laboratory-access.md)。外部邮箱 OAuth、真实发信/日历确认、数据库关系和金额结构检查仍沿用原契约。
+两个设置需要同时生效，重启服务后才影响已有进程，代码默认值没有改动。该模式的业务接口免 Cookie、CSRF、Tool token，开放跨账号业务访问；可省略 If-Match/revision 和 Tool 幂等键。可用 `X-Lab-User: algorithm-lab` 选择资料归属，省略时按既有实验模式选取身份。详见 [实验访问说明](laboratory-access.md)。外部邮箱 OAuth、真实发信/日历确认、数据库关系和金额结构检查仍沿用原契约。
+
+2026-09-22 已向线上 PostgreSQL 的 `algorithm-lab` 账号导入上述批次，并按审计清单逐项核实记录数量。导入前的数据库备份、运行配置备份及导入清单位于服务器 `/opt/salesmate/backups/support-seed-20260922T064840Z`。线上配置随本次部署重启服务加载，可通过 `/api/v1/session/` 的 `lab_open_access` 和 `/api/v1/sales/world/` 核实生效状态。
 
 ## 算法可直接使用的接口
 
