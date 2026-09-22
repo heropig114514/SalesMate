@@ -1,7 +1,7 @@
-/** 职责：验证金额气泡的地理锚点、面积比例及可访问交互。
- * 实现：隔离静态服务器加载实际 Leaflet、地图模块和页面样式，以受控坐标与金额检查真实浏览器几何；不访问业务接口。
- * 关联：world-map.js、world-news.css；Playwright/Chrome 路径由环境显式提供。
- * 目录：geometry、checkGeometry、main。
+/** 职责：验证金额气泡的地理锚点、面积比例、半透明效果及币种提示。
+ * 实现：隔离静态服务器加载实际 Leaflet、地图模块和完整页面，以受控坐标与模拟接口金额检查几何和币种选择；不访问真实业务接口。
+ * 关联：world-map.js、world-news.js/css、world.html；Playwright/Chrome 路径由环境显式提供。
+ * 目录：geometry、checkGeometry、checkCurrencies、main。
  * 变量索引：ASSETS 为静态资源根目录；OUTPUT 为忽略的截图目录。
  */
 const assert = require('node:assert/strict');
@@ -35,12 +35,75 @@ async function checkGeometry(page) {
   assert.equal(rows.length, 4);
 }
 
+/** 功能：验证完整页面的币种来源和金额语义。输入：browser、base 为隔离浏览器和静态服务地址。输出：无，失败抛错。
+ * 逻辑：模拟只有 SGD、混合币种、零与未知金额及空活动；检查无关币种不进入选择框，URL 与切换保留已知金额，标签不伪造汇率。
+ * 约束：所有接口为显式只读夹具；未知接口或写入使测试失败，不触及线上记录。 */
+async function checkCurrencies(browser, base) {
+  const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let records = [
+    { id: 'sgd', city: 'Singapore', country: 'SG', latitude: 1.352, longitude: 103.819, map_amounts: { SGD: '100.00' } },
+    { id: 'usd', city: 'San Francisco', country: 'US', latitude: 37.775, longitude: -122.419, map_amounts: { SGD: '200.00' } },
+    { id: 'zero', city: 'Tokyo', country: 'JP', latitude: 35.676, longitude: 139.65, map_amounts: { SGD: '0.00' } },
+    { id: 'unknown', city: 'Munich', country: 'DE', latitude: 48.135, longitude: 11.582, map_amounts: {} },
+  ];
+  await page.route('**/*', route => {
+    const req = route.request(), url = new URL(req.url());
+    if (url.origin !== base || req.method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
+    if (!url.pathname.startsWith('/api/')) return route.continue();
+    if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: {
+      count: records.length, countries: [], currencies: ['CNY', 'SGD', 'USD'], unmapped_customer_count: 0,
+      results: records.map(row => ({ ...row, title: row.city, amounts: row.map_amounts, event_type: 'exhibition', starts_at: '2027-01-01T12:00:00Z', ends_at: '2027-01-02T12:00:00Z', data_source: 'synthetic', customers: [], onsite: [], suggested_actions: [] })),
+    } });
+    if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 0, results: [] } });
+    if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
+    errors.push('Unexpected API: ' + url.pathname);
+    return route.abort();
+  });
+  await page.goto(base + '/world/?currency=USD');
+  await page.locator('.event-pin').first().waitFor();
+  assert.deepEqual(await page.locator('#map-currency option').allTextContents(), ['SGD']);
+  assert.equal(await page.inputValue('#map-currency'), 'SGD');
+  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
+  assert.equal(await page.locator('[data-event-id="zero"] .event-pin-amount').textContent(), 'SGD 0');
+  assert.equal(await page.locator('[data-event-id="unknown"] .event-pin-amount').textContent(), 'Amount unknown');
+  records[1].map_amounts = { USD: '200.00' };
+  await page.reload();
+  await page.locator('.event-pin').first().waitFor();
+  assert.deepEqual(await page.locator('#map-currency option').allTextContents(), ['SGD', 'USD']);
+  assert.equal(await page.locator('[data-event-id="usd"] .event-pin-amount').textContent(), 'USD 200');
+  assert.equal(await page.locator('[data-event-id="usd"] .event-pin-currency-note').textContent(), 'No SGD amount');
+  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '0px');
+  await page.selectOption('#map-currency', 'USD');
+  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
+  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-currency-note').textContent(), 'No USD amount');
+  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '62px');
+  await page.reload();
+  await page.locator('.event-pin').first().waitFor();
+  assert.equal(await page.inputValue('#map-currency'), 'USD');
+  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
+  records = [];
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#world-data-status').textContent.startsWith('Database records'));
+  assert.equal(await page.locator('#map-currency option').count(), 0);
+  assert.equal(await page.locator('.event-pin').count(), 0);
+  assert.equal(await page.locator('#world-error').isVisible(), false);
+  assert.deepEqual(errors, []);
+  await page.close();
+}
+
 /** 功能：运行隔离地图回归。输入：Playwright/Chrome 环境。输出：检查摘要和截图。
  * 逻辑：验证全球/亚太/欧洲、缩放、手机尺寸、不同长度标签、选择及未知/零金额；空白图标区域不得截获点击，金额提示不得改变圆心；捕获脚本错误。
  * 约束：仅本机静态网络；金额为浏览器测试夹具，不写入数据库或调用 Agent。 */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === '/world/') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(fs.readFileSync(path.join(ASSETS, '../world.html')));
+      return;
+    }
     if (pathname === '/') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="stylesheet" href="/static/design-system.css"><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/world-news.css"><link rel="stylesheet" href="/static/vendor/leaflet-1.9.4/leaflet.css"><script src="/static/vendor/leaflet-1.9.4/leaflet.js"></script></head><body><div id="world-map" style="width:100%;height:560px"></div></body></html>');
@@ -67,7 +130,7 @@ async function main() {
         { id: 'duplicate', country: 'US', city: 'San Francisco long label', lat: 37.775, lng: -122.419, amount: 400 },
         { id: 'unknown', country: 'DE', city: '慕尼黑', lat: 48.135, lng: 11.582, amount: null },
         { id: 'zero', country: 'JP', city: '东京', lat: 35.676, lng: 139.65, amount: 0 },
-      ].map(row => ({ ...row, title: row.city, en: row.city, currency: 'SGD' }));
+      ].map(row => ({ ...row, title: row.city, en: row.city, currency: 'SGD', map_amounts: row.amount === null ? {} : { SGD: String(row.amount) } }));
       window.fixtureMap = new WorldMap(document.querySelector('#world-map'), id => { window.selected = id; window.fixtureMap.setItems(window.fixture, id); });
       window.fixtureMap.setCountries(['SG', 'US', 'DE', 'JP']);
       await window.fixtureMap.load();
@@ -96,6 +159,11 @@ async function main() {
     await page.locator('[data-event-id="small"]').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.selected), 'small');
+    const fills = await page.locator('.event-bubble').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).backgroundColor));
+    for (const fill of fills) {
+      const alpha = Number(fill.match(/\/\s*([\d.]+)\)/)?.[1]);
+      assert.ok(alpha > 0 && alpha <= 0.35, 'Both selected and normal bubbles must remain translucent: ' + fill);
+    }
     fs.mkdirSync(OUTPUT, { recursive: true });
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-desktop.png') });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -103,7 +171,8 @@ async function main() {
     await checkGeometry(page);
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-mobile.png') });
     assert.deepEqual(errors, []);
-    console.log('Map geometry passed: projected centers, 4:1 area, shared coordinates, unknown/zero, views/zoom/resize, mouse/keyboard.');
+    await checkCurrencies(browser, `http://127.0.0.1:${server.address().port}`);
+    console.log('Map checks passed: centers, 4:1 area, translucency, actual currencies, mixed amounts/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

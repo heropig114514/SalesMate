@@ -1,5 +1,5 @@
 /** 职责：将活动与商机金额投影到真实世界地图。
- * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积与同城商机金额成比例，圆心固定在地理锚点，标签独立定位；按钮支持键盘选择和聚合金额提示。
+ * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积按所选币种金额计算，圆心固定在地理锚点；标签分币种显示已有金额，区分无所选币种金额与真正未知。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；后端客户国家代码决定高亮；不请求在线瓦片。
  * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setCountries、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
  * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
@@ -113,7 +113,7 @@ export class WorldMap {
     this.selectedId = selectedId;
     this.draw();
   }
-  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照。输出：无。逻辑：同坐标使用后端去重金额，正金额直径为当前最大金额比例的平方根乘 62；未知/零金额保留位置标记并区分文案；圆心对齐图标中心，标签及聚合金额提示不参与圆心布局；点击显示该城市第一项或已选项。约束：无业务评分或排名，不将未知金额标为零，选中状态不放大金额面积。 */
+  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照，各项 map_amounts 为后端去重的分币种金额，amount 为所选 currency 的数值或 null。输出：无。逻辑：正金额直径按当前最大金额比例的平方根乘 62；所有已有币种均在标签列出，所选币种排首位，缺少所选币种单独注明；仅 map_amounts 为空时显示未知；标签不参与圆心布局。约束：无换汇、跨币种加总或金额回退；零金额保留为零，选中状态不放大金额面积。 */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();
@@ -138,11 +138,14 @@ export class WorldMap {
         items.some((v) => v.id === this.selectedId),
       );
       const name = language === "en" ? item.en : item.title;
-      const amountText = amount === null ? (language === 'en' ? 'Amount unknown' : '金额未知') : `${item.currency} ${amount.toLocaleString()}`;
+      const amounts = Object.entries(item.map_amounts).sort(([a], [b]) => Number(b === item.currency) - Number(a === item.currency) || a.localeCompare(b));
+      const amountText = amounts.map(([currency, value]) => `${currency} ${Number(value).toLocaleString()}`).join('\n') || (language === 'en' ? 'Amount unknown' : '金额未知');
+      const currencyNote = amount === null && amounts.length ? (language === 'en' ? `No ${item.currency} amount` : `无 ${item.currency} 金额`) : '';
       button.title = `${item.city} · ${language === 'en' ? 'Local pipeline' : '当地关联商机'}: ${amountText}`;
+      if (currencyNote) button.title += `\n${currencyNote}`;
       button.setAttribute(
         "aria-label",
-        `${name}, ${item.currency} ${amount === null ? (language === 'en' ? 'Amount unknown' : '金额未知') : amount.toLocaleString()}, ${items.length}`,
+        `${name}, ${amountText.replaceAll('\n', ', ')}, ${currencyNote ? currencyNote + ', ' : ''}${items.length}`,
       );
       const bubble = document.createElement("span");
       bubble.className = "event-bubble";
@@ -154,6 +157,12 @@ export class WorldMap {
       value.className = "event-pin-amount";
       value.textContent = amountText;
       label.append(value);
+      if (currencyNote) {
+        const note = document.createElement("span");
+        note.className = "event-pin-currency-note";
+        note.textContent = currencyNote;
+        label.append(note);
+      }
       button.append(bubble, label);
       button.addEventListener("click", () => this.onSelect(item.id));
       L.marker([item.lat, item.lng], {

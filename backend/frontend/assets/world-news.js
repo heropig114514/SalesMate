@@ -1,13 +1,13 @@
 /** 职责：从数据库展示活动地图、资讯和邀约模板。
- * 实现：显式读取分页，分币种显示，标记虚拟占位；失败显示错误，无静态回退。
+ * 实现：显式读取分页，地图币种仅取活动实际关联金额，提示保留其他币种已知金额；标记虚拟占位，失败显示错误，无静态回退。
  * 关联：地图锚点与金额提示修复使用新版资源；侧栏优先级入口移除后更新导航缓存；共享导航使用移除实验入口后的缓存版本；sales/world、world-news、seller-context 接口和 WorldMap。
  * 目录：$、text、countryName、loadPages、eventRows、money、render、selectEvent、renderDetail、renderNews、renderArticle、foldLine、calendarText、calendarText.escape、calendarText.instant、downloadItinerary、inviteDraft、start。
- * 变量索引：$ 查询 DOM；state 数据快照和筛选；categories 分类；regionNames 地区名称；map 地图实例。
+ * 变量索引：$ 查询 DOM；state 数据快照和筛选，currencies 仅包含活动地图金额币种；categories 分类；regionNames 地区名称；map 地图实例。
  */
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { mountWorkspace } from './workspace.js?v=20260922-sidebar';
-import { WorldMap } from './world-map.js?v=20260922-map-anchor';
+import { WorldMap } from './world-map.js?v=20260922-map-currency';
 const $ = id => document.getElementById(id);
 const state = { events: [], news: [], countries: [], currencies: [], selected: null, country: 'all', currency: '', type: 'all', time: 'all', view: 'global', seller: null };
 const categories = { regulation: ['监管', 'Regulation'], industry: ['产业', 'Industry'], competition: ['竞争', 'Competition'], price: ['价格', 'Price'] };
@@ -72,7 +72,7 @@ export function calendarText(item) {
 function downloadItinerary(item) { const url = URL.createObjectURL(new Blob([calendarText(item)], { type: 'text/calendar;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = item.id + '.ics'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 /** 功能：填充邀约模板。输入：item。输出：对话框。逻辑：使用本人资料署名。约束：不调用 AI、不猜测收件人、不发送。 */
 function inviteDraft(item) { const person = state.seller?.sales_setup?.personal || {}; $('invite-subject').value = text('邀约交流：', 'Invitation: ') + item.title; $('invite-body').value = text(`您好，\n\n希望与您在 ${item.starts_at.slice(0, 10)} 的“${item.title}”（${item.city}）期间预约交流。请告知方便的时间。\n\n`, `Hello,\n\nWould you be available to meet during ${item.title} in ${item.city} on ${item.starts_at.slice(0, 10)}?\n\n`) + [person.name, person.title, person.email].filter(Boolean).join('\n') + (item.data_source === 'synthetic' ? text('\n\n注意：活动为虚拟占位。', '\n\nThis event is synthetic.') : ''); $('invite-dialog').showModal(); }
-/** 功能：初始化数据库页面。输入：DOM 和 URL。输出：Promise。逻辑：读取后绑定控件，币种优先使用 URL 选择或活动实际关联币种，失败明确展示。约束：不创建占位、不自动重试。 */
+/** 功能：初始化数据库页面。输入：DOM 和 URL。输出：Promise。逻辑：读取后绑定控件，可选币种来自全部活动 map_amounts，排除无关商机币种；有效 URL 币种优先，否则使用活动首个实际币种；无金额时币种选择为空，失败明确展示。约束：不创建占位、不自动重试、不换汇。 */
 async function start() {
   mountWorkspace('world');
   const article = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
@@ -81,7 +81,7 @@ async function start() {
     if (article) { await renderArticle(article[1]); return; }
     $('world-data-status').textContent = text('正在读取数据库…', 'Loading database…');
     const [world, news, seller] = await Promise.all([loadPages('sales/world/'), request('sales/records/world-news/?page_size=4&to=' + encodeURIComponent(new Date().toISOString()) + '&from=' + encodeURIComponent(new Date(Date.now() - 14 * 86400000).toISOString())), request('sales/seller-context/')]);
-    Object.assign(state, { events: world.results, countries: world.countries, currencies: world.currencies, news: news.results, seller });
+    Object.assign(state, { events: world.results, countries: world.countries, currencies: [...new Set(world.results.flatMap(item => Object.keys(item.map_amounts)))].sort(), news: news.results, seller });
     const query = new URLSearchParams(location.search);
     const eventCurrency = state.events.flatMap(item => Object.keys(item.map_amounts)).find(currency => state.currencies.includes(currency));
     state.currency = state.currencies.includes(query.get('currency')) ? query.get('currency') : eventCurrency || state.currencies[0] || '';
