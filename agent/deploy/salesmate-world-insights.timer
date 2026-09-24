@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect World Insights twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00 UTC
+Persistent=true
+RandomizedDelaySec=20min
+Unit=salesmate-world-insights.service
+
+[Install]
+WantedBy=timers.target

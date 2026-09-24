@@ -1,0 +1,18 @@
+[Unit]
+Description=SalesMate World Insights collector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=salesmate
+Group=salesmate
+WorkingDirectory=/opt/salesmate/app
+EnvironmentFile=/opt/salesmate/shared/runtime.env
+EnvironmentFile=-/opt/salesmate/shared/world-insights.env
+Environment=SALESMATE_WORLD_GEO_CACHE=/opt/salesmate/shared/world-geocodes.json
+ExecStart=/opt/salesmate/venv/bin/python -m agent.world_insights
+TimeoutStartSec=15min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

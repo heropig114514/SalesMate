@@ -1,0 +1,18 @@
+{
+  "searches": [
+    {"kind": "news", "industry": "半导体设备", "query": "semiconductor equipment manufacturing investment"},
+    {"kind": "news", "industry": "精密量测", "query": "industrial metrology optical inspection technology"},
+    {"kind": "news", "industry": "光学检测", "query": "photonics optical inspection semiconductor"},
+    {"kind": "news", "industry": "半导体设备", "query": "semiconductor equipment export regulation"},
+    {"kind": "event", "industry": "半导体设备", "query": "semiconductor equipment exhibition trade show"},
+    {"kind": "event", "industry": "精密量测", "query": "metrology photonics exhibition trade show"}
+  ],
+  "feeds": [
+    {"kind": "event", "industry": "半导体与电子制造", "url": "https://semiconductorcalendar.com/feed.xml"},
+    {"kind": "news", "industry": "欧洲工业", "url": "https://ec.europa.eu/eurostat/en/search?_estatsearchportlet_WAR_estatsearchportlet_collection=CAT_PREREL&_estatsearchportlet_WAR_estatsearchportlet_theme=PER_INDCOM&p_p_id=estatsearchportlet_WAR_estatsearchportlet&p_p_lifecycle=2&p_p_mode=view&p_p_resource_id=atom&p_p_state=maximized"},
+    {"kind": "news", "industry": "欧洲科技", "url": "https://ec.europa.eu/eurostat/en/search?_estatsearchportlet_WAR_estatsearchportlet_collection=CAT_PREREL&_estatsearchportlet_WAR_estatsearchportlet_theme=PER_RESDEV&p_p_id=estatsearchportlet_WAR_estatsearchportlet&p_p_lifecycle=2&p_p_mode=view&p_p_resource_id=atom&p_p_state=maximized"},
+    {"kind": "news", "industry": "电子与半导体", "url": "https://www.nist.gov/news-events/electronics/rss.xml"},
+    {"kind": "news", "industry": "精密量测", "url": "https://www.nist.gov/news-events/metrology/rss.xml"},
+    {"kind": "event", "industry": "工业技术", "url": "https://www.nist.gov/news-events/events/rss.xml"}
+  ]
+}

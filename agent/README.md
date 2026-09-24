@@ -1,5 +1,26 @@
 # SalesMate Agent MVP
 
+## 全球洞察采集
+
+`python -m agent.world_insights` 是独立于 Gmail、L1–L4 和聊天的单次采集任务。它从 `world_insights_sources.json` 配置的公开 GDELT 搜索、NIST/Eurostat 订阅源以及半导体活动日历发现半导体设备、精密量测等行业资讯及活动，不需要新闻搜索 API Key。新闻必须有来源页面或订阅源提供的带时区发布日期；模型只整理来源片段，不能臆测国家。地图活动只从来源页的结构化 Event 数据读取明确的活动名称、日期、城市和国家，经 Nominatim 校验城市坐标后才写入。若来源只给活动日期、不提供钟点，记录会明确标记时间是系统占位值。缺地点的条目会跳过，不生成猜测位置。每轮最多写入 4 条资讯、2 条活动，已存在的来源 URL 不重复写入；单条失败不影响其他条目。
+
+先在项目根目录安装 `agent/requirements.txt`，配置百炼模型现有环境变量，以及独立的 `SALESMATE_TOOLS_URL`、`SALESMATE_TOOLS_TOKEN`。Tool 凭证至少授权 `world_news.list/create` 和 `world_events.list/create`；不能使用 Gmail/聊天 Worker 的 Agent 凭证代替。生产环境建议把 Tool 配置放在 `/opt/salesmate/shared/world-insights.env`，只允许 `salesmate` 服务用户读取，不要提交到 Git。
+
+```bash
+python -m agent.world_insights --dry-run
+python -m agent.world_insights
+sudo install -m 644 agent/deploy/salesmate-world-insights.service /etc/systemd/system/
+sudo install -m 644 agent/deploy/salesmate-world-insights.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now salesmate-world-insights.timer
+sudo systemctl start salesmate-world-insights.service
+sudo journalctl -u salesmate-world-insights.service -n 100 --no-pager
+```
+
+服务默认每天 UTC 03:00、15:00 各执行一次，并设有随机延迟。`--dry-run` 会访问公开来源、地理编码及模型，但不调用后端写入工具；单次结果中的 `news`、`events`、`source_successes`、`source_errors`、`item_errors` 可用于检查采集情况。只有全部来源不可用时，任务才以来源故障退出；单个来源或条目出错会记录日志并继续。来源站点不可达或没有足够可靠的日期、地点时，本轮可能没有新记录。地理编码缓存路径可通过 `SALESMATE_WORLD_GEO_CACHE` 配置。
+
+**全员共享仍待后端实现：**产品规则是所有已登录员工均可读取全球资讯和活动，当前后端仍按 owner 隔离。定时任务写入后，其他员工不会自动看到；后端需调整读取权限，同时保留写入权限和客户/商机数据隔离。现有部署脚本也不会自动安装此 timer。
+
 更新日期：2026-09-20<br>
 版本：v2.5<br>
 状态：员工网页 Gmail 授权、一次性同步请求及原有 L1–L4 链路已完成联调；工作空间聊天已对接后端请求绑定的只读客户工具，真实模型与网页联合验收仍需执行。
