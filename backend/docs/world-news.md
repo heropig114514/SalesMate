@@ -2,6 +2,8 @@
 
 入口 `/world/`，新闻详情 `/world/news/<UUID>/`。页面已读取后端数据库；原有静态演示源与未接入的浏览器消息推送模块已删除。虚拟数据须由 `seed_development_support` 显式入库，页面不会自动创建或在接口失败时回退演示数据。初始化及算法接入见 [联调支持](development-support.md)。
 
+公共新闻新增公司、需求、项目、金额及证据的单组结构化信息，详见 [新闻销售线索契约](world-news-signals.md)。这些金额保留来源口径，与下述内部商机地图金额分别展示。
+
 ## 数据和交互
 
 - 活动从 `/api/v1/sales/world/` 显式读取所有分页；资讯从 `records/world-news/` 读取近 14 天最多 4 条，详情直接按 ID 查询。
@@ -25,6 +27,7 @@
 | --- | --- |
 | `frontend/world.html`、`assets/world-news.css` | 页面骨架与响应式布局 |
 | `assets/world-news.js` | 数据库分页、筛选、详情、日历及邀约模板 |
+| `assets/world-signals.js` | 公共新闻线索、来源金额精确格式化、证据和推断分区 |
 | `assets/world-dates.js` | 日期精度、日期筛选边界与全天 ICS 属性 |
 | `assets/world-map.js` | 真实国界、客户国家高亮、金额气泡及视角 |
 | `assets/world-countries.geojson`、`assets/vendor/` | 本地底图、Leaflet 及许可 |
@@ -37,7 +40,7 @@
 ## 兼容、去重和发布
 
 - 新增可写 `time_precision=date|datetime`，默认 datetime。date 使用 UTC 午夜或中午的一致边界承载日期，`ends_at` 的 UTC 日期为排除式边界；只读 `starts_on/ends_on` 为包含末日的来源日期，普通 datetime 输出 null。
-- Agent 代码和载荷不变。仅当 `data_source=agent`、description 包含完整独立行 `来源仅提供日期；起止钟点是系统占位值，请以来源页为准。`、起止均为 UTC 中午且递增时，后端兼容适配为 date。完整标记与时间不符会拒绝，不猜测其他文章或午夜活动的精度。迁移为历史明确标记记录补精度，不改写原时间。
+- 活动 Agent 代码和日期载荷不变。仅当 `data_source=agent`、description 包含完整独立行 `来源仅提供日期；起止钟点是系统占位值，请以来源页为准。`、起止均为 UTC 中午且递增时，后端兼容适配为 date。完整标记与时间不符会拒绝，不猜测其他文章或午夜活动的精度。迁移为历史明确标记记录补精度，不改写原时间。
 - 数据库对非空 Agent 新闻来源 URL 唯一，对 Agent 活动的 URL + starts_at 联合唯一；人工/synthetic 不受采集去重约束。归档不释放唯一性；重复返回 409，不覆盖原记录。URL 按保存字符串比较，不合并重定向、不同查询参数或近似标题；现有 Agent 已负责其 URL 规范化。
 - 当前 Agent 会把来源相同的记录跳过（包括归档），不会自动更新原资讯；活动不同届次虽然后端允许保存，现有 Agent 的 URL 去重仍可能跳过，本文不宣称已改变其采集策略。并发写入遇到 409 时，现有 Agent 会计入 item_errors，后端不伪装为成功。
 - 发布需应用 `sales.0009_shared_insights`。迁移先核对重复，存在重复则明确失败，需人工确认处理后重跑；不会自动删除、合并或归档。部署前备份按项目既有流程执行。本次代码修改不代表线上已迁移。

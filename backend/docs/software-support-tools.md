@@ -95,3 +95,7 @@
 部署需执行 `python backend/manage.py migrate`。`sales.0007_world_insights` 创建活动和资讯表；`sales.0008_development_support` 增加来源字段、允许空来源，并创建商机信号及评分表。现有部署脚本已包含 migrate。普通资料与文件工具沿用既有表，无新的第三方密钥要求；虚拟数据需要另行显式执行初始化命令。
 
 `tests.integration.test_support_tools` 覆盖真实 HTTP + PostgreSQL CRUD、跨账号隔离、幂等、版本冲突、文件引用保护、分块读取、授权模板；没有连接真实外部数据源。`browser_onboarding.cjs` 使用模拟 API 和真实 Chrome 验证编辑保留关联。原 SDK 的 MCP stdio 测试使用本机 HTTP fixture，协议通过不代表已验证线上账号或外部发信。
+
+## 公共新闻销售线索
+
+`world_news.create/update` 支持十三个可选公开线索与来源金额字段；`list/get` 和 REST 返回相同字段。精确金额、证据组合、空值及页面口径见 [新闻销售线索契约](world-news-signals.md)。实际 Schema 由工具目录发布，旧载荷继续可用，不自动创建或关联 CRM。

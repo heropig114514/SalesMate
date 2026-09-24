@@ -1,5 +1,5 @@
 """职责：从既有序列化器生成工具输入契约。
-实现：递归投影嵌套资料和可写字段，JSON Schema 预检与原 DRF/业务校验共同生效。
+实现：可空枚举显式接受空字符串、非负 Decimal 使用非负字符串语法；递归投影嵌套资料和可写字段，JSON Schema 预检与原 DRF/业务校验共同生效。
 关联：registry 发布 Schema；services 调用前验证，避免通用 ORM 或任意字段入口。
 目录：
 - object_schema：构造封闭对象。
@@ -42,7 +42,7 @@ def object_schema(properties, required=()):
 # 功能：投影字段类型。
 # 输入：`field` 为 DRF 字段。
 # 输出：JSON Schema。
-# 逻辑：递归声明嵌套对象及数组，保持 decimal 字符串精度、关系主键类型及可空语义。
+# 逻辑：递归声明嵌套对象及数组；枚举保留 allow_blank，decimal 保留字符串及非负限制，关系类型与 null 独立表达。
 # 约束：未支持字段显式失败；动态关系权限仍由原序列化器执行。
 def field_schema(field):
     if isinstance(field, s.ListSerializer):
@@ -58,6 +58,8 @@ def field_schema(field):
         )
     elif isinstance(field, s.ChoiceField):
         result = {"enum": list(field.choices)}
+        if field.allow_blank and "" not in result["enum"]:
+            result["enum"].append("")
     elif isinstance(field, s.BooleanField):
         result = {"type": "boolean"}
     elif isinstance(field, s.IntegerField):
@@ -65,7 +67,7 @@ def field_schema(field):
     elif isinstance(field, s.DecimalField):
         result = {
             "type": "string",
-            "pattern": r"^-?\d+(\.\d+)?$",
+            "pattern": r"^[0-9]+(\.[0-9]+)?$" if field.min_value is not None and field.min_value >= 0 else r"^-?\d+(\.\d+)?$",
             "description": "精确十进制字符串，禁止浮点金额。",
         }
     elif isinstance(field, s.FloatField):

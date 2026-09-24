@@ -1,7 +1,7 @@
 /** 职责：验证金额气泡、共享活动日期展示和全天日历。
- * 实现：隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
+ * 实现：额外以模拟 API 验证新闻公共线索、精确金额、事实/推断及移动布局；隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
  * 关联：world-map.js、world-news.js/css、world.html；Playwright/Chrome 路径由环境显式提供。
- * 目录：geometry、checkGeometry、checkCurrencies、checkDates、main。
+ * 目录：geometry、checkGeometry、checkCurrencies、checkDates、checkNewsSignals、main。
  * 变量索引：ASSETS 为静态资源根目录；OUTPUT 为忽略的截图目录。
  */
 const assert = require('node:assert/strict');
@@ -141,13 +141,63 @@ async function checkDates(browser, base) {
   }
 }
 
+/** 功能：验证真实新闻页面的结构化公开线索。输入：browser、base 为浏览器和隔离静态服务地址。输出：断言与截图。
+ * 逻辑：模拟新/旧新闻 API，检查全部字段、金额类型和精确字符、推断标记、XSS 转义以及手机无横向溢出。
+ * 约束：不使用真实 Agent 或业务数据库，来源金额不能进入活动地图币种或商机汇总。 */
+async function checkNewsSignals(browser, base) {
+  const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let record = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', title: '测试扩产新闻', category: 'industry', published_at: '2026-09-24T08:00:00Z', source_url: 'https://example.org/news', data_source: 'agent', summary: '来源摘要', content: '公开新闻正文', company_name: '测试公司', signal_type: 'new_factory', project_name: '测试基地', demand_description: '建设生产线', potential_sales_need: '可能需要检测设备', opportunity_reason: '生产线可能涉及检测环节', time_window: '2027 年投产', evidence: '测试公司计划建设测试基地。<img src=x onerror="window.newsXss=true">总投资 CNY 999999999999999999999999.123456。', amount: '999999999999999999999999.123456', currency: 'CNY', amount_type: 'total_investment', amount_scope: 'whole_project', amount_evidence: '总投资 CNY 999999999999999999999999.123456' };
+  await page.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== base || route.request().method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
+    if (!url.pathname.startsWith('/api/')) return route.continue();
+    if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 0, results: [], countries: [], currencies: [], unmapped_customer_count: 0 } });
+    if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 1, results: [record] } });
+    if (url.pathname === `/api/v1/sales/records/world-news/${record.id}/`) return route.fulfill({ json: record });
+    if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
+    errors.push('Unexpected API: ' + url.pathname); return route.abort();
+  });
+  await page.goto(base + '/world/');
+  await page.locator('.industry-news-card').waitFor();
+  assert.match(await page.locator('.industry-news-card').innerText(), /测试公司/);
+  assert.match(await page.locator('.industry-news-card').innerText(), /项目总投资/);
+  assert.equal(await page.locator('#map-currency option').count(), 0);
+  await page.locator('.industry-news-card').click();
+  await page.locator('.news-signal').waitFor();
+  assert.equal(await page.locator('#world-data-status').innerText(), '数据库记录 · 资讯');
+  const detail = await page.locator('.news-signal').innerText();
+  for (const value of ['测试公司', '新建工厂', '测试基地', '建设生产线', '2027 年投产', '项目总投资', '整个项目', '推断 · 非已确认采购需求', '可能需要检测设备', '生产线可能涉及检测环节', '不代表我们的订单金额']) assert.ok(detail.includes(value), value);
+  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), 'CNY 999,999,999,999,999,999,999,999.123456');
+  assert.equal(await page.locator('.news-signal img').count(), 0);
+  assert.equal(await page.evaluate(() => window.newsXss), undefined);
+  fs.mkdirSync(OUTPUT, { recursive: true });
+  await page.screenshot({ path: path.join(OUTPUT, 'world-news-signal-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+  await page.screenshot({ path: path.join(OUTPUT, 'world-news-signal-mobile.png'), fullPage: true });
+  record = { ...record, amount: '0.000000' };
+  await page.reload(); await page.locator('.news-signal').waitFor();
+  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), 'CNY 0');
+  record = { ...record, amount: null, currency: '', amount_type: '', amount_scope: '', amount_evidence: '' };
+  await page.reload(); await page.locator('.news-signal').waitFor();
+  assert.match(await page.locator('.news-reported-amount').innerText(), /暂无结构化金额信息/);
+  record = { id: record.id, title: '旧新闻', category: 'industry', published_at: record.published_at, source_url: record.source_url, data_source: 'agent', summary: '', content: '保留旧正文' };
+  await page.reload(); await page.locator('.news-signal').waitFor();
+  assert.match(await page.locator('.news-signal').innerText(), /暂无结构化线索信息/);
+  assert.match(await page.locator('#news-detail').innerText(), /保留旧正文/);
+  assert.deepEqual(errors, []);
+  await page.close();
+}
+
 /** 功能：运行隔离地图回归。输入：Playwright/Chrome 环境。输出：检查摘要和截图。
  * 逻辑：验证地图投影、币种及交互；共享日期在多时区/手机展示，实际下载全天 ICS；捕获脚本错误。
  * 约束：仅本机静态网络；金额为浏览器测试夹具，不写入数据库或调用 Agent。 */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    if (pathname === '/world/') {
+    if (pathname === '/world/' || /^\/world\/news\/[a-z0-9-]+\/$/.test(pathname)) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(fs.readFileSync(path.join(ASSETS, '../world.html')));
       return;
@@ -165,6 +215,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });
   try {
+    await checkNewsSignals(browser, `http://127.0.0.1:${server.address().port}`);
     await checkDates(browser, `http://127.0.0.1:${server.address().port}`);
     const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1000, height: 700 } });
     const errors = [];
@@ -221,7 +272,7 @@ async function main() {
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-mobile.png') });
     assert.deepEqual(errors, []);
     await checkCurrencies(browser, `http://127.0.0.1:${server.address().port}`);
-    console.log('World checks passed: shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, 4:1 area, translucency, currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
+    console.log('World checks passed: news signals/exact decimal/source types/inference/escaping/mobile/legacy;  shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, 4:1 area, translucency, currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -214,10 +214,11 @@ class InsightMigrationTests(TransactionTestCase):
     # 功能：验证旧记录精度迁移及重复阻断。
     # 输入：无外部参数；0008 历史状态中的旧 Agent 日期活动与重复新闻。
     # 输出：重复时迁移失败且记录保留，人工移除测试重复后迁移成功且日期被标记。
-    # 逻辑：真正执行前后迁移；finally 恢复最新 sales schema，失败数据仅限测试库。
+    # 逻辑：真正执行前后迁移；finally 恢复执行前所有应用的最新 schema，失败数据仅限测试库。
     # 约束：生产迁移从不删除重复，此处删除的是测试自行创建的重复夹具。
     def test_historical_dates_and_duplicate_rejection(self):
         executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
         previous = [("sales", "0008_development_support")]
         current = [("sales", "0009_shared_insights")]
         executor.migrate(previous)
@@ -242,7 +243,7 @@ class InsightMigrationTests(TransactionTestCase):
         finally:
             if duplicate is not None:
                 duplicate.delete()
-            MigrationExecutor(connection).migrate(current)
+            MigrationExecutor(connection).migrate(latest)
 
     # 功能：验证不同账号并发采集只创建一条新闻。
     # 输入：无外部参数；两个测试账号、同步屏障和独立数据库连接。

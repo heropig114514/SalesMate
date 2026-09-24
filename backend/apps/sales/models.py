@@ -1,11 +1,11 @@
 """职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：活动和资讯共享事实、保留 owner 写入归属；Agent 来源按 URL（活动另含开始时间）约束重复；活动显式保存日期精度；其他业务采用 UUID、revision 与归档。
+实现：新闻保存单组公开线索、精确金额和证据，不自动关联 CRM；活动和资讯共享事实、保留 owner 写入归属；Agent 来源按 URL（活动另含开始时间）约束重复；活动显式保存日期精度；其他业务采用 UUID、revision 与归档。
 关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
 目录：
-- WorldNews：行业资讯事实与来源。
+- WorldNews：行业资讯事实、单组公共销售线索、来源金额与证据。
 - WorldEvent：活动事实与显式商机关联。
 - WorldEvent.Meta：约束同源同期开场的 Agent 活动唯一。
-- WorldNews.Meta：约束 Agent 新闻来源唯一。
+- WorldNews.Meta：约束来源唯一和金额组合一致性。
 - Record：可归档的版本化业务记录基类。
 - Record.Meta：声明抽象性或数据库唯一及数值约束。
 - CompanyRecord：关联客户和负责人的业务记录基类。
@@ -46,9 +46,13 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
+- NEWS_SIGNAL_TYPES：公开新闻事件类型。
+- NEWS_CURRENCIES：协作契约支持的币种。
+- NEWS_AMOUNT_TYPES：来源金额的业务口径。
+- NEWS_AMOUNT_SCOPES：来源金额覆盖范围。
 - WorldEvent.time_precision：datetime 为确切时刻，date 为 UTC 日期边界且结束日排除。
 - WorldEvent.Meta.constraints：非空 Agent 来源 URL 与开始时间联合唯一，包含归档记录。
-- WorldNews.Meta.constraints：非空 Agent 新闻来源 URL 唯一，包含归档记录。
+- WorldNews.Meta.constraints：Agent 来源唯一；金额非负且与币种、类型、范围、证据同时有值或同时为空。
 - WorldEvent.data_source：活动来源标签，synthetic 表示占位。
 - WorldNews.data_source：资讯来源标签，synthetic 表示占位。
 - WorldNews.title：资讯标题。
@@ -59,6 +63,19 @@
 - WorldNews.source_url：原始报道来源。
 - WorldNews.summary：上游提供摘要。
 - WorldNews.content：纯文本正文。
+- WorldNews.company_name：公司或机构原文名称。
+- WorldNews.signal_type：原文事件类型，可空。
+- WorldNews.project_name：原文项目名。
+- WorldNews.demand_description：新闻明确披露的需求。
+- WorldNews.potential_sales_need：与新闻事实分开的潜在采购推断。
+- WorldNews.opportunity_reason：潜在需求与产品的相关性解释，不是确认采购。
+- WorldNews.time_window：来源给出的项目或采购时间节点。
+- WorldNews.evidence：公共来源原文片段。
+- WorldNews.amount：最多 24 位整数及 6 位小数的来源金额，未知为 null。
+- WorldNews.currency：来源金额币种，不换汇。
+- WorldNews.amount_type：投资、预算、招标或合同等金额口径。
+- WorldNews.amount_scope：整项目、设备采购或其他覆盖范围。
+- WorldNews.amount_evidence：包含于 evidence 的金额原文。
 - WorldEvent.title：活动名称。
 - WorldEvent.event_type：活动类型。
 - WorldEvent.country：ISO 国家地区代码。
@@ -212,6 +229,11 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+
+NEWS_SIGNAL_TYPES = [(value, value) for value in ("expansion", "new_factory", "tender", "equipment_upgrade", "procurement", "other")]
+NEWS_CURRENCIES = [(value, value) for value in ("CNY", "USD", "EUR", "GBP", "JPY", "KRW", "SGD", "TWD", "HKD", "INR", "CAD", "AUD", "CHF")]
+NEWS_AMOUNT_TYPES = [(value, value) for value in ("total_investment", "procurement_budget", "tender_amount", "contract_amount", "other")]
+NEWS_AMOUNT_SCOPES = [(value, value) for value in ("whole_project", "equipment_procurement", "other")]
 
 
 # 功能：可归档的版本化业务记录基类。
@@ -745,9 +767,9 @@ class WorldEvent(Record):
         constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start")]
 
 
-# 功能：保存行业资讯事实与来源。
-# 逻辑：保留创建者并共享新闻事实；非空 Agent 来源 URL 在所有账号间唯一。
-# 约束：归档后仍阻止重采，不抓取外站、不生成摘要或排序。
+# 功能：保存行业资讯及单组公开销售线索、来源金额和证据。
+# 逻辑：旧记录新增文本为空、金额为 null；金额单独保留口径，不计入 CRM 商机。
+# 约束：归档后仍阻止重采；不按公司名创建或关联私人记录，不抓取外站、不生成推断。
 class WorldNews(Record):
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
@@ -758,12 +780,31 @@ class WorldNews(Record):
     source_url = models.URLField(max_length=2000, blank=True)
     summary = models.TextField(blank=True)
     content = models.TextField()
+    company_name = models.CharField(max_length=240, blank=True, default="")
+    signal_type = models.CharField(max_length=30, choices=NEWS_SIGNAL_TYPES, blank=True, default="")
+    project_name = models.CharField(max_length=240, blank=True, default="")
+    demand_description = models.CharField(max_length=500, blank=True, default="")
+    potential_sales_need = models.CharField(max_length=500, blank=True, default="")
+    opportunity_reason = models.CharField(max_length=500, blank=True, default="")
+    time_window = models.CharField(max_length=240, blank=True, default="")
+    evidence = models.CharField(max_length=600, blank=True, default="")
+    amount = models.DecimalField(max_digits=30, decimal_places=6, null=True, blank=True)
+    currency = models.CharField(max_length=3, choices=NEWS_CURRENCIES, blank=True, default="")
+    amount_type = models.CharField(max_length=30, choices=NEWS_AMOUNT_TYPES, blank=True, default="")
+    amount_scope = models.CharField(max_length=30, choices=NEWS_AMOUNT_SCOPES, blank=True, default="")
+    amount_evidence = models.CharField(max_length=400, blank=True, default="")
 
-    # 功能：约束采集新闻身份。
-    # 逻辑：非空 Agent 来源全局唯一，阻止不同账号并发重复创建。
+    # 功能：约束采集新闻身份和金额存储一致性。
+    # 逻辑：非空 Agent 来源全局唯一；金额非负且元数据全有，无金额时元数据全空。
     # 约束：不合并人工记录，不覆盖既有正文。
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["source_url"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_news_agent_source")]
+        constraints = [
+            models.UniqueConstraint(fields=["source_url"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_news_agent_source"),
+            models.CheckConstraint(condition=(
+                models.Q(amount__isnull=True, currency="", amount_type="", amount_scope="", amount_evidence="")
+                | (models.Q(amount__isnull=False, amount__gte=0, currency__in=[value for value, _ in NEWS_CURRENCIES], amount_type__in=[value for value, _ in NEWS_AMOUNT_TYPES], amount_scope__in=[value for value, _ in NEWS_AMOUNT_SCOPES]) & ~models.Q(amount_evidence=""))
+            ), name="world_news_amount_consistent"),
+        ]
 
 
 from .algorithm_models import OpportunitySignal, OpportunityPriority  # noqa: E402,F401

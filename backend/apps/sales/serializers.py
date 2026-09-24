@@ -1,5 +1,5 @@
 """职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：通用资源同时注册独立商机信号和评分，不执行算法；活动资讯校验日期精度、来源及授权关联，并在所有读取入口过滤私有商机标识；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
+实现：公开新闻校验单组销售线索、来源金额与证据，不生成或关联 CRM；通用资源同时注册独立商机信号和评分，不执行算法；活动资讯校验日期精度、来源及授权关联，并在所有读取入口过滤私有商机标识；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
 关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
 目录：
 - ZonedDateTimeField：活动资讯时间及字段验证。
@@ -8,9 +8,9 @@
 - WorldEventSerializer.validate：活动资讯时间及字段验证。
 - WorldEventSerializer.to_representation：过滤无权读取的商机标识，返回明确日期范围。
 - WorldEventSerializer.Meta：活动资讯时间及字段验证。
-- WorldNewsSerializer：活动资讯时间及字段验证。
-- WorldNewsSerializer.validate：活动资讯时间及字段验证。
-- WorldNewsSerializer.Meta：活动资讯时间及字段验证。
+- WorldNewsSerializer：公共新闻、单组销售线索和来源金额契约。
+- WorldNewsSerializer.validate：合并更新校验金额证据，再验证来源去重。
+- WorldNewsSerializer.Meta：声明基础新闻和十三个可选公共线索字段。
 - ConnectionSerializer：连接安全字段。
 - ConnectionSerializer.Meta：字段配置。
 - StrictModelSerializer：拒绝未知或只读输入并按用户限制关系。
@@ -79,6 +79,9 @@
 - WorldNewsSerializer.country：显式验证 country 的类型与边界。
 - WorldNewsSerializer.summary：显式验证 summary 的类型与边界。
 - WorldNewsSerializer.content：显式验证 content 的类型与边界。
+- WorldNewsSerializer.amount：非负十进制字符串，24 位整数与 6 位小数；返回固定精度字符串或 null。
+- WorldNewsSerializer.evidence：保留原文空白，最长 600 字符。
+- WorldNewsSerializer.amount_evidence：保留金额原文空白，最长 400 字符。
 - WorldEventSerializer.Meta.model：声明对应模型。
 - WorldEventSerializer.Meta.fields：声明公开字段。
 - WorldEventSerializer.Meta.read_only_fields：声明服务端维护字段。
@@ -163,6 +166,7 @@ from rest_framework import serializers as s
 
 from apps.crm.models import Company, Contact
 from . import models
+from .news_signals import NewsAmountField, validate_news_signal
 from .permissions import scope, visible_company_ids
 
 
@@ -1044,8 +1048,8 @@ class WorldEventSerializer(StrictModelSerializer):
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
-# 功能：验证行业资讯存储。
-# 逻辑：显式分类、带时区发布日期和纯文本；来源仅对 Agent 执行全局去重。
+# 功能：验证行业资讯、公共销售线索和精确来源金额。
+# 逻辑：新增字段可省略，不自动关联 CRM；金额证据及组合通过合并校验，来源对 Agent 全局去重。
 # 约束：关闭 DRF 自动来源唯一校验，重复由 insights 返回 409 并由数据库兜住并发；不抓取或生成摘要。
 class WorldNewsSerializer(StrictModelSerializer):
     source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
@@ -1053,23 +1057,26 @@ class WorldNewsSerializer(StrictModelSerializer):
     country = s.RegexField(r'^[A-Z]{2}$', allow_blank=True, required=False)
     summary = s.CharField(max_length=8000, allow_blank=True, required=False)
     content = s.CharField(max_length=100000)
+    amount = NewsAmountField(max_digits=30, decimal_places=6, min_value=0, allow_null=True, required=False, coerce_to_string=True, help_text="非负普通十进制字符串，最多 24 位整数和 6 位小数；超限拒绝，不舍入；未知为 null。")
+    evidence = s.CharField(max_length=600, allow_blank=True, required=False, trim_whitespace=False)
+    amount_evidence = s.CharField(max_length=400, allow_blank=True, required=False, trim_whitespace=False)
 
-    # 功能：校验来源。
+    # 功能：校验新闻来源和完整金额证据组合。
     # 输入：`attrs`。
     # 输出：验证后字段。
-    # 逻辑：复用 insights 校验无凭证 HTTPS 和 Agent 来源重复。
+    # 逻辑：先合并旧值校验金额组合和原文包含关系，再复用 insights 校验 HTTPS 与重复来源。
     # 约束：重复抛 409，不访问来源或覆盖原记录。
     def validate(self, attrs):
         from .insights import validate_insight
-        return validate_insight(self, attrs)
+        return validate_insight(self, validate_news_signal(self, attrs))
 
     # 功能：声明资讯字段。
-    # 逻辑：内容及来源可写，身份与版本只读；条件唯一性由 insights 显式检查及数据库约束。
+    # 逻辑：内容、来源和十三个公共线索字段可写，新增字段可省略；身份与版本只读，来源唯一性由 insights 及数据库约束。
     # 约束：人工记录不被 DRF 自动来源唯一校验误拦，归档走命令接口。
     class Meta:
         model = models.WorldNews
         validators = []
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source', 'company_name', 'signal_type', 'project_name', 'demand_description', 'potential_sales_need', 'opportunity_reason', 'time_window', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 

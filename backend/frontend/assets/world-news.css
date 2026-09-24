@@ -1,5 +1,5 @@
 /* 职责：全球洞察的活动列表、金额地图、详情面板和行业资讯布局。
- * 实现：共享主题变量、桌面三列、窄屏堆叠；气泡填充不透明度为普通 20%、选中 30%，圆心固定在地理锚点；标签分行显示已有币种金额与缺少所选币种的提示。
+ * 实现：新闻线索按事实、来源金额和推断分区，证据与长金额可折行；共享主题变量、桌面三列、窄屏堆叠；气泡填充不透明度为普通 20%、选中 30%，圆心固定在地理锚点；标签分行显示已有币种金额与缺少所选币种的提示。
  * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.js、world-map.js；沿用共享导航与 Leaflet 本地资源。
  * 目录：无函数或类；区域为页面头、筛选、活动列、地图、详情、资讯与响应式。
  * 变量索引：--bubble-size 为单个气泡直径，由金额平方根计算；其余使用共享主题变量。 */
@@ -693,3 +693,14 @@
     font-size: 28px;
   }
 }
+
+/* 公共新闻线索使用明确分区；金额不截断，移动端保留全部精确数位及证据。 */
+.news-signal { margin: 24px 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; }
+.news-signal dl { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
+.news-signal dt { color: var(--muted); }
+.news-signal dd { margin: 0; white-space: pre-wrap; }
+.news-signal blockquote { margin: 12px 0; padding: 12px 16px; border-left: 3px solid var(--accent); white-space: pre-wrap; }
+.news-signal, .news-signal-summary, .news-source-amount { overflow-wrap: anywhere; }
+.news-source-amount { font-variant-numeric: tabular-nums; color: var(--accent); }
+.news-inference, .news-reported-amount { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }
+@media (max-width: 600px) { .news-signal { padding: 12px; } .news-signal dl { grid-template-columns: 1fr; } }
