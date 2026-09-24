@@ -23,13 +23,19 @@
 ```bash
 sudo install -m 644 agent/deploy/salesmate-world-insights.service /etc/systemd/system/
 sudo install -m 644 agent/deploy/salesmate-world-insights.timer /etc/systemd/system/
+sudo install -d -o salesmate -g salesmate -m 700 /opt/salesmate/shared/world-insights
+sudo install -d -m 755 /etc/systemd/system/salesmate-world-insights.service.d
+sudo install -m 644 backend/deploy/lightsail/world-insights-cache.conf /etc/systemd/system/salesmate-world-insights.service.d/cache.conf
 sudo systemctl daemon-reload
-sudo systemctl enable --now salesmate-world-insights.timer
 sudo systemctl start salesmate-world-insights.service
 sudo journalctl -u salesmate-world-insights.service -n 100 --no-pager
+# 核对真实入库与 item_errors 后启用后续定时执行。
+sudo systemctl enable --now salesmate-world-insights.timer
 ```
 
 timer 沿用每天 UTC 03:00、15:00 和最多 20 分钟随机延迟。首次真实运行会创建共享记录，需要在已准备好正式发布的环境执行；本文不是执行记录。
+
+现有 `/opt/salesmate/shared` 是 root 管理的 0750 目录，服务账号不能在父目录创建缓存或 `.tmp` 文件。必须安装上述缓存路径 drop-in；仅创建一个可写 JSON 文件不足以支持 Agent 的同目录临时写入和原子替换。只为独立子目录授予写权限，不将整个 shared 目录开放给服务账号；Agent 源文件保持不变。
 
 ## 轮换与验收
 
