@@ -1,8 +1,10 @@
 # Agent 业务工具接入
 
+新增 `crmarena.info/evidence/evaluation/predict` 四个公开研究只读工具，动态 MCP 目录自动发现；已有凭证不会自动扩权。实时推理可用专用 `SALESMATE_TOOLS_TIMEOUT` 显式增加超时，默认仍30秒。输入输出和调用示例见 [CRMArena 接入](crmarena-integration.md)。
+
 当前算法联调服务器启用[公开实验模式](laboratory-access.md)：所有业务数据（含非 KGSEED）免登录、跨账号可读写，Tool/MCP 无需令牌。下文原鉴权约束仅在关闭实验开关后生效，保留的外部动作与密钥边界见该说明。
 
-完整目录提供 155 个业务工具（默认 QQ 暂停时为 154 个，不发布 `actions.prepare_qq`）、独立用户委托、HTTP SDK、CLI 和 stdio MCP 服务，复用现有权限、序列化器和事务。新增资料、文件、活动资讯和授权模板见 [算法侧的软件辅助接口](software-support-tools.md)。供 Agent 开发侧接入；当前聊天工作流仍为只读问答，尚未增加自动选择/执行工具的循环。
+完整目录提供业务工具、独立用户委托、HTTP SDK、CLI 和 stdio MCP 服务，复用现有权限、序列化器和事务。数量以 `catalog.count` 为准，并受当前授权与 QQ 开关影响；QQ 暂停时不发布 `actions.prepare_qq`。新增资料、文件、活动资讯和授权模板见 [算法侧的软件辅助接口](software-support-tools.md)。供 Agent 开发侧接入；当前聊天工作流仍为只读问答，尚未增加自动选择/执行工具的循环。
 
 ## 文件职责
 
@@ -55,7 +57,7 @@ integrations/salesmate_tools/
 ## 执行规则
 
 - `read`：查询，不接受幂等键；日历查询会访问外部 API。
-- `write`：已委托的普通写入，如跟进、草稿；必须提供 UUID `idempotency_key`。
+- `write`：普通写入（跟进、草稿等）要求UUID `idempotency_key`。图谱`graph.ingest`/`graph.retract`例外：目录公开`idempotency_scope=source_key/episode_id`，使用来源自身幂等并拒绝传输UUID；它们不创建ToolCall，审计保存在Episode及图谱血缘中。
 - `confirm`：只保存有效期 24 小时的冻结提案，不执行业务；用户单独审阅批准。
 
 写调用按「用户 + 幂等键」去重，跨凭证共享同一逻辑操作。相同工具和输入重放历史回执；同键不同内容返回 409。JSON 键顺序不影响去重。回执不是业务实体最新快照。
@@ -151,3 +153,7 @@ python backend/tools/check_doc_changes.py --base HEAD --fail-on-review
 ```
 
 后端测试覆盖全部资源列表、输入校验、权限/CSRF、版本、幂等、跨凭证并发、报价金额、联系人主键、知识来源、三种外部动作只准备、提案确认/到期/撤销与回滚。客户端测试包含真实 SDK stdio 握手及分页，HTTP 为本机 fixture；不代表真实外部账号授权或发信成功。CI 使用独立 SDK 环境运行测试。
+
+## 语义图谱MCP
+
+新增九个`graph.*`工具，支持schema、状态、实体、事实、血缘、来源列表/详情、输入和撤回。凭证须显式包含相应名称。完整调用、SSH隧道及部署见[图谱使用与部署](semantic-graph-deployment.md)。

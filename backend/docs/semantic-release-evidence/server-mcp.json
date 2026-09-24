@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "transport": "real stdio MCP to real HTTP backend",
+  "tools": [
+    "graph.entities",
+    "graph.episode",
+    "graph.episodes",
+    "graph.facts",
+    "graph.ingest",
+    "graph.lineage",
+    "graph.retract",
+    "graph.schema",
+    "graph.status"
+  ],
+  "schema_count": 48,
+  "source_key": "mcp-smoke-f96251154c6245458a6740a7233cd332",
+  "episode_id": "928f14db-68f8-4c8a-aae7-24cdf8f2dadf",
+  "source_replay_same_id": true,
+  "retracted": true,
+  "model_called": false
+}

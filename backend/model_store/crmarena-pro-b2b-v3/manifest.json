@@ -1,0 +1,19 @@
+{
+  "dataset_id": "crmarena-pro-b2b-v3",
+  "usage_scope": "public_synthetic_research_only",
+  "license": "CC-BY-NC-4.0",
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "model_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "kaggle_version": 2,
+  "kaggle_run_id": 352410191,
+  "source_code_sha256": "1a1a74fab26ed91b80a8e052f497189daf08a89c0f9aaa32ff3b0c3b826b9fbd",
+  "files": {
+    "knowledge_graph.sqlite": "d4117df525b3905d12704427412678bdea46cd0be2738c57671d8f64242bc607",
+    "queries.json": "a4567528c6c648022101b5114792367b3446821d39008bd91e027bae9b0a9db7",
+    "base_prompts.json": "b87cba06de69133100c379d95e35c67c8c209432109cd6051d9f4ba2952e6e76",
+    "answers.jsonl": "0b6c54d482bf3de5619323c9e25ee3b47d6b8b11975780ac7c9399fe4eba6b71",
+    "model_audit.json": "f728cf15c178a17fa16fa125204ae98c2cd0638af93ac7b88dfee53ed177eb8e",
+    "graph_audit.json": "76c48512f47496793487aa7766a6878a970ca7323735184272718230d4435062",
+    "metrics.json": "a8e20d45bdc224189724cdce6b9bf9eaa371f609eee147a86666a0c15191c722"
+  }
+}

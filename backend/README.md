@@ -534,3 +534,7 @@ ANALYSIS_PROVIDER=rules
 ## extract-v7 后端适配
 
 历史事实的预览/显式升级接口、持久修复状态、方向校验和 L4 暂定分保存契约见 [后端 v7 适配说明](docs/backend-v7-adaptation.md)。升级不会自动执行，也不会重新拉取邮箱。
+
+## 语义图谱与本机模型
+
+48类业务schema的自动关联建图、HTTP接口、九个MCP工具与独立服务器部署见[图谱使用与部署](docs/semantic-graph-deployment.md)。微调Q4为实验候选，不默认替换官方权重。

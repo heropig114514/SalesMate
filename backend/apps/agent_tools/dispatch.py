@@ -1,6 +1,6 @@
 """职责：将已授权工具绑定到现有业务处理器。
 实现：商机上下文、评分列表、地图及销售方资料读取共用固定视图；工具支持事实升级预览及显式排队；实验模式知识条目跨账号读取；使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
-关联：services 完成工具认证与输入验证后调用；这里不触发 DRF 二次认证、不构造网络回环。
+关联：services 完成工具认证与输入验证后调用；graph 复用本人图谱视图，crmarena 复用公开研究；这里不触发 DRF 二次认证、不构造网络回环。
 目录：
 - request_context：建立限定业务上下文。
 - execute：分派固定工具。
@@ -20,6 +20,8 @@ from apps.sales import views as sales
 from apps.chat.models import KnowledgeEntry
 from .support import execute_support
 from .experiments import execute_experiment
+from .crmarena import execute_crmarena_tool
+from .graph import execute_graph_tool
 
 
 # 功能：构造业务处理器所需上下文。
@@ -41,10 +43,14 @@ def request_context(actor, query=None, data=None, revision=None):
 # 功能：执行业务适配。
 # 输入：`actor`、`spec` 白名单声明、`args` 校验后参数、`key` 可选幂等 UUID。
 # 输出：既有 Response。
-# 逻辑：algorithm_read 只分派四个固定只读视图；实验模式知识查询覆盖所有账号；事实升级固定 GET/POST 方法，其余按 kind 分派到业务视图。
+# 逻辑：graph 分派本人图谱，crmarena 分派公开研究；algorithm_read 分派固定只读视图，其余保留原业务与实验模式边界。
 # 约束：调用前必须由 services 认证与校验；不分派任意路径、任意方法或动作批准。
 def execute(actor, spec, args, key=None):
     kind = spec["kind"]
+    if kind == "graph":
+        return execute_graph_tool(actor, spec, args)
+    if kind == "crmarena":
+        return execute_crmarena_tool(spec, args)
     request = request_context(actor, args, args.get("data"), args.get("revision"))
     if kind == "algorithm_read":
         from apps.sales.algorithm_views import SellerContextView, OpportunityContextView, PriorityBoardView

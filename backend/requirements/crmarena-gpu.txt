@@ -1,0 +1,9 @@
+# 职责：固定可选 CRMArena 双 T4 运行依赖，不加入普通 CPU Web 安装。
+# 实现：先在独立环境安装 base.txt 及官方 CUDA 12.8 torch，再安装本文件。
+# 关联：crmarena_runtime 启动时验证版本和原权重；不在请求内执行 pip。
+# 目录：无函数或类。
+# 变量索引：torch 为 FP16 CUDA 推理；transformers 为原模型实现；accelerate 为分层放置；huggingface-hub 为固定模型制品工具。
+torch==2.10.0+cu128
+transformers==4.56.2
+accelerate==1.10.1
+huggingface-hub==0.36.2

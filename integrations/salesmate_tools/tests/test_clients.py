@@ -13,6 +13,7 @@
 - ClientTests.test_cli_and_key_forwarding：验证文件参数及幂等键。
 - ClientTests.test_transport_errors_and_redirects：验证不重试、不泄露 token。
 - ClientTests.test_configuration_and_fixed_endpoints：拒绝不安全地址与未知接口。
+- ClientTests.test_timeout_configuration_and_model_errors：核验显式长超时及模型错误透传。
 - ProtocolTests：真实子进程 MCP 验证。
 - ProtocolTests.test_anonymous_stdio：验证无令牌 MCP 与可省略幂等键。
 - ProtocolTests.test_stdio_catalog_call_and_error：验证 SDK 握手、分页、写参数及错误标志。
@@ -209,6 +210,27 @@ class ClientTests(unittest.TestCase):
                 ToolClient(url, "token")
         with self.assertRaises(ToolError):
             self.client.request("POST", "credentials/")
+
+    # 功能：验证 GPU 长推理可以显式配置超时且错误不会变为成功。
+    # 输入：无外部参数；合成专用环境变量与503响应。
+    # 输出：默认30秒保持，显式600秒传递，非法数值被拒绝，503保留业务错误代码。
+    # 逻辑：仅网络响应由 Mock 提供，不连接模型服务。
+    # 约束：不调整默认超时、不自动重试。
+    def test_timeout_configuration_and_model_errors(self):
+        with patch.dict(os.environ, {"SALESMATE_TOOLS_URL": "http://127.0.0.1"}, clear=True):
+            self.assertEqual(ToolClient.from_env().timeout, 30)
+            os.environ["SALESMATE_TOOLS_TIMEOUT"] = "600"
+            self.assertEqual(ToolClient.from_env().timeout, 600)
+            for value in ["nan", "inf", "0", "3601", "bad"]:
+                os.environ["SALESMATE_TOOLS_TIMEOUT"] = value
+                with self.assertRaises(ToolError):
+                    ToolClient.from_env()
+        response = Mock(status_code=503)
+        response.json.return_value = {"error": {"code": "crmarena_unavailable", "detail": "Model not configured"}}
+        with patch("integrations.salesmate_tools.client.requests.request", return_value=response) as request:
+            with self.assertRaisesRegex(ToolError, "crmarena_unavailable"):
+                self.client.call("crmarena.predict", {})
+            request.assert_called_once()
 
 
 # 功能：验证真实 MCP 进程。

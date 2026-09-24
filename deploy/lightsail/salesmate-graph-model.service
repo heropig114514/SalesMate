@@ -1,0 +1,29 @@
+# 职责：运行独立的微调Q4实验推理服务。
+# 实现：校验固定制品，回环监听、单槽位和两线程，不自动重启或回退。
+# 关联：backend/tools/run_graph_model.py；独立于线上默认模型。
+# 目录：无。
+# 变量索引：ExecStart中variant为实验制品；上下文16384由启动器固定；Nice降低实验优先级。
+[Unit]
+Description=SalesMate semantic v2 experimental Q4 model
+After=network.target
+
+[Service]
+Type=simple
+User=salesmate-graph
+Group=salesmate-graph
+WorkingDirectory=/opt/salesmate-semantic/app
+ExecStart=/usr/bin/python3 /opt/salesmate-semantic/app/backend/tools/run_graph_model.py --executable /opt/salesmate-semantic/llama-b11146/llama-server --model /opt/salesmate-semantic/models/Qwen3-4B-SalesMate-Semantic-v2-Q4_K_M.gguf --variant semantic-v2 --threads 2 --port 8088
+Restart=no
+Nice=10
+CPUWeight=20
+OOMScoreAdjust=500
+KillMode=control-group
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
