@@ -14,6 +14,7 @@ from agent.world_insights import (
     _read_limited,
     build_event,
     existing_urls,
+    main,
     run_once,
     source_url,
     summarize_news,
@@ -97,6 +98,8 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual((result["news"], result["events"], result["item_errors"]), (1, 1, 0))
         self.assertEqual([row[0] for row in tools.writes], ["world_events.create", "world_news.create"])
         self.assertEqual(tools.writes[1][1]["data"]["country"], "US")
+        self.assertEqual(tools.writes[1][1]["data"]["company_name"], "")
+        self.assertIsNone(tools.writes[1][1]["data"]["amount"])
         self.assertEqual(tools.writes[0][1]["data"]["city"], "Singapore")
         self.assertEqual(tools.writes[0][1]["data"]["latitude"], 1.3521)
         self.assertTrue(all(row[2] for row in tools.writes))
@@ -126,6 +129,57 @@ class WorldInsightsTests(unittest.TestCase):
         news = Candidate("news", "equipment", "United States equipment technology",
                          NEWS_URL, "", NOW)
         self.assertIsNone(summarize_news(news, "Short", model))
+
+    def test_source_backed_sales_signal_and_amount_are_submitted(self):
+        tools = FakeTools()
+        candidate = Candidate("news", "optical inspection", "启明光学新建检测基地",
+                              NEWS_URL, "", NOW)
+        excerpt = ("启明光学计划在 2027 年新建检测基地，总投资 2 亿元，"
+                   "其中设备采购预算 5000 万元，预计 2027 年投产。")
+
+        def signal_model(system, user, *, max_tokens):
+            parsed = json.loads(model(system, user, max_tokens=max_tokens))
+            parsed.update(country="", country_evidence="", company_name="启明光学",
+                          signal_type="new_factory", project_name="检测基地",
+                          demand_description="披露了设备采购预算。",
+                          potential_sales_need="可能需要光学检测设备。",
+                          opportunity_reason="新基地设有设备采购预算。",
+                          time_window="2027 年投产", evidence=excerpt,
+                          amount="50000000", currency="CNY",
+                          amount_type="procurement_budget", amount_scope="equipment_procurement",
+                          amount_evidence="设备采购预算 5000 万元")
+            return json.dumps(parsed, ensure_ascii=False)
+
+        sources = {"feeds": [{"kind": "news", "industry": "optical inspection", "url": NEWS_URL}],
+                   "searches": []}
+        with (patch("agent.world_insights.read_feed", return_value=[candidate]),
+              patch("agent.world_insights.fetch_page", return_value=(excerpt, NOW, []))):
+            result = run_once(client=tools, sources=sources, model=signal_model, now=NOW)
+        self.assertEqual((result["news"], result["item_errors"]), (1, 0))
+        data = tools.writes[0][1]["data"]
+        self.assertEqual(data["company_name"], "启明光学")
+        self.assertEqual(data["signal_type"], "new_factory")
+        self.assertEqual(data["amount"], "50000000")
+        self.assertEqual(data["currency"], "CNY")
+        self.assertEqual(data["amount_scope"], "equipment_procurement")
+
+        def unsupported_amount(system, user, *, max_tokens):
+            parsed = json.loads(signal_model(system, user, max_tokens=max_tokens))
+            parsed["amount"] = "200000000"
+            return json.dumps(parsed, ensure_ascii=False)
+
+        unsupported = summarize_news(candidate, excerpt, unsupported_amount)
+        self.assertIsNone(unsupported["amount"])
+        self.assertEqual(unsupported["amount_evidence"], "")
+
+        def malformed_signal(system, user, *, max_tokens):
+            parsed = json.loads(signal_model(system, user, max_tokens=max_tokens))
+            parsed["signal_type"] = ["new_factory"]
+            return json.dumps(parsed, ensure_ascii=False)
+
+        preserved_news = summarize_news(candidate, excerpt, malformed_signal)
+        self.assertEqual(preserved_news["company_name"], "")
+        self.assertEqual(preserved_news["title"], candidate.title)
 
     def test_dated_feed_excerpt_survives_article_redirect(self):
         tools = FakeTools()
@@ -162,6 +216,29 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(result["source_successes"], 1)
         self.assertEqual(result["source_errors"], 1)
         self.assertEqual((result["news"], result["events"]), (0, 0))
+
+    def test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved(self):
+        class RejectingTools(FakeTools):
+            def call(self, name, arguments, idempotency_key=None):
+                if name == "world_news.create":
+                    raise InsightError("unsupported fields")
+                return super().call(name, arguments, idempotency_key)
+
+        candidate = Candidate("news", "equipment", "United States inspection technology",
+                              NEWS_URL, "", NOW)
+        sources = {"feeds": [{"kind": "news", "industry": "equipment", "url": NEWS_URL}],
+                   "searches": []}
+        with (patch("agent.world_insights.read_feed", return_value=[candidate]),
+              patch("agent.world_insights.fetch_page", return_value=(
+                  "A United States equipment producer reported a new optical inspection technology.",
+                  NOW, []))):
+            result = run_once(client=RejectingTools(), sources=sources, model=model, now=NOW)
+        self.assertEqual((result["news"], result["item_errors"], result["write_errors"]), (0, 1, 1))
+        with (patch("agent.world_insights.load_environment"),
+              patch("agent.world_insights.load_sources", return_value=sources),
+              patch("agent.world_insights.ToolClient.from_env", return_value=RejectingTools()),
+              patch("agent.world_insights.run_once", return_value=result)):
+            self.assertEqual(main([]), 3)
 
 
 if __name__ == "__main__":

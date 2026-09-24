@@ -4,6 +4,8 @@
 
 `python -m agent.world_insights` 是独立于 Gmail、L1–L4 和聊天的单次采集任务。它从 `world_insights_sources.json` 配置的公开 GDELT 搜索、NIST/Eurostat 订阅源以及半导体活动日历发现半导体设备、精密量测等行业资讯及活动，不需要新闻搜索 API Key。新闻必须有来源页面或订阅源提供的带时区发布日期；模型只整理来源片段，不能臆测国家。地图活动只从来源页的结构化 Event 数据读取明确的活动名称、日期、城市和国家，经 Nominatim 校验城市坐标后才写入。若来源只给活动日期、不提供钟点，记录会明确标记时间是系统占位值。缺地点的条目会跳过，不生成猜测位置。每轮最多写入 4 条资讯、2 条活动，已存在的来源 URL 不重复写入；单条失败不影响其他条目。
 
+资讯模型还会从同一来源片段提取公司、事件类型、项目、明确需求、潜在需求及理由、时间窗口与原文证据；金额必须带币种、金额类型、范围和原文证据，且数值能与原文核对。没有可核对的公司级事件时，这些字段留空。Agent 已将这组字段直接附加到 `world_news.create`，因此**必须先让后端扩展 `world_news` 写入契约，再启用正式采集服务**；当前后端会拒绝新增字段并返回 400。`--dry-run` 可先查看完整的待写载荷，不会写入后端。已按旧契约存储的资讯不会因来源 URL 去重而自动补齐新字段，须另行安排回填。
+
 先在项目根目录安装 `agent/requirements.txt`，配置百炼模型现有环境变量，以及独立的 `SALESMATE_TOOLS_URL`、`SALESMATE_TOOLS_TOKEN`。Tool 凭证至少授权 `world_news.list/create` 和 `world_events.list/create`；不能使用 Gmail/聊天 Worker 的 Agent 凭证代替。生产环境建议把 Tool 配置放在 `/opt/salesmate/shared/world-insights.env`，只允许 `salesmate` 服务用户读取，不要提交到 Git。
 
 ```bash
@@ -17,9 +19,9 @@ sudo systemctl start salesmate-world-insights.service
 sudo journalctl -u salesmate-world-insights.service -n 100 --no-pager
 ```
 
-服务默认每天 UTC 03:00、15:00 各执行一次，并设有随机延迟。`--dry-run` 会访问公开来源、地理编码及模型，但不调用后端写入工具；单次结果中的 `news`、`events`、`source_successes`、`source_errors`、`item_errors` 可用于检查采集情况。只有全部来源不可用时，任务才以来源故障退出；单个来源或条目出错会记录日志并继续。来源站点不可达或没有足够可靠的日期、地点时，本轮可能没有新记录。地理编码缓存路径可通过 `SALESMATE_WORLD_GEO_CACHE` 配置。
+服务默认每天 UTC 03:00、15:00 各执行一次，并设有随机延迟。`--dry-run` 会访问公开来源、地理编码及模型，但不调用后端写入工具；单次结果中的 `news`、`events`、`source_successes`、`source_errors`、`item_errors`、`write_errors` 可用于检查采集情况。全部来源不可用，或所有尝试的写入均失败时，任务会以非零状态退出；单个来源或条目出错仍会记录日志并继续处理其他条目。来源站点不可达或没有足够可靠的日期、地点时，本轮可能没有新记录。地理编码缓存路径可通过 `SALESMATE_WORLD_GEO_CACHE` 配置。
 
-**全员共享仍待后端实现：**产品规则是所有已登录员工均可读取全球资讯和活动，当前后端仍按 owner 隔离。定时任务写入后，其他员工不会自动看到；后端需调整读取权限，同时保留写入权限和客户/商机数据隔离。现有部署脚本也不会自动安装此 timer。
+**全员共享：**后端已允许所有已登录员工读取全球资讯和活动，写入仍受 Tool 白名单和 owner 权限限制，客户及商机仍按各自权限隔离。现有部署脚本不会自动安装此 timer；新增销售线索字段完成后端适配前不要启用它。
 
 更新日期：2026-09-20<br>
 版本：v2.5<br>

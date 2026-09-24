@@ -20,6 +20,7 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -43,6 +44,32 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "SalesMateWorldInsights/1.0 (+https://milkdragon.dev)"
 _SKILL = load_skill("world-insights")
 _CATEGORIES = frozenset({"regulation", "industry", "competition", "price"})
+_SIGNAL_FIELDS = ("company_name", "signal_type", "project_name", "demand_description",
+                  "potential_sales_need", "opportunity_reason", "time_window", "evidence",
+                  "amount", "currency", "amount_type", "amount_scope", "amount_evidence")
+_SIGNAL_TYPES = frozenset({"expansion", "new_factory", "tender", "equipment_upgrade",
+                           "procurement", "other"})
+_AMOUNT_TYPES = frozenset({"total_investment", "procurement_budget", "tender_amount",
+                           "contract_amount", "other"})
+_AMOUNT_SCOPES = frozenset({"whole_project", "equipment_procurement", "other"})
+_CURRENCY_MARKERS = {"CNY": ("人民币", "元", "CNY", "RMB", "￥"),
+                     "USD": ("美元", "USD", "US$"),
+                     "EUR": ("欧元", "EUR", "€"),
+                     "GBP": ("英镑", "GBP", "£"),
+                     "JPY": ("日元", "JPY"), "KRW": ("韩元", "KRW", "₩"),
+                     "SGD": ("新加坡元", "SGD", "S$"),
+                     "TWD": ("新台币", "TWD", "NT$"),
+                     "HKD": ("港元", "HKD", "HK$"),
+                     "INR": ("卢比", "INR", "₹"),
+                     "CAD": ("加元", "CAD", "C$"),
+                     "AUD": ("澳元", "AUD", "A$"),
+                     "CHF": ("瑞士法郎", "CHF")}
+_AMOUNT_NUMBER = re.compile(r"(?<![\d])(?P<number>\d+(?:,\d{3})*(?:\.\d+)?)\s*"
+                            r"(?P<unit>亿|万|千|billion|million|thousand|bn|m)?", re.I)
+_AMOUNT_MULTIPLIERS = {"亿": Decimal("100000000"), "万": Decimal("10000"),
+                       "千": Decimal("1000"), "billion": Decimal("1000000000"),
+                       "million": Decimal("1000000"), "thousand": Decimal("1000"),
+                       "bn": Decimal("1000000000"), "m": Decimal("1000000")}
 _TRACKING = frozenset({"fbclid", "gclid", "mc_cid", "mc_eid"})
 _COUNTRY_ALIASES = {"U.S.": "US", "USA": "US", "UK": "GB", "South Korea": "KR"}
 _EVENT_WORDS = re.compile(r"\b(exhibition|expo|trade show|semicon)\b|展会|博览会", re.I)
@@ -111,6 +138,80 @@ def country_code(value: object) -> str:
 
 def _plain(value: str) -> str:
     return " ".join(BeautifulSoup(value, "html.parser").get_text(" ", strip=True).split())
+
+
+def _source_quote(value: object, evidence: str, max_length: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    quote = " ".join(value.split())
+    return quote if 0 < len(quote) <= max_length and quote.casefold() in evidence.casefold() else ""
+
+
+def _currency_supported(quote: str, code: str) -> bool:
+    folded = quote.casefold()
+    if not any(marker.casefold() in folded for marker in _CURRENCY_MARKERS[code]):
+        return False
+    if code == "CNY" and not any(marker.casefold() in folded
+                                 for marker in ("人民币", "CNY", "RMB", "￥")):
+        foreign = (marker for other, markers in _CURRENCY_MARKERS.items() if other != "CNY"
+                   for marker in markers)
+        if any(marker.casefold() in folded for marker in foreign):
+            return False
+    return True
+
+
+def _sales_signal(parsed: Mapping[str, Any], evidence: str) -> dict[str, Any]:
+    """Keep only source-backed public opportunity hints; never invent CRM relationships."""
+    result: dict[str, Any] = {field: "" for field in _SIGNAL_FIELDS}
+    result["amount"] = None
+    quote = _source_quote(parsed.get("evidence"), evidence, 600)
+    company = parsed.get("company_name")
+    signal_type = parsed.get("signal_type")
+    if (not quote or not isinstance(company, str) or not 0 < len(company.strip()) <= 240
+            or company.strip().casefold() not in quote.casefold()
+            or not isinstance(signal_type, str) or signal_type not in _SIGNAL_TYPES):
+        return result
+    result["company_name"] = company.strip()
+    result["signal_type"] = signal_type
+    result["evidence"] = quote
+    for field, limit in (("project_name", 240), ("demand_description", 500),
+                         ("potential_sales_need", 500), ("opportunity_reason", 500),
+                         ("time_window", 240)):
+        value = parsed.get(field)
+        if isinstance(value, str) and len(value.strip()) <= limit:
+            result[field] = value.strip()
+    if result["project_name"] and result["project_name"].casefold() not in evidence.casefold():
+        result["project_name"] = ""
+    if result["time_window"] and result["time_window"].casefold() not in evidence.casefold():
+        result["time_window"] = ""
+    if result["potential_sales_need"] and not result["opportunity_reason"]:
+        result["potential_sales_need"] = ""
+
+    amount_quote = _source_quote(parsed.get("amount_evidence"), evidence, 400)
+    currency = parsed.get("currency")
+    amount_type = parsed.get("amount_type")
+    amount_scope = parsed.get("amount_scope")
+    try:
+        amount = Decimal(str(parsed.get("amount")))
+    except (InvalidOperation, ValueError):
+        return result
+    if (not amount_quote or amount_quote.casefold() not in quote.casefold()
+            or not isinstance(currency, str) or currency not in _CURRENCY_MARKERS
+            or not isinstance(amount_type, str) or amount_type not in _AMOUNT_TYPES
+            or not isinstance(amount_scope, str) or amount_scope not in _AMOUNT_SCOPES
+            or (amount_type == "total_investment" and amount_scope != "whole_project")
+            or not amount.is_finite() or amount <= 0
+            or not _currency_supported(amount_quote, currency)):
+        return result
+    for match in _AMOUNT_NUMBER.finditer(amount_quote):
+        unit = (match.group("unit") or "").lower()
+        source_amount = Decimal(match.group("number").replace(",", ""))
+        if source_amount * _AMOUNT_MULTIPLIERS.get(unit, Decimal(1)) == amount:
+            result.update(amount=format(amount, "f"), currency=currency,
+                          amount_type=amount_type, amount_scope=amount_scope,
+                          amount_evidence=amount_quote)
+            break
+    return result
 
 
 def _read_limited(response: requests.Response, limit: int) -> bytes:
@@ -273,8 +374,10 @@ def summarize_news(candidate: Candidate, excerpt: str, model: Callable[..., str]
         parsed = json.loads(raw)
     except (TypeError, ValueError):
         raise InsightError("资讯摘要模型未返回 JSON。") from None
-    if not isinstance(parsed, dict) or set(parsed) != {"relevant", "category", "industry", "country",
-                                                  "country_evidence", "summary", "content"}:
+    news_fields = {"relevant", "category", "industry", "country",
+                   "country_evidence", "summary", "content"}
+    if (not isinstance(parsed, dict) or not news_fields <= set(parsed)
+            or set(parsed) - news_fields - set(_SIGNAL_FIELDS)):
         raise InsightError("资讯摘要字段不符合契约。")
     if parsed["relevant"] is False:
         return None
@@ -292,12 +395,14 @@ def summarize_news(candidate: Candidate, excerpt: str, model: Callable[..., str]
             raise InsightError("资讯国家缺少可核对的文本依据。")
     elif marker:
         raise InsightError("未知国家不能携带地点依据。")
-    return {"title": candidate.title, "category": parsed["category"],
-            "industry": parsed["industry"].strip(), "country": country,
-            "summary": parsed["summary"].strip(),
-            "content": "根据来源片段整理：" + parsed["content"].strip(),
-            "source_url": candidate.url, "published_at": candidate.published_at.isoformat(),
-            "data_source": "agent"}
+    payload = {"title": candidate.title, "category": parsed["category"],
+               "industry": parsed["industry"].strip(), "country": country,
+               "summary": parsed["summary"].strip(),
+               "content": "根据来源片段整理：" + parsed["content"].strip(),
+               "source_url": candidate.url, "published_at": candidate.published_at.isoformat(),
+               "data_source": "agent"}
+    payload.update(_sales_signal(parsed, evidence))
+    return payload
 
 
 class Geocoder:
@@ -487,7 +592,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
             logger.warning("world_source_failed kind=search error_type=%s", type(error).__name__)
 
     seen, counts, previews = set(), {"news": 0, "event": 0}, []
-    item_errors = 0
+    item_errors, write_errors = 0, 0
     for candidate in candidates:
         if counts[candidate.kind] >= (4 if candidate.kind == "news" else 2):
             continue
@@ -497,6 +602,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
         if (candidate.kind == "news" and candidate.published_at
                 and not now - timedelta(days=14) <= candidate.published_at <= now):
             continue
+        stage = "source"
         try:
             try:
                 excerpt, published, events = fetch_page(candidate.url)
@@ -506,6 +612,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
                 logger.info("world_news_feed_excerpt_used source_host=%s", urlsplit(candidate.url).hostname)
                 excerpt, published, events = candidate.excerpt, candidate.published_at, []
             if candidate.kind == "news":
+                stage = "news_prepare"
                 published = published or candidate.published_at
                 if not published or not now - timedelta(days=14) <= published <= now:
                     continue
@@ -513,6 +620,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
                                       candidate.url, candidate.excerpt, published)
                 payload = summarize_news(candidate, excerpt, model)
             else:
+                stage = "event_prepare"
                 payload = build_event(candidate, events, geocoder.lookup, now)
             if payload is None:
                 continue
@@ -520,6 +628,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
             if dry_run:
                 previews.append({"tool": name, "data": payload})
             else:
+                stage = "write"
                 key = str(uuid.uuid5(uuid.NAMESPACE_URL, name + ":" + candidate.url))
                 reply = client.call(name, {"data": payload}, idempotency_key=key)
                 if reply.get("status") != "completed":
@@ -529,11 +638,13 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
                         candidate.kind, urlsplit(candidate.url).hostname, dry_run)
         except Exception as error:
             item_errors += 1
-            logger.warning("world_item_failed kind=%s source_host=%s error_type=%s",
-                           candidate.kind, urlsplit(candidate.url).hostname, type(error).__name__)
+            write_errors += int(stage == "write")
+            logger.warning("world_item_failed kind=%s stage=%s source_host=%s error_type=%s",
+                           candidate.kind, stage, urlsplit(candidate.url).hostname,
+                           type(error).__name__)
     return {"news": counts["news"], "events": counts["event"],
             "source_errors": source_errors, "source_successes": source_successes,
-            "item_errors": item_errors,
+            "item_errors": item_errors, "write_errors": write_errors,
             "preview": previews if dry_run else []}
 
 
@@ -551,6 +662,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("world_run_failed error_type=%s reason=%s", type(error).__name__, error)
         return 1
     print(json.dumps(result, ensure_ascii=False))
+    if result["write_errors"] and not (result["news"] or result["events"]):
+        return 3
     return 2 if result["source_successes"] == 0 else 0
 
 
