@@ -1,10 +1,11 @@
 /** 职责：将活动与商机金额投影到真实世界地图。
- * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；圆面积按所选币种金额计算，圆心固定在地理锚点；标签分币种显示已有金额，区分无所选币种金额与真正未知。
+ * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；已知金额按比例绘圆，所选币种无数值时用固定白色半透明小气泡保留交互；圆心固定在地理锚点，标签保留所有已知币种。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；后端客户国家代码决定高亮；不请求在线瓦片。
  * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setCountries、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
- * 变量索引：WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器；无模块常量。
+ * 变量索引：MISSING_AMOUNT_DIAMETER 为无所选币种金额时的位置气泡直径，不表达金额；WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器。
  */
 import { language } from "./i18n.js?v=20260921-product";
+const MISSING_AMOUNT_DIAMETER = 18;
 /** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：业务记录来自接口，不定位用户。 */
 export class WorldMap {
   /** 功能：初始化地图。输入：element 与 onSelect 回调。输出：实例。逻辑：真实地理投影及本地底图。约束：Leaflet 缺失明确报错。 */
@@ -113,7 +114,7 @@ export class WorldMap {
     this.selectedId = selectedId;
     this.draw();
   }
-  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照，各项 map_amounts 为后端去重的分币种金额，amount 为所选 currency 的数值或 null。输出：无。逻辑：正金额直径按当前最大金额比例的平方根乘 62；所有已有币种均在标签列出，所选币种排首位，缺少所选币种单独注明；仅 map_amounts 为空时显示未知；标签不参与圆心布局。约束：无换汇、跨币种加总或金额回退；零金额保留为零，选中状态不放大金额面积。 */
+  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照，各项 map_amounts 为后端去重金额，amount 为所选币种数值或 null。输出：无。逻辑：正金额直径按最大值比例平方根乘 62；缺失数值用固定 18px 的白色半透明气泡，复用相同鼠标和键盘选择回调；所有已知币种仍列出，缺所选币种单独注明。约束：位置气泡不代表零或估算金额；已知零仍保持原零值语义，不换汇，选中不改变数据直径。 */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();
@@ -126,10 +127,11 @@ export class WorldMap {
       const knownAmounts = items.map(value => value.amount).filter(Number.isFinite);
       const item = items.find((v) => v.id === this.selectedId) || items[0],
         amount = knownAmounts.length ? Math.max(...knownAmounts) : null,
-        size = Math.sqrt((amount ?? 0) / Math.max(1, ...this.items.map(value => value.amount).filter(Number.isFinite))) * 62;
+        size = amount === null ? MISSING_AMOUNT_DIAMETER : Math.sqrt(amount / Math.max(1, ...this.items.map(value => value.amount).filter(Number.isFinite))) * 62;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "event-pin";
+      button.classList.toggle("amount-missing", amount === null);
       button.classList.toggle("multiple", items.length > 1);
       button.dataset.eventId = item.id;
       button.style.setProperty("--bubble-size", `${size}px`);

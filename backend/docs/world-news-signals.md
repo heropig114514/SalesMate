@@ -69,3 +69,15 @@
 `tests.integration.test_news_signals` 在隔离 PostgreSQL 库验收完整/空/旧载荷、24+6 位精度、证据组合、部分更新、Tool 目录、共享写隔离、数据库约束及迁移。已有共享资讯与工具测试继续验收来源并发冲突和展会兼容。
 
 `node backend/tools/browser_world_map.cjs` 使用模拟 API 和实际页面验收公司、事实/推断、金额口径、精确字符、HTML 转义、零/未知值、旧新闻及手机布局；不代表真实新闻或更新后的 Agent 已完成联调。
+
+## 显式刷新旧新闻
+
+维护者可以在生产备份完成后，对已明确授权的新闻 UUID 执行：
+
+```bash
+python backend/manage.py refresh_world_news_signals NEWS_UUID [NEWS_UUID ...] --apply
+```
+
+省略 `--apply` 只预览。目标必须全部为未归档的 Agent 新闻；不支持全表隐式刷新。命令重新读取原来源页面，并直接调用现有 Agent 的 `summarize_news`，沿用模型、提示词及校验参数，旧生成摘要不作为来源证据。只更新十三个公开线索字段，不改标题、正文、时间、来源，不关联 CRM；旧 revision 检查保护并发编辑，相同字段不重复写入。
+
+来源或 Agent 提取失败时保留该条旧记录，输出失败原因并退出非零；已完成的其他条目保留，不自动重试或降级。Agent 没有提取出合格金额时仍保存 null，不能通过放宽证据规则填造数值。该命令与普通采集分别运行，普通采集的来源去重行为不变。

@@ -1,5 +1,5 @@
 /** 职责：验证金额气泡、共享活动日期展示和全天日历。
- * 实现：额外以模拟 API 验证新闻公共线索、精确金额、事实/推断及移动布局；隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
+ * 实现：验证缺金额气泡固定 18px、白色透明及鼠标/键盘选择，保持已知金额比例；额外以模拟 API 验证新闻公共线索、精确金额、事实/推断及移动布局；隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
  * 关联：world-map.js、world-news.js/css、world.html；Playwright/Chrome 路径由环境显式提供。
  * 目录：geometry、checkGeometry、checkCurrencies、checkDates、checkNewsSignals、main。
  * 变量索引：ASSETS 为静态资源根目录；OUTPUT 为忽略的截图目录。
@@ -25,18 +25,19 @@ async function geometry(page) {
 }
 
 /** 功能：断言圆心与金额比例。输入：page 页面。输出：无，失败抛错。
- * 逻辑：坐标误差最多一像素，400 对 100 的面积比为四；同坐标重复记录不能重复累计金额。约束：允许浏览器子像素舍入，不更改业务阈值。 */
+ * 逻辑：坐标误差最多一像素，400 对 100 的面积比为四；同坐标重复记录不能重复累计金额，缺值气泡固定 18px。约束：允许浏览器子像素舍入，不更改业务阈值。 */
 async function checkGeometry(page) {
   const rows = await geometry(page);
   for (const row of rows) assert.ok(Math.abs(row.dx) <= 1 && Math.abs(row.dy) <= 1, `${row.id} center offset: ${JSON.stringify(row)}`);
   const small = rows.find(row => row.id === 'small'), large = rows.find(row => row.id === 'large');
   assert.ok(Math.abs(large.diameter ** 2 / small.diameter ** 2 - 4) < 0.01);
   assert.equal(large.diameter, 62);
+  assert.equal(rows.find(row => row.id === 'unknown').diameter, 18);
   assert.equal(rows.length, 4);
 }
 
 /** 功能：验证完整页面的币种来源和金额语义。输入：browser、base 为隔离浏览器和静态服务地址。输出：无，失败抛错。
- * 逻辑：模拟只有 SGD、混合币种、零与未知金额及空活动；检查无关币种不进入选择框，URL 与切换保留已知金额，标签不伪造汇率。
+ * 逻辑：模拟只有 SGD、混合币种、零与未知金额及空活动；检查无关币种不进入选择框，URL 与切换保留已知金额，缺所选币种时使用 18px 位置气泡，标签不伪造汇率。
  * 约束：所有接口为显式只读夹具；未知接口或写入使测试失败，不触及线上记录。 */
 async function checkCurrencies(browser, base) {
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } });
@@ -74,7 +75,7 @@ async function checkCurrencies(browser, base) {
   assert.deepEqual(await page.locator('#map-currency option').allTextContents(), ['SGD', 'USD']);
   assert.equal(await page.locator('[data-event-id="usd"] .event-pin-amount').textContent(), 'USD 200');
   assert.equal(await page.locator('[data-event-id="usd"] .event-pin-currency-note').textContent(), 'No SGD amount');
-  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '0px');
+  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '18px');
   await page.selectOption('#map-currency', 'USD');
   assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
   assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-currency-note').textContent(), 'No USD amount');
@@ -255,13 +256,27 @@ async function main() {
     assert.equal(await page.evaluate(() => window.selected), 'large');
     await checkGeometry(page);
     assert.match(await page.locator('[data-event-id="unknown"]').getAttribute('aria-label'), /金额未知/);
+    assert.match(await page.locator('[data-event-id="unknown"]').getAttribute('class'), /amount-missing/);
+    assert.equal(await page.locator('[data-event-id="unknown"] .event-bubble').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(255, 255, 255, 0.22)');
+    await page.locator('[data-event-id="unknown"] .event-bubble').hover();
+    assert.equal(await page.locator('[data-event-id="unknown"] .event-pin-amount').isVisible(), true);
+    await page.locator('[data-event-id="unknown"] .event-bubble').click();
+    assert.equal(await page.evaluate(() => window.selected), 'unknown');
+    assert.equal(await page.locator('[data-event-id="unknown"] .event-bubble').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(255, 255, 255, 0.32)');
+    await page.locator('[data-event-id="small"]').focus();
+    await page.keyboard.press('Enter');
+    await page.locator('[data-event-id="unknown"]').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => window.selected), 'unknown');
+    await checkGeometry(page);
+
     assert.match(await page.locator('[data-event-id="zero"]').getAttribute('aria-label'), /SGD 0/);
     await page.locator('[data-event-id="small"]').focus();
     await page.keyboard.press('Enter');
     assert.equal(await page.evaluate(() => window.selected), 'small');
     const fills = await page.locator('.event-bubble').evaluateAll(nodes => nodes.map(node => getComputedStyle(node).backgroundColor));
     for (const fill of fills) {
-      const alpha = Number(fill.match(/\/\s*([\d.]+)\)/)?.[1]);
+      const alpha = Number(fill.match(/(?:\/|,)\s*([\d.]+)\)/)?.[1]);
       assert.ok(alpha > 0 && alpha <= 0.35, 'Both selected and normal bubbles must remain translucent: ' + fill);
     }
     fs.mkdirSync(OUTPUT, { recursive: true });

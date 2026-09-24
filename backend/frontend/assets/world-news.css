@@ -1,5 +1,5 @@
 /* 职责：全球洞察的活动列表、金额地图、详情面板和行业资讯布局。
- * 实现：新闻线索按事实、来源金额和推断分区，证据与长金额可折行；共享主题变量、桌面三列、窄屏堆叠；气泡填充不透明度为普通 20%、选中 30%，圆心固定在地理锚点；标签分行显示已有币种金额与缺少所选币种的提示。
+ * 实现：无所选币种金额的活动使用白色半透明小气泡，选择态保持白色；新闻线索按事实、来源金额和推断分区，证据与长金额可折行；共享主题变量、桌面三列、窄屏堆叠；气泡填充不透明度为普通 20%、选中 30%，圆心固定在地理锚点；标签分行显示已有币种金额与缺少所选币种的提示。
  * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.js、world-map.js；沿用共享导航与 Leaflet 本地资源。
  * 目录：无函数或类；区域为页面头、筛选、活动列、地图、详情、资讯与响应式。
  * 变量索引：--bubble-size 为单个气泡直径，由金额平方根计算；其余使用共享主题变量。 */
@@ -319,6 +319,17 @@
 .event-pin.selected .event-bubble {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   outline: 4px solid color-mix(in srgb, var(--accent) 15%, transparent);
+}
+/* 固定位置气泡不表示金额大小；与已有气泡共用点击、悬停和键盘事件。 */
+.event-pin.amount-missing .event-bubble {
+  border-color: rgb(255 255 255 / 65%);
+  background: rgb(255 255 255 / 22%);
+  box-shadow: 0 0 14px rgb(255 255 255 / 12%);
+  color: #fff;
+}
+.event-pin.amount-missing.selected .event-bubble {
+  background: rgb(255 255 255 / 32%);
+  outline: 4px solid rgb(255 255 255 / 18%);
 }
 .event-pin-label {
   position: absolute;
