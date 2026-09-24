@@ -1,5 +1,5 @@
 """职责：提供全球洞察的数据库查询与地图业务聚合。
-实现：活动关联金额按商机主键去重、分币种累加；国家高亮来自客户资料，不生成推荐。
+实现：公共活动批量投影并过滤私人商机 ID；关联金额按访问者可见商机去重、分币种累加，国家高亮仍来自可见客户。
 关联：world-news.js 消费本视图；活动与资讯仍通过通用 CRUD 和 MCP 维护。
 目录：
 - country_code：规范已知国家名称或代码。
@@ -55,8 +55,8 @@ class WorldView(SalesView):
     # 功能：返回数据库活动与统计。
     # 输入：`request` 包含 page/page_size、country、event_type、from/to，可选 q。
     # 输出：分页活动、国家统计、高亮国家、可选币种及未知国家客户数。
-    # 逻辑：国家数量忽略当前国家筛选；每个活动关联去重商机，并为同坐标活动提供去重的地图金额。
-    # 约束：归档客户、归档商机与非活跃状态不计额；客户无国家不猜测；查询不写数据库。
+    # 逻辑：活动共享读取，批量序列化过滤关联 ID；国家数量忽略国家筛选，金额和客户仅按当前用户可见的商机去重聚合。
+    # 约束：公共活动不扩大客户权限；归档客户/商机与非活跃状态不计额；客户无国家不猜测，不写数据库。
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         query = scope(WorldEvent, request.user).filter(archived=False)
@@ -87,9 +87,10 @@ class WorldView(SalesView):
             selected = [item for item in opportunities if country_code(item.company.customer.get("country")) == code]
             row["amounts"] = amounts(selected)
             row["unknown_amount_count"] = sum(item.amount is None for item in selected)
+        payloads = {item["id"]: item for item in WorldEventSerializer(rows, many=True, context={"request": request}).data}
         result = []
         for event in rows:
             selected = [by_id[pk] for pk in dict.fromkeys(str(pk) for pk in event.opportunity_ids) if pk in by_id]
-            payload = WorldEventSerializer(event, context={"request": request}).data
+            payload = payloads[str(event.pk)]
             result.append({**payload, "amounts": amounts(selected), "map_amounts": amounts([by_id[pk] for pk in city_ids[(event.country, event.latitude, event.longitude)] if pk in by_id]), "customers": sorted({item.company.name for item in selected}), "unknown_amount_count": sum(item.amount is None for item in selected)})
         return Response({**pagination, "results": result, "countries": sorted(countries.values(), key=lambda row: row["code"]), "currencies": sorted({item.currency for item in opportunities}), "unmapped_customer_count": unmapped})

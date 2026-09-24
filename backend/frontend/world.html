@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 
 <!-- 职责：提供全球活动地图、联动活动详情、行业资讯和独立详情地址的页面骨架。
-实现：Leaflet 绘制真实地理底图和数据库商机，地图脚本与样式缓存同步半透明及币种提示修复；world-news.js 管理活动筛选、日历下载与邀约草稿；虚拟来源逐条明确展示。
+实现：共享活动使用明确日期范围及全天日历，入口缓存同步日期适配；Leaflet 绘制真实地理底图和数据库商机，地图脚本与样式缓存同步半透明及币种提示修复；world-news.js 管理活动筛选、日历下载与邀约草稿；虚拟来源逐条明确展示。
 关联：入口缓存同步侧栏优先级移除；入口缓存版本同步顶栏实验入口移除；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；assistant-widget.js/css 提供底部条状助手；product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；后端存储并验证资讯；world-map.js 绘制气泡；Django 的 /world/ 与 /world/news/<id>/ 共用模板。
 目录：无函数或类；workspace-profile 为底部公司与邮箱设置，world-map 地图、event-detail 活动详情、industry-news 资讯、news-detail 文章、world-status 无障碍状态、world-error 错误提示。
 国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
@@ -17,7 +17,7 @@
 <link href="/static/vendor/leaflet-1.9.4/leaflet.css" rel="stylesheet"/>
 <link href="/static/world-news.css?v=20260922-map-currency" rel="stylesheet"/>
 <script defer="" src="/static/vendor/leaflet-1.9.4/leaflet.js"></script>
-<script type="module" src="/static/world-news.js?v=20260922-map-currency"></script>
+<script type="module" src="/static/world-news.js?v=20260924-insights"></script>
 <script type="module" src="/static/i18n.js?v=20260921-product"></script></head>
 <body class="world-workspace"><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
 <a class="world-skip" href="#world-content"><span data-i18n="跳到世界消息">跳到世界消息</span></a>

@@ -1,9 +1,11 @@
 """职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：商机信号和评分由 algorithm_models 注册；活动和资讯保存 data_source 区分虚拟占位，不计算建议；可编辑业务采用 UUID、revision 与归档；销售方画像按 owner 保存，商机产品显式录入；任务及外部动作采用专用约束。
+实现：活动和资讯共享事实、保留 owner 写入归属；Agent 来源按 URL（活动另含开始时间）约束重复；活动显式保存日期精度；其他业务采用 UUID、revision 与归档。
 关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
 目录：
 - WorldNews：行业资讯事实与来源。
 - WorldEvent：活动事实与显式商机关联。
+- WorldEvent.Meta：约束同源同期开场的 Agent 活动唯一。
+- WorldNews.Meta：约束 Agent 新闻来源唯一。
 - Record：可归档的版本化业务记录基类。
 - Record.Meta：声明抽象性或数据库唯一及数值约束。
 - CompanyRecord：关联客户和负责人的业务记录基类。
@@ -44,6 +46,9 @@
 - Connection：保存单独授权的外部服务加密凭证。
 - Connection.Meta：限制员工每个提供方和账号只有一份连接。
 变量索引：
+- WorldEvent.time_precision：datetime 为确切时刻，date 为 UTC 日期边界且结束日排除。
+- WorldEvent.Meta.constraints：非空 Agent 来源 URL 与开始时间联合唯一，包含归档记录。
+- WorldNews.Meta.constraints：非空 Agent 新闻来源 URL 唯一，包含归档记录。
 - WorldEvent.data_source：活动来源标签，synthetic 表示占位。
 - WorldNews.data_source：资讯来源标签，synthetic 表示占位。
 - WorldNews.title：资讯标题。
@@ -713,9 +718,10 @@ class Connection(Record):
 
 
 # 功能：保存活动事实与显式商机关联。
-# 逻辑：继承业务记录字段，以 data_source 显式区分人工、算法和虚拟占位。
-# 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
+# 逻辑：保留创建者、公开活动事实及日期精度；Agent 同 URL 同开始时间只保留一份记录。
+# 约束：关联商机输出仍按访问者过滤；日期型结束边界排除末日之后的一天，不代表实际钟点。
 class WorldEvent(Record):
+    time_precision = models.CharField(max_length=8, choices=[("datetime", "确切时间"), ("date", "仅日期")], default="datetime")
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
     event_type = models.CharField(max_length=20, choices=[("exhibition", "展会"), ("sales", "销售活动")])
@@ -732,10 +738,16 @@ class WorldEvent(Record):
     suggested_actions = models.JSONField(default=list, blank=True)
     opportunity_ids = models.JSONField(default=list, blank=True)
 
+    # 功能：禁止跨账号重复采集同一场活动。
+    # 逻辑：仅对有来源的 Agent 记录约束 URL 和开始时间；归档不释放唯一性。
+    # 约束：同 URL 不同届次允许存储；人工记录不受采集去重约束。
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start")]
+
 
 # 功能：保存行业资讯事实与来源。
-# 逻辑：继承业务记录字段，以 data_source 显式区分人工、算法和虚拟占位。
-# 约束：只存储调用方显式提供的数据，不抓取外站、不计算评分或排序。
+# 逻辑：保留创建者并共享新闻事实；非空 Agent 来源 URL 在所有账号间唯一。
+# 约束：归档后仍阻止重采，不抓取外站、不生成摘要或排序。
 class WorldNews(Record):
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
@@ -746,6 +758,12 @@ class WorldNews(Record):
     source_url = models.URLField(max_length=2000, blank=True)
     summary = models.TextField(blank=True)
     content = models.TextField()
+
+    # 功能：约束采集新闻身份。
+    # 逻辑：非空 Agent 来源全局唯一，阻止不同账号并发重复创建。
+    # 约束：不合并人工记录，不覆盖既有正文。
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["source_url"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_news_agent_source")]
 
 
 from .algorithm_models import OpportunitySignal, OpportunityPriority  # noqa: E402,F401

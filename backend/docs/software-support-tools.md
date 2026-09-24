@@ -78,11 +78,17 @@
 
 活动字段：title、event_type（exhibition/sales）、country（两位大写国家地区代码）、city、latitude/longitude、starts_at/ends_at、可空 registration_deadline、source_url、description、onsite、suggested_actions、opportunity_ids、data_source。商机关联接受权限范围内未归档且不重复的 UUID，实验模式可跨账号；这是保存时引用校验，后续商机变动不自动清除活动中的历史引用。现场信息和建议由调用方显式提供，服务端只保存。
 
+资讯/活动在正式及个人隔离模式对所有已登录员工共享读取，包含人工和 Agent 来源；更新/归档仍限 owner，Tool 调用仍需工具白名单授权。所有读取入口的 opportunity_ids 按访问者权限过滤，地图金额与客户信息也维持原业务隔离。公共文本字段不作为私人备注保存。
+
+活动新增可选 time_precision=date|datetime（默认 datetime），只读 starts_on/ends_on 为 date 精度的包含末日日期，datetime 时为 null。date 的 starts_at/ends_at 使用一致的 UTC 午夜或中午边界，结束日排除。现有 Agent 的明确日期占位标记由后端兼容，不要求 Agent 修改载荷。详细规则见 [全球洞察](world-news.md)。
+
+非空 Agent 新闻按来源 URL、Agent 活动按 URL 与开始时间跨账号去重，归档不释放唯一性；重复或并发竞争返回 409，不覆盖旧记录，人工记录不受该采集约束。
+
 资讯字段：title、category（regulation/industry/competition/price）、industry、country、published_at、source_url、summary、content、data_source。实验模式或 data_source=synthetic 允许空来源；已填来源必须是无凭证 HTTPS URL，服务端不访问或验证来源可达性。时间必须包含时区。内容是纯文本，不执行 HTML。
 
 列表支持 page/page_size、q、archived、country、from/to；活动另有 event_type，资讯另有 category。from/to 为带时区 ISO 时间，包含下界、不包含上界；活动按开始时间升序，资讯按发布时间降序。未知筛选字段报错。默认分页 30、最多 100，不隐式拉取全部数据。
 
-全球洞察前端已读取数据库，商机优先级页展示保存的结果。虚拟内容通过显式初始化命令入库并标记来源；没有 SSE/WebSocket、自动采集、评分或推荐任务。
+全球洞察前端读取数据库，商机优先级页展示保存的结果。虚拟内容通过显式初始化命令入库并标记来源；后端和页面不自行采集、评分或生成推荐。独立 Agent 采集定时任务须另行部署，见 [采集运维](world-insights-operations.md)；没有 SSE/WebSocket。
 
 ## 运维和验证
 

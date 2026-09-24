@@ -1,11 +1,12 @@
 """职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：通用资源同时注册独立商机信号和评分，不执行算法；新增活动资讯的时间、来源及授权商机关联校验；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
+实现：通用资源同时注册独立商机信号和评分，不执行算法；活动资讯校验日期精度、来源及授权关联，并在所有读取入口过滤私有商机标识；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
 关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
 目录：
 - ZonedDateTimeField：活动资讯时间及字段验证。
 - ZonedDateTimeField.to_internal_value：活动资讯时间及字段验证。
 - WorldEventSerializer：活动资讯时间及字段验证。
 - WorldEventSerializer.validate：活动资讯时间及字段验证。
+- WorldEventSerializer.to_representation：过滤无权读取的商机标识，返回明确日期范围。
 - WorldEventSerializer.Meta：活动资讯时间及字段验证。
 - WorldNewsSerializer：活动资讯时间及字段验证。
 - WorldNewsSerializer.validate：活动资讯时间及字段验证。
@@ -59,6 +60,12 @@
 - NotificationSerializer：应用内到期提醒的授权字段契约。
 - NotificationSerializer.Meta：声明本实体字段和不可直接写入的状态。
 变量索引：
+- WorldEventSerializer.starts_on：日期型活动的包含式开始日期，只读。
+- WorldEventSerializer.ends_on：日期型活动的包含式结束日期，只读。
+- WorldEventSerializer.source_url：来源格式校验；条件去重由 insights 和数据库负责，避免对人工来源施加唯一性。
+- WorldNewsSerializer.source_url：新闻来源格式校验；跨账号 Agent 去重由 insights 和数据库负责。
+- WorldEventSerializer.Meta.validators：关闭 DRF 自动条件唯一校验，使用显式 409 契约。
+- WorldNewsSerializer.Meta.validators：关闭 DRF 自动条件唯一校验，保留手工条件和数据库约束。
 - WorldEventSerializer.latitude：显式验证 latitude 的类型与边界。
 - WorldEventSerializer.longitude：显式验证 longitude 的类型与边界。
 - WorldEventSerializer.country：显式验证 country 的类型与边界。
@@ -981,10 +988,13 @@ class ZonedDateTimeField(s.DateTimeField):
         return super().to_internal_value(value)
 
 
-# 功能：验证活动事实与本人商机关联。
-# 逻辑：坐标、时间和列表显式约束。
-# 约束：不生成建议，不调用外站。
+# 功能：验证共享活动事实并隔离关联业务信息。
+# 逻辑：写入校验日期精度；所有读取入口过滤不可见商机 ID，日期型输出包含末日的日期范围。
+# 约束：活动原文为共享事实，商机、客户和金额不随活动扩大权限；不访问外站。
 class WorldEventSerializer(StrictModelSerializer):
+    source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
+    starts_on = s.DateField(read_only=True, allow_null=True)
+    ends_on = s.DateField(read_only=True, allow_null=True)
     latitude = s.FloatField(min_value=-85, max_value=85)
     longitude = s.FloatField(min_value=-180, max_value=180)
     country = s.RegexField(r'^[A-Z]{2}$')
@@ -998,25 +1008,47 @@ class WorldEventSerializer(StrictModelSerializer):
     # 功能：校验跨字段。
     # 输入：`attrs` 字段。
     # 输出：验证后的 attrs。
-    # 逻辑：委托 insights 的来源、日期和归属检查。
-    # 约束：不改变调用方文本或业务记录。
+    # 逻辑：委托 insights 校验来源、日期、归属及跨账号重复，兼容明确 Agent 日期占位协议。
+    # 约束：不改变原始文本和时间，重复返回 409，不覆盖已有记录。
     def validate(self, attrs):
         from .insights import validate_insight
         return validate_insight(self, attrs)
 
+    # 功能：为共享活动生成访问者可见的投影。
+    # 输入：`instance` 为活动记录；隐式读取 request.user 和当前批次的商机关联。
+    # 输出：过滤后的活动字典，日期型附 starts_on/ends_on，普通时刻的两字段为 null。
+    # 逻辑：按当前序列化批次一次性查询可见商机，所有 API 和 Tool 共用；日期型从 UTC 边界取包含式日期。
+    # 约束：无请求身份时关联为空；缓存仅存当前序列化器实例，不跨请求复用，不改数据库。
+    def to_representation(self, instance):
+        from .insight_dates import date_range
+        data = super().to_representation(instance)
+        if not hasattr(self, "_visible_insight_opportunities"):
+            request = self.context.get("request")
+            rows = self.parent.instance if isinstance(self.parent, s.ListSerializer) else [instance]
+            identifiers = {str(pk) for row in rows for pk in row.opportunity_ids}
+            self._visible_insight_opportunities = set()
+            if request and request.user.is_authenticated and identifiers:
+                self._visible_insight_opportunities = {str(pk) for pk in scope(models.Opportunity, request.user).filter(pk__in=identifiers).values_list("pk", flat=True)}
+        data["opportunity_ids"] = [str(pk) for pk in instance.opportunity_ids if str(pk) in self._visible_insight_opportunities]
+        dates = date_range(instance.starts_at, instance.ends_at) if instance.time_precision == "date" else (None, None)
+        data["starts_on"], data["ends_on"] = [value.isoformat() if value else None for value in dates]
+        return data
+
     # 功能：声明活动字段。
-    # 逻辑：复用 Record 的只读版本与账号，显式暴露数据来源。
-    # 约束：不接受调用方伪造 owner。
+    # 逻辑：复用 Record 的只读版本与账号，暴露数据来源、日期精度及只读日期范围。
+    # 约束：不接受调用方伪造 owner 或日期投影，关联 ID 由访问者权限投影。
     class Meta:
         model = models.WorldEvent
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids', 'data_source']
+        validators = []
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'time_precision', 'starts_on', 'ends_on', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids', 'data_source']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
 # 功能：验证行业资讯存储。
-# 逻辑：显式分类、带时区发布日期和纯文本。
-# 约束：不抓取新闻或自动生成摘要。
+# 逻辑：显式分类、带时区发布日期和纯文本；来源仅对 Agent 执行全局去重。
+# 约束：关闭 DRF 自动来源唯一校验，重复由 insights 返回 409 并由数据库兜住并发；不抓取或生成摘要。
 class WorldNewsSerializer(StrictModelSerializer):
+    source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     published_at = ZonedDateTimeField()
     country = s.RegexField(r'^[A-Z]{2}$', allow_blank=True, required=False)
     summary = s.CharField(max_length=8000, allow_blank=True, required=False)
@@ -1025,17 +1057,18 @@ class WorldNewsSerializer(StrictModelSerializer):
     # 功能：校验来源。
     # 输入：`attrs`。
     # 输出：验证后字段。
-    # 逻辑：复用 insights 校验。
-    # 约束：不访问链接目标。
+    # 逻辑：复用 insights 校验无凭证 HTTPS 和 Agent 来源重复。
+    # 约束：重复抛 409，不访问来源或覆盖原记录。
     def validate(self, attrs):
         from .insights import validate_insight
         return validate_insight(self, attrs)
 
     # 功能：声明资讯字段。
-    # 逻辑：内容及来源可写，账号、归档与版本服务端维护。
-    # 约束：归档走现有命令接口。
+    # 逻辑：内容及来源可写，身份与版本只读；条件唯一性由 insights 显式检查及数据库约束。
+    # 约束：人工记录不被 DRF 自动来源唯一校验误拦，归档走命令接口。
     class Meta:
         model = models.WorldNews
+        validators = []
         fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 

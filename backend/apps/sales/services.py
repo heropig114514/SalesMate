@@ -1,5 +1,5 @@
 """职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：实验模式跳过所有者和团队管理角色限制；业务关系、金额和状态约束保留。新聊天会话不绑定公司；按业务 owner 串行化写入；商机变更更新当前客户，订单及产品变更传播销售方评分依赖；审计、版本和任务原子提交；到期提醒在账号共享锁下重读。
+实现：实验模式沿用开放权限，业务关系、金额和状态约束保留；共享资讯的跨账号来源唯一性由数据库最终裁决。按业务 owner 串行化写入；商机及销售方变更传播评分依赖；审计、版本和任务原子提交。
 国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
 关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
 目录：
@@ -300,8 +300,8 @@ def validate_record(instance, actor, changed, creating):
 # 功能：创建或版本化修改销售记录。
 # 输入：`serializer` 为已校验序列化器，`actor` 为用户，`expected` 为旧 revision 或 None。
 # 输出：已保存模型；归属转移拒绝文案按当前语言插入原字段名。
-# 逻辑：锁 owner 后检查关系及版本，保存商机产品与业务记录；当前客户同步后传播订单、产品的共享评分依赖。
-# 约束：动作、附件与提醒使用专门入口；写入错误整体回滚，无自动重试。
+# 逻辑：锁 owner 后检查关系及版本；公共资讯已在 serializer 预检来源，最终唯一性由数据库裁决并发，避免 full_clean 把竞争错误变成 400；其他模型仍执行全部模型约束校验。
+# 约束：公共资讯数据库唯一冲突由原视图映射为 409；不吞错或重试；动作、附件与提醒使用专门入口，事务整体回滚。
 @transaction.atomic
 def save_record(serializer, actor, expected=None):
     model = serializer.Meta.model
@@ -355,7 +355,7 @@ def save_record(serializer, actor, expected=None):
             if duplicate.content != candidate.content:
                 raise Conflict("同一消息幂等键对应不同内容。")
             return duplicate
-    candidate.full_clean()
+    candidate.full_clean(validate_constraints=not isinstance(candidate, (models.WorldEvent, models.WorldNews)))
     if existing:
         candidate.revision += 1
     candidate.save()

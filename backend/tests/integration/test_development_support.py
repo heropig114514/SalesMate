@@ -1,5 +1,5 @@
 """职责：验证数据库占位、全球聚合、商机结果和开发权限。
-实现：隔离 PostgreSQL 中通过真实 DRF 请求检查正式/实验模式，不连接模型和外部服务。
+实现：隔离 PostgreSQL 中验证公共活动共享和私人商机隔离，以及正式/实验模式差异；不连接模型和外部服务。
 关联：sales.world、algorithm_views、seed_development_support 及现有 Tool 鉴权。
 目录：
 - DevelopmentSupportTests：端到端支持层测试。
@@ -7,7 +7,7 @@
 - DevelopmentSupportTests.test_seed_is_idempotent_and_does_not_rewrite：确认显式占位稳定。
 - DevelopmentSupportTests.test_world_deduplicates_and_keeps_currencies：验证重复商机和币种。
 - DevelopmentSupportTests.test_partial_results_context_and_latest_score：验证最小提交和上下文。
-- DevelopmentSupportTests.test_formal_access_is_isolated：验证关闭实验模式后的权限。
+- DevelopmentSupportTests.test_formal_public_events_keep_private_business：验证公共活动共享而商机仍隔离。
 - DevelopmentSupportTests.test_lab_tools_omit_credentials_versions_and_source：验证放宽规则。
 - DevelopmentSupportTests.test_essential_boundaries_remain：验证必要边界。
 变量索引：
@@ -91,16 +91,19 @@ class DevelopmentSupportTests(TestCase):
         self.assertEqual(len(context.data["signals"]), 2)
         self.assertTrue(context.data["seller_context"]["sales_setup"]["products"])
 
-    # 功能：验证关闭实验模式后的访问范围。
-    # 输入：匿名及另一登录账号。
-    # 输出：匿名拒绝、他人列表为空、上下文不可见。
-    # 逻辑：使用未认证和真实会话客户端。
-    # 约束：不模拟授权处理器。
-    def test_formal_access_is_isolated(self):
+    # 功能：验证公共活动共享与正式业务隔离。
+    # 输入：无外部参数；实例中的匿名及另一登录账号。
+    # 输出：匿名拒绝，已登录员工看到公共活动但看不到私人关联和上下文。
+    # 逻辑：使用真实 Session 请求同时检查活动数量、字段投影和商机权限。
+    # 约束：不模拟权限、不扩大客户和商机读取。
+    def test_formal_public_events_keep_private_business(self):
         other = APIClient()
         self.assertEqual(other.get("/api/v1/sales/world/").status_code, 403)
         other.force_login(self.other)
-        self.assertEqual(other.get("/api/v1/sales/world/").data["count"], 0)
+        world = other.get("/api/v1/sales/world/").data
+        self.assertEqual(world["count"], 8)
+        for row in world["results"]:
+            self.assertEqual((row["opportunity_ids"], row["customers"], row["amounts"], row["map_amounts"]), ([], [], {}, {}))
         self.assertEqual(other.get(f"/api/v1/sales/opportunity-context/{self.opportunity.pk}/").status_code, 404)
 
     # 功能：验证实验模式无需凭据、版本和来源。

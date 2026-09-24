@@ -11,7 +11,7 @@
 - SupportToolTests.test_documents_roundtrip_and_references：无 Session 上传、分块读取与引用删除保护。
 - SupportToolTests.test_existing_attachment_reads：已有业务附件的真实存储读取和完整性校验。
 - SupportToolTests.test_events_news_crud_and_filters：事件资讯存储、筛选、修改和归档。
-- SupportToolTests.test_invalid_insights_and_private_relations：坏数据和跨账号关联拒绝。
+- SupportToolTests.test_invalid_insights_and_private_relations：坏数据拒绝、公共资讯读取及跨账号关联隔离。
 - SupportToolTests.test_permission_presets_and_token_boundaries：批量授权和令牌范围固定。
 变量索引：
 - BASE：工具 HTTP 路径。
@@ -188,11 +188,11 @@ class SupportToolTests(TestCase):
         self.assertEqual(response.data["results"][0]["id"], news["id"])
         self.assertEqual(ToolProposal.objects.count(), 0)
 
-    # 功能：验证时间、来源和跨账号关联边界。
+    # 功能：验证公共资讯读取及时间、来源和私人商机关联边界。
     # 输入：无时区时间、危险链接、倒置窗口以及其他员工记录。
-    # 输出：均拒绝，失败不留下幂等成功回执或业务数据。
+    # 输出：公共资讯可跨账号读取；无效输入和私有商机关联被拒绝且不留成功回执。
     # 逻辑：真实 JSON Schema、序列化器及 owner 查询联动。
-    # 约束：不因可调用性要求放开数据隔离。
+    # 约束：只共享公共资讯，客户和商机关联维持隔离。
     def test_invalid_insights_and_private_relations(self):
         data = {"title": "消息", "category": "price", "published_at": "2026-09-21T00:00:00Z", "source_url": "https://example.com/news", "content": "内容"}
         for field, value in (("source_url", "javascript:alert(1)"), ("published_at", "2026-09-21T00:00:00"), ("owner", self.other.pk)):
@@ -200,7 +200,7 @@ class SupportToolTests(TestCase):
         self.assertEqual(ToolCall.objects.count(), 0)
         self.assertFalse(models.WorldNews.objects.exists())
         foreign = models.WorldNews.objects.create(owner=self.other, **data)
-        self.call("world_news.get", {"id": str(foreign.pk)}, 404)
+        self.assertEqual(self.call("world_news.get", {"id": str(foreign.pk)})["data"]["id"], str(foreign.pk))
         self.call("world_news.list", {"from": "2026-10-01T00:00:00Z", "to": "2026-09-01T00:00:00Z"}, 400)
         company = grouping.create_company(self.other, "他人客户")
         opportunity = models.Opportunity.objects.create(owner=self.other, company=company, title="商机", currency="SGD")

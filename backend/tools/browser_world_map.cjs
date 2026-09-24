@@ -1,7 +1,7 @@
-/** 职责：验证金额气泡的地理锚点、面积比例、半透明效果及币种提示。
- * 实现：隔离静态服务器加载实际 Leaflet、地图模块和完整页面，以受控坐标与模拟接口金额检查几何和币种选择；不访问真实业务接口。
+/** 职责：验证金额气泡、共享活动日期展示和全天日历。
+ * 实现：隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
  * 关联：world-map.js、world-news.js/css、world.html；Playwright/Chrome 路径由环境显式提供。
- * 目录：geometry、checkGeometry、checkCurrencies、main。
+ * 目录：geometry、checkGeometry、checkCurrencies、checkDates、main。
  * 变量索引：ASSETS 为静态资源根目录；OUTPUT 为忽略的截图目录。
  */
 const assert = require('node:assert/strict');
@@ -93,8 +93,56 @@ async function checkCurrencies(browser, base) {
   await page.close();
 }
 
+/** 功能：验证日期型活动不显示占位钟点或错误末日。输入：browser 浏览器、base 静态服务器地址。输出：无，断言失败抛错。
+ * 逻辑：真实页面加载 Agent 兼容响应，在两个极端时区检查末日、导出全天 ICS、邀请和手机布局并留截图；普通时间型仍导出 UTC 时刻。
+ * 约束：API 为明确夹具，所有非本地请求和写入均拒绝，不证明真实采集已运行。 */
+async function checkDates(browser, base) {
+  for (const timezoneId of ['Pacific/Kiritimati', 'America/Los_Angeles']) {
+    const context = await browser.newContext({ locale: 'en-US', timezoneId, acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage(), errors = [];
+    const fixture = { id: 'date-expo', title: 'Shared date-only expo', city: 'Singapore', country: 'SG', latitude: 1.3, longitude: 103.8, event_type: 'exhibition', data_source: 'agent', time_precision: 'date', starts_at: '2026-10-27T12:00:00Z', ends_at: '2026-10-30T12:00:00Z', starts_on: '2026-10-27', ends_on: '2026-10-29', amounts: {}, map_amounts: {}, customers: [], opportunity_ids: [], onsite: [], suggested_actions: [], description: 'Public exhibition. Exact time is not supplied.', source_url: 'https://example.org/expo' };
+    page.on('pageerror', error => errors.push(error.message));
+    await page.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (url.origin !== base || route.request().method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
+      if (!url.pathname.startsWith('/api/')) return route.continue();
+      if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 1, results: [fixture], countries: [], currencies: [], unmapped_customer_count: 0 } });
+      if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 0, results: [] } });
+      if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
+      errors.push('Unexpected API: ' + url.pathname); return route.abort();
+    });
+    await page.goto(base + '/world/');
+    await page.locator('#add-itinerary').waitFor();
+    assert.match(await page.locator('#event-detail').textContent(), /2026-10-27 — 2026-10-29.*Dates only/);
+    assert.doesNotMatch(await page.locator('#event-detail').textContent(), /2026-10-30/);
+    const downloadPromise = page.waitForEvent('download');
+    await page.click('#add-itinerary');
+    const download = await downloadPromise, calendar = fs.readFileSync(await download.path(), 'utf8');
+    assert.match(calendar, /DTSTART;VALUE=DATE:20261027/);
+    assert.match(calendar, /DTEND;VALUE=DATE:20261030/);
+    assert.doesNotMatch(calendar, /DTSTART:.*T120000/);
+    await page.click('#create-invite');
+    assert.match(await page.inputValue('#invite-body'), /2026-10-27/);
+    await page.click('#invite-close');
+    const timed = await page.evaluate(async row => {
+      const { calendarText } = await import('/static/world-news.js?v=20260924-insights');
+      return calendarText({ ...row, time_precision: 'datetime', starts_at: '2026-10-27T09:00:00+08:00', ends_at: '2026-10-27T17:00:00+08:00' });
+    }, fixture);
+    assert.match(timed, /DTSTART:20261027T010000Z/);
+    assert.match(timed, /DTEND:20261027T090000Z/);
+    assert.doesNotMatch(timed, /VALUE=DATE/);
+    fs.mkdirSync(OUTPUT, { recursive: true });
+    await page.screenshot({ path: path.join(OUTPUT, 'world-shared-dates-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.screenshot({ path: path.join(OUTPUT, 'world-shared-dates-mobile.png'), fullPage: true });
+    assert.deepEqual(errors, []);
+    await context.close();
+  }
+}
+
 /** 功能：运行隔离地图回归。输入：Playwright/Chrome 环境。输出：检查摘要和截图。
- * 逻辑：验证全球/亚太/欧洲、缩放、手机尺寸、不同长度标签、选择及未知/零金额；空白图标区域不得截获点击，金额提示不得改变圆心；捕获脚本错误。
+ * 逻辑：验证地图投影、币种及交互；共享日期在多时区/手机展示，实际下载全天 ICS；捕获脚本错误。
  * 约束：仅本机静态网络；金额为浏览器测试夹具，不写入数据库或调用 Agent。 */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -117,6 +165,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });
   try {
+    await checkDates(browser, `http://127.0.0.1:${server.address().port}`);
     const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1000, height: 700 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -172,7 +221,7 @@ async function main() {
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-mobile.png') });
     assert.deepEqual(errors, []);
     await checkCurrencies(browser, `http://127.0.0.1:${server.address().port}`);
-    console.log('Map checks passed: centers, 4:1 area, translucency, actual currencies, mixed amounts/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
+    console.log('World checks passed: shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, 4:1 area, translucency, currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
