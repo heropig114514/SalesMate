@@ -10,6 +10,8 @@
 - NewsRefreshTests.test_failure_preserves_record：错误退出非零，不覆盖旧记录。
 - NewsRefreshTests.test_target_preflight：无效或重复目标在外部调用前拒绝。
 - NewsRefreshTests.test_concurrent_revision_is_not_overwritten：过期快照不能覆盖并发修改。
+- NewsRefreshTests.test_explicit_preview_import：仅导入明确匹配的来源，无额外网络或模型请求。
+- NewsRefreshTests.test_preview_mismatch_and_duplicates：预览缺少目标或来源歧义时拒绝。
 变量索引：
 - 无
 """
@@ -138,3 +140,38 @@ class NewsRefreshTests(TestCase):
                 refresh_one(self.record, True)
         self.record.refresh_from_db()
         self.assertEqual((self.record.revision, self.record.company_name), (1, "其他编辑"))
+
+    # 功能：验证显式预览文件可复用 Agent 原采集流程的公开结果。
+    # 输入：一个精确来源匹配的 payload 及一条未授权目标的额外预览。
+    # 输出：仅指定旧新闻更新，不调用网络、环境加载或模型。
+    # 逻辑：预览文件为模拟边界，导入经过实际字段和版本校验。
+    # 约束：不将预览里的未知记录创建为新新闻，不修改原标题或正文。
+    def test_explicit_preview_import(self):
+        payload = {**self.payload, "source_url": self.record.source_url, "data_source": "agent", "content": "不能覆盖原正文"}
+        document = {"preview": [{"tool": "world_news.create", "data": payload}, {"tool": "world_news.create", "data": {**payload, "source_url": "https://example.org/unselected"}}]}
+        output = io.StringIO()
+        with patch("pathlib.Path.read_text", return_value=json.dumps(document)), patch("agent.world_insights.fetch_page") as fetch, patch("agent.world_insights.summarize_news") as model, patch("agent.world_insights.load_environment") as environment:
+            call_command("refresh_world_news_signals", str(self.record.pk), agent_preview="preview.json", apply=True, stdout=output)
+            fetch.assert_not_called()
+            model.assert_not_called()
+            environment.assert_not_called()
+        self.record.refresh_from_db()
+        self.assertEqual((self.record.company_name, self.record.content, self.record.revision), ("示例公司", "旧正文", 1))
+        self.assertEqual(WorldNews.objects.count(), 1)
+        self.assertEqual(json.loads(output.getvalue())["results"][0]["status"], "updated")
+
+    # 功能：拒绝缺失、歧义或伪装来源的预览。
+    # 输入：无匹配、重复匹配及非 Agent 来源标记的 JSON。
+    # 输出：命令失败，原记录和版本不变，无网络请求。
+    # 逻辑：必须明确命中单个 source_url，不能按标题或列表位置猜测。
+    # 约束：不会因导入失败切回网络重采。
+    def test_preview_mismatch_and_duplicates(self):
+        item = {"tool": "world_news.create", "data": {**self.payload, "source_url": self.record.source_url, "data_source": "agent"}}
+        invalid_source = {"tool": "world_news.create", "data": {**item["data"], "data_source": "manual"}}
+        for rows in ([], [item, item], [invalid_source]):
+            with self.subTest(rows=rows), patch("pathlib.Path.read_text", return_value=json.dumps({"preview": rows})), patch("agent.world_insights.fetch_page") as fetch:
+                with self.assertRaises(CommandError):
+                    call_command("refresh_world_news_signals", str(self.record.pk), agent_preview="preview.json", apply=True, stdout=io.StringIO())
+                fetch.assert_not_called()
+        self.record.refresh_from_db()
+        self.assertEqual((self.record.revision, self.record.company_name), (0, ""))

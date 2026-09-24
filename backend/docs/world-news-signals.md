@@ -81,3 +81,11 @@ python backend/manage.py refresh_world_news_signals NEWS_UUID [NEWS_UUID ...] --
 省略 `--apply` 只预览。目标必须全部为未归档的 Agent 新闻；不支持全表隐式刷新。命令重新读取原来源页面，并直接调用现有 Agent 的 `summarize_news`，沿用模型、提示词及校验参数，旧生成摘要不作为来源证据。只更新十三个公开线索字段，不改标题、正文、时间、来源，不关联 CRM；旧 revision 检查保护并发编辑，相同字段不重复写入。
 
 来源或 Agent 提取失败时保留该条旧记录，输出失败原因并退出非零；已完成的其他条目保留，不自动重试或降级。Agent 没有提取出合格金额时仍保存 null，不能通过放宽证据规则填造数值。该命令与普通采集分别运行，普通采集的来源去重行为不变。
+
+若原页面重定向导致直接刷新失败，可显式运行原 Agent 的 `python -m agent.world_insights --dry-run`，将 stdout 中完整结果 JSON 保存为受保护文件，再执行：
+
+```bash
+python backend/manage.py refresh_world_news_signals NEWS_UUID --agent-preview /absolute/path/preview.json --apply
+```
+
+此模式复用 Agent 既有来源采集与订阅摘要规则，不再次调用网络或模型。导入前要求每个指定 UUID 在预览中存在且只有一条相同来源的新闻；缺失或歧义拒绝。未选新闻及展会不写入，原标题、正文与日期保持不变。两种模式由维护者明确选择，原页模式失败不会自动切换文件导入。
