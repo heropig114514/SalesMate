@@ -2315,12 +2315,98 @@
     "initial_test_environment_failure": "WSL PostgreSQL stopped; retained logs, kept WSL active and reran clean test DB successfully"
   },
   "server": {
-    "status": "pending temporary isolated experiment; candidate not approved for default use"
+    "tested_revision": "a5c60d0f029b00d6d853fcfc42904bd5e54d9635",
+    "source_files_verified": 502,
+    "tested_profile": "prefix8",
+    "test_type": "temporary isolated deployment; not promoted",
+    "vcpu": 2,
+    "ram_gib_approx": 3.7,
+    "swap_gib": 8,
+    "threads": 2,
+    "context": 8192,
+    "slots": 1,
+    "api_profile_confirmed_in_log": "prefix8",
+    "weight_sha256_verified_by_launcher": true,
+    "model_initialization_seconds_after_hash": 83.818345,
+    "schema_count": 48,
+    "anonymous_status": 401,
+    "structured_http_status": 200,
+    "structured_replay_same_episode": true,
+    "natural_language_cold": {
+      "status_code": 502,
+      "seconds": 300.27869364403887,
+      "body": {
+        "error": {
+          "code": "error",
+          "detail": {
+            "message": "本机模型生成或证据校验失败；未写入图谱，无自动重试。",
+            "stage": "local_model",
+            "reason": "ReadTimeout"
+          }
+        },
+        "request_id": "0bb639297bf848d0a0c300c7dffad507"
+      }
+    },
+    "failed_source_check": {
+      "source_key": "deploy-smoke-f2a01bf17dec40938bc6eb6a0b78e2cd-text",
+      "found_in_first_page": false,
+      "pagination": {
+        "count": 4,
+        "page": 1,
+        "page_size": 100
+      }
+    },
+    "model_cgroup_memory_bytes_snapshot": 3198349312,
+    "model_cgroup_swap_bytes_snapshot": 2887946240,
+    "vmstat_swap_in_kib_s_range": [
+      10402,
+      21569
+    ],
+    "vmstat_io_wait_percent_range": [
+      17,
+      31
+    ],
+    "prefill_progress": {
+      "tokens": 2048,
+      "seconds": 243.96,
+      "tokens_per_second": 8.39
+    },
+    "warm_request_tested": false,
+    "model_stopped_after_timed_out_request": true,
+    "real_mcp": {
+      "passed": true,
+      "transport": "real stdio MCP to real HTTP backend",
+      "tools": [
+        "graph.entities",
+        "graph.episode",
+        "graph.episodes",
+        "graph.facts",
+        "graph.ingest",
+        "graph.lineage",
+        "graph.retract",
+        "graph.schema",
+        "graph.status"
+      ],
+      "schema_count": 48,
+      "source_key": "mcp-smoke-652f1e8148834c5eb9b3c51798f37214",
+      "episode_id": "a5e24a17-21e9-486e-b800-5603dfe84ae3",
+      "source_replay_same_id": true,
+      "retracted": true,
+      "model_called": false
+    },
+    "restore_command_completed": true,
+    "final_profile": "baseline",
+    "final_readiness": "verified: baseline 16384 context, both services active, API and production ready health ok",
+    "production_database_changed": false,
+    "production_site_health_during_test": "ok",
+    "gunicorn_private_control_directory_created": true
   },
   "limitations": [
     "Small synthetic shared-template corpus",
     "One sequential run per arm; desktop load not isolated",
     "RSS is sampled process-tree sum, not exclusive physical memory",
     "Development search expanded before test; test did not select another candidate"
-  ]
+  ],
+  "local_measurement_scope": "Model HTTP duration; excludes graph DB work and includes semantically invalid outputs",
+  "release_tag": "semantic-graph-v0.2.0"
 }
