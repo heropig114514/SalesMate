@@ -1,5 +1,7 @@
 # SalesMate Agent MVP
 
+图谱模型工具接入请先阅读[图谱模型与 Agent 工具交接](../backend/docs/semantic-agent-handoff.md)。现有 HTTP SDK/stdio MCP 可独立调用，`graph.ingest` 会保存观察并建图；尚未注册到本目录工作空间聊天的自动工具流程。小服务器自然语言请求仍有超时限制，不沿用 L1 四路并发策略。
+
 ## 全球洞察采集
 
 `python -m agent.world_insights` 是独立于 Gmail、L1–L4 和聊天的单次采集任务。它从 `world_insights_sources.json` 配置的公开 GDELT 搜索、NIST/Eurostat 订阅源以及半导体活动日历发现半导体设备、精密量测等行业资讯及活动，不需要新闻搜索 API Key。新闻必须有来源页面或订阅源提供的带时区发布日期；模型只整理来源片段，不能臆测国家。地图活动只从来源页的结构化 Event 数据读取明确的活动名称、日期、城市和国家，经 Nominatim 校验城市坐标后才写入。若来源只给活动日期、不提供钟点，记录会明确标记时间是系统占位值。缺地点的条目会跳过，不生成猜测位置。每轮最多写入 4 条资讯、2 条活动，已存在的来源 URL 不重复写入；单条失败不影响其他条目。

@@ -40,6 +40,7 @@ Agent 代码位于与 `backend/` 同级的 `agent/`，通过 HTTP 协议读取�
 
 - [软件开发与启动说明](backend/README.md)
 - [Agent 实现与数据契约](agent/README.md)
+- [图谱模型与 Agent 工具交接](backend/docs/semantic-agent-handoff.md)：HTTP/MCP 接入、写入副作用、幂等与失败处理、当前性能边界；聊天 Agent 尚未自动接入。
 - [Gmail 测试邮件注入器](test_tools/README.md)
 - [目录与职责](backend/docs/project-structure.md)
 - [代码注释规范](backend/docs/coding-agent-guidelines.md)
