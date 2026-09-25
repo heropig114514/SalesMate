@@ -2,9 +2,11 @@
 
 本版提供48类业务schema、不完整结构化观察、文本/邮件正文抽取、已有实体关联、来源撤回及证据追溯。图谱由PostgreSQL维护，LLM输出候选，不直接修改订单、业务权限或发送邮件。微调V2 Q4是实验候选，默认启动器仍选择官方Q4；准确率限制见[实验说明](semantic-model-experiments.md)。
 
-## 本次验证结论
+## 首版基线验证与优化入口
 
 服务器已成功加载权重；结构化HTTP、来源重放和真实stdio MCP闭环通过。完整schema自然语言请求在301.34秒以502 ReadTimeout失败，模型日志显示2048个输入token耗时256.22秒（约7.99 tokens/s），请求随后取消，未写入该来源。不能将模型health=ok当作自然语言接口可用。模型服务当前已启动但未启用开机自启，实验API已启用自启；8 GiB交换空间持久保留。默认300秒阈值没有为此失败自动放宽。
+
+上述为首版baseline记录。本轮`prefix8`候选的本机完整测试平均62.47→18.31秒，但契约通过数8/12→7/12，未达到启用门槛；默认继续baseline。临时服务器验证、精确限制及恢复状态以[推理优化说明](semantic-inference-optimization.md)为准。
 
 ## 输入与结果
 
@@ -110,9 +112,11 @@ python backend/tools/run_graph_model.py \
   --variant semantic-v2 --threads 2 --port 8088
 ```
 
-不传variant时仍为official，并要求官方制品哈希。默认线程8，服务器部署显式设为2以匹配2 vCPU；这是一项新的部署验证，不与此前8线程桌面微基准直接比较。上下文16384、单槽位、输出预算1536、temperature=0、seed=2026保留。关闭自动fit、prompt缓存和上下文滑动，防止运行时静默缩小输入；失败不换模型或精度。
+不传variant时仍为official，并要求官方制品哈希。默认线程8，服务器部署显式设为2以匹配2 vCPU；这是一项新的部署验证，不与此前8线程桌面微基准直接比较。默认`--profile baseline`使用上下文16384、单槽位、F16 KV并关闭prompt缓存。所有配置保持输出预算1536、temperature=0、seed=2026，并关闭自动fit及上下文滑动；失败不换模型或精度。
 
 后端环境设置`GRAPH_LLM_URL=http://127.0.0.1:8088/v1`、`GRAPH_LLM_MODEL=salesmate-graph`。模型端口仅监听回环，不暴露公网；HTTP工具认证由后端执行。
+
+优化配置通过模型启动器`--profile`和API环境`GRAPH_LLM_PROFILE`同步显式选择，默认均为baseline。配置、质量门槛、冷/热请求结果和当前部署验证见[推理优化说明](semantic-inference-optimization.md)。推理配置与模型权重版本是两个独立选项，不能把KV缓存量化误认为重新量化了权重。
 
 ## 本次服务器布局与连接
 

@@ -2,7 +2,7 @@
 # 实现：校验固定制品，回环监听、单槽位和两线程，不自动重启或回退。
 # 关联：backend/tools/run_graph_model.py；独立于线上默认模型。
 # 目录：无。
-# 变量索引：ExecStart中variant为实验制品；上下文16384由启动器固定；Nice降低实验优先级。
+# 变量索引：ExecStart中variant为实验制品；默认profile为baseline、上下文16384；Nice降低实验优先级。
 [Unit]
 Description=SalesMate semantic v2 experimental Q4 model
 After=network.target
