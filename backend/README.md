@@ -1,8 +1,10 @@
 # SalesMate 软件与 Agent 联调
 
+当前图谱采用 PostgreSQL 业务投影、来源血缘与 Qwen 语义输入，HTTP/MCP 接入见 [Agent 图谱交接](docs/semantic-agent-handoff.md)。旧研究接口与推荐模型已退役，保留模型及恢复入口见 [模型清理与恢复](docs/model-retirement.md)。
+
 正式公司优先级 `score-v2` 已提供后端评分上下文、销售方资料维护、解释保存和版本触发；数据口径及接口见 [L4 后端适配](docs/l4-priority.md)。资料齐全时 Agent 会随分数提交 `score_details`；网页展示完整解释仍需前端接入。
 
-面向用户协作的 123 个后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
+面向用户协作的后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
 
 页面现已统一为销售工作空间：共享导航、首页待办、客户跨页上下文和业务表单预填。入口与验证记录见 [统一工作空间](docs/unified-workspace.md)。
 

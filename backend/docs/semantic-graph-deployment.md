@@ -2,7 +2,7 @@
 
 后续 Agent 开发先阅读[统一交接入口](semantic-agent-handoff.md)，其中汇总工具选择、写入副作用、失败/幂等处理及当前可用性；本文提供具体配置与部署命令。
 
-本版提供48类业务schema、不完整结构化观察、文本/邮件正文抽取、已有实体关联、来源撤回及证据追溯。图谱由PostgreSQL维护，LLM输出候选，不直接修改订单、业务权限或发送邮件。微调V2 Q4是实验候选，默认启动器仍选择官方Q4；准确率限制见[实验说明](semantic-model-experiments.md)。
+本版提供48类业务schema、不完整结构化观察、文本/邮件正文抽取、已有实体关联、来源撤回及证据追溯。图谱由PostgreSQL维护，LLM输出候选，不直接修改订单、业务权限或发送邮件。微调V2 Q4仍有实验质量限制；按2026-09-25清理要求，启动器仅保留semantic-v2部署选项；准确率限制见[实验说明](semantic-model-experiments.md)。
 
 ## 首版基线验证与优化入口
 
@@ -114,7 +114,7 @@ python backend/tools/run_graph_model.py \
   --variant semantic-v2 --threads 2 --port 8088
 ```
 
-不传variant时仍为official，并要求官方制品哈希。默认线程8，服务器部署显式设为2以匹配2 vCPU；这是一项新的部署验证，不与此前8线程桌面微基准直接比较。默认`--profile baseline`使用上下文16384、单槽位、F16 KV并关闭prompt缓存。所有配置保持输出预算1536、temperature=0、seed=2026，并关闭自动fit及上下文滑动；失败不换模型或精度。
+不传variant时为semantic-v2，仅接受保留的微调Q4制品哈希。默认线程8，服务器部署显式设为2以匹配2 vCPU；这是一项新的部署验证，不与此前8线程桌面微基准直接比较。默认`--profile baseline`使用上下文16384、单槽位、F16 KV并关闭prompt缓存。所有配置保持输出预算1536、temperature=0、seed=2026，并关闭自动fit及上下文滑动；失败不换模型或精度。
 
 后端环境设置`GRAPH_LLM_URL=http://127.0.0.1:8088/v1`、`GRAPH_LLM_MODEL=salesmate-graph`。模型端口仅监听回环，不暴露公网；HTTP工具认证由后端执行。
 

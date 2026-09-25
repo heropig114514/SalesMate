@@ -211,7 +211,7 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(ToolError):
             self.client.request("POST", "credentials/")
 
-    # 功能：验证 GPU 长推理可以显式配置超时且错误不会变为成功。
+    # 功能：验证长请求可以显式配置超时且图谱未就绪错误不会变为成功。
     # 输入：无外部参数；合成专用环境变量与503响应。
     # 输出：默认30秒保持，显式600秒传递，非法数值被拒绝，503保留业务错误代码。
     # 逻辑：仅网络响应由 Mock 提供，不连接模型服务。
@@ -226,10 +226,10 @@ class ClientTests(unittest.TestCase):
                 with self.assertRaises(ToolError):
                     ToolClient.from_env()
         response = Mock(status_code=503)
-        response.json.return_value = {"error": {"code": "crmarena_unavailable", "detail": "Model not configured"}}
+        response.json.return_value = {"error": {"code": "graph_unavailable", "detail": "Model not configured"}}
         with patch("integrations.salesmate_tools.client.requests.request", return_value=response) as request:
-            with self.assertRaisesRegex(ToolError, "crmarena_unavailable"):
-                self.client.call("crmarena.predict", {})
+            with self.assertRaisesRegex(ToolError, "graph_unavailable"):
+                self.client.call("graph.status", {})
             request.assert_called_once()
 
 

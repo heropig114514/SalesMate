@@ -1,6 +1,6 @@
 # Agent 业务工具接入
 
-新增 `crmarena.info/evidence/evaluation/predict` 四个公开研究只读工具，动态 MCP 目录自动发现；已有凭证不会自动扩权。实时推理可用专用 `SALESMATE_TOOLS_TIMEOUT` 显式增加超时，默认仍30秒。输入输出和调用示例见 [CRMArena 接入](crmarena-integration.md)。
+图谱能力统一为 `graph.*` 九项工具，包括结构化/文本输入、查询、来源血缘及撤回。既有凭证不会自动扩权；接入和性能边界见 [Agent 图谱交接](semantic-agent-handoff.md)。
 
 当前算法联调服务器启用[公开实验模式](laboratory-access.md)：所有业务数据（含非 KGSEED）免登录、跨账号可读写，Tool/MCP 无需令牌。下文原鉴权约束仅在关闭实验开关后生效，保留的外部动作与密钥边界见该说明。
 

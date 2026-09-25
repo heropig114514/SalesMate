@@ -1,11 +1,11 @@
 # 图谱模型与 Agent 工具交接
 
-更新日期：2026-09-25。本文是后续 Agent 开发的入口；运行行为以实际工具目录及源码为准。接口已封装为 HTTP SDK 和 stdio MCP，但尚未接入现有工作空间聊天 Agent 的工具选择流程。不要把文档或 MCP 配置的存在解释为聊天已经可以自动建图。
+更新日期：2026-09-25。旧模型与研究接口已按用户要求清理；唯一保留模型、远程恢复及兼容性变更见[模型清理与恢复](model-retirement.md)。本文是后续 Agent 开发的入口；运行行为以实际工具目录及源码为准。接口已封装为 HTTP SDK 和 stdio MCP，但尚未接入现有工作空间聊天 Agent 的工具选择流程。不要把文档或 MCP 配置的存在解释为聊天已经可以自动建图。
 
 ## 1. 当前交付与可用边界
 
 - 基线代码：`semantic-graph-v0.2.0`，提交 `6b7098ea91455b421c27876e524298a02fb2162d`。代码位于 `feat/semantic-graph-mcp-v2` 分支，[PR #1](https://github.com/heropig114514/SalesMate/pull/1)；不要假设已合并默认分支。后续文档提交不表示服务器同步部署。
-- 隔离服务器运行微调 V2 Q4_K_M 权重，推理配置为 `baseline`（16K 上下文、单槽位、CPU 2 线程）。启动器未指定 variant 时仍选择官方模型；权重版本和推理配置是两件事。
+- 隔离服务器运行微调 V2 Q4_K_M 权重，推理配置为 `baseline`（16K 上下文、单槽位、CPU 2 线程）。2026-09-25清理后启动器仅接受并默认选择semantic-v2；权重版本和推理配置是两件事。
 - 结构化 `records` 输入、查询、来源重放与撤回，已通过真实 HTTP/MCP 闭环验证。这条路径不调用 LLM。
 - 自然语言图谱抽取仍是实验能力：微调 Q4 在 12 条合成测试中，结构/证据合法 8/12、事实完全匹配 6/12；不可视作真实邮件准确率。
 - 服务器完整 schema 文本请求曾在 baseline 约 301.34 秒、临时 prefix8 约 300.28 秒返回 502/ReadTimeout。未写入相应失败来源。prefix8 未通过本机质量门槛，已恢复 baseline。
@@ -114,4 +114,4 @@ HTTP 等价请求为 `POST /api/v1/agent-tools/call/`，头 `Authorization: Tool
 
 接手顺序：确认 checkout 和目标环境 → 配置最小 Tool 授权 → 发现工具并读 schema/status → 在专用沙盒验证结构化写入/查询/血缘/撤回 → 单独验证文本质量和延迟 → 再实现聊天 Agent 的显式工具注册与执行流程。图谱工具尚未成为现有聊天的自动工具，不修改现有 L1–L4 链路即可独立联调 SDK/MCP。
 
-复现与权重位置、SHA256、服务启停、私有凭证和 SSH 方式见[部署说明](semantic-graph-deployment.md)。固定评测条件和性能结果见[微调说明](semantic-model-experiments.md)、[推理优化](semantic-inference-optimization.md)。本次交接只补文档，不改变模型、参数、接口、权限或服务器运行配置。
+复现与权重位置、SHA256、服务启停、私有凭证和 SSH 方式见[部署说明](semantic-graph-deployment.md)。固定评测条件和性能结果见[微调说明](semantic-model-experiments.md)、[推理优化](semantic-inference-optimization.md)。旧模型和研究接口已按用户要求退役，恢复入口与当前制品见[模型清理与恢复](model-retirement.md)；训练评测条件和服务器运行配置未随本次本地清理改变。

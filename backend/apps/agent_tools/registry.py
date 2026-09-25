@@ -1,6 +1,6 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：CRMArena 工具可显式调用固定实验模型；商机信号与评分仍复用 CRUD 而不调用算法；发布事实升级及显式排队工具；实验模式动态发布可省略版本/幂等键的目录；登记客户、邮件、日历、资料、文件及共享实验能力；QQ 禁用时不发布其发信准备工具。
-关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；graph_specs 发布本人语义图谱，crmarena_specs 发布公开研究；MCP 不自行扩展白名单。
+实现：语义图谱工具可输入文本或结构化观察并查询血缘；商机信号与评分仍复用 CRUD 而不调用算法；发布事实升级及显式排队工具；实验模式动态发布可省略版本/幂等键的目录；登记客户、邮件、日历、资料、文件及共享实验能力；QQ 禁用时不发布其发信准备工具。
+关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；graph_specs 发布本人语义图谱；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
 - build_registry：构造完整工具目录。
@@ -19,7 +19,6 @@ from apps.crm.serializers import RegisterSerializer
 from .schemas import UUID, REVISION, PAGE, object_schema, record_schema
 from .support import support_specs
 from .experiments import experiment_specs
-from .crmarena import crmarena_specs
 from .graph import graph_specs
 
 RESOURCES = {
@@ -85,7 +84,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：组合本人图谱、CRMArena 公开研究、信号评分、事实升级及既有业务工具；图谱写入使用来源幂等；邮箱同步要求显式范围及超过50封的风险批准。
+# 逻辑：组合本人图谱、信号评分、事实升级及既有业务工具；图谱写入使用来源幂等；邮箱同步要求显式范围及超过50封的风险批准。
 # 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
     entries = [
@@ -486,6 +485,5 @@ def build_registry():
         )
     entries.extend(support_specs(tool))
     entries.extend(experiment_specs(tool))
-    entries.extend(crmarena_specs(tool))
     entries.extend(graph_specs(tool))
     return {entry["name"]: entry for entry in entries if settings.QQ_MAIL_ENABLED or entry["name"] != "actions.prepare_qq"}

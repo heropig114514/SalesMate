@@ -6,7 +6,7 @@
 - messages：构造含业务类型、既有实体和陈述的模型输入。
 - response_schema：声明模型必须生成的 JSON 结构。
 变量索引：
-- VERSION：独立语义建图协议版本，不改变 CRMArena 实验。
+- VERSION：语义建图协议版本，用于输入输出契约与审计。
 - RELATIONS：允许的文本陈述关系及端点类型。
 - ATTRIBUTES：允许的文本陈述属性。
 """
@@ -26,7 +26,7 @@ ATTRIBUTES = {"reported_need", "reported_budget", "reported_quantity", "reported
 # 输入：无外部参数；读取当前受控业务 schema。
 # 输出：实体和事实数组的 JSON Schema。
 # 逻辑：生成阶段区分关系和属性，限定局部引用、谓词和空值位置；生成后仍检查端点类型、存在性及证据。
-# 约束：结构约束不保证语义正确；没有 JSON 修复或放宽证据规则，独立于 CRMArena 协议。
+# 约束：结构约束不保证语义正确；没有 JSON 修复或放宽证据规则。
 def response_schema():
     schema = catalog()
     local_key = {"type": "string", "enum": [f"e{index}" for index in range(1, 31)]}

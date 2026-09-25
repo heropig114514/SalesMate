@@ -23,7 +23,8 @@
 # 在独立终端运行本机模型。模型必须是本项目已核验的 Q4 制品，脚本验证 SHA256。
 .venv/Scripts/python.exe backend/tools/run_graph_model.py `
   --executable ../output/crmarena-cpu-q4-20260924/llama-bin/llama-server.exe `
-  --model ../output/crmarena-cpu-q4-20260924/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+  --model ../output/semantic-finetune-v2-20260925/results/semantic-ft-v2/Qwen3-4B-SalesMate-Semantic-v2-Q4_K_M.gguf `
+  --variant semantic-v2 --profile baseline
 ```
 
 在运行 Web 或输入命令的环境中明确设置：
@@ -33,9 +34,9 @@ $env:GRAPH_LLM_URL = 'http://127.0.0.1:8088/v1'
 $env:GRAPH_LLM_MODEL = 'salesmate-graph'
 ```
 
-本机模型只绑定回环地址，不经过环境代理或重定向，不发送远程请求。新流程使用纯 CPU、8线程、16384上下文、最大输出1536 tokens、temperature=0、seed=2026、单次HTTP超时300秒；关闭上下文滑动，超长或非正常结束明确失败。它没有更改 CRMArena 冻结题、抽取规则、双T4要求或原CPU实验条件。
+本机模型只绑定回环地址，不经过环境代理或重定向，不发送远程请求。新流程使用纯 CPU、8线程、16384上下文、最大输出1536 tokens、temperature=0、seed=2026、单次HTTP超时300秒；关闭上下文滑动，超长或非正常结束明确失败。清理旧实验不改变这组推理参数；历史实验结果保留用于审计。
 
-权重身份由启动脚本校验；每次响应保留模型别名及参数，不将别名等同于独立远程权重验证。默认仍为官方权重；另有已完成的微调V2实验制品，须显式选择semantic-v2。质量限制与部署见[使用与部署](semantic-graph-deployment.md)。
+权重身份由启动脚本校验；每次响应保留模型别名及参数，不将别名等同于独立远程权重验证。2026-09-25按用户要求仅保留微调V2 Q4部署制品，启动器默认semantic-v2；不再提供官方权重部署分支。质量限制与部署见[使用与部署](semantic-graph-deployment.md)。
 
 ## 输入示例
 

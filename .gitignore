@@ -34,14 +34,6 @@ artifacts/
 
 # Private sales attachments
 backend/private_uploads/
-# CRMArena verified public artifacts are installed with the tracked manifest.
-backend/model_store/crmarena-pro-b2b-v3/knowledge_graph.sqlite
-backend/model_store/crmarena-pro-b2b-v3/queries.json
-backend/model_store/crmarena-pro-b2b-v3/base_prompts.json
-backend/model_store/crmarena-pro-b2b-v3/answers.jsonl
-backend/model_store/crmarena-pro-b2b-v3/model_audit.json
-backend/model_store/crmarena-pro-b2b-v3/graph_audit.json
-backend/model_store/crmarena-pro-b2b-v3/metrics.json
 
 # Large model artifacts and deployment credentials are installed separately.
 *.gguf

@@ -47,7 +47,6 @@
 - CELERY_BROKER_URL：服务器 Redis 消息地址，celery 模式必填。
 - CELERY_RESULT_BACKEND：服务器 Redis 结果地址，celery 模式必填。
 - LOGGING：控制台日志格式、处理器和 Django/SalesMate 日志级别。
-- CRMARENA_MODEL_DIR：管理员显式配置的本地固定 Qwen 权重目录，空值时实时推理返回 503。
 """
 
 
@@ -62,8 +61,6 @@ env = environ.Env()
 PROJECT_DIR = BASE_DIR.parent
 if (PROJECT_DIR / ".env").is_file():
     environ.Env.read_env(PROJECT_DIR / ".env", overwrite=False)
-
-CRMARENA_MODEL_DIR = env.str("CRMARENA_MODEL_DIR", default="")
 
 SECRET_KEY = env.str("DJANGO_SECRET_KEY")
 # 空白密钥也视为配置失败；异常中不包含读取到的密钥值。
