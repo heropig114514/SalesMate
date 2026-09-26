@@ -210,14 +210,14 @@ def build_analysis_input(
 ) -> AnalysisInput | ValidationError:
     """读取一份公司快照，完成校验、归并、指标和版本计算。"""
     if not _nonblank(company_id):
-        return ValidationError("invalid_input", "company_id 不能为空。", "company_id")
+        return ValidationError("invalid_input", "company_id must not be empty.", "company_id")
     if not _nonblank(merge_version):
-        return ValidationError("invalid_input", "merge_version 不能为空。", "merge_version")
+        return ValidationError("invalid_input", "merge_version must not be empty.", "merge_version")
 
     try:
         grouping = backend.get_company_grouping(company_id)
     except Exception as error:
-        return ValidationError("grouping_retrieval_failed", f"公司归组读取失败：{error}")
+        return ValidationError("grouping_retrieval_failed", f"Company grouping read failed: {error}")
     try:
         grouping = _validate_grouping(grouping, company_id)
     except ValueError as error:
@@ -225,7 +225,7 @@ def build_analysis_input(
     try:
         context = backend.get_company_context(company_id)
     except Exception as error:
-        return ValidationError("context_retrieval_failed", f"公司上下文读取失败：{error}")
+        return ValidationError("context_retrieval_failed", f"Company context read failed: {error}")
 
     try:
         context = _validate_context(context, grouping)
@@ -246,7 +246,7 @@ def build_analysis_input(
     except ValueError as error:
         return ValidationError("invalid_backend_data", str(error))
     except Exception as error:
-        return ValidationError("analysis_input_failed", f"L2 构建失败：{error}")
+        return ValidationError("analysis_input_failed", f"L2 build failed: {error}")
 
     priority_context = dict(context.get("priority_context") or {})
     recent_emails = sorted(
@@ -401,13 +401,13 @@ def compute_input_version(
 # 约束：无效值抛 ValueError，不使用本地时区补齐。
 def parse_rfc3339(value: object) -> datetime:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("时间必须是非空 RFC3339 字符串。")
+        raise ValueError("Time must be a nonempty RFC3339 string.")
     try:
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        raise ValueError(f"时间格式无效：{value}") from None
+        raise ValueError(f"Invalid time format: {value}") from None
     if result.tzinfo is None or result.utcoffset() is None:
-        raise ValueError(f"时间必须包含时区：{value}")
+        raise ValueError(f"Time must include a time zone: {value}")
     return result
 
 
@@ -419,31 +419,31 @@ def parse_rfc3339(value: object) -> datetime:
 def _validate_grouping(raw: object, company_id: str) -> dict[str, Any]:
     grouping = _mapping(raw, "Grouping")
     if grouping.get("company_id") != company_id:
-        raise ValueError("Grouping.company_id 与请求不一致。")
+        raise ValueError("Grouping.company_id does not match the request.")
     if grouping.get("crm_status") not in CRM_STATUSES:
-        raise ValueError("Grouping.crm_status 无效。")
+        raise ValueError("Grouping.crm_status is invalid.")
     domains = _list(grouping.get("domains"), "Grouping.domains")
     contacts = _list(grouping.get("contacts"), "Grouping.contacts")
     members = _string_list(
         grouping.get("member_dedupe_keys"), "Grouping.member_dedupe_keys"
     )
     if len(members) != len(set(members)):
-        raise ValueError("Grouping.member_dedupe_keys 不能重复。")
+        raise ValueError("Grouping.member_dedupe_keys must be unique.")
 
     normalized_contacts = []
     for index, raw_contact in enumerate(contacts):
         contact = _mapping(raw_contact, f"Grouping.contacts[{index}]")
         email = contact.get("contact_email")
         if not _mailbox(email):
-            raise ValueError(f"Grouping.contacts[{index}].contact_email 无效。")
+            raise ValueError(f"Grouping.contacts[{index}].contact_email is invalid.")
         count = contact.get("interaction_count")
         if type(count) is not int or count < 0:
-            raise ValueError(f"Grouping.contacts[{index}].interaction_count 无效。")
+            raise ValueError(f"Grouping.contacts[{index}].interaction_count is invalid.")
         if type(contact.get("is_primary")) is not bool:
-            raise ValueError(f"Grouping.contacts[{index}].is_primary 无效。")
+            raise ValueError(f"Grouping.contacts[{index}].is_primary is invalid.")
         name = contact.get("contact_name")
         if name is not None and not isinstance(name, str):
-            raise ValueError(f"Grouping.contacts[{index}].contact_name 无效。")
+            raise ValueError(f"Grouping.contacts[{index}].contact_name is invalid.")
         normalized_contacts.append(copy.deepcopy(dict(contact)))
 
     return {
@@ -464,18 +464,18 @@ def _validate_grouping(raw: object, company_id: str) -> dict[str, Any]:
 def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any]:
     context = _mapping(raw, "CompanyContext")
     if context.get("company_id") != grouping["company_id"]:
-        raise ValueError("CompanyContext.company_id 与 Grouping 不一致。")
+        raise ValueError("CompanyContext.company_id does not match Grouping.")
     external_version = context.get("external_snapshot_version")
     if not _nonblank(external_version):
-        raise ValueError("CompanyContext.external_snapshot_version 不能为空。")
+        raise ValueError("CompanyContext.external_snapshot_version must not be empty.")
 
     raw_emails = _list(context.get("emails"), "CompanyContext.emails")
     emails = [_validate_email(email, index) for index, email in enumerate(raw_emails)]
     email_keys = [email["dedupe_key"] for email in emails]
     if len(email_keys) != len(set(email_keys)):
-        raise ValueError("CompanyContext.emails 的 dedupe_key 不能重复。")
+        raise ValueError("CompanyContext.emails dedupe_key values must be unique.")
     if set(email_keys) != set(grouping["member_dedupe_keys"]):
-        raise ValueError("CompanyContext.emails 与公司成员邮件范围不一致。")
+        raise ValueError("CompanyContext.emails does not match company membership.")
 
     customer = _mapping(context.get("customer"), "CompanyContext.customer")
     tickets = _list(context.get("tickets"), "CompanyContext.tickets")
@@ -483,10 +483,10 @@ def _validate_context(raw: object, grouping: Mapping[str, Any]) -> dict[str, Any
     orders = _list(context.get("orders"), "CompanyContext.orders")
     priority_context = context.get("priority_context")
     if priority_context is not None and not isinstance(priority_context, Mapping):
-        raise ValueError("CompanyContext.priority_context 必须是对象。")
+        raise ValueError("CompanyContext.priority_context must be an object.")
     employee_count = customer.get("employee_count")
     if employee_count is not None and (type(employee_count) is not int or employee_count < 0):
-        raise ValueError("CompanyContext.customer.employee_count 无效。")
+        raise ValueError("CompanyContext.customer.employee_count is invalid.")
     first_deal = customer.get("first_deal_at")
     if first_deal is not None:
         parse_rfc3339(first_deal)
@@ -515,32 +515,32 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
     email = _mapping(raw, f"emails[{index}]")
     dedupe_key = email.get("dedupe_key")
     if not _nonblank(dedupe_key):
-        raise ValueError(f"emails[{index}].dedupe_key 不能为空。")
+        raise ValueError(f"emails[{index}].dedupe_key must not be empty.")
     direction = email.get("direction")
     if direction not in DIRECTIONS:
-        raise ValueError(f"emails[{index}].direction 无效。")
+        raise ValueError(f"emails[{index}].direction is invalid.")
     status = email.get("extract_status")
     if status not in EXTRACT_STATUSES:
-        raise ValueError(f"emails[{index}].extract_status 无效。")
+        raise ValueError(f"emails[{index}].extract_status is invalid.")
     extract_version = email.get("extract_prompt_version")
     if not compatible_extraction(email, EXTRACT_PROMPT_VERSION):
-        raise ValueError(f"emails[{index}] 不是受支持的 L1 结构。")
+        raise ValueError(f"emails[{index}] is not a supported L1 structure.")
 
     sent_at = email.get("sent_at")
     if sent_at is not None:
         parse_rfc3339(sent_at)
     thread_id = email.get("thread_id")
     if thread_id is not None and not _nonblank(thread_id):
-        raise ValueError(f"emails[{index}].thread_id 无效。")
+        raise ValueError(f"emails[{index}].thread_id is invalid.")
     subject = email.get("subject", "")
     if not isinstance(subject, str):
-        raise ValueError(f"emails[{index}].subject 无效。")
+        raise ValueError(f"emails[{index}].subject is invalid.")
 
     facts = email.get("facts")
     if status == "completed":
         facts = _validate_facts(facts, index)
     elif facts is not None:
-        raise ValueError(f"emails[{index}] 非 completed 状态的 facts 必须为 null。")
+        raise ValueError(f"emails[{index}] facts must be null unless status is completed.")
 
     result = copy.deepcopy(dict(email))
     result.update(
@@ -564,20 +564,20 @@ def _validate_email(raw: object, index: int) -> dict[str, Any]:
 def _validate_facts(raw: object, email_index: int) -> dict[str, Any]:
     facts = _mapping(raw, f"emails[{email_index}].facts")
     if set(facts) != set(FACT_FIELDS):
-        raise ValueError(f"emails[{email_index}].facts 字段与 {EXTRACT_PROMPT_VERSION} 不一致。")
+        raise ValueError(f"emails[{email_index}].facts fields do not match {EXTRACT_PROMPT_VERSION}.")
     if type(facts["has_substantive_update"]) is not bool:
-        raise ValueError("has_substantive_update 必须是布尔值。")
+        raise ValueError("has_substantive_update must be a boolean.")
     summary = facts["message_summary"]
     if not isinstance(summary, str) or len(summary) > 80:
-        raise ValueError("message_summary 必须是 80 字以内的字符串。")
+        raise ValueError("message_summary must be a string of at most 80 characters.")
     intent_hint = facts["intent_hint"]
     if (intent_hint is not None and not isinstance(intent_hint, str)) or intent_hint not in INTENT_HINTS:
-        raise ValueError("intent_hint 枚举无效。")
+        raise ValueError("intent_hint has an invalid enum value.")
     intent_evidences = _string_list(facts["intent_evidences"], "intent_evidences", allow_empty=True)
     if intent_hint is None and intent_evidences:
-        raise ValueError("无采购阶段时 intent_evidences 必须为空。")
+        raise ValueError("intent_evidences must be empty when there is no purchase stage.")
     if intent_hint is not None and not intent_evidences:
-        raise ValueError("采购阶段必须提供原文依据。")
+        raise ValueError("A purchase stage requires verbatim evidence.")
 
     normalized = copy.deepcopy(dict(facts))
     for field in ORDINARY_FACT_FIELDS:
@@ -587,16 +587,16 @@ def _validate_facts(raw: object, email_index: int) -> dict[str, Any]:
         for index, raw_group in enumerate(groups):
             group = _mapping(raw_group, f"{field}[{index}]")
             if set(group) != {"value", "evidences"}:
-                raise ValueError(f"{field}[{index}] 字段必须是 value 和 evidences。")
+                raise ValueError(f"{field}[{index}] fields must be value and evidences.")
             value = group.get("value")
             if not _nonblank(value) or value in seen:
-                raise ValueError(f"{field}[{index}].value 为空或重复。")
+                raise ValueError(f"{field}[{index}].value is empty or duplicated.")
             seen.add(value)
             evidences = _string_list(
                 group.get("evidences"), f"{field}[{index}].evidences"
             )
             if not evidences:
-                raise ValueError(f"{field}[{index}].evidences 不能为空。")
+                raise ValueError(f"{field}[{index}].evidences must not be empty.")
             normalized_groups.append({"value": value, "evidences": evidences})
         normalized[field] = normalized_groups
     return normalized
@@ -697,7 +697,7 @@ def _fact_sort_key(item: Mapping[str, Any]) -> tuple[bool, datetime, str, int]:
 def _clock_text(clock: Callable[[], datetime]) -> str:
     value = clock()
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("clock 必须返回带时区的 datetime。")
+        raise ValueError("clock must return a timezone-aware datetime.")
     return value.isoformat()
 
 
@@ -708,7 +708,7 @@ def _clock_text(clock: Callable[[], datetime]) -> str:
 # 约束：非法值抛 ValueError，path 定位错误。
 def _mapping(value: object, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError(f"{path} 必须是对象。")
+        raise ValueError(f"{path} must be an object.")
     return value
 
 
@@ -719,7 +719,7 @@ def _mapping(value: object, path: str) -> Mapping[str, Any]:
 # 约束：非法值抛 ValueError，path 定位错误。
 def _list(value: object, path: str) -> list[Any]:
     if not isinstance(value, list):
-        raise ValueError(f"{path} 必须是数组。")
+        raise ValueError(f"{path} must be an array.")
     return value
 
 
@@ -733,12 +733,12 @@ def _string_list(value: object, path: str, *, allow_empty: bool = False) -> list
     result = []
     for index, item in enumerate(items):
         if not _nonblank(item):
-            raise ValueError(f"{path}[{index}] 必须是非空字符串。")
+            raise ValueError(f"{path}[{index}] must be a nonempty string.")
         result.append(item)
     if not allow_empty and not result:
         return []
     if len(result) != len(set(result)):
-        raise ValueError(f"{path} 不能重复。")
+        raise ValueError(f"{path} must be unique.")
     return result
 
 

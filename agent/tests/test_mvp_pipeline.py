@@ -363,7 +363,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
         bailian_analysis_provider(self.input)
 
         system_prompt, user_text = generate.call_args.args
-        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT:\n", 1)[1])
         first_fact = model_input["facts"]["product_need"][0]
         self.assertNotIn("member_dedupe_keys", model_input)
         self.assertNotIn("input_version", model_input)
@@ -405,7 +405,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
         bailian_analysis_provider(enriched)
 
         user_text = generate.call_args.args[1]
-        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT:\n", 1)[1])
         source = model_input["business_context"]["company_enrichment"]["source"]
         self.assertRegex(source.pop("source_ref"), r"^src_\d+$")
         self.assertEqual(
@@ -445,7 +445,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
         bailian_analysis_provider(enriched)
 
         user_text = generate.call_args.args[1]
-        model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        model_input = json.loads(user_text.split("\nANALYSIS_INPUT:\n", 1)[1])
         self.assertEqual(
             model_input["business_context"]["company_enrichment"],
             {"status": "unavailable", "reason": "integrity_error"},
@@ -541,7 +541,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("枚举值无效", result["error"]["message"])
+        self.assertIn("invalid enum value", result["error"]["message"])
 
     # 功能：Verify l3 rejects unknown source and percentage。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。
@@ -557,7 +557,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("不存在的来源", result["error"]["message"])
+        self.assertIn("source absent from the input", result["error"]["message"])
 
         percentage = _payload(self.input)
         percentage["list_view"]["headline_summary"] = "成交概率 80%"
@@ -567,7 +567,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("百分比", result["error"]["message"])
+        self.assertIn("percentage", result["error"]["message"])
 
         deal_likelihood = _payload(self.input)
         deal_likelihood["detail_view"]["analysis"]["opportunity"]["facts"][0][
@@ -581,7 +581,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("百分比", result["error"]["message"])
+        self.assertIn("percentage", result["error"]["message"])
 
         invalid_enum = _payload(self.input)
         invalid_enum["list_view"]["signal"] = "won"
@@ -591,7 +591,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("枚举值无效", result["error"]["message"])
+        self.assertIn("invalid enum value", result["error"]["message"])
 
         missing_basis = _payload(self.input)
         del missing_basis["detail_view"]["analysis"]["risk"]["inferences"][0]["basis"]
@@ -601,7 +601,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("字段必须", result["error"]["message"])
+        self.assertIn("fields must", result["error"]["message"])
 
     # 功能：Verify l3 allows business percentage and normalizes typed source ref。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。
@@ -656,7 +656,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["list_view"]["signal"], "inquiry_intent")
         self.assertEqual(generate.call_count, 2)
-        self.assertIn("上一次分析未通过", generate.call_args_list[1].args[1])
+        self.assertIn("The previous analysis failed", generate.call_args_list[1].args[1])
 
     # 功能：Verify no purchase basis only accepts unknown signal。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。
@@ -705,7 +705,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("缺少采购事实", result["error"]["message"])
+        self.assertIn("requires a purchasing fact", result["error"]["message"])
 
     # 功能：Verify signal gates use quote order and new lead context。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。
@@ -756,7 +756,7 @@ class AnalysisAndScoreTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         self.assertEqual(result["status"], "failed")
-        self.assertIn("真实外发报价", result["error"]["message"])
+        self.assertIn("actual outbound quote", result["error"]["message"])
 
     # 功能：Verify l4 requires formal priority context without legacy fallback。
     # 输入：无外部参数，读取测试内存夹具和固定时钟。

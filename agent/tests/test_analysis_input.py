@@ -99,7 +99,7 @@ class AnalysisInputTests(unittest.TestCase):
         score = compute_score({"status": "completed"}, result, clock=lambda: NOW,
                               priority_context=result.priority_context)
         self.assertEqual(score["score"], 35)
-        self.assertIn("暂定分", score["score_reasons"][2]["note"])
+        self.assertIn("Provisional score", score["score_reasons"][2]["note"])
 
     def test_old_l1_email_is_rejected(self):
         class OldEmailBackend(FakeBackend):

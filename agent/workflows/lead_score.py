@@ -71,7 +71,7 @@ def compute_priority_result(
     input_doc = _document(analysis_input)
     now = clock()
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
-        raise ValueError("clock 必须返回带时区的 datetime。")
+        raise ValueError("clock must return a timezone-aware datetime.")
     priority_doc = dict(priority_context) if priority_context is not None else {}
     score = _compute_priority(analysis_doc, input_doc, priority_doc, now)
     logger.info(
@@ -93,14 +93,14 @@ def _compute_priority(
         "company_id": str(analysis_input.get("company_id", "")),
         "input_version": str(analysis_input.get("input_version", "")),
         "score": None,
-        "score_reasons": [{"feature": "insufficient_data", "contribution": 0, "note": "评分依据不足"}],
+        "score_reasons": [{"feature": "insufficient_data", "contribution": 0, "note": "Insufficient evidence for scoring"}],
         "score_version": SCORE_VERSION,
         "scored_at": now.isoformat(),
     }
     if analysis.get("status") != "completed":
         return result
     if not isinstance(context, Mapping):
-        raise ValueError("priority_context 必须是对象。")
+        raise ValueError("priority_context must be an object.")
     messages = (
         _priority_messages(context["communications"], analysis_input)
         if "communications" in context else None
@@ -119,9 +119,9 @@ def _compute_priority(
     fit = _fit_points(context.get("customer"), context.get("deal"), context.get("seller"))
     missing = []
     if deal is None:
-        missing.append("活跃商机金额及同币种销售均值")
+        missing.append("Active deal amount and same-currency seller average")
     if fit is None:
-        missing.append("完整客户匹配资料")
+        missing.append("Complete customer-fit data")
     if deal is not None and fit is not None:
         opportunity_value = _round(Decimal(deal) * Decimal("0.60") + Decimal(fit) * Decimal("0.40"))
     elif deal is not None:
@@ -139,25 +139,25 @@ def _compute_priority(
     for name in sorted(raw, key=lambda key: (-(raw[key] - contributions[key]), key))[:remainder]:
         contributions[name] += 1
     urgency_note = (
-        f"{urgency_source['type']}：{urgency_source['evidence']} [{urgency_source['source_id']}]"
-        if urgency_source else "无明确紧急时间，按基础档位 10 分"
+        f"{urgency_source['type']}: {urgency_source['evidence']} [{urgency_source['source_id']}]"
+        if urgency_source else "No explicit urgent date; use the 10-point baseline"
     )
     result["score"] = score
-    provisional_note = f"暂定分；缺少{'、'.join(missing)}；按已有维度折算。" if missing else ""
+    provisional_note = f"Provisional score; missing {', '.join(missing)}; rescaled from available dimensions." if missing else ""
     if missing:
         logger.info("l4_score_provisional company_id=%s missing=%s", result["company_id"], ",".join(missing))
     if deal is not None and fit is not None:
-        opportunity_note = f"公司级商机价值 {opportunity_value}/100；金额档位 {deal}/100，客户匹配 {fit}/100"
+        opportunity_note = f"Company-level opportunity value {opportunity_value}/100; amount tier {deal}/100; customer fit {fit}/100"
     elif deal is not None:
-        opportunity_note = f"暂用金额档位 {deal}/100。{provisional_note}"
+        opportunity_note = f"Using the amount tier temporarily: {deal}/100. {provisional_note}"
     elif fit is not None:
-        opportunity_note = f"暂用客户匹配 {fit}/100。{provisional_note}"
+        opportunity_note = f"Using customer fit temporarily: {fit}/100. {provisional_note}"
     else:
         opportunity_note = provisional_note
     result["score_reasons"] = [
         {"feature": "urgency", "contribution": contributions["urgency"], "note": urgency_note},
         {"feature": "buying_intent", "contribution": contributions["buying_intent"],
-         "note": f"{intent_source['type']}：{intent_source['evidence']} [{intent_source['source_id']}]"},
+         "note": f"{intent_source['type']}: {intent_source['evidence']} [{intent_source['source_id']}]"},
         {"feature": "opportunity_value", "contribution": contributions.get("opportunity_value", 0),
          "note": opportunity_note},
     ]
@@ -200,14 +200,14 @@ def _priority_details(
     if urgency_signal is not None:
         reasons.append({
             "type": urgency_signal["type"],
-            "title": "存在需要优先处理的时间节点",
+            "title": "A time-sensitive milestone needs attention",
             "evidence": urgency_signal["evidence"],
             "source_id": urgency_signal["source_id"],
             "impact_score": contributions["urgency"],
         })
     reasons.append({
         "type": "BUYING_INTENT",
-        "title": "客户采购阶段已有明确证据",
+        "title": "The customer's purchase stage has explicit evidence",
         "evidence": intent_signal["evidence"],
         "source_id": intent_signal["source_id"],
         "impact_score": contributions["buying_intent"],
@@ -217,8 +217,8 @@ def _priority_details(
     ratio = (amount / average).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
     reasons.append({
         "type": "DEAL_VALUE",
-        "title": "公司级商机价值",
-        "evidence": f"商机金额为本公司同币种平均成交额的 {ratio} 倍；客户匹配 {fit}/100。",
+        "title": "Company-level opportunity value",
+        "evidence": f"Deal value is {ratio} times the same-currency seller average; customer fit {fit}/100.",
         "source_id": None,
         "impact_score": contributions["opportunity_value"],
     })
@@ -243,16 +243,16 @@ def _priority_details(
 
 def _next_action(urgency_signal: Mapping[str, Any] | None, intent_signal: Mapping[str, Any]) -> str:
     if urgency_signal and urgency_signal["type"] == "OVERDUE_ACTION":
-        return "核对逾期事项并尽快联系客户；对外动作由员工确认。"
+        return "Review overdue items and contact the customer promptly; an employee must approve external actions."
     if intent_signal["type"] == "FORMAL_QUOTATION_REQUEST":
-        return "核对金额、产品和截止时间，准备正式报价供员工确认。"
+        return "Verify amount, product, and deadline; prepare a formal quote for employee approval."
     if urgency_signal and urgency_signal["type"] == "UPCOMING_MEETING":
-        return "核对会议时间与参会人员，准备讨论材料。"
+        return "Confirm meeting time and attendees; prepare discussion materials."
     if urgency_signal:
-        return "先核对时间节点，再安排员工跟进。"
+        return "Verify the deadline, then arrange employee follow-up."
     if intent_signal["type"] in {"CONTRACT_DISCUSSION", "PAYMENT_DISCUSSION"}:
-        return "核对商务条款并安排员工跟进。"
-    return "确认客户下一步需求并安排跟进。"
+        return "Review commercial terms and arrange employee follow-up."
+    return "Confirm the customer's next need and arrange follow-up."
 
 
 def rank_company_scores(scores: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -269,20 +269,20 @@ def rank_company_scores(scores: list[Mapping[str, Any]]) -> list[dict[str, Any]]
 
 def _priority_messages(raw: object, analysis_input: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     if not isinstance(raw, list):
-        raise ValueError("L4 communications 必须是数组。")
+        raise ValueError("L4 communications must be an array.")
     allowed = analysis_input.get("member_dedupe_keys")
     allowed_refs = set(allowed) if isinstance(allowed, list) else set()
     messages = {}
     for item in raw:
         if not isinstance(item, Mapping):
-            raise ValueError("L4 邮件通信必须是对象。")
+            raise ValueError("L4 email communication must be an object.")
         source_id = item.get("message_id")
         if not isinstance(source_id, str) or source_id not in allowed_refs or source_id in messages:
-            raise ValueError("L4 邮件通信来源不在当前公司或重复。")
+            raise ValueError("L4 email communication source is outside this company or duplicated.")
         if not isinstance(item.get("content"), str) or not item["content"].strip():
-            raise ValueError("L4 邮件通信缺少正文。")
+            raise ValueError("L4 email communication is missing its body.")
         if item.get("sender") not in ("customer", "employee"):
-            raise ValueError("L4 邮件通信 sender 无效。")
+            raise ValueError("Invalid L4 email communication sender.")
         messages[source_id] = item
     return messages
 
@@ -295,9 +295,9 @@ def _priority_signals(
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise ValueError("L4 signals 必须是数组。")
+        raise ValueError("L4 signals must be an array.")
     if len(raw) > 30:
-        raise ValueError("L4 信号最多 30 项。")
+        raise ValueError("L4 signals are limited to 30 items.")
     allowed = analysis_input.get("member_dedupe_keys")
     allowed_refs = set(allowed) if isinstance(allowed, list) else set()
     supported = TIME_SIGNALS | {"CUSTOMER_WAITING"} | INTENT_POINTS.keys()
@@ -305,35 +305,35 @@ def _priority_signals(
     seen = set()
     for item in raw:
         if not isinstance(item, Mapping):
-            raise ValueError("评分信号必须是对象。")
+            raise ValueError("Scoring signal must be an object.")
         kind, source_id, evidence = item.get("type"), item.get("source_id"), item.get("evidence")
         if not isinstance(kind, str) or kind not in supported:
-            raise ValueError("评分信号类型无效。")
+            raise ValueError("Invalid scoring signal type.")
         if not isinstance(source_id, str) or source_id not in allowed_refs:
-            raise ValueError("评分信号必须引用本公司邮件。")
+            raise ValueError("Scoring signal must cite an email from this company.")
         if not isinstance(evidence, str) or not evidence.strip():
-            raise ValueError("评分信号缺少原文证据。")
+            raise ValueError("Scoring signal is missing verbatim evidence.")
         if messages is not None:
             message = messages.get(source_id)
             if message is None or re.sub(r"\s+", "", evidence) not in re.sub(r"\s+", "", message["content"]):
-                raise ValueError("L4 信号证据不在来源邮件中。")
+                raise ValueError("L4 signal evidence is absent from the source email.")
             if kind in INTENT_POINTS or kind in {"DEADLINE", "CUSTOMER_WAITING"}:
                 if message["sender"] != "customer":
-                    raise ValueError("客户意向和催促信号必须来自客户邮件。")
+                    raise ValueError("Customer intent and urgency signals must come from customer emails.")
         confidence = item.get("confidence")
         if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
-            raise ValueError("评分信号置信度必须在 0–1。")
+            raise ValueError("Scoring signal confidence must be between 0 and 1.")
         value = item.get("value")
         if kind in TIME_SIGNALS and _timestamp(value) is None and _calendar_date(value) is None:
-            raise ValueError("时间信号必须是日期或带时区的时间。")
+            raise ValueError("Time signal must be a date or timezone-aware time.")
         if kind == "QUANTITY_CONFIRMED" and (type(value) is not int or value <= 0):
-            raise ValueError("数量信号必须是正整数。")
+            raise ValueError("Quantity signal must be a positive integer.")
         if kind == "BUDGET_CONFIRMED":
             if not isinstance(value, Mapping) or _money(value.get("amount")) is None or _currency(value.get("currency")) is None:
-                raise ValueError("预算信号必须包含金额和三位币种。")
+                raise ValueError("Budget signal must include an amount and three-letter currency.")
         if kind not in TIME_SIGNALS | {"QUANTITY_CONFIRMED", "BUDGET_CONFIRMED"}:
             if value is not None and not isinstance(value, str):
-                raise ValueError("L4 信号值类型无效。")
+                raise ValueError("Invalid L4 signal value type.")
         key = (kind, source_id, evidence)
         if key not in seen:
             signals.append(dict(item))
@@ -348,11 +348,11 @@ def _urgency_points(
     if isinstance(seller, Mapping) and seller.get("time_zone") is not None:
         zone = seller["time_zone"]
         if not isinstance(zone, str) or not zone.strip():
-            raise ValueError("seller.time_zone 必须是 IANA 时区。")
+            raise ValueError("seller.time_zone must be an IANA time zone.")
         try:
             current = now.astimezone(ZoneInfo(zone))
         except ZoneInfoNotFoundError:
-            raise ValueError("seller.time_zone 不是有效的 IANA 时区。") from None
+            raise ValueError("seller.time_zone is not a valid IANA time zone.") from None
     timed = [
         (points, item) for item in signals if item["type"] in TIME_SIGNALS
         if (points := _time_urgency(item, current)) is not None
@@ -478,7 +478,7 @@ def _document(value: object) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
     if not isinstance(value, Mapping):
-        raise ValueError("输入必须是对象。")
+        raise ValueError("Input must be an object.")
     return dict(value)
 
 

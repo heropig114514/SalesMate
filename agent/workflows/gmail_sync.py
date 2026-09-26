@@ -77,11 +77,11 @@ def sync_gmail(
     mailbox_address = authorization.get("mailbox_address")
     max_results = authorization.get("max_results", 20)
     if not isinstance(mailbox_id, str) or not mailbox_id.strip():
-        return _failed("", "invalid_authorization", "mailbox_id 不能为空。")
+        return _failed("", "invalid_authorization", "mailbox_id must not be empty.")
     if not isinstance(access_token, str) or not access_token.strip():
-        return _failed(mailbox_id, "gmail_authorization_required", "需要 Gmail 授权。")
+        return _failed(mailbox_id, "gmail_authorization_required", "Gmail authorization is required.")
     if type(max_results) is not int or not 1 <= max_results <= 20:
-        return _failed(mailbox_id, "invalid_authorization", "max_results 必须在 1 到 20 之间。")
+        return _failed(mailbox_id, "invalid_authorization", "max_results must be between 1 and 20.")
 
     started = perf_counter()
     logger.info(
@@ -109,7 +109,7 @@ def sync_gmail(
         sync_state = _get_sync_state(backend, mailbox_id)
         if message_ids is not None:
             if len(message_ids) > gmail_message_limit(authorization.get("sync_options") or {}):
-                raise ValueError("重试邮件数超过本批允许的封数，请先批准相应的同步范围。")
+                raise ValueError("The retry count exceeds this batch's approved message limit. Approve the corresponding sync scope first.")
             emails = read_messages(service, message_ids, progress=observer)
             next_cursor = (sync_state or {}).get("cursor")
             pending_message_ids = (sync_state or {}).get("scope", {}).get("pending_message_ids", [])
@@ -136,7 +136,7 @@ def sync_gmail(
         return _failed(
             mailbox_id,
             "gmail_authorization_required",
-            f"Gmail 读取失败：{type(error).__name__}: {error}",
+            f"Gmail read failed: {type(error).__name__}: {error}",
         )
 
     logger.info(
@@ -168,7 +168,7 @@ def sync_gmail(
         return _failed(
             mailbox_id,
             "backend_email_lookup_failed",
-            f"已保存邮件查询失败：{type(error).__name__}: {error}",
+            f"Saved email query failed: {type(error).__name__}: {error}",
             fetched_count=len(emails),
         )
 
@@ -517,7 +517,7 @@ def _email_result_error(
         "gmail_message_id": message_id,
         "stage": stage,
         "code": code,
-        "message": str(message or "单封邮件处理失败。"),
+        "message": str(message or "Single-message processing failed."),
     }
 
 
@@ -531,7 +531,7 @@ def _can_reuse_stored_extraction(stored: object) -> bool:
     if stored is None:
         return False
     if not isinstance(stored, Mapping):
-        raise TypeError("已保存邮件必须是对象。")
+        raise TypeError("Saved email must be an object.")
     return (
         stored.get("extract_prompt_version") == EXTRACT_PROMPT_VERSION
         and stored.get("extract_status") in {"completed", "skipped_non_business"}
@@ -567,7 +567,7 @@ def _get_sync_state(
         return None
     state = reader(mailbox_id)
     if not isinstance(state, Mapping) or type(state.get("version")) is not int:
-        raise ValueError("同步游标响应缺少有效版本。")
+        raise ValueError("Sync cursor response is missing a valid version.")
     return dict(state)
 
 

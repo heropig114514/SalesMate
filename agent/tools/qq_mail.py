@@ -47,21 +47,21 @@ class QQMailError(RuntimeError):
 # 约束：不接受账号密码，不输出底层认证响应，不进行自动重试。
 def connect(address, authorization_code):
     if not re.fullmatch(r"[^\s@]+@(qq|foxmail)\.com", address, re.IGNORECASE):
-        raise QQMailError("请输入完整的 @qq.com 或 @foxmail.com 邮箱地址。")
+        raise QQMailError("Enter a complete @qq.com or @foxmail.com email address.")
     if not re.fullmatch(r"[A-Za-z]{16}", authorization_code):
-        raise QQMailError("请输入 QQ 邮箱生成的 16 位授权码，而非账号密码。")
+        raise QQMailError("Enter the 16-character QQ Mail authorization code, not the account password.")
     client = None
     try:
         client = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, ssl_context=ssl.create_default_context(), timeout=TIMEOUT)
         status, _ = client.login(address, authorization_code)
         if status != "OK":
-            raise QQMailError("QQ 邮箱登录失败，请检查 IMAP 服务和授权码。")
+            raise QQMailError("QQ Mail login failed. Check IMAP and the authorization code.")
         return client
     except (OSError, imaplib.IMAP4.error, QQMailError) as error:
         logger.warning("qq_connect_failed error_type=%s action=check_imap_network_and_authorization", type(error).__name__)
         if client is not None:
             disconnect(client)
-        raise QQMailError("无法连接 QQ 邮箱，请检查 IMAP 已开启、授权码有效及服务器可访问 imap.qq.com:993。") from None
+        raise QQMailError("Cannot connect to QQ Mail. Check that IMAP is enabled, the authorization code is valid, and imap.qq.com:993 is reachable.") from None
 
 
 # 功能：释放只读 IMAP 连接。
@@ -88,14 +88,14 @@ def disconnect(client):
 def folders(client):
     status, rows = client.list()
     if status != "OK":
-        raise QQMailError("QQ 文件夹列表读取失败。")
+        raise QQMailError("Failed to read QQ Mail folders.")
     marked, named = [], []
     for row in rows or []:
         if not isinstance(row, bytes):
-            raise QQMailError("QQ 文件夹列表格式不受支持。")
+            raise QQMailError("Unsupported QQ Mail folder-list format.")
         match = re.fullmatch(rb'\(([^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (.+)', row)
         if not match:
-            raise QQMailError("QQ 文件夹列表格式不受支持。")
+            raise QQMailError("Unsupported QQ Mail folder-list format.")
         flags, name = match.groups()
         if b"\\noselect" in flags.lower().split():
             continue
@@ -108,7 +108,7 @@ def folders(client):
             named.append(name)
     candidates = marked if marked else named
     if len(set(candidates)) != 1:
-        raise QQMailError("无法唯一识别 QQ 已发送文件夹，请检查邮箱的 IMAP 文件夹设置。")
+        raise QQMailError("Cannot uniquely identify the QQ Mail Sent folder. Check IMAP folder settings.")
     return ["INBOX", candidates[0]]
 
 
@@ -122,7 +122,7 @@ def select_folder(client, folder):
     status, _ = client.select(quoted, readonly=True)
     _, values = client.response("UIDVALIDITY")
     if status != "OK" or not values or not isinstance(values[0], bytes) or not values[0].isdigit() or int(values[0]) <= 0:
-        raise QQMailError("QQ 文件夹无法只读打开或缺少 UIDVALIDITY。")
+        raise QQMailError("QQ Mail folder cannot be opened read-only or lacks UIDVALIDITY.")
     return int(values[0])
 
 
@@ -135,7 +135,7 @@ def message_id(folder, validity, uid):
     encoded = base64.urlsafe_b64encode(folder.encode("ascii")).decode("ascii").rstrip("=")
     value = f"qq:{encoded}:{validity}:{uid}"
     if len(value) > 200:
-        raise QQMailError("QQ 文件夹名称超出现有消息标识长度限制。")
+        raise QQMailError("QQ Mail folder name exceeds the message ID length limit.")
     return value
 
 
@@ -147,14 +147,14 @@ def message_id(folder, validity, uid):
 def split_message_id(value):
     match = re.fullmatch(r"qq:([A-Za-z0-9_-]+):([1-9][0-9]*):([1-9][0-9]*)", value)
     if not match:
-        raise QQMailError("QQ 消息标识无效。")
+        raise QQMailError("Invalid QQ Mail message ID.")
     encoded, validity, uid = match.groups()
     try:
         folder = base64.b64decode(encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True).decode("ascii")
     except (ValueError, UnicodeError):
-        raise QQMailError("QQ 消息标识编码无效。") from None
+        raise QQMailError("Invalid QQ Mail message ID encoding.") from None
     if any(ord(char) < 32 for char in folder) or message_id(folder, int(validity), int(uid)) != value:
-        raise QQMailError("QQ 消息标识编码无效。")
+        raise QQMailError("Invalid QQ Mail message ID encoding.")
     return folder, int(validity), int(uid)
 
 
@@ -171,10 +171,10 @@ def list_uids(client, after, since=None):
         criteria.extend(["SINCE", f"{day.day:02d}-{month}-{day.year:04d}"])
     status, rows = client.uid("search", None, *criteria)
     if status != "OK" or not rows or not isinstance(rows[0], bytes):
-        raise QQMailError("QQ 邮件 UID 列表读取失败。")
+        raise QQMailError("Failed to read QQ Mail UID list.")
     items = rows[0].split()
     if any(not item.isdigit() or int(item) <= 0 for item in items):
-        raise QQMailError("QQ 邮件 UID 列表格式无效。")
+        raise QQMailError("Invalid QQ Mail UID-list format.")
     return sorted({int(item) for item in items if int(item) > after})
 
 
@@ -187,24 +187,24 @@ def message_dates(client, uids):
     if not uids:
         return {}
     if any(type(uid) is not int or uid <= 0 for uid in uids):
-        raise QQMailError("QQ 日期查询 UID 无效。")
+        raise QQMailError("Invalid QQ Mail date-query UID.")
     status, rows = client.uid("fetch", ",".join(map(str, uids)), "(UID INTERNALDATE)")
     dates = {}
     if status != "OK":
-        raise QQMailError("QQ 邮件日期查询失败。")
+        raise QQMailError("QQ Mail date query failed.")
     for row in rows or []:
         if not isinstance(row, bytes):
-            raise QQMailError("QQ 邮件日期响应格式无效。")
+            raise QQMailError("Invalid QQ Mail date response.")
         uid_match = re.search(rb"\bUID (\d+)\b", row)
         date_match = re.search(rb'INTERNALDATE "([^"]+)"', row)
         if not uid_match or not date_match or int(uid_match[1]) in dates:
-            raise QQMailError("QQ 邮件日期响应缺少唯一 UID 或日期。")
+            raise QQMailError("QQ Mail date response is missing a unique UID or date.")
         try:
             dates[int(uid_match[1])] = datetime.strptime(date_match[1].decode("ascii"), "%d-%b-%Y %H:%M:%S %z").astimezone(timezone.utc)
         except (ValueError, UnicodeError):
-            raise QQMailError("QQ 邮件内部日期无效。") from None
+            raise QQMailError("Invalid QQ Mail internal date.") from None
     if set(dates) != set(uids):
-        raise QQMailError("QQ 日期查询结果不完整，邮件可能已被移动或删除。")
+        raise QQMailError("QQ Mail date-query result is incomplete; the message may have moved or been deleted.")
     return dates
 
 
@@ -216,18 +216,18 @@ def message_dates(client, uids):
 def read_email(client, value):
     folder, validity, uid = split_message_id(value)
     if select_folder(client, folder) != validity:
-        raise QQMailError("QQ 文件夹 UIDVALIDITY 已变化，请检查同步状态后再处理。")
+        raise QQMailError("QQ Mail folder UIDVALIDITY changed; check sync state before continuing.")
     status, rows = client.uid("fetch", str(uid), "(UID INTERNALDATE BODY.PEEK[])")
     parts = [item for item in rows or [] if isinstance(item, tuple)]
     if status != "OK" or len(parts) != 1:
-        raise QQMailError("QQ 邮件读取失败，邮件可能已被移动或删除。")
+        raise QQMailError("Failed to read QQ Mail message; it may have moved or been deleted.")
     meta, raw = parts[0]
     uid_match = re.search(rb"\bUID (\d+)\b", meta)
     date_match = re.search(rb'INTERNALDATE "([^"]+)"', meta)
     if not uid_match or int(uid_match[1]) != uid or not date_match or not isinstance(raw, bytes):
-        raise QQMailError("QQ 邮件读取响应缺少 UID 或接收时间。")
+        raise QQMailError("QQ Mail message response is missing UID or received time.")
     try:
         received = datetime.strptime(date_match[1].decode("ascii"), "%d-%b-%Y %H:%M:%S %z").astimezone(timezone.utc).isoformat()
     except (ValueError, UnicodeError):
-        raise QQMailError("QQ 邮件接收时间无效。") from None
+        raise QQMailError("Invalid QQ Mail received time.") from None
     return parse_raw_email(base64.urlsafe_b64encode(raw).decode("ascii"), message_id=value, thread_id=None, received_at=received)

@@ -178,7 +178,7 @@ def process_jobs_once(
                 "failed",
                 None,
                 {"analysis": False, "score": False, "emails_submitted": 0},
-                {"code": "invalid_job", "message": "任务结构或触发类型无效。"},
+                {"code": "invalid_job", "message": "Invalid job structure or trigger type."},
                 started,
             )
         elif company_id in processed_companies:

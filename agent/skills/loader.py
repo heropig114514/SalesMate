@@ -31,30 +31,30 @@ class AgentSkill:
 def load_skill(name: str) -> AgentSkill:
     """按稳定名称读取一个项目 Skill；结果在当前进程内缓存。"""
     if not isinstance(name, str) or _SKILL_NAME.fullmatch(name) is None:
-        raise SkillLoadError("Skill 名称只能包含小写字母、数字和连字符。")
+        raise SkillLoadError("Skill names may contain only lowercase letters, digits, and hyphens.")
 
     path = SKILLS_DIR / name / "SKILL.md"
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
-        raise SkillLoadError(f"无法读取 Skill：{name}。") from error
+        raise SkillLoadError(f"Cannot read Skill: {name}.") from error
 
     frontmatter, instructions = _split_document(text, name)
     metadata = _parse_frontmatter(frontmatter, name)
     if metadata.get("name") != name:
-        raise SkillLoadError(f"Skill 目录名与元数据 name 不一致：{name}。")
+        raise SkillLoadError(f"Skill directory does not match metadata name: {name}.")
 
     description = metadata.get("description", "").strip()
     version = metadata.get("metadata.version", "").strip()
     token_text = metadata.get("metadata.max-tokens", "").strip()
     if not description or not version or not instructions:
-        raise SkillLoadError(f"Skill 缺少 description、version 或指令正文：{name}。")
+        raise SkillLoadError(f"Skill is missing description, version, or instructions: {name}.")
     try:
         max_tokens = int(token_text)
     except ValueError:
-        raise SkillLoadError(f"Skill 的 max-tokens 必须是正整数：{name}。") from None
+        raise SkillLoadError(f"Skill max-tokens must be a positive integer: {name}.") from None
     if max_tokens <= 0:
-        raise SkillLoadError(f"Skill 的 max-tokens 必须是正整数：{name}。")
+        raise SkillLoadError(f"Skill max-tokens must be a positive integer: {name}.")
 
     return AgentSkill(
         name=name,
@@ -78,11 +78,11 @@ def list_skills() -> list[AgentSkill]:
 def _split_document(text: str, name: str) -> tuple[list[str], str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        raise SkillLoadError(f"Skill 缺少 YAML frontmatter：{name}。")
+        raise SkillLoadError(f"Skill is missing YAML frontmatter: {name}.")
     try:
         end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
     except StopIteration:
-        raise SkillLoadError(f"Skill 的 YAML frontmatter 未结束：{name}。") from None
+        raise SkillLoadError(f"Skill YAML frontmatter is not terminated: {name}.") from None
     return lines[1:end], "\n".join(lines[end + 1 :]).strip()
 
 
@@ -101,7 +101,7 @@ def _parse_frontmatter(lines: list[str], name: str) -> dict[str, str]:
             result[f"metadata.{key}"] = _unquote(value)
             continue
         if raw_line[:1].isspace():
-            raise SkillLoadError(f"Skill 含不支持的 frontmatter 缩进：{name}。")
+            raise SkillLoadError(f"Skill frontmatter has unsupported indentation: {name}.")
         section = None
         key, value = _frontmatter_pair(raw_line, name)
         result[key] = _unquote(value)
@@ -110,10 +110,10 @@ def _parse_frontmatter(lines: list[str], name: str) -> dict[str, str]:
 
 def _frontmatter_pair(line: str, name: str) -> tuple[str, str]:
     if ":" not in line:
-        raise SkillLoadError(f"Skill 含无效 frontmatter：{name}。")
+        raise SkillLoadError(f"Skill frontmatter is invalid: {name}.")
     key, value = line.split(":", 1)
     if not key.strip() or not value.strip():
-        raise SkillLoadError(f"Skill 含空 frontmatter 值：{name}。")
+        raise SkillLoadError(f"Skill frontmatter contains an empty value: {name}.")
     return key.strip(), value.strip()
 
 

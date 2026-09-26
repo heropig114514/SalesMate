@@ -98,6 +98,8 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual((result["news"], result["events"], result["item_errors"]), (1, 1, 0))
         self.assertEqual([row[0] for row in tools.writes], ["world_events.create", "world_news.create"])
         self.assertEqual(tools.writes[1][1]["data"]["country"], "US")
+        self.assertEqual(tools.writes[1][1]["data"]["summary"], "美国半导体设备公司推出新检测技术。")
+        self.assertEqual(tools.writes[1][1]["data"]["content"], "该技术面向晶圆检测；来源片段未提供商业化时间。")
         self.assertEqual(tools.writes[1][1]["data"]["company_name"], "")
         self.assertIsNone(tools.writes[1][1]["data"]["amount"])
         self.assertEqual(tools.writes[0][1]["data"]["city"], "Singapore")
@@ -204,7 +206,7 @@ class WorldInsightsTests(unittest.TestCase):
         payload = build_event(candidate, [event], lambda *_: (22.54, 114.05), NOW)
         self.assertIsNotNone(payload)
         self.assertEqual(payload["country"], "CN")
-        self.assertIn("来源仅提供日期", payload["description"])
+        self.assertIn("The source provides a date only", payload["description"])
         self.assertEqual(payload["starts_at"], "2026-10-27T12:00:00+00:00")
 
     def test_one_source_failure_does_not_fail_another_empty_source(self):

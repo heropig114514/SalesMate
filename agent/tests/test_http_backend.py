@@ -303,7 +303,7 @@ class DjangoBackendClientTests(unittest.TestCase):
         cache_session = _Session(
             _Response({"hit": True, "status": "completed", "input_version": "v1"})
         )
-        with self.assertRaisesRegex(BackendContractError, "完整 Analysis"):
+        with self.assertRaisesRegex(BackendContractError, "full Analysis"):
             self.client(cache_session, mailbox_id=None).get_cached_analysis(
                 "company-1", "v1"
             )

@@ -21,41 +21,41 @@ from agent.workflows.orchestration import process_jobs_once
 def main(argv: list[str] | None = None) -> int:
     """执行一次公司分析、任务处理、聊天回答或员工授权邮箱同步。"""
     raw_argv = sys.argv[1:] if argv is None else argv
-    parser = argparse.ArgumentParser(description="SalesMate 一次性 Agent 命令")
+    parser = argparse.ArgumentParser(description="SalesMate one-shot Agent commands")
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument(
         "--analysis-company-id",
         metavar="COMPANY_ID",
-        help="为指定公司构建 L2 AnalysisInput",
+        help="Build L2 AnalysisInput for a company",
     )
     selection.add_argument(
         "--process-jobs-once",
         action="store_true",
-        help="从 Django 后端领取一批任务并运行一次 L2-L4",
+        help="Claim a batch from Django and run L2-L4 once",
     )
     selection.add_argument(
         "--process-chat-once",
         action="store_true",
-        help="从 Django 后端领取并回答一条聊天请求，然后立即退出",
+        help="Claim and answer one chat request from Django, then exit",
     )
     selection.add_argument(
         "--sync-authorized-mailboxes-once",
         action="store_true",
-        help="处理员工在网页中请求的 Gmail 同步，然后立即退出",
+        help="Process one employee-requested Gmail sync, then exit",
     )
     parser.add_argument(
         "--merge-version",
         default="merge-v2",
-        help="L2 归并规则版本（默认：merge-v2）",
+        help="L2 merge rule version (default: merge-v2)",
     )
-    parser.add_argument("--job-limit", type=int, default=10, help="一次领取任务数（默认：10）")
+    parser.add_argument("--job-limit", type=int, default=10, help="Number of jobs to claim (default: 10)")
     args = parser.parse_args(raw_argv)
 
     is_l2 = args.analysis_company_id is not None
     if not is_l2 and "--merge-version" in raw_argv:
-        parser.error("--merge-version 必须与 --analysis-company-id 一起使用")
+        parser.error("--merge-version requires --analysis-company-id")
     if args.job_limit <= 0:
-        parser.error("--job-limit 必须大于 0")
+        parser.error("--job-limit must be greater than 0")
 
     if is_l2:
         return _run_l2(
@@ -78,7 +78,7 @@ def _run_chat_once() -> int:
     except Exception:
         return _print_safe_error(
             "chat_processing_failed",
-            "聊天请求处理失败，请检查 Agent 配置或稍后重试。",
+            "Chat request processing failed. Check the Agent configuration or retry later.",
             1,
         )
     _print_json(result)
@@ -104,7 +104,7 @@ def _run_l2(
     except Exception as error:
         return _print_safe_error(
             "configuration_failed",
-            f"真实后端配置无效：{type(error).__name__}: {error}",
+            f"Live backend configuration is invalid: {type(error).__name__}: {error}",
             1,
         )
 
@@ -131,7 +131,7 @@ def _run_jobs_once(limit: int) -> int:
     except Exception as error:
         return _print_safe_error(
             "job_processing_failed",
-            f"任务处理失败：{type(error).__name__}: {error}",
+            f"Job processing failed: {type(error).__name__}: {error}",
             1,
         )
     _print_json(reports)
@@ -150,7 +150,7 @@ def _run_authorized_sync(limit: int) -> int:
     except Exception as error:
         return _print_safe_error(
             "authorized_gmail_sync_failed",
-            f"员工 Gmail 同步失败：{type(error).__name__}: {error}",
+            f"Employee Gmail sync failed: {type(error).__name__}: {error}",
             1,
         )
     _print_json(reports)

@@ -55,7 +55,7 @@ class NewsSourceTests(unittest.TestCase):
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))])
     @patch("agent.world_insights.requests.get")
     def test_known_migration_does_not_skip_public_address_validation(self, get, dns):
-        with self.assertRaisesRegex(world.InsightError, "非公网"):
+        with self.assertRaisesRegex(world.InsightError, "non-public"):
             world.fetch_page(OLD)
         get.assert_not_called()
 

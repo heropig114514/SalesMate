@@ -99,7 +99,7 @@ class CompanyPriorityTests(unittest.TestCase):
         self.assertEqual(len(details["top_reasons"]), 3)
         self.assertEqual(details["top_reasons"][0]["type"], "DEADLINE")
         self.assertEqual(details["evidence"][0]["source_id"], "sales@example.com:mail-1")
-        self.assertIn("正式报价", details["recommended_next_action"])
+        self.assertIn("formal quote", details["recommended_next_action"])
 
     def test_urgency_buckets(self):
         for hours, expected in [(4, 100), (5, 90), (24, 90), (25, 80),
@@ -116,7 +116,7 @@ class CompanyPriorityTests(unittest.TestCase):
         data = context()
         data["signals"] = data["signals"][1:]
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
-                         "无明确紧急时间，按基础档位 10 分")
+                         "No explicit urgent date; use the 10-point baseline")
 
     def test_missing_business_data_gives_provisional_score_but_missing_intent_is_null(self):
         for field in ("average_deal_currency", "products", "similar_won_deals"):
@@ -125,7 +125,7 @@ class CompanyPriorityTests(unittest.TestCase):
                 del data["seller"][field]
                 result = scored(data)
                 self.assertIsInstance(result["score"], int)
-                self.assertIn("暂定分", result["score_reasons"][2]["note"])
+                self.assertIn("Provisional score", result["score_reasons"][2]["note"])
         data = context()
         data["signals"] = data["signals"][:1]
         self.assertIsNone(scored(data)["score"])
@@ -168,13 +168,13 @@ class CompanyPriorityTests(unittest.TestCase):
         data["signals"][0]["value"] = None
         self.assertEqual(scored(data)["score"], 60)
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
-                         "无明确紧急时间，按基础档位 10 分")
+                         "No explicit urgent date; use the 10-point baseline")
 
     def test_historical_deadline_does_not_stay_urgent_forever(self):
         data = context()
         data["signals"][0]["value"] = (NOW - timedelta(days=30)).isoformat()
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
-                         "无明确紧急时间，按基础档位 10 分")
+                         "No explicit urgent date; use the 10-point baseline")
         data["signals"][0]["type"] = "OVERDUE_ACTION"
         self.assertGreater(scored(data)["score"], 90)
 
@@ -186,7 +186,7 @@ class CompanyPriorityTests(unittest.TestCase):
         self.assertEqual(scored(data)["score"], 84)  # 明天按 80。
         data["signals"][0]["value"] = "2026-09-01"
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
-                         "无明确紧急时间，按基础档位 10 分")
+                         "No explicit urgent date; use the 10-point baseline")
 
     def test_date_only_deadline_uses_seller_time_zone(self):
         data = context()
@@ -205,7 +205,7 @@ class CompanyPriorityTests(unittest.TestCase):
     def test_signal_source_must_belong_to_company(self):
         data = context()
         data["signals"][0]["source_id"] = "another-company:mail-1"
-        with self.assertRaisesRegex(ValueError, "本公司邮件"):
+        with self.assertRaisesRegex(ValueError, "email from this company"):
             scored(data)
 
     def test_l4_uses_structured_l1_stage_without_model(self):
@@ -222,7 +222,7 @@ class CompanyPriorityTests(unittest.TestCase):
         )
         self.assertEqual(result["score"], 88)
         data["signals"][1]["evidence"] = "已经签署合同"
-        with self.assertRaisesRegex(ValueError, "证据"):
+        with self.assertRaisesRegex(ValueError, "evidence"):
             compute_score({"status": "completed"}, analysis_input(), clock=lambda: NOW,
                           priority_context=data)
 
@@ -238,7 +238,7 @@ class CompanyPriorityTests(unittest.TestCase):
             priority_context=data,
         )
         self.assertIsInstance(result["score"], int)
-        self.assertIn("暂定分", result["score_reasons"][2]["note"])
+        self.assertIn("Provisional score", result["score_reasons"][2]["note"])
 
     def test_ranking_is_company_level_and_null_last(self):
         high = scored()

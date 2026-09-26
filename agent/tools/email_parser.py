@@ -58,12 +58,12 @@ def _decode_raw_message(raw: str) -> Message:
         encoded += b"=" * (-len(encoded) % 4)
         data = base64.b64decode(encoded, altchars=b"-_", validate=True)
     except (AttributeError, UnicodeEncodeError, ValueError, binascii.Error):
-        raise RuntimeError("邮件内容解码失败。") from None
+        raise RuntimeError("Email content decoding failed.") from None
 
     try:
         return BytesParser(policy=policy.default).parsebytes(data)
     except Exception:
-        raise RuntimeError("邮件格式解析失败。") from None
+        raise RuntimeError("Email format parsing failed.") from None
 
 
 def _header_text(message: Message, name: str) -> str:

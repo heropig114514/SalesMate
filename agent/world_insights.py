@@ -233,7 +233,7 @@ def _read_limited(response: requests.Response, limit: int) -> bytes:
     for chunk in response.iter_content(65536):
         size += len(chunk)
         if size > limit:
-            raise InsightError("外部响应超过大小上限。")
+            raise InsightError("External response exceeds the size limit.")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -247,7 +247,7 @@ def _json_get(url: str, *, params: Mapping[str, Any], headers: Mapping[str, str]
                 raise InsightError("External search redirected unexpectedly.")
             return json.loads(_read_limited(response, 2_000_000))
     except (requests.RequestException, ValueError) as error:
-        raise InsightError(f"外部检索请求失败：{type(error).__name__}") from None
+        raise InsightError(f"External search request failed: {type(error).__name__}") from None
 
 
 def search_gdelt(query: str, industry: str, kind: str, *, limit: int = 12) -> list[Candidate]:
@@ -257,7 +257,7 @@ def search_gdelt(query: str, industry: str, kind: str, *, limit: int = 12) -> li
                        headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     articles = result.get("articles") if isinstance(result, dict) else None
     if not isinstance(articles, list):
-        raise InsightError("GDELT 未返回文章数组。")
+        raise InsightError("GDELT did not return an article array.")
     output = []
     for row in articles[:limit]:
         if not isinstance(row, dict):
@@ -272,7 +272,7 @@ def search_gdelt(query: str, industry: str, kind: str, *, limit: int = 12) -> li
 def read_feed(url: str, industry: str, kind: str, *, limit: int = 15) -> list[Candidate]:
     """Read an explicitly configured RSS/Atom source; do not scrape feed links as instructions."""
     if source_url(url) != url:
-        raise InsightError("订阅源 URL 无效。")
+        raise InsightError("Invalid feed URL.")
     try:
         with requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=(5, 15),
                           allow_redirects=False, stream=True) as response:
@@ -281,7 +281,7 @@ def read_feed(url: str, industry: str, kind: str, *, limit: int = 15) -> list[Ca
                 raise InsightError("Feed redirected unexpectedly.")
             root = ET.fromstring(_read_limited(response, 1_000_000))
     except (requests.RequestException, ET.ParseError) as error:
-        raise InsightError(f"订阅源读取失败：{type(error).__name__}") from None
+        raise InsightError(f"Feed read failed: {type(error).__name__}") from None
 
     output = []
     rss = root.findall(".//item")
@@ -313,14 +313,14 @@ def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
         logger.info("world_source_url_normalized source_host=ec.europa.eu migration=eurostat_indicator")
         url = canonical
     if source_url(url) != url:
-        raise InsightError("文章链接不安全。")
+        raise InsightError("Unsafe article URL.")
     host = urlsplit(url).hostname
     try:
         addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     except OSError:
-        raise InsightError("来源域名解析失败。") from None
+        raise InsightError("Source hostname resolution failed.") from None
     if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
-        raise InsightError("来源域名指向非公网地址。")
+        raise InsightError("Source hostname resolves to a non-public address.")
     try:
         response = requests.get(url, headers={"User-Agent": USER_AGENT},
                                 timeout=(5, 15), allow_redirects=False, stream=True)
@@ -328,12 +328,12 @@ def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
         if response.status_code >= 300:
             raise InsightError("Source page redirected unexpectedly.")
         if "html" not in response.headers.get("Content-Type", "").lower():
-            raise InsightError("来源不是 HTML。")
+            raise InsightError("Source is not HTML.")
         chunks, size = [], 0
         for chunk in response.iter_content(65536):
             size += len(chunk)
             if size > 1_000_000:
-                raise InsightError("来源页面超过大小上限。")
+                raise InsightError("Source page exceeds the size limit.")
             chunks.append(chunk)
         try:
             page_text = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
@@ -341,7 +341,7 @@ def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
             page_text = b"".join(chunks).decode("utf-8", errors="replace")
         soup = BeautifulSoup(page_text, "html.parser")
     except requests.RequestException as error:
-        raise InsightError(f"来源页面读取失败：{type(error).__name__}") from None
+        raise InsightError(f"Source page read failed: {type(error).__name__}") from None
     finally:
         if "response" in locals():
             response.close()
@@ -391,32 +391,32 @@ def summarize_news(candidate: Candidate, excerpt: str, model: Callable[..., str]
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
-        raise InsightError("资讯摘要模型未返回 JSON。") from None
+        raise InsightError("News summary model did not return JSON.") from None
     news_fields = {"relevant", "category", "industry", "country",
                    "country_evidence", "summary", "content"}
     if (not isinstance(parsed, dict) or not news_fields <= set(parsed)
             or set(parsed) - news_fields - set(_SIGNAL_FIELDS)):
-        raise InsightError("资讯摘要字段不符合契约。")
+        raise InsightError("News summary fields do not match the contract.")
     if parsed["relevant"] is False:
         return None
     if parsed["relevant"] is not True or parsed["category"] not in _CATEGORIES:
-        raise InsightError("资讯相关性或类别无效。")
+        raise InsightError("Invalid news relevance or category.")
     for key, max_length in (("industry", 100), ("summary", 300), ("content", 1200)):
         if not isinstance(parsed[key], str) or not 0 < len(parsed[key].strip()) <= max_length:
-            raise InsightError(f"资讯 {key} 无效。")
+            raise InsightError(f"News {key} is invalid.")
     country, marker = parsed["country"], parsed["country_evidence"]
     if not isinstance(country, str) or not isinstance(marker, str):
-        raise InsightError("资讯国家字段无效。")
+        raise InsightError("Invalid news country field.")
     if country:
         if (country != country_code(marker) or not marker.strip()
                 or marker.casefold() not in evidence.casefold()):
-            raise InsightError("资讯国家缺少可核对的文本依据。")
+            raise InsightError("News country lacks verifiable textual evidence.")
     elif marker:
-        raise InsightError("未知国家不能携带地点依据。")
+        raise InsightError("An unknown country must not have location evidence.")
     payload = {"title": candidate.title, "category": parsed["category"],
                "industry": parsed["industry"].strip(), "country": country,
                "summary": parsed["summary"].strip(),
-               "content": "根据来源片段整理：" + parsed["content"].strip(),
+               "content": parsed["content"].strip(),
                "source_url": candidate.url, "published_at": candidate.published_at.isoformat(),
                "data_source": "agent"}
     payload.update(_sales_signal(parsed, evidence))
@@ -527,12 +527,12 @@ def build_event(candidate: Candidate, events: list[dict[str, Any]],
         if len(description) < 30:
             continue
         if date_only:
-            description += "\n来源仅提供日期；起止钟点是系统占位值，请以来源页为准。"
+            description += "\nThe source provides a date only; start/end times are system placeholders. Check the source page."
         return {"title": title[:240], "event_type": "exhibition", "country": code,
                 "city": city[:120], "latitude": coords[0], "longitude": coords[1],
                 "starts_at": start.isoformat(), "ends_at": end.isoformat(),
                 "registration_deadline": None, "source_url": candidate.url,
-                "description": (description + "\n位置坐标：© OpenStreetMap contributors (Nominatim)。").strip(),
+                "description": (description + "\nCoordinates: © OpenStreetMap contributors (Nominatim).").strip(),
                 "onsite": [], "suggested_actions": [], "opportunity_ids": [], "data_source": "agent"}
     return None
 
@@ -544,37 +544,37 @@ def existing_urls(client: ToolClient, tool: str) -> set[str]:
         reply = client.call(tool, {"page": page, "page_size": 100, "archived": "all"})
         data = reply.get("data") if isinstance(reply, dict) else None
         if not isinstance(reply, dict) or reply.get("status") != "completed" or not isinstance(data, dict):
-            raise InsightError(f"{tool} 列表回执无效。")
+            raise InsightError(f"{tool} list receipt is invalid.")
         rows, count = data.get("results"), data.get("count")
         if not isinstance(rows, list) or type(count) is not int:
-            raise InsightError(f"{tool} 分页回执无效。")
+            raise InsightError(f"{tool} page receipt is invalid.")
         urls.update(url for row in rows if isinstance(row, dict)
                     if (url := source_url(row.get("source_url"))))
         if page * 100 >= count:
             return urls
-    raise InsightError(f"{tool} 超过 100 页，无法安全去重。")
+    raise InsightError(f"{tool} exceeds 100 pages; cannot safely deduplicate.")
 
 
 def load_sources(path: Path = SOURCES_PATH) -> dict[str, list[dict[str, str]]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
-        raise InsightError(f"来源配置读取失败：{type(error).__name__}") from None
+        raise InsightError(f"Source configuration read failed: {type(error).__name__}") from None
     if not isinstance(data, dict) or set(data) != {"searches", "feeds"}:
-        raise InsightError("来源配置字段无效。")
+        raise InsightError("Invalid source configuration fields.")
     if not data["searches"] and not data["feeds"]:
-        raise InsightError("来源配置不能同时为空。")
+        raise InsightError("Source configuration cannot be entirely empty.")
     for section, field in (("searches", "query"), ("feeds", "url")):
         rows = data[section]
         if not isinstance(rows, list):
-            raise InsightError("来源配置必须是数组。")
+            raise InsightError("Source configuration must be an array.")
         for row in rows:
             if (not isinstance(row, dict) or set(row) != {"kind", "industry", field}
                     or row["kind"] not in {"news", "event"}
                     or not all(isinstance(row[key], str) and row[key].strip() for key in row)):
-                raise InsightError("来源配置条目无效。")
+                raise InsightError("Invalid source configuration entry.")
             if field == "url" and source_url(row[field]) != row[field]:
-                raise InsightError("订阅源必须是公共 HTTPS 地址。")
+                raise InsightError("Feed must be a public HTTPS URL.")
     return data
 
 
@@ -584,7 +584,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
     """Run a bounded pass; one bad article is isolated, source outages are reported."""
     now = now or datetime.now(timezone.utc)
     if not dry_run and client is None:
-        raise InsightError("正式运行需要 Tool 客户端。")
+        raise InsightError("Production run requires a Tool client.")
     existing = {"news": set(), "event": set()}
     if client is not None and not dry_run:
         existing["news"] = existing_urls(client, "world_news.list")
@@ -658,7 +658,7 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
                 key = str(uuid.uuid5(uuid.NAMESPACE_URL, name + ":" + candidate.url))
                 reply = client.call(name, {"data": payload}, idempotency_key=key)
                 if reply.get("status") != "completed":
-                    raise InsightError("工具写入未完成。")
+                    raise InsightError("Tool write did not complete.")
             counts[candidate.kind] += 1
             logger.info("world_item_processed kind=%s source_host=%s dry_run=%s",
                         candidate.kind, urlsplit(candidate.url).hostname, dry_run)

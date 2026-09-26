@@ -49,12 +49,12 @@ class GmailHistoryExpiredError(RuntimeError):
 def create_service(access_token: str):
     """使用前端传入的短期 access token 创建只读 Gmail Service。"""
     if not isinstance(access_token, str) or not access_token.strip():
-        raise RuntimeError("Gmail access token 不能为空。")
+        raise RuntimeError("Gmail access token must not be empty.")
     try:
         credentials = Credentials(token=access_token.strip(), scopes=SCOPES)
         return build("gmail", "v1", credentials=credentials, cache_discovery=False)
     except Exception:
-        raise RuntimeError("Gmail access token 无法建立连接。") from None
+        raise RuntimeError("Cannot connect using the Gmail access token.") from None
 
 
 # 功能：使用后端授权创建 Gmail 客户端。
@@ -65,7 +65,7 @@ def create_service(access_token: str):
 def create_service_from_authorization(authorization: Mapping) -> tuple[object, dict]:
     """使用后端保存的授权信息创建 Gmail Service，并返回可能刷新的凭证。"""
     if not isinstance(authorization, Mapping) or not authorization:
-        raise RuntimeError("Gmail 授权信息为空。")
+        raise RuntimeError("Gmail authorization is empty.")
     try:
         credentials = Credentials.from_authorized_user_info(
             dict(authorization), SCOPES
@@ -74,17 +74,17 @@ def create_service_from_authorization(authorization: Mapping) -> tuple[object, d
             if credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
-                raise RuntimeError("Gmail 授权已失效，请员工重新授权。")
+                raise RuntimeError("Gmail authorization has expired; ask the employee to authorize again.")
         service = build(
             "gmail", "v1", credentials=credentials, cache_discovery=False
         )
         return service, json.loads(credentials.to_json())
     except RefreshError:
-        raise RuntimeError("Gmail 授权刷新失败，请员工重新授权。") from None
+        raise RuntimeError("Gmail authorization refresh failed; ask the employee to authorize again.") from None
     except RuntimeError:
         raise
     except Exception:
-        raise RuntimeError("Gmail 授权信息无法建立连接。") from None
+        raise RuntimeError("Cannot connect using the Gmail authorization.") from None
 
 
 # 功能：查询授权账号地址。
@@ -97,12 +97,12 @@ def get_profile_address(service) -> str:
     try:
         profile = service.users().getProfile(userId="me").execute()
     except Exception:
-        raise RuntimeError("Gmail profile 读取失败。") from None
+        raise RuntimeError("Failed to read the Gmail profile.") from None
 
     email_address = profile.get("emailAddress") if isinstance(profile, dict) else None
     normalized = _normalize_mailbox_address(email_address)
     if normalized is None:
-        raise RuntimeError("Gmail profile 未返回邮箱地址。")
+        raise RuntimeError("Gmail profile did not return an email address.")
     return normalized
 
 
@@ -116,14 +116,14 @@ def get_profile_history_id(service) -> str:
     try:
         profile = service.users().getProfile(userId="me").execute()
     except Exception:
-        raise RuntimeError("Gmail profile 历史游标读取失败。") from None
+        raise RuntimeError("Failed to read the Gmail profile history cursor.") from None
 
     history_id = profile.get("historyId") if isinstance(profile, dict) else None
     if isinstance(history_id, bool) or not isinstance(history_id, (str, int)):
-        raise RuntimeError("Gmail profile 未返回有效历史游标。")
+        raise RuntimeError("Gmail profile did not return a valid history cursor.")
     normalized = str(history_id).strip()
     if not normalized:
-        raise RuntimeError("Gmail profile 未返回有效历史游标。")
+        raise RuntimeError("Gmail profile did not return a valid history cursor.")
     return normalized
 
 
@@ -152,10 +152,10 @@ def read_email(service, message_id: str) -> dict:
             userId="me", id=message_id, format="raw"
         ).execute()
     except Exception:
-        raise RuntimeError("Gmail 邮件读取失败。") from None
+        raise RuntimeError("Failed to read the Gmail message.") from None
 
     if not isinstance(message, dict):
-        raise RuntimeError("Gmail 邮件响应无效。")
+        raise RuntimeError("Invalid Gmail message response.")
     raw = message.get("raw")
     returned_id = message.get("id")
     if (
@@ -164,7 +164,7 @@ def read_email(service, message_id: str) -> dict:
         or not isinstance(returned_id, str)
         or not returned_id.strip()
     ):
-        raise RuntimeError("Gmail 邮件响应无效。")
+        raise RuntimeError("Invalid Gmail message response.")
 
     thread_id = message.get("threadId")
     if not isinstance(thread_id, str) or not thread_id.strip():
@@ -237,7 +237,7 @@ def _internal_date_to_utc(value) -> str | None:
 def list_sync_message_ids(service, limit: int = 20) -> list[str]:
     """列出最近收件和发件的 Gmail message ID，不读取邮件正文。"""
     if type(limit) is not int:
-        raise RuntimeError("Gmail 同步数量必须是整数。")
+        raise RuntimeError("Gmail sync count must be an integer.")
     max_results = max(1, min(limit, 20))
     try:
         response = service.users().messages().list(
@@ -246,19 +246,19 @@ def list_sync_message_ids(service, limit: int = 20) -> list[str]:
             q="{in:inbox in:sent}",
         ).execute()
     except Exception:
-        raise RuntimeError("Gmail 同步邮件列表读取失败。") from None
+        raise RuntimeError("Failed to read the Gmail sync message list.") from None
 
     if not isinstance(response, dict):
-        raise RuntimeError("Gmail 同步邮件列表响应无效。")
+        raise RuntimeError("Invalid Gmail sync message-list response.")
     items = response.get("messages", [])
     if not isinstance(items, list):
-        raise RuntimeError("Gmail 同步邮件列表响应无效。")
+        raise RuntimeError("Invalid Gmail sync message-list response.")
 
     message_ids: list[str] = []
     for item in items[:max_results]:
         message_id = item.get("id") if isinstance(item, dict) else None
         if not isinstance(message_id, str) or not message_id.strip():
-            raise RuntimeError("Gmail 同步邮件列表响应无效。")
+            raise RuntimeError("Invalid Gmail sync message-list response.")
         message_ids.append(message_id)
     return message_ids
 
@@ -273,7 +273,7 @@ def list_history_message_ids(
 ) -> tuple[list[str], str]:
     """列出 historyId 之后新增的收件和发件 ID，并返回最新游标。"""
     if not isinstance(start_history_id, str) or not start_history_id.strip():
-        raise RuntimeError("Gmail 历史游标不能为空。")
+        raise RuntimeError("Gmail history cursor must not be empty.")
 
     message_ids: list[str] = []
     seen_message_ids: set[str] = set()
@@ -295,12 +295,12 @@ def list_history_message_ids(
             status = getattr(getattr(error, "resp", None), "status", None)
             if status == 404:
                 raise GmailHistoryExpiredError(
-                    "Gmail 历史游标已过期，需要重新扫描最近邮件。"
+                    "Gmail history cursor expired; rescan recent messages."
                 ) from None
-            raise RuntimeError("Gmail 增量历史读取失败。") from None
+            raise RuntimeError("Failed to read Gmail incremental history.") from None
 
         if not isinstance(response, dict):
-            raise RuntimeError("Gmail 增量历史响应无效。")
+            raise RuntimeError("Invalid Gmail incremental history response.")
         returned_history_id = response.get("historyId")
         if isinstance(returned_history_id, (str, int)) and not isinstance(
             returned_history_id, bool
@@ -311,18 +311,18 @@ def list_history_message_ids(
 
         history = response.get("history", [])
         if not isinstance(history, list):
-            raise RuntimeError("Gmail 增量历史响应无效。")
+            raise RuntimeError("Invalid Gmail incremental history response.")
         for record in history:
             additions = record.get("messagesAdded", []) if isinstance(record, dict) else []
             if not isinstance(additions, list):
-                raise RuntimeError("Gmail 增量历史响应无效。")
+                raise RuntimeError("Invalid Gmail incremental history response.")
             for addition in additions:
                 message = addition.get("message") if isinstance(addition, dict) else None
                 if not isinstance(message, dict):
-                    raise RuntimeError("Gmail 增量历史响应无效。")
+                    raise RuntimeError("Invalid Gmail incremental history response.")
                 message_id = message.get("id")
                 if not isinstance(message_id, str) or not message_id.strip():
-                    raise RuntimeError("Gmail 增量历史响应无效。")
+                    raise RuntimeError("Invalid Gmail incremental history response.")
                 labels = message.get("labelIds")
                 if isinstance(labels, list) and labels and not {
                     "INBOX",
@@ -341,7 +341,7 @@ def list_history_message_ids(
             or not next_page_token
             or next_page_token in seen_page_tokens
         ):
-            raise RuntimeError("Gmail 增量历史分页信息无效。")
+            raise RuntimeError("Invalid Gmail incremental history pagination.")
         seen_page_tokens.add(next_page_token)
         page_token = next_page_token
 
@@ -359,7 +359,7 @@ def read_messages(service, message_ids: list[str], progress=None) -> list[dict]:
         not isinstance(message_id, str) or not message_id.strip()
         for message_id in message_ids
     ):
-        raise RuntimeError("Gmail message ID 列表无效。")
+        raise RuntimeError("Invalid Gmail message ID list.")
     if progress is None:
         return [read_email(service, message_id) for message_id in message_ids]
     progress("discovered", {"message_ids": message_ids})

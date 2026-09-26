@@ -290,7 +290,7 @@ class BackendRequestError(RuntimeError):
     def __init__(
         self, status_code: int, code: str, detail: str, *, scope: str | None = None
     ):
-        super().__init__(f"后端请求失败（HTTP {status_code}, {code}）：{detail}")
+        super().__init__(f"Backend request failed (HTTP {status_code}, {code}): {detail}")
         self.status_code = status_code
         self.code = code
         self.detail = detail
@@ -335,18 +335,18 @@ class DjangoBackendClient:
         session: requests.Session | None = None,
     ):
         if not isinstance(base_url, str) or not base_url.strip():
-            raise BackendConfigurationError("base_url 不能为空。")
+            raise BackendConfigurationError("base_url must not be empty.")
         if not isinstance(service_token, str) or not service_token.strip():
-            raise BackendConfigurationError("service_token 不能为空。")
+            raise BackendConfigurationError("service_token must not be empty.")
         if type(lease_seconds) is not int or not 10 <= lease_seconds <= 600:
-            raise BackendConfigurationError("lease_seconds 必须在 10 到 600 之间。")
+            raise BackendConfigurationError("lease_seconds must be between 10 and 600.")
         if (
             not isinstance(analysis_prompt_version, str)
             or not analysis_prompt_version.strip()
         ):
-            raise BackendConfigurationError("analysis_prompt_version 不能为空。")
+            raise BackendConfigurationError("analysis_prompt_version must not be empty.")
         if not isinstance(timeout, (int, float)) or timeout <= 0:
-            raise BackendConfigurationError("timeout 必须大于 0。")
+            raise BackendConfigurationError("timeout must be greater than 0.")
 
         self.base_url = base_url.rstrip("/") + "/"
         self.mailbox_id = mailbox_id
@@ -378,14 +378,14 @@ class DjangoBackendClient:
     ) -> dict[str, Any]:
         """补充 HTTP 传输字段，并把逐封结果聚合为 GmailSyncResult 所需统计。"""
         if source not in {"gmail_real", "qq_real"}:
-            raise BackendContractError("不支持的真实邮箱来源。")
+            raise BackendContractError("Unsupported live mailbox provider.")
         if not isinstance(self.mailbox_id, str) or not self.mailbox_id.strip():
-            raise BackendConfigurationError("提交邮件前必须配置 mailbox_id。")
+            raise BackendConfigurationError("mailbox_id is required before submitting email.")
 
         payload = []
         for submission in submissions:
             if not isinstance(submission, Mapping):
-                raise BackendContractError("EmailSubmission 必须是对象。")
+                raise BackendContractError("EmailSubmission must be an object.")
             item = copy.deepcopy(dict(submission))
             item["mailbox_id"] = self.mailbox_id
             item["source"] = source
@@ -393,19 +393,19 @@ class DjangoBackendClient:
 
         response, _ = self._request("POST", "emails/", json=payload)
         if not isinstance(response, list):
-            raise BackendContractError("邮件提交响应必须是数组。")
+            raise BackendContractError("Email submission response must be an array.")
 
         counts = {"created": 0, "updated": 0, "duplicate": 0}
         affected: list[str] = []
         for index, raw in enumerate(response):
             if not isinstance(raw, Mapping):
-                raise BackendContractError(f"邮件提交响应第 {index} 项必须是对象。")
+                raise BackendContractError(f"Email submission response item {index} must be an object.")
             status = raw.get("status")
             company_id = raw.get("company_id")
             if status not in counts:
-                raise BackendContractError(f"邮件提交响应状态无效：{status}")
+                raise BackendContractError(f"Invalid email submission response status: {status}")
             if not isinstance(company_id, str) or not company_id:
-                raise BackendContractError("邮件提交响应缺少 company_id。")
+                raise BackendContractError("Email submission response is missing company_id.")
             counts[status] += 1
             if company_id not in affected:
                 affected.append(company_id)
@@ -436,15 +436,15 @@ class DjangoBackendClient:
             return None
         document = self._object(response, "Stored EmailSubmission")
         if document.get("dedupe_key") != dedupe_key:
-            raise BackendContractError("已保存邮件的 dedupe_key 与请求不一致。")
+            raise BackendContractError("Saved email dedupe_key does not match the request.")
         if not isinstance(document.get("extract_prompt_version"), str):
-            raise BackendContractError("已保存邮件缺少 extract_prompt_version。")
+            raise BackendContractError("Saved email is missing extract_prompt_version.")
         if document.get("extract_status") not in {
             "completed",
             "failed",
             "skipped_non_business",
         }:
-            raise BackendContractError("已保存邮件的 extract_status 无效。")
+            raise BackendContractError("Saved email extract_status is invalid.")
         return document
 
     # 功能：读取公司归组。
@@ -459,11 +459,11 @@ class DjangoBackendClient:
         document = self._object(response, "Grouping")
         revision = self._etag(headers)
         if revision is None:
-            raise BackendContractError("Grouping 响应缺少 ETag。")
+            raise BackendContractError("Grouping response is missing ETag.")
         active_job = self._company_jobs.get(company_id)
         if active_job is not None and revision != active_job.expected_version:
             raise BackendContractError(
-                "公司上下文版本已超过当前 Job，停止本次分析以避免使用过期任务。"
+                "Company context version exceeds the current job; analysis stopped to avoid stale input."
             )
         self._revisions[company_id] = revision
         return document
@@ -476,7 +476,7 @@ class DjangoBackendClient:
     def get_company_context(self, company_id: str) -> dict[str, Any]:
         revision = self._revisions.get(company_id)
         if revision is None:
-            raise BackendContractError("读取 CompanyContext 前必须先读取 Grouping。")
+            raise BackendContractError("Read Grouping before CompanyContext.")
         response, headers = self._request(
             "GET",
             "context/",
@@ -485,7 +485,7 @@ class DjangoBackendClient:
         )
         returned_revision = self._etag(headers)
         if returned_revision is not None and returned_revision != revision:
-            raise BackendContractError("Grouping 与 CompanyContext 的 ETag 不一致。")
+            raise BackendContractError("Grouping and CompanyContext ETags do not match.")
         return self._object(response, "CompanyContext")
 
     # 功能：保存 L2 输入并跟踪版本。
@@ -546,7 +546,7 @@ class DjangoBackendClient:
         if "list_view" in document and "detail_view" in document:
             return document
         raise BackendContractError(
-            "cached-analysis 命中时必须返回完整 Analysis；当前后端只返回缓存元数据。"
+            "A cached-analysis hit must return the full Analysis; the backend returned metadata only."
         )
 
     # 功能：提交 L3 分析。
@@ -591,12 +591,12 @@ class DjangoBackendClient:
             json={"limit": limit, "lease_seconds": self.lease_seconds},
         )
         if not isinstance(response, list):
-            raise BackendContractError("Job claim 响应必须是数组。")
+            raise BackendContractError("Job claim response must be an array.")
 
         jobs = []
         for index, raw in enumerate(response):
             if not isinstance(raw, Mapping):
-                raise BackendContractError(f"Job claim 响应第 {index} 项必须是对象。")
+                raise BackendContractError(f"Job claim response item {index} must be an object.")
             payload = raw.get("payload")
             company_id = raw.get("company_id")
             if company_id is None and isinstance(payload, Mapping):
@@ -609,7 +609,7 @@ class DjangoBackendClient:
                 for value in (job_id, company_id, token, version)
             ):
                 raise BackendContractError(
-                    "Job 缺少 job_id、company_id、lease_token 或 expected_version。"
+                    "Job is missing job_id, company_id, lease_token, or expected_version."
                 )
 
             context = _JobContext(
@@ -641,7 +641,7 @@ class DjangoBackendClient:
         job_id = document.get("job_id")
         context = self._jobs.get(str(job_id))
         if context is None:
-            raise BackendContractError("JobReport 没有对应的已领取任务。")
+            raise BackendContractError("JobReport has no corresponding claimed job.")
         self._request(
             "POST",
             "jobs/report/",
@@ -663,12 +663,12 @@ class DjangoBackendClient:
             "POST", "mailbox-syncs/claim/", json={"limit": limit}
         )
         if not isinstance(response, list):
-            raise BackendContractError("Mailbox sync claim 响应必须是数组。")
+            raise BackendContractError("Mailbox sync claim response must be an array.")
         claims: list[dict[str, Any]] = []
         for index, raw in enumerate(response):
             if not isinstance(raw, Mapping):
                 raise BackendContractError(
-                    f"Mailbox sync claim 第 {index} 项必须是对象。"
+                    f"Mailbox sync claim item {index} must be an object."
                 )
             required = {
                 "mailbox_id": raw.get("mailbox_id"),
@@ -679,11 +679,11 @@ class DjangoBackendClient:
             if not isinstance(required["mailbox_id"], str) or not isinstance(
                 required["mailbox_address"], str
             ):
-                raise BackendContractError("Mailbox sync claim 缺少邮箱标识或地址。")
+                raise BackendContractError("Mailbox sync claim is missing the mailbox ID or address.")
             if not isinstance(required["authorization"], Mapping):
-                raise BackendContractError("Mailbox sync claim 缺少授权信息。")
+                raise BackendContractError("Mailbox sync claim is missing authorization.")
             if type(required["max_results"]) is not int:
-                raise BackendContractError("Mailbox sync claim 的 max_results 无效。")
+                raise BackendContractError("Mailbox sync claim has invalid max_results.")
             claims.append(copy.deepcopy(dict(raw)))
         return claims
 
@@ -710,11 +710,11 @@ class DjangoBackendClient:
         document = self._object(response, "SyncState")
         revision = self._etag(headers)
         if revision is None:
-            raise BackendContractError("SyncState 响应缺少 ETag。")
+            raise BackendContractError("SyncState response is missing ETag.")
         if str(document.get("mailbox_id")) != mailbox_id:
-            raise BackendContractError("SyncState 的 mailbox_id 与请求不一致。")
+            raise BackendContractError("SyncState mailbox_id does not match the request.")
         if type(document.get("version")) is not int:
-            raise BackendContractError("SyncState 响应缺少整数 version。")
+            raise BackendContractError("SyncState response is missing an integer version.")
         self._mailbox_revisions[mailbox_id] = revision
         return document
 
@@ -728,10 +728,10 @@ class DjangoBackendClient:
         document = dict(sync_state)
         mailbox_id = document.get("mailbox_id")
         if not isinstance(mailbox_id, str) or not mailbox_id:
-            raise BackendContractError("SyncState 载荷缺少 mailbox_id。")
+            raise BackendContractError("SyncState payload is missing mailbox_id.")
         revision = self._mailbox_revisions.get(mailbox_id)
         if revision is None:
-            raise BackendContractError("保存 SyncState 前必须先读取当前状态。")
+            raise BackendContractError("Read the current SyncState before saving.")
         response, headers = self._request(
             "POST",
             "sync-state-save/",
@@ -741,7 +741,7 @@ class DjangoBackendClient:
         saved = self._object(response, "SyncState")
         returned_revision = self._etag(headers)
         if returned_revision is None:
-            raise BackendContractError("保存 SyncState 的响应缺少 ETag。")
+            raise BackendContractError("Save SyncState response is missing ETag.")
         self._mailbox_revisions[mailbox_id] = returned_revision
         return saved
 
@@ -755,14 +755,14 @@ class DjangoBackendClient:
         response, _ = self._request("POST", "chat/requests/claim/", json={})
         document = self._object(response, "Answer request claim")
         if "request" not in document:
-            raise BackendContractError("Answer request claim 响应缺少 request。")
+            raise BackendContractError("Answer request claim response is missing request.")
 
         raw_request = document["request"]
         if raw_request is None:
             return None
         if not isinstance(raw_request, Mapping):
             raise BackendContractError(
-                "Answer request claim 的 request 必须是对象或 null。"
+                "Answer request claim request must be an object or null."
             )
 
         request = copy.deepcopy(dict(raw_request))
@@ -774,7 +774,7 @@ class DjangoBackendClient:
             self._required_string(request, field, "Answer request claim")
         if "company_id" in request:
             if request.pop("company_id") is not None:
-                raise BackendContractError("工作空间聊天请求不能绑定公司。")
+                raise BackendContractError("Workspace chat requests must not be bound to a company.")
         return request
 
     # 功能：映射聊天上下文接口。
@@ -785,11 +785,11 @@ class DjangoBackendClient:
     def get_answer_context(self, request_id: str, scope: str) -> dict[str, Any]:
         """读取当前聊天请求绑定的客户及指定知识范围上下文。"""
         self._required_string(
-            {"request_id": request_id}, "request_id", "Answer context 请求"
+            {"request_id": request_id}, "request_id", "Answer context request"
         )
         if scope not in {"internal", "external"}:
             raise BackendContractError(
-                "Answer context scope 必须是 internal 或 external。"
+                "Answer context scope must be internal or external."
             )
 
         response, _ = self._request(
@@ -799,9 +799,9 @@ class DjangoBackendClient:
         )
         document = self._object(response, "Answer context")
         if document.get("request_id") != request_id:
-            raise BackendContractError("Answer context 的 request_id 与请求不一致。")
+            raise BackendContractError("Answer context request_id does not match the request.")
         if document.get("scope") != scope:
-            raise BackendContractError("Answer context 的 scope 与请求不一致。")
+            raise BackendContractError("Answer context scope does not match the request.")
 
         customer_context = document.get("customer_context")
         context_items = document.get("context_items")
@@ -814,23 +814,23 @@ class DjangoBackendClient:
         )
         if customer_status not in allowed_customer_statuses:
             raise BackendContractError(
-                "Answer context 的 customer_context_status 与 scope 不一致。"
+                "Answer context customer_context_status does not match the scope."
             )
         if scope == "external" and customer_context:
             raise BackendContractError(
-                "External answer context 不得包含 customer_context。"
+                "External answer context must not include customer_context."
             )
 
         if document.get("knowledge_status") not in {"completed", "failed"}:
-            raise BackendContractError("Answer context 的 knowledge_status 无效。")
+            raise BackendContractError("Answer context knowledge_status is invalid.")
         self._retrieval_gaps(document.get("retrieval_gaps"))
         if type(document.get("external_available")) is not bool:
             raise BackendContractError(
-                "Answer context 的 external_available 必须是布尔值。"
+                "Answer context external_available must be a boolean."
             )
         if scope == "external" and document["external_available"] is not True:
             raise BackendContractError(
-                "External answer context 的 external_available 必须为 true。"
+                "External answer context external_available must be true."
             )
         return document
 
@@ -841,7 +841,7 @@ class DjangoBackendClient:
     # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_tools(self, request_id: str) -> dict[str, Any]:
         """读取本次 processing 请求可用的工具目录，不从全局注册表猜测权限。"""
-        self._required_string({"request_id": request_id}, "request_id", "Chat tools 请求")
+        self._required_string({"request_id": request_id}, "request_id", "Chat tools request")
         response, _ = self._request(
             "GET", "chat/tools/", query={"request_id": request_id, "page": 1, "page_size": 30}
         )
@@ -855,11 +855,11 @@ class DjangoBackendClient:
             or document["page"] != 1
             or document["count"] > document["page_size"]
         ):
-            raise BackendContractError("Chat tools 目录版本、请求或分页不一致。")
+            raise BackendContractError("Chat tools catalog version, request, or pagination does not match.")
         tools = document.get("tools")
         self._object_list(tools, "Chat tools tools")
         if len(tools) != document["count"]:
-            raise BackendContractError("Chat tools 目录数量不一致。")
+            raise BackendContractError("Chat tools catalog count does not match.")
         return document
 
     # 功能：读取本人请求的权威状态。
@@ -869,7 +869,7 @@ class DjangoBackendClient:
     # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
     def get_chat_request_status(self, request_id: str) -> dict[str, Any]:
         """只查询本人聊天请求的已保存状态，不重新领取或生成回答。"""
-        self._required_string({"request_id": request_id}, "request_id", "Chat status 请求")
+        self._required_string({"request_id": request_id}, "request_id", "Chat status request")
         response, _ = self._request(
             "GET", f"chat/requests/{quote(request_id, safe='')}/"
         )
@@ -878,7 +878,7 @@ class DjangoBackendClient:
             document.get("request_id") != request_id
             or document.get("status") not in {"pending", "processing", "completed", "failed"}
         ):
-            raise BackendContractError("Chat request status 与本次请求不一致。")
+            raise BackendContractError("Chat request status does not match this request.")
         return document
 
     # 功能：执行客户读取或共享实验维护并取得登记证据。
@@ -890,11 +890,11 @@ class DjangoBackendClient:
         self, request_id: str, name: str, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
         """调用请求绑定的读取及实验维护工具；工具结果和证据由后端共同确认。"""
-        self._required_string({"request_id": request_id}, "request_id", "Chat tool 请求")
+        self._required_string({"request_id": request_id}, "request_id", "Chat tool request")
         if name not in WORKSPACE_TOOLS:
-            raise BackendContractError("Chat tool 仅支持已登记的客户读取及实验维护。")
+            raise BackendContractError("Chat tool supports only registered customer reads and experiment maintenance.")
         if not isinstance(arguments, Mapping):
-            raise BackendContractError("Chat tool arguments 必须是对象。")
+            raise BackendContractError("Chat tool arguments must be an object.")
         response, _ = self._request(
             "POST",
             "chat/tool-reads/",
@@ -902,11 +902,11 @@ class DjangoBackendClient:
         )
         document = self._object(response, "Chat tool")
         if document.get("request_id") != request_id or document.get("tool") != name:
-            raise BackendContractError("Chat tool 响应与本次请求或工具不一致。")
+            raise BackendContractError("Chat tool response does not match this request or tool.")
         if document.get("status") != "completed":
-            raise BackendContractError("Chat tool 未确认工具操作完成。")
+            raise BackendContractError("Chat tool did not confirm completion.")
         if not isinstance(document.get("data"), Mapping):
-            raise BackendContractError("Chat tool data 必须是对象。")
+            raise BackendContractError("Chat tool data must be an object.")
         self._object_list(document.get("evidence_items"), "Chat tool evidence_items")
         return document
 
@@ -918,26 +918,26 @@ class DjangoBackendClient:
     def report_answer(self, result: Mapping[str, Any]) -> dict[str, Any]:
         """回报一次稳定的 completed 或 failed 聊天结果。"""
         if not isinstance(result, Mapping):
-            raise BackendContractError("Report answer 载荷必须是对象。")
+            raise BackendContractError("Report answer payload must be an object.")
         payload = copy.deepcopy(dict(result))
         request_id = self._required_string(payload, "request_id", "Report answer")
         self._required_string(payload, "chat_prompt_version", "Report answer")
         status = payload.get("status")
         if status not in {"completed", "failed"}:
             raise BackendContractError(
-                "Report answer 的 status 必须是 completed 或 failed。"
+                "Report answer status must be completed or failed."
             )
 
         response, _ = self._request("POST", "chat/answers/", json=payload)
         document = self._object(response, "Report answer")
         if document.get("request_id") != request_id:
-            raise BackendContractError("Report answer 响应的 request_id 与请求不一致。")
+            raise BackendContractError("Report answer response request_id does not match the request.")
         if document.get("saved") is not True:
-            raise BackendContractError("Report answer 响应未确认保存。")
+            raise BackendContractError("Report answer response did not confirm persistence.")
         if type(document.get("duplicate")) is not bool:
-            raise BackendContractError("Report answer 响应的 duplicate 必须是布尔值。")
+            raise BackendContractError("Report answer response duplicate must be a boolean.")
         if "assistant_message_id" not in document:
-            raise BackendContractError("Report answer 响应缺少 assistant_message_id。")
+            raise BackendContractError("Report answer response is missing assistant_message_id.")
         assistant_message_id = document["assistant_message_id"]
         if status == "completed":
             if (
@@ -945,14 +945,14 @@ class DjangoBackendClient:
                 or not assistant_message_id.strip()
             ):
                 raise BackendContractError(
-                    "Completed report 响应缺少 assistant_message_id。"
+                    "Completed report response is missing assistant_message_id."
                 )
         elif assistant_message_id is not None and (
             not isinstance(assistant_message_id, str)
             or not assistant_message_id.strip()
         ):
             raise BackendContractError(
-                "Failed report 响应的 assistant_message_id 无效。"
+                "Failed report response has an invalid assistant_message_id."
             )
         return document
 
@@ -965,7 +965,7 @@ class DjangoBackendClient:
     def _required_string(document: Mapping[str, Any], field: str, name: str) -> str:
         value = document.get(field)
         if not isinstance(value, str) or not value.strip():
-            raise BackendContractError(f"{name} 缺少 {field}。")
+            raise BackendContractError(f"{name} is missing {field}.")
         return value
 
     # 功能：验证对象数组。
@@ -976,9 +976,9 @@ class DjangoBackendClient:
     @staticmethod
     def _object_list(value: object, name: str) -> None:
         if not isinstance(value, list):
-            raise BackendContractError(f"{name} 必须是数组。")
+            raise BackendContractError(f"{name} must be an array.")
         if any(not isinstance(item, Mapping) for item in value):
-            raise BackendContractError(f"{name} 的每一项都必须是对象。")
+            raise BackendContractError(f"{name} must contain only objects.")
 
     # 功能：验证三字段资料缺口数组。
     # 输入：`value` 待校验值。
@@ -988,12 +988,12 @@ class DjangoBackendClient:
     @classmethod
     def _retrieval_gaps(cls, value: object) -> None:
         if not isinstance(value, list):
-            raise BackendContractError("Answer context 的 retrieval_gaps 必须是数组。")
+            raise BackendContractError("Answer context retrieval_gaps must be an array.")
         required_fields = {"scope", "code", "message"}
         for gap in value:
             if not isinstance(gap, Mapping) or set(gap) != required_fields:
                 raise BackendContractError(
-                    "Answer context retrieval gap 必须仅包含 scope、code 和 message。"
+                    "Answer context retrieval gap must contain only scope, code, and message."
                 )
             for field in required_fields:
                 cls._required_string(gap, field, "Answer context retrieval gap")
@@ -1006,7 +1006,7 @@ class DjangoBackendClient:
     def _write_headers(self, company_id: str) -> dict[str, str]:
         context = self._company_jobs.get(company_id)
         if context is None:
-            raise BackendContractError("保存分析结果前必须先领取该公司的任务。")
+            raise BackendContractError("Claim the company job before saving analysis results.")
         revision = self._revisions.get(company_id, context.expected_version)
         return {
             "If-Match": revision,
@@ -1076,7 +1076,7 @@ class DjangoBackendClient:
                 "backend_request_failed method=%s path=%s stage=response_json status=%s",
                 method, path, response.status_code,
             )
-            raise BackendContractError("后端成功响应不是有效 JSON。") from None
+            raise BackendContractError("Backend success response is not valid JSON.") from None
 
     # 功能：验证并提取公司 ID。
     # 输入：`document` 响应映射。
@@ -1087,7 +1087,7 @@ class DjangoBackendClient:
     def _company_id(document: Mapping[str, Any]) -> str:
         company_id = document.get("company_id")
         if not isinstance(company_id, str) or not company_id:
-            raise BackendContractError("载荷缺少 company_id。")
+            raise BackendContractError("Payload is missing company_id.")
         return company_id
 
     # 功能：要求响应为对象。
@@ -1098,7 +1098,7 @@ class DjangoBackendClient:
     @staticmethod
     def _object(value: object, name: str) -> dict[str, Any]:
         if not isinstance(value, Mapping):
-            raise BackendContractError(f"{name} 响应必须是对象。")
+            raise BackendContractError(f"{name} response must be an object.")
         return copy.deepcopy(dict(value))
 
     # 功能：提取响应版本头。
@@ -1121,16 +1121,16 @@ class DjangoBackendClient:
         try:
             payload = response.json()
         except ValueError:
-            return "http_error", "后端返回非 JSON 错误。", None
+            return "http_error", "Backend returned a non-JSON error.", None
         error = payload.get("error") if isinstance(payload, Mapping) else None
         if not isinstance(error, Mapping):
-            return "http_error", "后端请求被拒绝。", None
+            return "http_error", "Backend request was rejected.", None
         code = error.get("code")
         detail = error.get("detail")
         scope = error.get("scope")
         return (
             str(code or "http_error"),
-            str(detail or "后端请求被拒绝。"),
+            str(detail or "Backend request was rejected."),
             scope if scope in {"tool", "request"} else None,
         )
 
@@ -1163,7 +1163,7 @@ def django_backend_from_environment(
         timeout = float(os.getenv("SALESMATE_BACKEND_TIMEOUT", "30"))
     except ValueError:
         raise BackendConfigurationError(
-            "后端 timeout 或任务 lease_seconds 配置无效。"
+            "Backend timeout or job lease_seconds configuration is invalid."
         ) from None
     return DjangoBackendClient(
         base_url,

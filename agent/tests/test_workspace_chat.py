@@ -200,7 +200,18 @@ class WorkspaceChatTests(unittest.TestCase):
         provider = QueueProvider()
         result = process_chat_once(backend=backend, chat_provider=provider)
         self.assertEqual(result["status"], "completed")
-        self.assertIn("未执行", result["assistant_text"])
+        self.assertIn("No action was taken", result["assistant_text"])
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(backend.tool_calls, [])
+
+    def test_english_direct_write_request_is_not_executed(self):
+        backend = ToolBackend(
+            request=conversation_request(question="Please send an email to the customer"), replies=[]
+        )
+        provider = QueueProvider()
+        result = process_chat_once(backend=backend, chat_provider=provider)
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("No action was taken", result["assistant_text"])
         self.assertEqual(provider.calls, [])
         self.assertEqual(backend.tool_calls, [])
 
@@ -361,7 +372,7 @@ class WorkspaceChatTests(unittest.TestCase):
         prompt = provider.calls[-1][0][-1]["content"]
         self.assertEqual(result["status"], "completed")
         self.assertIn("预算 32 万元", prompt)
-        self.assertIn("[节选，原文未完整提供]", prompt)
+        self.assertIn("[Excerpt; full source not provided]", prompt)
         self.assertLess(len(prompt), 8000)
 
     def test_search_page_evidence_survives_many_results(self):

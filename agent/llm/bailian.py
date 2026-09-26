@@ -17,18 +17,18 @@ _CHAT_MESSAGE_KEYS = frozenset({"role", "content"})
 def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
     """Send a validated JSON-object request through the shared Bailian transport."""
     if type(max_tokens) is not int or max_tokens <= 0:
-        raise LLMError("max_tokens 必须是正整数。")
+        raise LLMError("max_tokens must be a positive integer.")
     api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
     base_url = os.getenv("BAILIAN_BASE_URL", "").strip().rstrip("/")
     model = os.getenv("BAILIAN_MODEL", "").strip()
     if not all((api_key, base_url, model)):
-        raise LLMError("请先在项目根目录 .env 填写 DASHSCOPE_API_KEY、BAILIAN_BASE_URL、BAILIAN_MODEL。")
+        raise LLMError("Set DASHSCOPE_API_KEY, BAILIAN_BASE_URL, and BAILIAN_MODEL in the project-root .env first.")
     url = urlsplit(base_url)
     if (url.scheme != "https" or not url.hostname or url.username or url.password
             or url.query or url.fragment or "{" in base_url):
-        raise LLMError("BAILIAN_BASE_URL 必须是控制台提供的完整 HTTPS 地址，不能含占位符。")
+        raise LLMError("BAILIAN_BASE_URL must be the complete HTTPS URL from the console, without placeholders.")
     if base_url.endswith("/chat/completions"):
-        raise LLMError("BAILIAN_BASE_URL 不要包含末尾的 /chat/completions。")
+        raise LLMError("BAILIAN_BASE_URL must not end with /chat/completions.")
 
     payload = {
         "model": model,
@@ -39,7 +39,7 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
     thinking = os.getenv("BAILIAN_ENABLE_THINKING", "").strip().lower()
     if thinking:
         if thinking not in ("true", "false"):
-            raise LLMError("BAILIAN_ENABLE_THINKING 只能填 true、false 或留空。")
+            raise LLMError("BAILIAN_ENABLE_THINKING must be true, false, or empty.")
         payload["enable_thinking"] = thinking == "true"
 
     try:
@@ -51,19 +51,19 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
             allow_redirects=False,
         )
     except requests.RequestException:
-        raise LLMError("百炼网络连接失败或超时，请检查网络及接入地址。") from None
+        raise LLMError("Bailian connection failed or timed out. Check the network and endpoint.") from None
     if response.status_code != 200:
         # 不打印请求头、Key 或未经检查的服务端响应正文。
         raise LLMError(
-            f"百炼返回 HTTP {response.status_code}。请检查地域、Key、模型权限、额度和 JSON 模式支持。"
+            f"Bailian returned HTTP {response.status_code}. Check region, API key, model access, quota, and JSON-mode support."
         )
     try:
         choice = response.json()["choices"][0]
         content = choice["message"]["content"]
         if choice.get("finish_reason") != "stop" or not isinstance(content, str):
-            raise ValueError("结果未完整返回")
+            raise ValueError("Incomplete response")
     except (ValueError, KeyError, IndexError, TypeError):
-        raise LLMError("百炼没有返回完整文本结果，请检查输出长度和模型兼容性。") from None
+        raise LLMError("Bailian did not return complete text. Check the output limit and model compatibility.") from None
     return content
 
 
@@ -85,18 +85,18 @@ def generate_chat_json(
 ) -> str:
     """按原顺序发送严格校验的聊天消息并返回模型原始 JSON 文本。"""
     if type(messages) is not list or not messages:
-        raise LLMError("messages 必须是非空列表。")
+        raise LLMError("messages must be a nonempty list.")
 
     validated_messages = []
     for message in messages:
         if type(message) is not dict or set(message) != _CHAT_MESSAGE_KEYS:
-            raise LLMError("每条消息必须且只能包含 role 和 content。")
+            raise LLMError("Each message must contain only role and content.")
         role = message["role"]
         content = message["content"]
         if type(role) is not str or role not in _CHAT_ROLES:
-            raise LLMError("消息 role 只能是 system、user 或 assistant。")
+            raise LLMError("Message role must be system, user, or assistant.")
         if type(content) is not str or not content.strip():
-            raise LLMError("消息 content 必须是非空字符串。")
+            raise LLMError("Message content must be a nonempty string.")
         validated_messages.append({"role": role, "content": content})
 
     return _request_json(validated_messages, max_tokens=max_tokens)

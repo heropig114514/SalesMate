@@ -89,11 +89,11 @@ _CONTEXT_FIELDS = {
     "external_available",
 }
 _FAILURE_MESSAGES = {
-    "invalid_request": "工作空间聊天请求无效。",
-    "context_unavailable": "聊天资料暂时不可用。",
-    "model_unavailable": "回答模型暂时不可用，请稍后重试。",
-    "invalid_model_output": "回答模型返回了无效结果。",
-    "report_failed": "回答结果暂时无法保存。",
+    "invalid_request": "Invalid workspace chat request.",
+    "context_unavailable": "Chat context is temporarily unavailable.",
+    "model_unavailable": "The answer model is temporarily unavailable. Try again later.",
+    "invalid_model_output": "The answer model returned an invalid result.",
+    "report_failed": "The answer could not be saved right now.",
 }
 _CITATION_MARKER = re.compile(r"\[(\d+)\]")
 _NONSTANDARD_SOURCE_TAG = re.compile(
@@ -116,7 +116,7 @@ class ChatValidationError(ValueError):
 # 约束：非法值抛出 ChatValidationError。
 def _nonblank(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ChatValidationError(f"{path} 必须是非空字符串。")
+        raise ChatValidationError(f"{path} must be a nonempty string.")
     return value.strip()
 
 
@@ -127,7 +127,7 @@ def _nonblank(value: object, path: str) -> str:
 # 约束：拒绝缺失及多余字段。
 def _keys(value: object, expected: set[str], path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != expected:
-        raise ChatValidationError(f"{path} 字段必须与契约完全一致。")
+        raise ChatValidationError(f"{path} fields must match the contract exactly.")
     return value
 
 
@@ -152,7 +152,7 @@ def _source(value: object, path: str) -> dict[str, str]:
     item = _keys(value, _SOURCE_FIELDS, path)
     content = item["content"]
     if not isinstance(content, str):
-        raise ChatValidationError(f"{path}.content 必须是字符串。")
+        raise ChatValidationError(f"{path}.content must be a string.")
     return {
         key: content if key == "content" else _nonblank(item[key], f"{path}.{key}")
         for key in ("source_id", "source_type", "title_or_label", "content")
@@ -169,12 +169,12 @@ def parse_conversation_request(value: object) -> dict[str, Any]:
     request = _keys(value, _REQUEST_FIELDS, "request")
     history = request["recent_history"]
     if not isinstance(history, list):
-        raise ChatValidationError("recent_history 必须是数组。")
+        raise ChatValidationError("recent_history must be an array.")
     parsed_history = []
     for index, raw in enumerate(history):
         row = _keys(raw, {"role", "content"}, f"recent_history[{index}]")
         if row["role"] not in {"user", "assistant"}:
-            raise ChatValidationError("历史消息角色无效。")
+            raise ChatValidationError("Invalid history message role.")
         parsed_history.append({
             "role": row["role"],
             "content": _nonblank(row["content"], f"recent_history[{index}].content"),
@@ -201,32 +201,32 @@ def parse_answer_context(
     context = _keys(value, _CONTEXT_FIELDS, "answer_context")
     request_id = _nonblank(context["request_id"], "answer_context.request_id")
     if expected_request_id is not None and request_id != expected_request_id:
-        raise ChatValidationError("answer_context.request_id 与当前请求不一致。")
+        raise ChatValidationError("answer_context.request_id does not match the current request.")
     scope = context["scope"]
     if scope not in {"internal", "external"} or (
         expected_scope is not None and scope != expected_scope
     ):
-        raise ChatValidationError("answer_context.scope 与请求范围不一致。")
+        raise ChatValidationError("answer_context.scope does not match the request scope.")
     for field in ("customer_context", "context_items", "retrieval_gaps"):
         if not isinstance(context[field], list):
-            raise ChatValidationError(f"answer_context.{field} 必须是数组。")
+            raise ChatValidationError(f"answer_context.{field} must be an array.")
     customer = [_source(item, "customer_context") for item in context["customer_context"]]
     knowledge = [_source(item, "context_items") for item in context["context_items"]]
     identities: dict[tuple[str, str, str], str] = {}
     for item in [*customer, *knowledge]:
         key = tuple(item[field] for field in ("source_id", "source_type", "title_or_label"))
         if key in identities and identities[key] != item["content"]:
-            raise ChatValidationError("同一来源标识对应不同证据正文。")
+            raise ChatValidationError("The same source ID refers to different evidence content.")
         identities[key] = item["content"]
     customer_status = context["customer_context_status"]
     if customer_status not in ({"completed", "failed"} if scope == "internal" else {"not_applicable"}):
-        raise ChatValidationError("answer_context.customer_context_status 无效。")
+        raise ChatValidationError("Invalid answer_context.customer_context_status.")
     if context["knowledge_status"] not in {"completed", "failed"}:
-        raise ChatValidationError("answer_context.knowledge_status 无效。")
+        raise ChatValidationError("Invalid answer_context.knowledge_status.")
     if type(context["external_available"]) is not bool:
-        raise ChatValidationError("answer_context.external_available 必须是布尔值。")
+        raise ChatValidationError("answer_context.external_available must be a boolean.")
     if scope == "external" and (customer or not context["external_available"]):
-        raise ChatValidationError("外部上下文状态无效。")
+        raise ChatValidationError("Invalid external context state.")
     return {
         **context,
         "request_id": request_id,
@@ -243,7 +243,7 @@ def parse_answer_context(
 # 约束：不修改原列表或既定历史预算。
 def trim_recent_history(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
-        raise ChatValidationError("recent_history 必须是数组。")
+        raise ChatValidationError("recent_history must be an array.")
     retained = list(value)
     while retained and sum(len(row["content"]) for row in retained) > _HISTORY_CHARACTER_BUDGET:
         retained.pop(0)
@@ -264,7 +264,7 @@ def trim_context_items(customer_context: object, internal_knowledge: object, ext
         ("external_knowledge", external_knowledge),
     ):
         if not isinstance(items, list):
-            raise ChatValidationError(f"{field} 必须是数组。")
+            raise ChatValidationError(f"{field} must be an array.")
         for raw in items:
             if sum(map(len, result.values())) >= 12:
                 break
@@ -272,7 +272,7 @@ def trim_context_items(customer_context: object, internal_knowledge: object, ext
             if item["content"].strip():
                 result[field].append({
                     **item,
-                    "content": item["content"][:1985] + "\n[节选，原文未完整提供]"
+                    "content": item["content"][:1985] + "\n[Excerpt; full source not provided]"
                     if len(item["content"]) > 2000 else item["content"],
                 })
     return result
@@ -293,15 +293,15 @@ def _decode_json_object(value: str) -> dict[str, Any]:
         result = {}
         for key, item in pairs:
             if key in result:
-                raise ChatValidationError("模型结果含重复 JSON 字段。")
+                raise ChatValidationError("Model output contains duplicate JSON fields.")
             result[key] = item
         return result
     try:
         parsed = json.loads(value, object_pairs_hook=unique)
     except (ValueError, TypeError) as error:
-        raise ChatValidationError("模型结果不是有效 JSON Object。") from error
+        raise ChatValidationError("Model output is not a valid JSON object.") from error
     if not isinstance(parsed, dict):
-        raise ChatValidationError("模型结果必须是 JSON Object。")
+        raise ChatValidationError("Model output must be a JSON object.")
     return parsed
 
 
@@ -318,7 +318,7 @@ def parse_model_candidate(
     text = _NONSTANDARD_SOURCE_TAG.sub("", _nonblank(candidate["assistant_text"], "assistant_text"))
     raw_citations = candidate["citations"]
     if not isinstance(raw_citations, list) or not isinstance(allowed_context_items, list):
-        raise ChatValidationError("citations 必须是数组。")
+        raise ChatValidationError("citations must be an array.")
     allowlist = {
         tuple(item[field] for field in ("source_id", "source_type", "title_or_label"))
         for item in allowed_context_items if item["content"].strip()
@@ -328,11 +328,11 @@ def parse_model_candidate(
         citation = _keys(raw, _CITATION_FIELDS, f"citations[{index}]")
         parsed = {field: _nonblank(citation[field], field) for field in _CITATION_FIELDS}
         if tuple(parsed[field] for field in ("source_id", "source_type", "title_or_label")) not in allowlist:
-            raise ChatValidationError("引用不属于本轮可见的授权来源。")
+            raise ChatValidationError("Citation is not in the authorized sources visible this turn.")
         citations.append(parsed)
     markers = [int(value) for value in _CITATION_MARKER.findall(text)]
     if (not markers and citations) or any(marker < 1 or marker > len(citations) for marker in markers):
-        raise ChatValidationError("回答引用编号与 citations 不一致。")
+        raise ChatValidationError("Answer citation numbers do not match citations.")
     used: dict[tuple[str, str, str], int] = {}
     compact = []
     for marker in markers:
@@ -365,7 +365,7 @@ def parse_model_candidate(
 def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     request_id = _nonblank(request_id, "request_id")
     if code not in _FAILURE_MESSAGES:
-        raise ChatValidationError("失败代码无效。")
+        raise ChatValidationError("Invalid failure code.")
     return {
         "request_id": request_id,
         "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
@@ -406,10 +406,21 @@ def _is_direct_tool_action(question: str) -> bool:
     compact = re.sub(r"\s+", "", question).lower()
     if re.search(r"(?:如何|怎么|怎样).{0,8}(?:发送|安排|创建|更新|删除)", compact):
         return False
-    return bool(re.search(
+    if re.search(
         r"(?:请|帮我|替我|直接|马上|现在).{0,30}(?:发送|发信|寄出|群发|安排会议|预约会议|创建日程|删除客户|修改客户|写入crm|保存报价)",
         compact,
-    ))
+    ):
+        return True
+    english = " ".join(question.lower().split())
+    if re.search(r"\b(?:how to|how (?:do|can|would) (?:i|we)|explain how to)\b", english):
+        return False
+    action = (
+        r"(?:send\s+(?:an?\s+)?(?:email|mail)|schedule\s+(?:an?\s+)?meeting|"
+        r"(?:create|delete|update)\s+(?:a\s+)?(?:calendar event|crm record|customer|deal)|"
+        r"save\s+(?:a\s+)?quote)"
+    )
+    return bool(re.search(r"\b(?:please|can you|could you|i want you to|go ahead and)\b.{0,80}\b" + action, english)
+                or re.match(r"\A\s*" + action, english))
 
 
 # 功能：调用百炼生成一次 JSON 回答。
@@ -443,38 +454,38 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
         or name not in WORKSPACE_TOOLS
         or not isinstance(value, dict)
     ):
-        raise ChatValidationError("工作空间只允许已登记的客户及实验读取及实验维护工具。")
+        raise ChatValidationError("The workspace permits only registered customer reads and experiment tools.")
     arguments = dict(value)
     if name in EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS:
         if name == "experiments.rows":
             size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
             if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
-                raise ChatValidationError("实验读取每页数量无效。")
+                raise ChatValidationError("Invalid experiment page size.")
             arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
         return name, arguments
     if name == "customers.search":
         if set(arguments) - {"q", "company", "archived", "page", "page_size"}:
-            raise ChatValidationError("客户搜索含不支持的参数。")
+            raise ChatValidationError("Customer search contains unsupported arguments.")
         if "q" in arguments and (
             not isinstance(arguments["q"], str) or len(arguments["q"]) > 500
         ):
-            raise ChatValidationError("客户搜索关键词无效。")
+            raise ChatValidationError("Invalid customer search query.")
         if "company" in arguments:
             _workspace_uuid(arguments["company"])
         if "archived" in arguments and (
             not isinstance(arguments["archived"], str)
             or arguments["archived"] not in {"false", "all"}
         ):
-            raise ChatValidationError("客户搜索归档参数无效。")
+            raise ChatValidationError("Invalid customer search archive argument.")
         if type(arguments.get("page", 1)) is not int or arguments.get("page", 1) < 1:
-            raise ChatValidationError("客户搜索页码无效。")
+            raise ChatValidationError("Invalid customer search page.")
         size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
         if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
-            raise ChatValidationError("客户搜索每页数量无效。")
+            raise ChatValidationError("Invalid customer search page size.")
         arguments.setdefault("page", 1)
         arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
     elif set(arguments) != {"company_id"}:
-        raise ChatValidationError("客户详情只接受 company_id。")
+        raise ChatValidationError("Customer details accepts only company_id.")
     else:
         _workspace_uuid(arguments["company_id"])
     return name, arguments
@@ -487,11 +498,11 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
 # 约束：不验证该 UUID 对应记录的访问权限。
 def _workspace_uuid(value: object) -> None:
     if not isinstance(value, str):
-        raise ChatValidationError("公司 ID 必须是 UUID。")
+        raise ChatValidationError("Company ID must be a UUID.")
     try:
         uuid.UUID(value)
     except (ValueError, AttributeError):
-        raise ChatValidationError("公司 ID 必须是 UUID。") from None
+        raise ChatValidationError("Company ID must be a UUID.") from None
 
 
 # 功能：解析请求实际发布的数据工具目录。
@@ -506,11 +517,11 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
         or raw.get("request_id") != request_id
         or not isinstance(raw.get("tools"), list)
     ):
-        raise ChatValidationError("工作空间工具目录与当前请求不一致。")
+        raise ChatValidationError("Workspace tool catalog does not match the current request.")
     catalog: dict[str, dict[str, Any]] = {}
     for entry in raw["tools"]:
         if not isinstance(entry, Mapping):
-            raise ChatValidationError("工作空间工具目录项无效。")
+            raise ChatValidationError("Invalid workspace tool catalog entry.")
         name = entry.get("name")
         if name not in WORKSPACE_TOOLS:
             continue
@@ -524,7 +535,7 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
             or not isinstance(schema.get("required"), list)
             or schema.get("additionalProperties") is not False
         ):
-            raise ChatValidationError("工作空间工具声明与执行模式契约不一致。")
+            raise ChatValidationError("Workspace tool declaration does not match the execution-mode contract.")
         catalog[name] = {
             "name": name,
             "description": entry.get("description", ""),
@@ -542,7 +553,7 @@ def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[st
     """模型参数先满足当前目录声明；具体业务约束仍由后端验证。"""
     properties = schema["properties"]
     if set(arguments) - set(properties) or set(schema["required"]) - set(arguments):
-        raise ChatValidationError("工具参数与后端目录 Schema 不一致。")
+        raise ChatValidationError("Tool arguments do not match the backend catalog schema.")
 
 
 # 功能：解析模型动作。
@@ -552,7 +563,7 @@ def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[st
 # 约束：回答只能引用当前展示的 evidence；不接受其他动作。
 def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id: str):
     if not isinstance(raw, str):
-        raise ChatValidationError("模型结果必须是 JSON 文本。")
+        raise ChatValidationError("Model output must be JSON text.")
     value = _decode_json_object(raw)
     if value.get("action") == "tool" and set(value) == {"action", "name", "arguments"}:
         name, arguments = _workspace_arguments(value["name"], value["arguments"])
@@ -566,7 +577,7 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
             request_id=request_id,
         )
         return "answer", candidate
-    raise ChatValidationError("模型动作必须是读取及实验维护工具查询或最终回答。")
+    raise ChatValidationError("Model action must be an authorized tool query or final answer.")
 
 
 # 功能：校验读取回执并生成提示摘要。
@@ -576,25 +587,25 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
 # 约束：摘要不展开附件正文；来源正文交给统一预算裁剪。
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
-        raise ChatValidationError("工具响应必须是对象。")
+        raise ChatValidationError("Tool response must be an object.")
     if raw.get("request_id") != request_id or raw.get("tool") != name:
-        raise ChatValidationError("工具响应不属于本次请求。")
+        raise ChatValidationError("Tool response does not belong to this request.")
     if (
         raw.get("status") != "completed"
         or raw.get("http_status") != 200
         or not isinstance(raw.get("data"), Mapping)
     ):
-        raise ChatValidationError("工具没有返回完成的查询数据。")
+        raise ChatValidationError("Tool did not return completed query data.")
     _workspace_uuid(raw.get("read_id"))
     items = raw.get("evidence_items")
     if not isinstance(items, list) or not items:
-        raise ChatValidationError("工具证据必须是数组。")
+        raise ChatValidationError("Tool evidence must be an array.")
     evidence = [
         _source(item, path=f"tool.evidence_items[{index}]")
         for index, item in enumerate(items)
     ]
     if any(not item["source_id"].startswith(f"chat-tool:{raw['read_id']}:") for item in evidence):
-        raise ChatValidationError("工具证据与本次读取 ID 不一致。")
+        raise ChatValidationError("Tool evidence does not match this read ID.")
     data = dict(raw["data"])
     if name == "customers.search":
         if (
@@ -606,11 +617,11 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
             or type(data.get("page_size")) is not int
             or data["page_size"] < 1
         ):
-            raise ChatValidationError("客户搜索响应缺少分页数据。")
+            raise ChatValidationError("Customer search response is missing pagination.")
         rows = []
         for result in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]:
             if not isinstance(result, Mapping):
-                raise ChatValidationError("客户搜索结果必须是对象。")
+                raise ChatValidationError("Customer search result must be an object.")
             rows.append({key: result[key] for key in ("id", "name", "domains") if key in result})
         summary = {
             "count": data["count"], "page": data["page"],
@@ -618,13 +629,13 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
         }
     elif name == "experiments.catalog":
         if not isinstance(data.get("batches"), list):
-            raise ChatValidationError("实验目录缺少批次数组。")
+            raise ChatValidationError("Experiment catalog is missing the batches array.")
         summary = {"batches": [{key: batch[key] for key in ("batch", "owner", "synthetic", "read_only", "notice", "total")}
                     | {"tables": [{key: table[key] for key in ("model", "name", "count")} | {"write": {key: table.get("write", {}).get(key, False) for key in ("create", "update", "delete")}} for table in batch["tables"]]}
                     for batch in data["batches"]]}
     elif name == "experiments.rows":
         if not isinstance(data.get("results"), list):
-            raise ChatValidationError("实验分页缺少记录数组。")
+            raise ChatValidationError("Experiment page is missing the records array.")
         summary = {key: data[key] for key in ("batch", "model", "count", "page", "page_size")}
         summary["write"] = data.get("write", {})
         summary["results"] = [{key: row[key] for key in ("pk", "owner", "synthetic", "read_only", "fingerprint") if key in row}
@@ -656,7 +667,7 @@ def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[di
         key = (item["source_id"], item["source_type"], item["title_or_label"])
         if key in identities:
             if identities[key] != item["content"]:
-                raise ChatValidationError("同一证据标识对应不同内容。")
+                raise ChatValidationError("The same evidence ID refers to different content.")
             continue
         allowed.append(item)
         identities[key] = item["content"]
@@ -671,7 +682,7 @@ def _workspace_excerpt(content: str, question: str, limit: int) -> str:
     """对模型展示明确标记的节选，优先保留与问题匹配的原文片段。"""
     if len(content) <= limit:
         return content
-    marker = "\n[节选，原文未完整提供]"
+    marker = "\n[Excerpt; full source not provided]"
     budget = limit - len(marker)
     head = min(700, budget // 3)
     excerpts = [content[:head]]
@@ -750,7 +761,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             return {
                 "request_id": request_id,
                 "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION,
-                "assistant_text": "该操作未执行，工作空间只允许维护明确指定的共享虚构数据，不执行真实业务外部动作。",
+                "assistant_text": "No action was taken. The workspace can maintain only explicitly specified shared synthetic data and cannot perform real external business actions.",
                 "citations": [], "status": "completed", "error": None,
             }
         code = "context_unavailable"
@@ -760,9 +771,9 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             expected_scope="internal",
         )
         if context["customer_context"] or context["customer_context_status"] != "completed":
-            raise ChatValidationError("工作空间初始上下文不得包含预选客户。")
+            raise ChatValidationError("Initial workspace context must not contain a preselected customer.")
         if context["knowledge_status"] != "completed":
-            raise ChatValidationError("工作空间内部知识状态不可用。")
+            raise ChatValidationError("Workspace internal knowledge is unavailable.")
         knowledge = trim_context_items([], context["context_items"], [])["internal_knowledge"]
         evidence = list(knowledge)
         observations: list[dict[str, Any]] = []
@@ -813,7 +824,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     **payload, "status": "completed", "error": None,
                 }
             if turn >= _WORKSPACE_MAX_TOOL_READS:
-                raise ChatValidationError("数据工具调用次数已达上限，模型仍未回答。")
+                raise ChatValidationError("The data-tool call limit was reached without an answer.")
             name, arguments = payload["name"], payload["arguments"]
             if catalog is None:
                 code = "context_unavailable"
@@ -830,7 +841,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             _workspace_schema_arguments(arguments, catalog[name]["inputSchema"])
             signature = (name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
             if signature in signatures:
-                raise ChatValidationError("模型重复请求同一数据工具调用。")
+                raise ChatValidationError("Model repeated the same data-tool call.")
             signatures.add(signature)
             code = "context_unavailable"
             try:
@@ -861,7 +872,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                 "workspace_chat_tool_completed request_id=%s tool=%s evidence=%s total_evidence=%s",
                 request_id, name, len(items), len(evidence),
             )
-        raise ChatValidationError("工作空间聊天未生成回答。")
+        raise ChatValidationError("Workspace chat did not produce an answer.")
     except Exception as error:
         logger.warning(
             "workspace_chat_failed request_id=%s stage=%s error_type=%s reason=%s",
@@ -914,7 +925,7 @@ def process_chat_once(
 
     request_id = _recognizable_request_id(claimed_request)
     if request_id is None:
-        raise ChatValidationError("领取的聊天请求缺少 request_id。")
+        raise ChatValidationError("Claimed chat request is missing request_id.")
     logger.info("chat_request_claimed request_id=%s mode=workspace", request_id)
     result = answer_workspace_request(
         claimed_request, backend=backend, chat_provider=chat_provider

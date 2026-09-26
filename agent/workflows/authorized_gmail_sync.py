@@ -44,7 +44,7 @@ def sync_authorized_mailboxes_once(
         refreshed_authorization: dict[str, Any] | None = None
         try:
             if not claim.get("sync_options") and not claim.get("message_ids"):
-                raise ValueError("此 Gmail 批次缺少范围，请重新选择范围后同步。")
+                raise ValueError("This Gmail batch has no scope. Select a scope and sync again.")
             service, refreshed_authorization = create_service_from_authorization(
                 claim["authorization"]
             )

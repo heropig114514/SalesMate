@@ -194,25 +194,25 @@ NON_BUSINESS_CASES = (
         "list-unsubscribe",
         {"List-Unsubscribe": "<mailto:leave@example.com>"},
         "buyer@example.com",
-        "命中 List-Unsubscribe 规则。",
+        "Matched the List-Unsubscribe rule.",
     ),
     (
         "precedence",
         {"Precedence": "BULK"},
         "buyer@example.com",
-        "命中 Precedence: bulk 规则。",
+        "Matched the Precedence: bulk rule.",
     ),
     (
         "auto-submitted",
         {"Auto-Submitted": "auto-generated"},
         "buyer@example.com",
-        "命中 Auto-Submitted 自动邮件规则。",
+        "Matched the Auto-Submitted rule.",
     ),
     (
         "no-reply sender",
         {},
         "no-reply@example.com",
-        "命中 no-reply 发件地址规则。",
+        "Matched the no-reply sender rule.",
     ),
     (
         "overlap uses stable first match",
@@ -222,7 +222,7 @@ NON_BUSINESS_CASES = (
             "Auto-Submitted": "auto-generated",
         },
         "no-reply@example.com",
-        "命中 List-Unsubscribe 规则。",
+        "Matched the List-Unsubscribe rule.",
     ),
 )
 
@@ -340,7 +340,7 @@ class EmailSubmissionBugConditionExplorationTests(
 
                 self.assertEqual(result["extract_status"], "failed")
                 self.assertIsNone(result["facts"])
-                self.assertEqual(result["extract_error"], "事实抽取失败。")
+                self.assertEqual(result["extract_error"], "Fact extraction failed.")
                 self.assertIsNone(result["non_business_reason"])
                 self.assertEqual(provider.calls, [(CANONICAL_SUBJECT, CANONICAL_BODY)])
 
@@ -366,7 +366,7 @@ class EmailSubmissionBugConditionExplorationTests(
         self.assertEqual(provider.calls, [(CANONICAL_SUBJECT, eligible_body)])
         self.assertEqual(result["extract_status"], "failed")
         self.assertIsNone(result["facts"])
-        self.assertEqual(result["extract_error"], "事实抽取失败。")
+        self.assertEqual(result["extract_error"], "Fact extraction failed.")
 
     def test_property_1_non_business_reasons_priority_and_zero_calls(self):
         for name, headers, sender, expected_reason in NON_BUSINESS_CASES:
@@ -416,7 +416,7 @@ class EmailSubmissionBugConditionExplorationTests(
                 )
                 self.assertEqual(result["extract_status"], "failed")
                 self.assertIsNone(result["facts"])
-                self.assertEqual(result["extract_error"], "事实抽取失败。")
+                self.assertEqual(result["extract_error"], "Fact extraction failed.")
                 self.assertNotIn("error", result)
                 serialized_error = json.dumps(
                     result["extract_error"], ensure_ascii=False

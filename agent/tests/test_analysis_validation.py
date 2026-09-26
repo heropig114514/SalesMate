@@ -32,7 +32,7 @@ class AnalysisValidationTests(unittest.TestCase):
         with patch("agent.workflows.customer_analysis.generate_json", return_value="{}") as model:
             bailian_analysis_provider(self.document)
         text = model.call_args.args[1]
-        model_input = json.loads(text.split("\nANALYSIS_INPUT：\n")[1])
+        model_input = json.loads(text.split("\nANALYSIS_INPUT:\n")[1])
         aliases = _source_aliases(self.document)
         self.assertNotIn("latest_message_summary", model_input)
         for groups in model_input["facts"].values():
@@ -58,7 +58,7 @@ class AnalysisValidationTests(unittest.TestCase):
         for ref in ("wrong@example.com:123456", "123456", "latest_message_summary", "src_999999"):
             payload = _payload(self.document)
             payload["detail_view"]["profile"]["intent"]["facts"][0]["source_refs"] = [ref]
-            with self.subTest(ref=ref), self.assertRaisesRegex(AnalysisValidationError, "不存在的来源"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(AnalysisValidationError, "source absent from the input"):
                 validate_analysis_payload(payload, self.document)
 
     def test_source_aliases_do_not_shadow_real_source_ids(self):
@@ -91,12 +91,12 @@ class AnalysisValidationTests(unittest.TestCase):
         result = validate_analysis_payload(payload, self.document)
         completeness = result["detail_view"]["context_completeness"]
         self.assertEqual(completeness["unparsed_message_count"], 2)
-        self.assertIn("2 封", completeness["note"])
+        self.assertIn("2 unparsed emails", completeness["note"])
         self.assertTrue(result["detail_view"]["missing_fields"])
         self.assertEqual(payload["detail_view"]["missing_fields"], [])
         for invalid in (-1, True, "2"):
             self.document["unparsed_message_count"] = invalid
-            with self.assertRaisesRegex(AnalysisValidationError, "非负整数"):
+            with self.assertRaisesRegex(AnalysisValidationError, "nonnegative integer"):
                 validate_analysis_payload(payload, self.document)
 
     def test_bad_note_is_normalized_without_second_model_call(self):
@@ -143,7 +143,7 @@ class AnalysisValidationTests(unittest.TestCase):
             result = generate_analysis(self.document, clock=lambda: NOW)
         self.assertEqual(result["status"], "completed")
         model.assert_called_once()
-        self.assertEqual(result["list_view"]["headline_summary"], "现有资料不足以判断交易结果。")
+        self.assertEqual(result["list_view"]["headline_summary"], "The available information does not establish a deal outcome.")
         self.assertFalse(_contains_deal_probability(result))
 
     def test_denial_normalization_does_not_hide_predictions_or_conditional_statements(self):
@@ -154,7 +154,12 @@ class AnalysisValidationTests(unittest.TestCase):
                 self.assertTrue(_contains_deal_probability(text))
         for text in ("目前无法判断成交概率。", "不能估算该客户的签约概率", "暂时难以评估赢单率。"):
             with self.subTest(text=text):
-                self.assertEqual(_normalize_probability_denial(text), "现有资料不足以判断交易结果。")
+                self.assertEqual(_normalize_probability_denial(text), "The available information does not establish a deal outcome.")
+        self.assertTrue(_contains_deal_probability("Estimated win rate is 80%."))
+        self.assertEqual(
+            _normalize_probability_denial("We cannot estimate the win rate."),
+            "The available information does not establish a deal outcome.",
+        )
 
     def test_denial_normalization_preserves_sources_and_original_candidate(self):
         payload = _payload(self.document)
