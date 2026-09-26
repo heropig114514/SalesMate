@@ -1,6 +1,6 @@
 """Responsibility: Explicitly create fictional database placeholders for global-insight and opportunity-algorithm integration.
 Implementation: Initialize each account/batch only once; commit fixed business examples, dates relative to initial import, source labels, and audit manifests together.
-Relationships: World-map and priority pages read ordinary database APIs; preserve Agent, algorithms, and existing real business records.
+Relationships: The world-map page and algorithm-integration clients read ordinary database APIs; preserve Agent, algorithms, and existing real business records.
 Directory:
 - seed_support: Atomically create fictional data.
 - Command: Initialize integration data.

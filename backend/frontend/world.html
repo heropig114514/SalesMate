@@ -2,7 +2,7 @@
 
 <!-- Responsibility: Provide structure for global event maps, linked event details, industry news, and separate article-detail URLs.
 Implementation: Missing-amount bubbles remain translucent white and interactive, with coordinated caching. News displays public leads, exact source amounts, and evidence separated into facts/inferences. Shared events use explicit date ranges/all-day calendars, with entry versions following date support. Leaflet renders real geography/database opportunities; map scripts/styles coordinate opacity/currency-label fixes. world-news.js handles filters, calendar downloads, and invitation drafts; synthetic sources are labeled individually.
-Relationships: Entry versions reflect sidebar-priority/experiment removal. Chat Markdown, 0919 interface, language/API, and workspace-chat resources use coordinated versions. assistant-widget.js/css supplies bottom chat, product-header.js the header, and design-system.css Nocturne tokens. The backend stores/validates news; world-map.js draws bubbles; Django /world/ and /world/news/<id>/ share this template.
+Relationships: The retired opportunity-priority page has no entry in this template. Chat Markdown, 0919 interface, language/API, and workspace-chat resources use coordinated versions. assistant-widget.js/css supplies bottom chat, product-header.js the header, and design-system.css Nocturne tokens. The backend stores/validates news; world-map.js draws bubbles; Django /world/ and /world/news/<id>/ share this template.
 Directory: No functions or classes; workspace-profile provides company/mail settings; world-map is the map, event-detail event details, industry-news news listing, news-detail the article, world-status accessible status, and world-error errors.
 Internationalization: data-i18n marks static text/attributes; language-bar offers selection and i18n.js initializes marked nodes only. Explicit option values retain protocol values.
 Variable index: No script variables; page modules manage filtering and linked DOM state. -->
@@ -29,7 +29,7 @@ Variable index: No script variables; page modules manage filtering and linked DO
 <nav class="workspace-profile" aria-label="Profile" id="workspace-profile"></nav>
 </aside>
 <main id="world-content">
-<div class="insights-heading"><div><p class="eyebrow">GLOBAL INSIGHTS</p><h1 data-i18n="全球洞察">全球洞察</h1><p data-i18n="这个季度，该去哪里见客户？">这个季度，该去哪里见客户？</p></div><span class="insights-demo" id="world-data-status">正在读取数据库…</span><a href="/priorities/">商机优先级 ↗</a></div>
+<div class="insights-heading"><div><p class="eyebrow">GLOBAL INSIGHTS</p><h1 data-i18n="全球洞察">全球洞察</h1><p data-i18n="这个季度，该去哪里见客户？">这个季度，该去哪里见客户？</p></div><span class="insights-demo" id="world-data-status">正在读取数据库…</span></div>
 <p id="world-error" role="alert" hidden></p><p id="world-status" class="sr-only" role="status"></p>
 <section id="world-explorer">
 <div class="insights-toolbar"><div><label for="event-type" data-i18n="活动类型">活动类型</label><select id="event-type"><option value="all" data-i18n="全部类型">全部类型</option><option value="exhibition" data-i18n="展会">展会</option><option value="sales" data-i18n="销售活动">销售活动</option></select><label for="event-time" data-i18n="时间窗">时间窗</label><select id="event-time"><option value="all" data-i18n="全部时间">全部时间</option><option value="30" data-i18n="30 天内">30 天内</option><option value="quarter" data-i18n="本季度">本季度</option></select></div><label>地图币种 <select id="map-currency"></select></label></div>

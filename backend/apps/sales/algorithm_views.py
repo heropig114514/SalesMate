@@ -1,6 +1,6 @@
 """Responsibility: Provide algorithm data context and opportunity-score display queries.
 Implementation: Reuse original serializers/permissions and expose opportunities, signals, and scores unchanged, without model calls or scoring-rule changes.
-Relationships: Algorithms may call fixed MCP tools; the frontend opportunity-priority page reads paginated results.
+Relationships: Algorithms may call fixed MCP tools; paginated results remain available through the API after retirement of the standalone opportunity-priority page.
 Directory:
 - seller_context: Collect the current identity's basic data and versions.
 - SellerContextView: Basic data retrieval.

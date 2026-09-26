@@ -2,7 +2,7 @@
 
 This implementation integrates Agent `score-v2` while retaining one current score per company, the L1→L4 flow, Agent HTTP protocol, and employee email isolation. Agent computes scores; the backend supplies authoritative inputs, validates results, stores explanations, and projects queries without duplicating scoring algorithms.
 
-Opportunity-level signals, result storage, and `/priorities/` were added on 2026-09-22; see [integration support](development-support.md). This support layer accepts explicit algorithm submissions without copying company scores to every opportunity. Original L4 validation/scheduling remains unchanged. Limitations below concerning incomplete explanation display apply only to the original company-detail page.
+Opportunity-level signals and result storage were added on 2026-09-22; see [integration support](development-support.md). The standalone `/priorities/` page and Global Insights entry were retired on 2026-09-27; score APIs and stored results remain available. This support layer accepts explicit algorithm submissions without copying company scores to every opportunity. Original L4 validation/scheduling remains unchanged. Limitations below concerning incomplete explanation display apply only to the original company-detail page.
 
 ## 1. Confirmed data definitions
 

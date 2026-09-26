@@ -14,12 +14,13 @@ Django serves the pages and browser ES Modules retain the business logic. The pr
 | assets/assistant-widget.js / assistant-widget.css | Shared floating entry point, collapsible bottom chat bar, and mobile layout across workspace pages. |
 | assets/assistant-markdown.js / markdown-it.vendor.js | Safe assistant-body rendering with pinned markdown-it and a same-origin standalone ESM distribution. |
 | assets/world-news.js/css / world-map.js | Database-backed global-insight events, amount map, detail view, and industry news. |
-| priorities.html / assets/priority-board.js/css | Opportunity scores, explanations, signals, and evidence; displays results and does not calculate the algorithm. |
 | assets/onboarding.js/css / company-settings.js | Four-step personal, company, product, and solution onboarding/settings persisted through account APIs. |
 
 The top bar uses light DOM, shared design variables, and native links. It does not introduce a routing system, query accounts, or create writes. The home page is not labeled Social Media Intelligence. The chat widget keeps the current page and product section. The Social Media Intelligence entry maps to existing mail and customer analysis; no unintegrated social channel was added.
 
 The product top bar displays only Global Insights, Social Media Intelligence, and Sales Business; the Experiment Data entry was removed. The internal /experiments/ page and its data APIs remain available to existing integration links. Hiding the entry does not modify data or backend permissions.
+
+The standalone opportunity-priority page and its Global Insights entry have been retired. `/priorities/` returns 404; its template and dedicated scripts/styles have been removed. Backend opportunity-score APIs and stored results remain available for algorithm integration.
 
 Product navigation is Dashboard, Channels (formerly Emails and analysis), and Customers. Opportunities, quotes, orders, and tickets are customer subentries. The left Opportunity Priority, World news, notifications, communication and materials, settings and collaboration, and legacy sales-business groups were removed; mail/customer detail no longer shows an upper customer navigation bar. Product sections and business routes retain their routes, data, and functionality.
 

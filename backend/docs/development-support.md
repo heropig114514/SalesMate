@@ -60,7 +60,7 @@ Scores may append history. Select latest results by descending `scored_at`, crea
 ## Pages and boundaries
 
 - `/world/` reads events, news, company countries, and opportunity amounts from the database. Same-coordinate amounts deduplicate linked opportunities, display currencies separately, and never fabricate unknown totals. Fictional events are labeled; missing sources may remain placeholders, while existing links still require HTTPS without credentials.
-- `/priorities/` displays active opportunities, latest scores, components, reasons, suggestions, structured signals, and evidence. Locate source text only in authorized business emails; submitted signal evidence discloses when it is not yet linked to source text.
+- The standalone `/priorities/` page and its Global Insights entry were retired on 2026-09-27. The old page URL returns 404; dedicated frontend assets are removed. Opportunity context, signals, score APIs, and stored results remain available for algorithm integration.
 - `/business/#opportunity-signals` and `#opportunity-priorities` maintain records through existing generic forms.
 - News displays at most 4 items from the last 14 days; expired dates are never silently refreshed. Events/news require explicit maintenance; initialization is not background news collection.
 - Itinerary buttons export ICS using database times; invitation buttons provide editable templates with the user's signature. No Agent-generated copy, sent emails, or external calendar events.
@@ -73,6 +73,6 @@ python backend/manage.py test tests.integration.test_development_support --keepd
 python backend/manage.py makemigrations --check --dry-run
 ```
 
-Browser checks require an initialized database and running local experiment service. Set `SALESMATE_TEST_URL=http://127.0.0.1:8011`, `SALESMATE_PLAYWRIGHT_MODULE`, and `SALESMATE_BROWSER_PATH`, then run `node backend/tools/browser_world_news.cjs`. It reads actual local APIs and checks desktop/mobile pages, exports, evidence, and request failures; it does not verify real Agent/external services.
+Browser checks require an initialized database and running local experiment service. Set `SALESMATE_TEST_URL=http://127.0.0.1:8011`, `SALESMATE_PLAYWRIGHT_MODULE`, and `SALESMATE_BROWSER_PATH`, then run `node backend/tools/browser_world_news.cjs`. It reads actual local APIs and checks desktop/mobile world pages, exports, priority-page retirement, and request failures; it does not verify real Agent/external services.
 
 In `backend/`, run `python tools/check_docs.py` and `python tools/check_doc_changes.py --base HEAD --fail-on-review`, and manually review frontend documentation. While code remains uncommitted, these checks do not prove Git commit atomicity.
