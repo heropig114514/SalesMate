@@ -111,7 +111,21 @@ def source_url(value: object) -> str | None:
         return None
     query = urlencode([(key, val) for key, val in parse_qsl(parsed.query)
                        if not key.lower().startswith("utm_") and key.lower() not in _TRACKING])
-    return urlunsplit(("https", host, parsed.path or "/", query, ""))
+    return _canonical_eurostat_url(urlunsplit(("https", host, parsed.path or "/", query, "")))
+
+
+def _canonical_eurostat_url(url: str) -> str:
+    """Known Eurostat indicator migration only; never follow arbitrary Location headers."""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return url
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if (parsed.scheme == "https" and parsed.netloc == "ec.europa.eu"
+            and parsed.path == "/eurostat/product" and len(pairs) == 1
+            and pairs[0][0] == "code" and re.fullmatch(r"4-\d{8}-ap", pairs[0][1])):
+        return "https://ec.europa.eu/eurostat/en/web/products-euro-indicators/w/" + pairs[0][1]
+    return url
 
 
 def aware_time(value: object) -> datetime | None:
@@ -294,6 +308,10 @@ def read_feed(url: str, industry: str, kind: str, *, limit: int = 15) -> list[Ca
 
 def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
     """Read bounded public HTML to verify dates and structured events."""
+    canonical = _canonical_eurostat_url(url)
+    if canonical != url:
+        logger.info("world_source_url_normalized source_host=ec.europa.eu migration=eurostat_indicator")
+        url = canonical
     if source_url(url) != url:
         raise InsightError("文章链接不安全。")
     host = urlsplit(url).hostname
@@ -594,6 +612,14 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
     seen, counts, previews = set(), {"news": 0, "event": 0}, []
     item_errors, write_errors = 0, 0
     for candidate in candidates:
+        canonical = source_url(candidate.url)
+        if canonical is None:
+            item_errors += 1
+            logger.warning("world_item_failed kind=%s stage=source error_type=InsightError reason=unsafe_url", candidate.kind)
+            continue
+        if canonical != candidate.url:
+            candidate = Candidate(candidate.kind, candidate.industry, candidate.title,
+                                  canonical, candidate.excerpt, candidate.published_at)
         if counts[candidate.kind] >= (4 if candidate.kind == "news" else 2):
             continue
         if (candidate.kind, candidate.url) in seen or candidate.url in existing[candidate.kind]:
@@ -639,9 +665,9 @@ def run_once(*, client: ToolClient | None, sources: Mapping[str, list[dict[str, 
         except Exception as error:
             item_errors += 1
             write_errors += int(stage == "write")
-            logger.warning("world_item_failed kind=%s stage=%s source_host=%s error_type=%s",
+            logger.warning("world_item_failed kind=%s stage=%s source_host=%s error_type=%s reason=%s",
                            candidate.kind, stage, urlsplit(candidate.url).hostname,
-                           type(error).__name__)
+                           type(error).__name__, str(error)[:300] if isinstance(error, InsightError) else "unavailable")
     return {"news": counts["news"], "events": counts["event"],
             "source_errors": source_errors, "source_successes": source_successes,
             "item_errors": item_errors, "write_errors": write_errors,

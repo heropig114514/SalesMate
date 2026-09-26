@@ -370,13 +370,13 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertNotIn("evidences", first_fact)
         self.assertEqual(
             set(first_fact),
-            {"value", "dedupe_key", "fact_time"},
+            {"value", "dedupe_key", "fact_time", "source_ref"},
         )
         self.assertIn("business_context", model_input)
         self.assertIn("ALLOWED_SOURCE_REFS", user_text)
         self.assertTrue(system_prompt)
         self.assertEqual(generate.call_args.kwargs["max_tokens"], 4000)
-        self.assertEqual(ANALYSIS_PROMPT_VERSION, "analysis-v4")
+        self.assertEqual(ANALYSIS_PROMPT_VERSION, "analysis-v5")
 
     # 功能：验证 L3 模型只接收公司补充资料中的业务事实和可引用标识。
     # 输入：在固定 L2 上加入包含后端校验元数据的 matched 补充对象。
@@ -406,6 +406,8 @@ class AnalysisAndScoreTests(unittest.TestCase):
 
         user_text = generate.call_args.args[1]
         model_input = json.loads(user_text.split("\nANALYSIS_INPUT：\n", 1)[1])
+        source = model_input["business_context"]["company_enrichment"]["source"]
+        self.assertRegex(source.pop("source_ref"), r"^src_\d+$")
         self.assertEqual(
             model_input["business_context"]["company_enrichment"],
             {

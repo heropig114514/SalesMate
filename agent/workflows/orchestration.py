@@ -14,7 +14,7 @@ from agent.workflows.customer_analysis import (
     generate_analysis,
 )
 from agent.workflows.lead_score import compute_priority_result
-from agent.clients.backend_api import BackendClient
+from agent.clients.backend_api import BackendClient, BackendRequestError
 
 
 SUPPORTED_TRIGGERS = frozenset(
@@ -221,8 +221,10 @@ def process_jobs_once(
                 )
             except Exception as error:
                 logger.warning(
-                    "analysis_job_failed job_id=%s company_id=%s error_type=%s",
+                    "analysis_job_failed job_id=%s company_id=%s error_type=%s http_status=%s backend_code=%s retry=explicit",
                     job_id, company_id, type(error).__name__,
+                    error.status_code if isinstance(error, BackendRequestError) else None,
+                    error.code if isinstance(error, BackendRequestError) else None,
                 )
                 report = _job_report(
                     job_id,

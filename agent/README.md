@@ -4,6 +4,8 @@
 
 `python -m agent.world_insights` 是独立于 Gmail、L1–L4 和聊天的单次采集任务。它从 `world_insights_sources.json` 配置的公开 GDELT 搜索、NIST/Eurostat 订阅源以及半导体活动日历发现半导体设备、精密量测等行业资讯及活动，不需要新闻搜索 API Key。新闻必须有来源页面或订阅源提供的带时区发布日期；模型只整理来源片段，不能臆测国家。地图活动只从来源页的结构化 Event 数据读取明确的活动名称、日期、城市和国家，经 Nominatim 校验城市坐标后才写入。若来源只给活动日期、不提供钟点，记录会明确标记时间是系统占位值。缺地点的条目会跳过，不生成猜测位置。每轮最多写入 4 条资讯、2 条活动，已存在的来源 URL 不重复写入；单条失败不影响其他条目。
 
+Eurostat 的已知指标旧地址 `/eurostat/product?code=4-<八位数字>-ap` 会转换为官方同主机的 `/eurostat/en/web/products-euro-indicators/w/…`，抓取和去重均使用规范地址，新记录也保存规范地址。已有数据库记录不会自动改写，需后端显式维护。抓取仍验证公网 DNS、HTTPS、响应类型和大小，不跟随其他重定向。`world_item_failed` 会记录阶段、异常类型及安全错误原因。
+
 资讯模型还会从同一来源片段提取公司、事件类型、项目、明确需求、潜在需求及理由、时间窗口与原文证据；金额必须带币种、金额类型、范围和原文证据，且数值能与原文核对。没有可核对的公司级事件时，这些字段留空。Agent 已将这组字段直接附加到 `world_news.create`，因此**必须先让后端扩展 `world_news` 写入契约，再启用正式采集服务**；当前后端会拒绝新增字段并返回 400。`--dry-run` 可先查看完整的待写载荷，不会写入后端。已按旧契约存储的资讯不会因来源 URL 去重而自动补齐新字段，须另行安排回填。
 
 先在项目根目录安装 `agent/requirements.txt`，配置百炼模型现有环境变量，以及独立的 `SALESMATE_TOOLS_URL`、`SALESMATE_TOOLS_TOKEN`。Tool 凭证至少授权 `world_news.list/create` 和 `world_events.list/create`；不能使用 Gmail/聊天 Worker 的 Agent 凭证代替。生产环境建议把 Tool 配置放在 `/opt/salesmate/shared/world-insights.env`，只允许 `salesmate` 服务用户读取，不要提交到 Git。
@@ -573,9 +575,13 @@ L3 一次百炼调用同时生成页面 A 和页面 B 所需的 Agent 字段。�
 }
 ```
 
-允许的 `source_refs`：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。调用百炼时会额外列出本次输入可用的完整来源字符串，模型必须原样复制；若模型只多加了 `company_id:` 等已知类型前缀，并且去掉前缀后能精确命中输入来源，Agent 会安全规范为原始 ID。重复来源会在本地去重，`metrics`、`facts` 等字段名仍不是合法来源。
+后端接收的 `source_refs` 保持原契约：邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、工单/报价/订单 ID 以及已登记的实验来源。`analysis-v5` 在模型侧使用本次输入专属的 `src_001` 等短编号，并给事实及业务对象附上 `source_ref`；Python 还原为完整来源后才执行原校验和提交。模型直接返回白名单中的完整标识也可接受；不会按邮件 ID 后缀或相近邮箱猜测来源。`latest_message_summary` 没有明确的邮件来源绑定，因此只保留在 L2 快照，不再作为 L3 模型的独立证据输入；`metrics`、`facts` 等字段名同样不是来源。
 
-L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率、错误规模档位、不满足门槛的信号，以及有未解析邮件却没有完整度说明的结果。单层 JSON Markdown 代码围栏和重复来源由本地规范化，不触发第二次模型调用；其他 JSON 或业务规则失败时，Agent 才会将具体校验原因和合法来源列表交给模型完整修正一次。第二次仍不合法才返回失败。邮件原文中的付款比例、良率等业务百分比允许按原文引用，不会被误判为成交概率。`repeat_purchase` 的历史订单只能来自 `business_context.orders`；邮件自述和 `facts.order_reference` 不能代替后端订单记录。`size_band` 和 `size_source` 最终由后端客户档案中的 `employee_count` 与 `employee_count_source` 确定；人数未知时固定输出 `unknown`，不接受模型猜测。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。
+L3 会拒绝无效来源、无来源的事实或推断、非法枚举、成交概率、错误规模档位及不满足门槛的信号。`context_completeness` 由 Python 按 L2 计数生成：零封未解析时 note 为 null，否则写明数量与分析不完整；模型遗漏、空字符串或错误类型不再造成整份画像失败。存在未解析邮件且 missing_fields 为空时，程序补充该已知缺项。
+
+单层 JSON Markdown 围栏、重复引用和系统完整性字段在本地处理，不额外调用模型。描述字段中完整独立的“目前无法判断成交概率”等无法评估说明会同义改写为“现有资料不足以判断交易结果。”，保持后端兼容并记录 `l3_probability_denial_normalized`；不改数字、引用、条件或肯定预测，复合句不会被这一规则删改。其他 JSON 或业务规则失败时，默认 provider 将具体错误、合法来源映射和上一版完整输出（最多 32000 字符，超限则不附带）交给模型定向修正一次，第二次仍不合法则失败；网络错误不自动重试。概率错误包含字段路径及命中关键词，日志不输出完整客户句子或整份模型结果。前后端关键词限制仍保留，更宽的否定/未知语义支持需要共同对齐；实际概率预测继续拒绝，付款比例等业务百分比本身不触发该限制。
+
+`repeat_purchase` 的历史订单只能来自 `business_context.orders`；邮件自述和 `facts.order_reference` 不能代替后端订单记录。`size_band` 和 `size_source` 使用后端客户人数或已验证的实验人数，人数未知时输出 `unknown`。冲突字段只允许使用 L1 的十三个事实字段，模型偶发返回的 `company_name` 会规范为 `company_self_reported`，其他非法字段在提交后端前失败。此次调整不改变 L1、L2 保存格式、L4 公式或后端接口；旧分析缓存通过 `analysis-v5` 版本隔离，仍需显式发起分析才会生成新结果。
 
 失败时返回 `status=failed`、`list_view=null`、`detail_view=null` 和本地调试错误，不写入分析缓存。
 
@@ -731,6 +737,8 @@ process_jobs_once(
 ```
 
 支持 `email_ingested`、`customer_detail_opened`、`external_updated` 和 `grouping_changed`。函数领取一批任务后立即返回；同一批中相同公司只分析一次。Agent workflow 不实现常驻轮询或任务级自动重试；L1 和 L3 各自的一次模型校验修正不属于任务重试。现有 Django 后端要求的租约和版本请求头由 `DjangoBackendClient` 管理。
+
+后端请求异常的 `analysis_job_failed` 日志包含 `http_status`、`backend_code` 和 `retry=explicit`。HTTP 409 不会被 Agent 直接重试或绕过版本校验；任务报告保持既有契约，需要后端和业务方基于最新资料发起新的分析。
 
 Agent workflow 依赖 `agent.clients.backend_api.BackendClient`：
 
@@ -888,4 +896,4 @@ python -m unittest agent.tests.test_mvp_pipeline
 
 ## 公司实验资料补充
 
-L2 直接复制后端 CompanyContext.company_enrichment，并将完整补充对象纳入 input_version；无需新增 Tool 凭证、分页检索或在 Agent 重做实体匹配。L3 的 `analysis-v4` 支持该快照登记的实验来源，CRM 人数优先，缺失时使用实验人数并标注 `synthetic_sample`。发送给模型时只保留补充事实、`source_id`、虚构标记及必要状态，不发送 owner、指纹、批次和版本等后端维护元数据。L1/L4 和模型预算不变。详见 [后端对接契约](../backend/docs/company-enrichment.md)。
+L2 直接复制后端 CompanyContext.company_enrichment，并将完整补充对象纳入 input_version；无需新增 Tool 凭证、分页检索或在 Agent 重做实体匹配。L3 的 `analysis-v5` 支持该快照登记的实验来源，CRM 人数优先，缺失时使用实验人数并标注 `synthetic_sample`。发送给模型时只保留补充事实、`source_id`、对应的 `source_ref` 短编号、虚构标记及必要状态，不发送 owner、指纹、批次和版本等后端维护元数据。L1/L4 和模型预算不变。详见 [后端对接契约](../backend/docs/company-enrichment.md)。
