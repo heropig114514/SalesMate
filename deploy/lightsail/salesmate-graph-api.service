@@ -1,0 +1,30 @@
+# 职责：运行隔离数据库上的语义图谱实验后端。
+# 实现：仅SSH隧道可访问回环HTTP；独立凭证，模型调用使用既定300秒超时。
+# 关联：runtime.env提供专用数据库与Django密钥；stdio MCP通过HTTP工具接口调用。
+# 目录：无。
+# 变量索引：workers/threads限制实验请求并发；timeout为360秒以覆盖模型超时和图谱同步。
+[Unit]
+Description=SalesMate isolated semantic graph API
+After=network.target postgresql.service salesmate-graph-model.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=salesmate-graph
+Group=salesmate-graph
+WorkingDirectory=/opt/salesmate-semantic/app/backend
+EnvironmentFile=/opt/salesmate-semantic/runtime.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.base
+Environment=PYTHONPATH=/opt/salesmate-semantic/app
+ExecStart=/opt/salesmate-semantic/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8090 --workers 1 --threads 2 --timeout 360 --graceful-timeout 360 --access-logfile - --error-logfile -
+Restart=no
+Nice=10
+CPUWeight=20
+TimeoutStopSec=370
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

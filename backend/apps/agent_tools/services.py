@@ -1,5 +1,5 @@
 """职责：执行工具授权、严格输入、幂等回执和真人确认协议。
-实现：写调用与唯一回执原子保存；正式模式管理操作产生提案，实验模式直接执行且幂等键可省略。
+实现：普通写调用与唯一回执原子保存；图谱写入使用来源自身幂等且推理不占事务；正式模式管理操作产生提案，实验模式直接执行。
 关联：registry 定义能力，dispatch 复用业务逻辑；正式模式仅 Session 视图可以调用 decide，实验模式使用公开身份。
 目录：
 - catalog：返回当前身份的工具目录。
@@ -34,7 +34,7 @@ logger = logging.getLogger("salesmate.agent_tools")
 # 功能：列出可用工具。
 # 输入：`actor` 已登录用户、`credential` 可选工具凭证、`category` 可选分类。
 # 输出：公开工具描述列表。
-# 逻辑：正式模式以凭证名单过滤，实验模式发布完整目录；不暴露内部处理器。
+# 逻辑：正式模式以凭证名单过滤，实验模式发布完整目录；公开来源幂等范围但不暴露内部处理器。
 # 约束：不通过目录授予权限，不返回业务数据或凭证。
 def catalog(actor, credential=None, category=None):
     if not enabled() and not actor.is_active:
@@ -54,6 +54,7 @@ def catalog(actor, credential=None, category=None):
                 "category",
                 "annotations",
                 "idempotency_required",
+                "idempotency_scope",
             }
         }
         for name, spec in build_registry().items()
@@ -99,8 +100,8 @@ def response_data(response):
 # 功能：调用一个授权业务工具。
 # 输入：`actor`、`credential`、`name`、`arguments`、`idempotency_key` 可选 UUID。
 # 输出：带工具名和回执的结果。
-# 逻辑：先校验和授权，写操作与回执同事务；仅锁凭证自身，避免先锁用户再等待回执形成倒序锁；确认工具仅冻结提案。
-# 约束：正式模式写入要求幂等键，实验模式省略时生成并返回 call_id；失败回滚、不重试；缓存回执是用户自己的历史，不当作当前数据。
+# 逻辑：先校验和授权；图谱来源写入由服务自行管理事务，以source_key或episode_id幂等；其他写操作与ToolCall回执同事务，确认工具仅冻结提案。
+# 约束：来源幂等工具拒绝传输UUID并返回Episode审计，不创建ToolCall；普通正式写入仍要求幂等UUID；失败不重试，缓存回执不代表当前数据。
 def invoke(actor, credential, name, arguments, idempotency_key=None):
     spec = build_registry().get(name)
     if spec is None:
@@ -114,7 +115,11 @@ def invoke(actor, credential, name, arguments, idempotency_key=None):
         spec["executionMode"],
     )
     try:
-        if spec["executionMode"] == "read":
+        if spec.get("idempotency_scope") in {"source_key", "episode_id"}:
+            if idempotency_key is not None:
+                raise ValidationError("图谱写入使用来源键或观察ID幂等，不接受 idempotency_key。")
+            result = {"tool": name, **response_data(execute(actor, spec, arguments))}
+        elif spec["executionMode"] == "read":
             if idempotency_key is not None and not enabled():
                 raise ValidationError("只读工具不接受幂等键。")
             result = {"tool": name, **response_data(execute(actor, spec, arguments))}

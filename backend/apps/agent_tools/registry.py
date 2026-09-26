@@ -1,6 +1,6 @@
 """职责：维护可发现的业务工具白名单及输入契约。
-实现：商机信号与评分复用 CRUD 工具，不调用算法；发布事实升级预览与显式排队工具；实验模式动态发布可省略版本/幂等键的全目录并直接执行内部管理操作；派生记录工具，登记客户、邮件、日历、资料、文件及共享实验读取能力；QQ 禁用时不发布其发信准备工具。
-关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；MCP 不自行扩展白名单。
+实现：语义图谱工具可输入文本或结构化观察并查询血缘；商机信号与评分仍复用 CRUD 而不调用算法；发布事实升级及显式排队工具；实验模式动态发布可省略版本/幂等键的目录；登记客户、邮件、日历、资料、文件及共享实验能力；QQ 禁用时不发布其发信准备工具。
+关联：dispatch 仅解释固定 kind；services 控制授权、幂等和提案；graph_specs 发布本人语义图谱；MCP 不自行扩展白名单。
 目录：
 - tool：建立工具声明。
 - build_registry：构造完整工具目录。
@@ -19,6 +19,7 @@ from apps.crm.serializers import RegisterSerializer
 from .schemas import UUID, REVISION, PAGE, object_schema, record_schema
 from .support import support_specs
 from .experiments import experiment_specs
+from .graph import graph_specs
 
 RESOURCES = {
     "opportunity-signals": "opportunity_signals",
@@ -54,11 +55,12 @@ HUMAN_WRITES = {"aliases", "teams", "memberships", "grants"}
 # 功能：生成工具描述。
 # 输入：`name`、`description`、`kind`、`schema`、`mode` 执行模式及 `binding` 固定路由信息。
 # 输出：内部工具字典。
-# 逻辑：公开结构与内部绑定分离；实验模式跳过内部管理提案确认，版本参数及幂等键不再必填。
+# 逻辑：公开结构与内部绑定分离；实验模式跳过管理提案确认，版本及幂等键不必填；图谱描述仍明确当前身份隔离。
 # 约束：确认模式不表示已经执行业务操作。
 def tool(name, description, kind, schema, mode="read", **binding):
     if enabled():
-        description += " 实验开放模式：免登录、跨账号访问，revision/expected/idempotency_key 均可省略，内部管理操作直接执行。"
+        description += (" 实验开放身份模式：图谱仍按当前身份隔离，来源写入使用source_key或episode_id幂等。" if kind == "graph" else
+                        " 实验开放模式：免登录、跨账号访问，revision/expected/idempotency_key 均可省略，内部管理操作直接执行。")
         mode = "write" if mode == "confirm" else mode
         schema["required"] = [key for key in schema.get("required", []) if key not in {"revision", "expected"}]
     return {
@@ -82,7 +84,7 @@ def tool(name, description, kind, schema, mode="read", **binding):
 # 功能：构造业务工具集合。
 # 输入：无参数，读取固定映射与实际字段。
 # 输出：按名称索引的工具字典。
-# 逻辑：新增可按商机过滤的信号和评分工具，归档直接执行；组合事实升级、业务、资料文件与共享实验工具；活动资讯可直接归档，原记录确认语义不变；会话支持通用/客户筛选；邮箱同步工具要求显式范围及超过 50 封的明确风险批准，特殊能力独立列举。
+# 逻辑：组合本人图谱、信号评分、事实升级及既有业务工具；图谱写入使用来源幂等；邮箱同步要求显式范围及超过50封的风险批准。
 # 约束：不注册外部动作批准/执行、任意 SQL 或凭证读取；QQ 禁用时不发布其发信准备工具。
 def build_registry():
     entries = [
@@ -483,4 +485,5 @@ def build_registry():
         )
     entries.extend(support_specs(tool))
     entries.extend(experiment_specs(tool))
+    entries.extend(graph_specs(tool))
     return {entry["name"]: entry for entry in entries if settings.QQ_MAIL_ENABLED or entry["name"] != "actions.prepare_qq"}

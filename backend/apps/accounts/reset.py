@@ -1,6 +1,6 @@
 """职责：清空当前账号内部数据，保留账号、密码及认证身份。
-实现：显式归属规则生成删除集合；延迟外键约束保护跨账号引用；事务提交后清理文件和会话。
-关联：AccountReset、ResetView、账号独占锁；模型列表覆盖 accounts/crm/sales/chat/agent_tools/vectors。
+实现：显式归属规则生成删除集合，包含图谱版本、证据、依赖中间表和清理时产生的捕获事件；延迟外键约束保护跨账号引用；提交后清理文件和会话。
+关联：AccountReset、ResetView、账号独占锁；覆盖 accounts/crm/sales/chat/agent_tools/vectors/knowledge_graph。
 目录：
 - reset_error：构造带请求 ID 的标准错误响应。
 - scoped_records：生成每个业务模型的账号限定查询。
@@ -36,7 +36,7 @@ from .reset_models import AccountReset
 from .reset_locks import account_lock, ResetBusy
 
 logger = logging.getLogger("salesmate.account_reset")
-BUSINESS_APPS = {"accounts", "crm", "sales", "chat", "agent_tools", "vectors"}
+BUSINESS_APPS = {"accounts", "crm", "sales", "chat", "agent_tools", "vectors", "knowledge_graph"}
 INDIRECT_OWNERS = {
     "crm.GmailCredential": "mailbox__owner", "crm.QQCredential": "mailbox__owner",
     "crm.QQSyncCheckpoint": "mailbox__owner", "crm.Contact": "company__owner",
@@ -49,6 +49,7 @@ INDIRECT_OWNERS = {
     "crm.SnapshotInvalidation": "snapshot__company__owner",
     "crm.ExtractionRepair": "email__mailbox__owner",
     "chat.Citation": "request__owner", "chat.ToolRead": "request__owner",
+    "knowledge_graph.Support": "fact__owner", "knowledge_graph.Change": "owner_id",
 }
 AUTH_KEYS = {SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY}
 
@@ -65,7 +66,7 @@ def reset_error(request, code, detail, status):
 # 功能：枚举明确归属当前账号的业务记录。
 # 输入：`owner` 为已认证账号。
 # 输出：模型及限定 QuerySet 列表；新模型缺少归属规则时抛 ValueError。
-# 逻辑：直接 owner 优先，子表使用显式路径；成员、授权和依赖通知随账号或其团队解除。
+# 逻辑：直接 owner 优先，子表使用显式路径；图谱事件按标量 owner_id 过滤，依赖中间表显式纳入；成员与授权按原范围解除。
 # 约束：不沿可见权限扩展业务所有权，不选择 User、认证组或重置协调状态。
 def scoped_records(owner):
     selections = []
@@ -76,7 +77,7 @@ def scoped_records(owner):
         path = "owner" if "owner" in fields else INDIRECT_OWNERS.get(model._meta.label)
         if path is None:
             raise ValueError(f"Missing reset ownership: {model._meta.label}")
-        scope = Q(**{path: owner})
+        scope = Q(**{path: owner.pk if path == "owner_id" else owner})
         if model._meta.label == "sales.Membership":
             scope |= Q(user=owner) | Q(team__owner=owner)
         if model._meta.label == "sales.CompanyGrant":
@@ -84,6 +85,8 @@ def scoped_records(owner):
         if model._meta.label == "sales.Notification":
             scope |= Q(follow_up__owner=owner)
         selections.append((model, model.objects.filter(scope)))
+    graph_inputs = apps.get_model("knowledge_graph", "Derivation").inputs.through
+    selections.append((graph_inputs, graph_inputs.objects.filter(derivation__owner=owner)))
     return selections
 
 
@@ -126,7 +129,7 @@ def clean_files(state):
 # 输入：`owner`、`key` 为幂等 UUID、`session` 为当前登录会话。
 # 输出：AccountReset；数据库错误回滚，附件错误保留 cleaning 状态。
 # 逻辑：历史幂等键直接返回；冻结主键集合并解除他人记录的可变负责人关联，同一事务删除及验证外键；文件清理可显式恢复。
-# 约束：只删除选择集合，直接 SQL 避免 ORM 隐式级联到其他账号；不禁用约束、不修改 User。
+# 约束：只删除选择集合及同事务新产生的本人图谱事件；直接 SQL 避免 ORM 隐式级联到其他账号；不禁用约束、不修改 User。
 def reset_account(owner, key, session):
     state, _ = AccountReset.objects.get_or_create(owner=owner)
     if not state.cleaning and str(key) in state.keys:
@@ -149,6 +152,8 @@ def reset_account(owner, key, session):
                     for offset in range(0, len(ids), 1000):
                         chunk = ids[offset:offset + 1000]
                         cursor.execute(f"DELETE FROM {table} WHERE {column} IN ({','.join(['%s'] * len(chunk))})", chunk)
+                # 来源删除会触发新事件；账号清空同时清除此轮事件，避免残留源标识。
+                apps.get_model("knowledge_graph", "Change").objects.filter(owner_id=owner.pk).delete()
                 cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
             apps.get_model("admin", "LogEntry").objects.filter(user=owner).delete()
             state.generation += 1

@@ -34,3 +34,8 @@ artifacts/
 
 # Private sales attachments
 backend/private_uploads/
+
+# Large model artifacts and deployment credentials are installed separately.
+*.gguf
+*.safetensors
+client-secret.json

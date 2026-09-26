@@ -1,5 +1,5 @@
 """职责：提供不依赖 Django 的业务工具 HTTP 客户端。
-实现：固定路径、可选用户 token（仅开放实验服务器允许留空）、显式分页和幂等键；拒绝重定向与自动重试。
+实现：固定路径、可选用户 token、显式分页和幂等键；专用环境变量可配置长推理超时，默认仍为30秒；拒绝重定向与自动重试。
 关联：CLI 和 MCP 共用；后端 agent_tools 执行所有权限与业务规则。
 目录：
 - ToolError：安全客户端错误。
@@ -15,6 +15,7 @@
 """
 
 import os
+import math
 from urllib.parse import urlsplit
 import requests
 
@@ -33,9 +34,11 @@ class ToolClient:
     # 功能：校验配置。
     # 输入：`base_url` 服务根地址、`token` 可选凭证，空值不发送 Authorization、`timeout` 秒数、`user` 可选实验归属用户名。
     # 输出：实例。
-    # 逻辑：禁止 URL 凭证、查询和片段。
+    # 逻辑：禁止 URL 凭证、查询和片段；timeout 必须为有限正数且不超过3600秒。
     # 约束：HTTP 只允许明确本机地址。
     def __init__(self, base_url, token="", timeout=30, user=""):
+        if type(timeout) not in {int, float} or not math.isfinite(timeout) or not 0 < timeout <= 3600:
+            raise ToolError("SALESMATE_TOOLS_TIMEOUT 须为大于0且不超过3600的秒数。")
         url = urlsplit(base_url)
         if (
             not url.hostname
@@ -63,15 +66,20 @@ class ToolClient:
         self.user = user
 
     # 功能：读取显式配置。
-    # 输入：环境变量 SALESMATE_TOOLS_URL、SALESMATE_TOOLS_TOKEN、SALESMATE_TOOLS_USER。
+    # 输入：环境变量 SALESMATE_TOOLS_URL、SALESMATE_TOOLS_TOKEN、SALESMATE_TOOLS_USER、SALESMATE_TOOLS_TIMEOUT。
     # 输出：客户端。
-    # 逻辑：不加载项目 .env 或 Worker 凭证。
+    # 逻辑：超时默认仍为30秒，显式配置解析为浮点；不加载项目 .env 或 Worker 凭证。
     # 约束：地址必填；令牌可空，服务端正式模式仍会拒绝匿名请求。
     @classmethod
     def from_env(cls):
+        try:
+            timeout = float(os.environ.get("SALESMATE_TOOLS_TIMEOUT", "30"))
+        except ValueError:
+            raise ToolError("SALESMATE_TOOLS_TIMEOUT 须为秒数。") from None
         return cls(
             os.environ.get("SALESMATE_TOOLS_URL", ""),
             os.environ.get("SALESMATE_TOOLS_TOKEN", ""),
+            timeout=timeout,
             user=os.environ.get("SALESMATE_TOOLS_USER", ""),
         )
 
@@ -99,7 +107,7 @@ class ToolClient:
                 "工具请求未获得可靠响应；写入结果可能未知，请保留原幂等键核对。"
             ) from None
         if not 200 <= response.status_code < 300:
-            if response.status_code in {400, 401, 403, 404, 409, 429}:
+            if response.status_code in {400, 401, 403, 404, 409, 429, 502, 503}:
                 try:
                     error = response.json()
                 except ValueError:

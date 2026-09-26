@@ -1,6 +1,6 @@
 """职责：定义共用 Django、数据库、API 和日志配置。
 实现：读取环境变量及项目根目录 .env，进程变量优先；数据库通过单一 DATABASE_URL 配置。
-关联：供 local.py 导入；注册 accounts、crm、sales、vectors、chat、agent_tools、请求日志中间件、错误处理器及 OpenAPI 生成器。
+关联：供 local.py 导入；注册 accounts、crm、sales、vectors、chat、agent_tools、knowledge_graph、请求日志中间件、错误处理器及 OpenAPI 生成器。
 
 目录：
 - 无
@@ -16,7 +16,7 @@
 - DEBUG：共用配置中的调试开关，默认关闭。
 - ALLOWED_HOSTS：允许的 Host 列表，从 DJANGO_ALLOWED_HOSTS 读取。
 - CSRF_TRUSTED_ORIGINS：允许的 CSRF 来源列表。
-- INSTALLED_APPS：框架、API、账号、crm 邮件、sales 业务、vectors 向量、chat 聊天与 agent_tools 业务工具应用的注册顺序。
+- INSTALLED_APPS：框架、API、账号、crm 邮件、sales 业务、vectors 向量、chat 聊天、agent_tools 及 knowledge_graph 应用的注册顺序。
 - MIDDLEWARE：请求处理链，日志位于最外层；账号锁覆盖 SessionMiddleware 的会话保存阶段。
 - ROOT_URLCONF：根路由模块路径。
 - WSGI_APPLICATION：WSGI 应用导入路径。
@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     "apps.vectors",
     "apps.chat",
     "apps.agent_tools",
+    "apps.knowledge_graph",
 ]
 MIDDLEWARE = [
     # 最外层先生成 request_id，使后续视图、错误响应和完成日志能够关联。

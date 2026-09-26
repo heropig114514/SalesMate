@@ -1,5 +1,5 @@
 """职责：通过 stdio 发布当前授权的业务 MCP 工具。
-实现：MCP SDK 低层回调透传分页目录、Schema 和调用结果；HTTP 在线程中运行。
+实现：MCP SDK 透传分页目录和结果；普通写入添加UUID，图谱来源幂等工具保留原Schema；HTTP在线程运行。
 关联：client 连接后端；后端是权限、确认、幂等及 Schema 的唯一业务来源。
 目录：
 - Bridge：动态工具协议桥。
@@ -36,7 +36,7 @@ class Bridge:
     # 功能：返回授权工具。
     # 输入：`context` 协议上下文、`params` 可选游标。
     # 输出：MCP ListToolsResult。
-    # 逻辑：每页 100，写 Schema 增加 idempotency_key；是否必填由服务端当前模式声明。
+    # 逻辑：每页100，普通写Schema增加idempotency_key；来源幂等工具不增加传输键，必填规则由服务端声明。
     # 约束：只读工具不接受 key，目录不发布 Session-only 确认或授权接口。
     async def list_tools(self, context, params):
         cursor = params.cursor if params else None
@@ -50,7 +50,7 @@ class Bridge:
         result = []
         for spec in catalog["tools"]:
             schema = copy.deepcopy(spec["inputSchema"])
-            if spec["executionMode"] != "read":
+            if spec["executionMode"] != "read" and not spec.get("idempotency_scope"):
                 schema["properties"]["idempotency_key"] = {
                     "type": "string",
                     "format": "uuid",
