@@ -1,20 +1,22 @@
 """Responsibility: Declare browser and fixed Agent routes for chat adaptation.
-Implementation: Mount relative to ``/api/v1/``, adding request-bound tool catalog, reads, and status checks without changing the existing Router.
-Relationships: ``chat.views`` and ``tool_views`` implement two independent authentication schemes.
+Implementation: Mount request tools, state queries, and independent browser approval decisions relative to /api/v1/ without changing the business Router.
+Relationships: views/tool_views expose browser and Agent interfaces; approvals accepts only a logged-in browser Session for decisions.
 Directory:
 - None
 Variable index:
-- urlpatterns: Browser actions; Agent claim, context, and reports; tool catalog, reads, and status mappings.
+- urlpatterns: Browser submission, status, retry, and approval; Agent claim, context, tools, and reports.
 """
 
 from django.urls import path
 from . import tool_views, views
+from .approvals import ApprovalDecisionView
 
 urlpatterns = [
     path("sales/chat/messages/", views.SubmitView.as_view()),
     path("sales/chat/requests/", views.RequestListView.as_view()),
     path("sales/chat/requests/<uuid:request_id>/", views.RequestView.as_view()),
     path("sales/chat/requests/<uuid:request_id>/retry/", views.RetryView.as_view()),
+    path("sales/chat/requests/<uuid:request_id>/approvals/<uuid:approval_id>/decision/", ApprovalDecisionView.as_view()),
     path("agent/chat/requests/claim/", views.ClaimView.as_view()),
     path("agent/chat/context/", views.ContextView.as_view()),
     path("agent/chat/answers/", views.AnswerView.as_view()),

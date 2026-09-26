@@ -1,5 +1,5 @@
 """Responsibility: Provide chat transactions, employee isolation, idempotent saving, and explicit recovery.
-Implementation: Experiment mode reads across accounts and continues conversations while continuation retains original conversation ownership; employee locks serialize workspace jobs; legacy company conversations retain only history, reports validate structure only, and terminal results compare exactly.
+Implementation: Employee locks serialize workspace jobs; approval waits block further tools, reports, and submissions until an independent decision. Claims restore approved Agent continuations without repeating writes; historical messages and exact terminal reports remain intact.
 Relationships: Called by ``chat.views`` and Worker; reuses sales ``Conversation`` and ``Message`` and crm authentication.
 Directory:
 - lock_owner: Acquire existing employee lock.
@@ -117,14 +117,15 @@ def require_workspace(conversation):
 # Function: Create one user question and answer request.
 # Inputs: Authenticated user ``owner`` and ``data`` containing conversation_id, content, and client_key.
 # Outputs: ``AnswerRequest`` and boolean indicating whether it was first created.
-# Logic: Only workspace accepts new tasks; experiment mode resolves original ownership then locks only that account and rereads conversation, client idempotency key precedes active-task check, and same-content retransmission returns original request.
-# Constraints: Ordinary historical messages are not automatically promoted to model requests; an active conversation rejects a second new question.
+# Logic: Preserve the submitter as requested_by before experiment-mode ownership resolution; lock the owning account and reread the workspace conversation. Client idempotency precedes active-task checks, so same-content retransmission returns the original request.
+# Constraints: Ordinary historical messages are not promoted to model requests; pending, processing, and awaiting_approval requests block a second new question.
 @transaction.atomic
 def submit(owner, data):
     contracts.fields(data, {"conversation_id", "content", "client_key"})
     conversation_id = contracts.identifier(data["conversation_id"])
     client_key = contracts.identifier(data["client_key"])
     content = contracts.text(data["content"], "content")
+    requested_by = owner
     conversation = conversation_for(owner, conversation_id)
     if enabled():
         owner = conversation.owner
@@ -146,7 +147,7 @@ def submit(owner, data):
             raise Conflict("该键已用于历史消息，请用新的提交键提问。")
         return original, False
     if AnswerRequest.objects.filter(
-        conversation=conversation, status__in=["pending", "processing"]
+        conversation=conversation, status__in=["pending", "processing", "awaiting_approval"]
     ).exists():
         raise Conflict("当前会话已有未完成回答，请等待完成。")
     message = Message.objects.create(
@@ -158,6 +159,7 @@ def submit(owner, data):
     )
     request = AnswerRequest.objects.create(
         owner=owner,
+        requested_by=requested_by,
         conversation=conversation,
         user_message=message,
     )
@@ -168,8 +170,8 @@ def submit(owner, data):
 # Function: Create a traceable new attempt for a failed answer.
 # Inputs: Current employee ``owner`` and original-request UUID ``request_id``.
 # Outputs: New request and first-creation flag; repeated click returns original successor.
-# Logic: Only workspace permits retry; experiment mode resolves and locks original request ownership first and rejects active task or existing successor question.
-# Constraints: Does not retry automatically, revive original request_id, or overwrite historical answer.
+# Logic: Only workspace permits retry; resolve and lock original ownership, reject active work including approval waits or a later question, and preserve the original requested_by (falling back to owner for legacy requests).
+# Constraints: Does not retry automatically, revive cancelled or awaiting_approval requests, or overwrite the original request or historical answer.
 @transaction.atomic
 def retry(owner, request_id):
     if enabled():
@@ -183,7 +185,7 @@ def retry(owner, request_id):
     if old.status != "failed":
         raise InvalidState("只有失败请求可以重新回答。")
     if AnswerRequest.objects.filter(
-        conversation=old.conversation, status__in=["pending", "processing"]
+        conversation=old.conversation, status__in=["pending", "processing", "awaiting_approval"]
     ).exists():
         raise Conflict("当前会话已有未完成回答。")
     if (
@@ -200,6 +202,7 @@ def retry(owner, request_id):
         conversation=old.conversation,
         user_message=old.user_message,
         retry_of=old,
+        requested_by=old.requested_by or owner,
     )
     logger.info(
         "chat_retried request_id=%s previous_id=%s owner_id=%s",
@@ -243,11 +246,13 @@ def retire_legacy_requests(owner=None):
 
 # Function: Atomically claim one task for current employee and freeze history.
 # Inputs: Employee ``owner`` bound by Agent service token.
-# Outputs: Five-field workspace request or ``None``; does not output company_id.
-# Logic: Claim pending request for selected account and freeze conversation history under that request's original ownership; does not mix queues across accounts.
+# Outputs: Five-field workspace request, optional resume checkpoint for approved operations, or None.
+# Logic: Claim pending requests, retain frozen history on approval resume, and restore canonical tool evidence; does not mix employee queues or rerun approved writes.
 # Constraints: Legacy company and revoked or archived requests do not block later tasks and are not redispatched implicitly; model is not called in transaction.
 @transaction.atomic
 def claim(owner):
+    from .approvals import resume_data
+
     lock_owner(owner)
     retire_legacy_requests(owner)
     for candidate in AnswerRequest.objects.filter(
@@ -281,24 +286,30 @@ def claim(owner):
             )
             .order_by("-created_at", "-id")[:20]
         )
-        request.recent_history = [
+        frozen_history = [
             {"role": row.role, "content": row.content}
             for row in reversed(list(history))
             if row.content.strip()
         ]
+        resume = resume_data(request)
+        if resume is None:
+            request.recent_history = frozen_history
         request.status = "processing"
         request.processing_started_at = timezone.now()
         request.save(
             update_fields=["recent_history", "status", "processing_started_at"]
         )
         logger.info("chat_claimed request_id=%s owner_id=%s", request.pk, owner.pk)
-        return {
+        payload = {
             "request_id": str(request.pk),
             "conversation_id": str(request.conversation_id),
             "user_message_id": str(message.pk),
             "question": message.content,
             "recent_history": request.recent_history,
         }
+        if resume is not None:
+            payload["resume"] = resume
+        return payload
     return None
 
 
@@ -430,11 +441,15 @@ def save_answer(owner, data):
 
 # Function: Project browser state for an authorized request.
 # Inputs: ``request`` is a request object validated by the permission service.
-# Outputs: Status, times, assistant-message identifier, ordered citations, and Agent error text.
-# Logic: Failure returns no assistant content; citation content comes from this request context or tool records and unregistered source content is empty.
-# Constraints: Does not output internal history, complete snapshot, tool history, or credentials; Agent error returns unchanged and Agent owns its redaction.
+# Outputs: Status, times, message identifiers, citations, error text, and optional pending approval with exact operation arguments.
+# Logic: Refresh the request under its row lock so status and pending approval cannot straddle a concurrent decision; citations retain their registered content or empty metadata-only bodies.
+# Constraints: Exposes only the pending operation for review, not internal checkpoints or complete tool history; Agent owns error redaction.
+@transaction.atomic
 def request_data(request):
-    return {
+    from .approvals import approval_data
+
+    request = AnswerRequest.objects.select_for_update().get(pk=request.pk)
+    data = {
         "request_id": str(request.pk),
         "conversation_id": str(request.conversation_id),
         "user_message_id": str(request.user_message_id),
@@ -453,6 +468,10 @@ def request_data(request):
             )
         ),
     }
+    approval = request.approvals.filter(status="pending").first() if request.status == "awaiting_approval" else None
+    if approval is not None:
+        data["approval"] = approval_data(approval)
+    return data
 
 
 # Function: Terminate interrupted task after human confirmation.

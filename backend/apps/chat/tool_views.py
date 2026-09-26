@@ -1,6 +1,6 @@
 """Responsibility: Publish Agent chat tool catalog, request-bound reads and experiment maintenance, and answer-status query.
-Implementation: Accept only employee-bound Agent authentication, distinguish request-level from tool-level errors, and prohibit caching for every response.
-Relationships: ``tool_reads`` reuses business reads and experiment maintenance and freezes evidence; ``services`` owns request authorization and final answer status.
+Implementation: Accept Agent authentication, distinguish tool/request errors, return 202 for approval suspension, and prohibit response caching.
+Relationships: tool_reads executes reads or creates approval checkpoints; services owns request state and canonical evidence, and approvals alone accepts browser write decisions.
 Directory:
 - AgentChatView: Authentication, error, and cache policy.
 - AgentChatView.handle_exception: Return stable request error without exposing exception content.
@@ -96,19 +96,20 @@ class ToolCatalogView(AgentChatView):
         return Response(tool_reads.catalog_for(request.user, query))
 
 
-# Function: Execute one read or experiment-maintenance tool and return stable sources for this invocation.
-# Logic: Derives owner only from authenticated identity and passes arguments unchanged to request-bound service.
-# Constraints: Does not accept client idempotency key or identity parameters; request and arguments derive experiment-maintenance idempotency key.
+# Function: Execute a read or suspend a proposed chat write for browser approval.
+# Logic: Derive identity from Agent authentication and pass exact arguments plus the optional continuation checkpoint to the request service.
+# Constraints: No write executes through this view; the independent decision transaction uses the frozen approval UUID for idempotency.
 class ToolReadView(AgentChatView):
     # Function: Execute an authorized data tool.
     # Inputs: ``request`` data is request_id, name, and arguments object.
-    # Outputs: Successful business data and evidence or explicit failure with scope=tool; retains HTTP status.
-    # Logic: Returns after service transaction succeeds and does not turn a tool 404 into empty list or chat failure.
+    # Outputs: Read data/evidence, 202 approval_required for writes, or explicit failure with scope=tool.
+    # Logic: Return the committed service receipt; an approval response is suspension, never business completion.
     # Constraints: Query does not require a chat-bound company; ``customers.context`` location parameters still follow original Schema.
     @extend_schema(
         request={"application/json": tool_reads.CALL_SCHEMA},
         responses={
             200: OpenApiTypes.OBJECT,
+            202: OpenApiTypes.OBJECT,
             400: OpenApiTypes.OBJECT,
             403: OpenApiTypes.OBJECT,
             404: OpenApiTypes.OBJECT,

@@ -1,11 +1,27 @@
 /**
  * Responsibility: Store the English catalog for Simplified Chinese interface source text.
- * Implementation: Includes Channel source previews, activity/onboarding text, and simplified password guidance. Exact source keys and numbered placeholders contain no runtime customer data; update both languages together and remove obsolete mailbox-authorization text.
+ * Implementation: Includes chat write approval, Channel previews, onboarding, and password guidance. Exact source keys and placeholders contain no runtime customer data.
  * Relationships: Shared language/API resources follow the interface cache version; i18n.js t/h reads this catalog for static data-i18n markers and explicitly marked JavaScript literals.
  * Directory: No functions or classes.
  * Variable index: EN is the read-only map from Chinese source text to English translations.
  */
 export const EN = Object.freeze({
+  "等待你批准操作": "Waiting for your approval",
+  "已取消待执行操作": "Pending operation cancelled",
+  "操作尚未执行，请审阅后批准或拒绝。": "The operation has not run. Review it and approve or reject.",
+  "新增记录": "Create record",
+  "修改记录": "Update record",
+  "删除记录": "Delete record",
+  "允许执行这项操作？": "Allow this operation?",
+  "这项操作会实际修改数据。请核对操作、目标和内容。": "This operation will change stored data. Review the action, target, and values.",
+  "实验批次：": "Synthetic batch: ",
+  "数据表：": "Table: ",
+  "记录：": "Record: ",
+  "将删除上面指定的记录。": "The record identified above will be deleted.",
+  "拒绝将取消待执行操作并返回聊天，之前已完成的操作会保留。": "Rejecting cancels the pending operation and returns to chat. Previously completed operations remain in effect.",
+  "拒绝并返回聊天": "Reject and return to chat",
+  "同意并继续": "Approve and continue",
+  "可协助讨论、查询与起草；聊天中的数据写入须经你批准后执行。": "Discuss, look up information, and draft text. Data changes requested in chat require your approval.",
   "预览引用来源": "Preview evidence source",
   "打开 AI 助手": "Open AI assistant",
   "客户沟通操作": "Customer communication actions",

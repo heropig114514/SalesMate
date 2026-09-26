@@ -1,16 +1,18 @@
 /**
  * Responsibility: Provide workspace chat, Markdown answers, source citations, persisted conversations, and editable drafts.
- * Implementation: assistant-markdown.js safely renders assistant content; explicit questions are queued. Read status before messages to avoid fast-answer races, and use bounded polling for actual answers. Account/conversation changes cancel prior observation; narrow screens retain modal focus.
+ * Implementation: Render persisted answers and poll requests; awaiting_approval opens an escaped operation dialog. Explicit decisions resume or cancel the backend request; account/conversation changes discard stale dialogs and responses.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; assistant-widget.js mounts the single workspace entry and provides history, draft, and save controls; sales-api.js handles communication.
  * Directory: AssistantPanel, AssistantPanel.constructor, AssistantPanel.initializeView, AssistantPanel.open,
  * AssistantPanel.close, AssistantPanel.syncLayout, AssistantPanel.handleKeydown, AssistantPanel.reset,
  * AssistantPanel.load, AssistantPanel.ensureConversation, AssistantPanel.save, AssistantPanel.draw, AssistantPanel.run,
  * AssistantPanel.stopPolling, AssistantPanel.watch, AssistantPanel.poll, AssistantPanel.refreshAnswers, AssistantPanel.pausePolling, AssistantPanel.retryAnswer.
+ * AssistantPanel.showApproval, AssistantPanel.dismissApproval, AssistantPanel.decideApproval.
  * Variable index: No module variables; nodes holds DOM references; drafts stores unsent page text; background records prior inert state on narrow screens.
  * conversations holds workspace conversations; conversation/draft holds the selected record and version; epoch prevents stale request updates.
  * busy controls submission; needsLoad defers new open requests during an operation; messageKey is the message idempotency key; narrow/isOpen controls layout; opener records the focus target after closing.
  * answers holds current conversation requests; pollTimer/pollController/pollEpoch manages cancellation; pollCount limits each round to 120 polls at two-second intervals.
+ * approvalDialog holds the pending operation modal; questions maps displayed question IDs to text for restoring an editable rejected question.
  */
 import { t, h, locale } from './i18n.js?v=20260921-product';
 
@@ -55,6 +57,8 @@ export class AssistantPanel {
     this.needsLoad = false;
     this.messageKey = crypto.randomUUID();
     this.answers = [];
+    this.approvalDialog = null;
+    this.questions = new Map();
     this.pollTimer = null;
     this.pollController = null;
     this.pollEpoch = 0;
@@ -122,7 +126,7 @@ export class AssistantPanel {
     document.getElementById('assistant-welcome-title').textContent = t('有什么想聊的？');
     document.getElementById('assistant-welcome-copy').textContent = t('讨论问题、起草邮件、翻译文字，或一起梳理工作计划。无需选择客户。');
     document.getElementById('assistant-unavailable').textContent = t('通用问答 · 写作 · 计划');
-    document.getElementById('assistant-availability-copy').textContent = t('可协助讨论与起草；当前聊天不会自动发送邮件或修改业务记录。');
+    document.getElementById('assistant-availability-copy').textContent = t('可协助讨论、查询与起草；聊天中的数据写入须经你批准后执行。');
     this.nodes.input.placeholder = t('输入问题，或告诉我你想完成什么…');
     const prompts = [
       [t('起草一封邮件'), t('帮我起草一封专业的商务邮件，请先问我需要哪些信息。')],
@@ -155,6 +159,7 @@ export class AssistantPanel {
    * Outputs: None. Logic: Retain page text, cancel observation, close modal semantics, and return focus to the surviving opener or floating entry; restore original background inert state.
    * Constraints: Route changes use false to avoid focusing an element about to be removed. */
   close(restoreFocus = true) {
+    this.dismissApproval();
     this.stopPolling();
     const wasOpen = this.isOpen;
     this.isOpen = false;
@@ -239,6 +244,7 @@ export class AssistantPanel {
    * Outputs: None. Logic: Read all conversation/draft pages; read answer status before messages so completed answers are visible. Responses from an old epoch never update the view.
    * Constraints: Prefer unsaved current-page text and explicitly mark it unsaved. */
   async load(selected) {
+    this.dismissApproval();
     this.stopPolling();
     this.answers = [];
     const epoch = ++this.epoch;
@@ -356,9 +362,10 @@ export class AssistantPanel {
    * Outputs: None. Logic: Render only assistant content through assistant-markdown.js; user content and sources remain escaped plain text. Associate messages with status, citations, and failure retries.
    * Constraints: Markdown disables raw HTML and dangerous links; evidence starts collapsed and never executes HTML. Preserve stored source text and generation flow. */
   draw(messages) {
+    this.questions = new Map(messages.filter((message) => message.role === "user").map((message) => [message.id, message.content]));
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
     const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
-    const labels = { pending: t("等待回答"), processing: t("正在生成回答"), completed: t("回答完成"), failed: t("回答失败") };
+    const labels = { pending: t("等待回答"), processing: t("正在生成回答"), awaiting_approval: t("等待你批准操作"), cancelled: t("已取消待执行操作"), completed: t("回答完成"), failed: t("回答失败") };
     this.nodes.panel.querySelector(".assistant-welcome").hidden = messages.length > 0;
     this.nodes.history.innerHTML = messages.length
       ? messages
@@ -391,13 +398,18 @@ export class AssistantPanel {
   }
 
   /** Function: Observe active requests in the current conversation. Inputs: answers and panel state.
-   * Outputs: None. Logic: Limit each round to 120 reads, spaced two seconds after each response, with only one read in flight.
-   * Constraints: Make no requests when closed or without active tasks, and never create model work. */
+   * Outputs: None. Logic: Awaiting approval opens its persisted review dialog; other active states allow at most 120 reads, two seconds apart, with one read in flight.
+   * Constraints: Do not poll while awaiting approval, closed, or without active work; never create model work. */
   watch() {
     this.stopPolling();
-    const active = this.answers.find((row) => ["pending", "processing"].includes(row.status));
+    const active = this.answers.find((row) => ["pending", "processing", "awaiting_approval"].includes(row.status));
     this.nodes.submit.disabled = this.busy || Boolean(active);
     if (!active || !this.isOpen) return;
+    if (active.status === "awaiting_approval") {
+      this.nodes["draft-note"].textContent = t("操作尚未执行，请审阅后批准或拒绝。");
+      this.showApproval(active);
+      return;
+    }
     this.pollCount = 0;
     this.nodes["draft-note"].textContent = active.status === "pending" ? t("问题已提交，等待回答。") : t("正在生成回答。");
     const epoch = this.pollEpoch;
@@ -414,7 +426,7 @@ export class AssistantPanel {
       const result = await salesRequest(`chat/requests/${requestId}/`, { signal: this.pollController.signal });
       if (epoch !== this.pollEpoch || !this.isOpen) return;
       this.answers = this.answers.map((row) => row.request_id === requestId ? result : row);
-      if (["completed", "failed"].includes(result.status)) {
+      if (["completed", "failed", "cancelled", "awaiting_approval"].includes(result.status)) {
         await this.refreshAnswers();
         return;
       }
@@ -430,7 +442,7 @@ export class AssistantPanel {
 
   /** Function: Refresh answers while preserving text being edited. Inputs: Current customer, conversation, and epoch.
    * Outputs: None. Logic: Read request status before messages to avoid mixing terminal states with old message snapshots; check bindings and observation generation, and offer explicit recovery if either read fails.
-   * Constraints: Do not reload drafts or steal focus; preserve history reading position and surface refresh errors. */
+   * Constraints: Preserve drafts and scroll position; an explicit pending approval may move focus into its review dialog. */
   async refreshAnswers() {
     this.stopPolling();
     const conversation = this.conversation?.id, epoch = this.epoch, observation = this.pollEpoch;
@@ -472,6 +484,73 @@ export class AssistantPanel {
     if (epoch === this.epoch) await this.refreshAnswers();
   }
 
+  /** Function: Show the exact pending mutation. Inputs: answer is a backend request with its approval.
+   * Outputs: None; opens a native dialog with approve/reject buttons and escaped parameters.
+   * Logic: Bind the dialog to a request and proposal; no decision is inferred from chat text or a polling result.
+   * Constraints: Escape cannot approve or silently reject; closing the panel leaves approval pending on the server. */
+  showApproval(answer) {
+    const approval = answer.approval;
+    if (!approval || this.approvalDialog?.dataset.approvalId === approval.id) return;
+    this.dismissApproval();
+    const dialog = document.createElement("dialog");
+    dialog.className = "assistant-approval";
+    dialog.dataset.approvalId = approval.id;
+    dialog.setAttribute("aria-labelledby", "assistant-approval-title");
+    const operation = { create: t("新增记录"), update: t("修改记录"), delete: t("删除记录") }[approval.tool.split(".").at(-1)] || approval.tool;
+    const args = approval.arguments;
+    dialog.innerHTML = h`<h3 id="assistant-approval-title">允许执行这项操作？</h3><p>这项操作会实际修改数据。请核对操作、目标和内容。</p><strong>${esc(operation)}</strong><p>实验批次：${esc(args.batch)}<br>数据表：${esc(args.model)}${args.pk ? h`<br>记录：${esc(args.pk)}` : ""}</p>${args.data ? `<pre>${esc(JSON.stringify(args.data, null, 2))}</pre>` : h`<p>将删除上面指定的记录。</p>`}<p>拒绝将取消待执行操作并返回聊天，之前已完成的操作会保留。</p><p class="assistant-approval-error" role="alert"></p><div class="actions"><button type="button" data-decision="reject">拒绝并返回聊天</button><button type="button" data-decision="approve">同意并继续</button></div>`;
+    dialog.addEventListener("cancel", (event) => event.preventDefault());
+    dialog.addEventListener("click", (event) => {
+      const decision = event.target.closest("[data-decision]")?.dataset.decision;
+      if (decision) this.run(() => this.decideApproval(answer, decision, dialog));
+    });
+    this.nodes.panel.append(dialog);
+    this.approvalDialog = dialog;
+    dialog.showModal();
+    dialog.querySelector('[data-decision="reject"]').focus();
+  }
+
+  /** Function: Remove the current approval modal. Inputs: approvalDialog instance state.
+   * Outputs: None. Logic: Close and detach UI only; server state remains unchanged.
+   * Constraints: Used on context changes and successful decisions; never submits an implicit rejection. */
+  dismissApproval() {
+    this.approvalDialog?.close();
+    this.approvalDialog?.remove();
+    this.approvalDialog = null;
+  }
+
+  /** Function: Submit an explicit browser decision. Inputs: answer identifies the frozen operation, decision is approve/reject, dialog is its current UI.
+   * Outputs: None; refreshes authoritative state and resumes polling or restores editable input.
+   * Logic: Disable duplicate clicks; send only the decision, preserve the existing question/history, and keep conflicts visible in the dialog.
+   * Constraints: Failed or lost responses never imply success and are not automatically retried; stale context responses do not update the current chat. */
+  async decideApproval(answer, decision, dialog) {
+    const epoch = this.epoch;
+    for (const button of dialog.querySelectorAll("button")) button.disabled = true;
+    try {
+      await salesRequest(`chat/requests/${answer.request_id}/approvals/${answer.approval.id}/decision/`, {
+        method: "POST", data: { decision },
+      });
+      if (epoch !== this.epoch || dialog !== this.approvalDialog) return;
+      this.dismissApproval();
+      if (decision === "reject" && !this.nodes.input.value.trim()) {
+        this.nodes.input.value = this.questions.get(answer.user_message_id) || "";
+        this.nodes.input.dispatchEvent(new Event("input"));
+      }
+      await this.refreshAnswers();
+      if (decision === "reject" && epoch === this.epoch && this.isOpen) {
+        this.nodes.input.disabled = false;
+        this.nodes.input.focus();
+      }
+    } catch (error) {
+      if (epoch === this.epoch && dialog === this.approvalDialog) {
+        dialog.querySelector('[role="alert"]').textContent = error.message;
+        console.warn("assistant_approval_failed");
+      }
+    } finally {
+      for (const button of dialog.querySelectorAll("button")) button.disabled = false;
+    }
+  }
+
   /** Function: Serialize current panel operations and display errors. Inputs: task is an asynchronous callback.
    * Outputs: None. Logic: Disable saving, input, and conversation switching; active tasks continue to prevent new questions after completion, and errors appear in the status area.
    * Constraints: No retries or body logging; the panel can still be closed after changing conversations. */
@@ -496,7 +575,7 @@ export class AssistantPanel {
         "clear",
       ])
         this.nodes[name].disabled = false;
-      this.nodes.submit.disabled = this.answers.some((row) => ["pending", "processing"].includes(row.status));
+      this.nodes.submit.disabled = this.answers.some((row) => ["pending", "processing", "awaiting_approval"].includes(row.status));
       if (this.needsLoad && this.isOpen) {
         this.needsLoad = false;
         this.run(() => this.load(this.conversation?.id));

@@ -1,9 +1,16 @@
 /* Responsibility: Define the cross-page horizontal chat bar that expands and collapses from the bottom.
  * Implementation: Bottom-right entry, wide bottom panel, compact toolbar/input, independently scrolling messages, and height limits with modal focus on narrow screens.
  * Relationships: assistant-widget.js mounts the template; assistant.js synchronizes visibility and accessibility state.
- * Directory: No functions or classes; style sections cover entry, panel, conversations, Markdown content, drafts, citations, and mobile layout.
+ * Directory: None. Style sections cover entry, panel, conversations, Markdown, citations, mobile layout, and the explicit write-approval dialog.
  * Variable index: No new variables; consumes design-system.css colors, borders, and --sidebar-width. */
 .assistant-launcher { position: fixed; z-index: 1601; right: max(24px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 9px; border: 1px solid var(--accent); border-radius: 28px; padding: 12px 18px; background: var(--accent); color: var(--bg); box-shadow: 0 8px 30px var(--shadow-color); cursor: pointer; font: inherit; font-size: 14px; }
+/* Review the complete frozen payload; long values scroll without hiding the decision controls. */
+.assistant-approval { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 24px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface); color: var(--ink); overflow: auto; }
+.assistant-approval[open] { display: grid; gap: 16px; }
+.assistant-approval::backdrop { background: rgb(0 0 0 / 55%); }
+.assistant-approval pre { max-height: 40dvh; overflow: auto; padding: 12px; border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-approval .actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; }
+.assistant-approval-error { color: var(--danger, #d66060); }
 .assistant-launcher > span:first-child { font-size: 24px; line-height: 1; }
 .assistant-launcher[aria-expanded="true"] { background: var(--surface); color: var(--accent); }
 .assistant-panel { position: fixed; z-index: 1600; left: calc(var(--sidebar-width) + 24px); right: 24px; bottom: 16px; max-height: min(460px, calc(100dvh - 120px)); display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto minmax(0, 1fr) auto; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 16px; box-shadow: 0 -8px 48px var(--shadow-color); overflow: hidden; font-size: 13px; }

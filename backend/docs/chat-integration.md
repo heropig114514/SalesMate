@@ -1,5 +1,7 @@
 # Sales chat: backend adaptation and operations
 
+The [chat write approval upgrade](chat-approvals.md) adds `awaiting_approval`/`cancelled` states, a Session-only decision endpoint, Agent continuation, frontend review, and migration `chat.0004_chatapproval_and_more`. Its state and deployment rules supersede the earlier no-migration/read-only descriptions below for chat writes.
+
 Updated 2026-09-20. The current deployment policy removes duplicate CI/server quality gates and retains tests as independent diagnostics; the historical release gates below have been superseded by the [current deployment instructions](../deploy/lightsail/README.md). This document describes backend adaptation to the current workspace Agent contract. Chat reports now validate only their schema, while retaining permission, request-state, and idempotency checks. The implementation provides questions, task status, Agent claim/context/report, evidence snapshots, citations, consumers, browser presentation, and request-bound read-only tools. See the [workspace chat integration contract](workspace-chat-tools.md) for new interfaces, tool errors, evidence storage, and release steps. Code delivery does not establish completion of production migrations, service installation, or real-model acceptance.
 
 ## 1. Boundaries and reuse

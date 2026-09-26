@@ -133,8 +133,8 @@ class ExperimentWriteTests(TestCase):
 
     # Function: Verifies the real maintenance chain for Tool scope and built-in Agent.
     # Inputs: A read-only token, subsequent explicit write authorization, and a chat request in progress.
-    # Outputs: Old authorization is rejected; it succeeds after authorization, and Agent replay modifies only once and saves a stable receipt.
-    # Logic: HTTP Tool authentication and Agent authentication run separately; model decisions are outside this case.
+    # Outputs: Old Tool scope is rejected; chat writes remain pending until independent browser approval and decision replay mutates only once.
+    # Logic: Separate Tool, Agent, and browser authentication; verify no chat mutation precedes the decision.
     # Constraints: Does not mistake a Tool token for an Agent token and does not call a real model.
     def test_tool_scope_and_chat_mutation(self):
         credential = ToolCredential.objects.create(owner=self.reader, name="write-test",
@@ -156,12 +156,19 @@ class ExperimentWriteTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION="Agent write-agent-token")
         payload = {"request_id": str(request.pk), "name": "experiments.update", "arguments": {
             "batch": APPROVED_BATCHES[0], "model": "crm.Company", "pk": row["pk"],
-            "expected": row["fingerprint"], "data": {"name": "由聊天修改"}}}
-        for index in range(2):
-            response = self.client.post("/api/v1/agent/chat/tool-reads/", payload, format="json")
+            "expected": row["fingerprint"], "data": {"name": "由聊天修改"}},
+            "continuation": {"next_turn": 1, "observations": [], "signatures": []}}
+        response = self.client.post("/api/v1/agent/chat/tool-reads/", payload, format="json")
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(len(load_batch(APPROVED_BATCHES[0]).changes["mutations"]), 1)
+        approval_id = response.data["approval"]["id"]
+        self.client.credentials()
+        self.client.force_login(self.reader)
+        for _ in range(2):
+            response = self.client.post(f"/api/v1/sales/chat/requests/{request.pk}/approvals/{approval_id}/decision/",
+                                        {"decision": "approve"}, format="json")
             self.assertEqual(response.status_code, 200, response.data)
-            self.assertEqual(response.data["replayed"], bool(index))
-            self.assertEqual(response.data["evidence_items"][0]["source_type"], "experiment_mutation")
+        self.assertEqual(request.tool_reads.get().evidence_items[0]["source_type"], "experiment_mutation")
         self.assertEqual(len(load_batch(APPROVED_BATCHES[0]).changes["mutations"]), 2)
 
     # Function: Verifies batch-deletion order after editing a foreign key.

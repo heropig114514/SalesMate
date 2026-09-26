@@ -188,7 +188,7 @@ class ExperimentToolTests(LiveServerTestCase):
     # Function: Verifies that workspace model decisions drive real experiment modifications and save answers.
     # Inputs: A newly authenticated account, real HTTP backend, and test model-decision function.
     # Outputs: Customer name changes, receipt is cited, and original ownership remains unchanged.
-    # Logic: Runs the complete four-step workflow of directory, exact row, modification, and answer.
+    # Logic: Runs directory and row reads, suspends the write for a real browser decision, then resumes the same request and cites its canonical receipt.
     # Constraints: Replaces only the LLM decision and does not mock authorization, database, or HTTP.
     def test_chat_agent_write_http_round_trip(self):
         conversation = Conversation.objects.create(owner=self.reader)
@@ -220,6 +220,15 @@ class ExperimentToolTests(LiveServerTestCase):
                     "citations": [{key: evidence[key] for key in ("source_id", "source_type", "title_or_label")}]}
             return json.dumps(decision, ensure_ascii=False)
 
+        result = process_chat_once(backend=backend, chat_provider=decide)
+        self.assertEqual(result["status"], "awaiting_approval", result)
+        self.assertNotEqual(Company.objects.get(pk=company).name, "算法组修改")
+        approval = request.approvals.get()
+        self.client.credentials()
+        self.client.force_login(self.reader)
+        decision = self.client.post(f"/api/v1/sales/chat/requests/{request.pk}/approvals/{approval.pk}/decision/",
+                                    {"decision": "approve"}, format="json")
+        self.assertEqual(decision.status_code, 200, decision.data)
         result = process_chat_once(backend=backend, chat_provider=decide)
         self.assertEqual(result["status"], "completed", result)
         self.assertEqual(Company.objects.get(pk=company).name, "算法组修改")

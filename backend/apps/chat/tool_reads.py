@@ -1,5 +1,5 @@
 """Responsibility: Provide chat requests with read and experiment-maintenance tool discovery, execution, and stable evidence registration.
-Implementation: Employee and request locks protect workspace processing boundary and reject continuing a legacy company request; reuse original tool Schema, handlers, and permissions and independently persist every successful result.
+Implementation: Employee and request locks protect workspace processing; read handlers register evidence, while every allowed write creates a durable approval before execution, including in laboratory mode.
 Relationships: ``tool_views`` exposes Agent HTTP; ``services.save_answer`` attaches citation content only from this request context and ``ToolRead``.
 Directory:
 - processing_request: Authorize and lock a request being processed.
@@ -14,7 +14,6 @@ Variable index:
 - logger: Emits only request, employee, tool, status, duration, and exception type.
 """
 
-import hashlib
 import json
 import logging
 import uuid
@@ -33,6 +32,7 @@ from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS, EXPERIME
 
 from .models import ToolRead
 from .services import lock_owner, request_for, require_workspace
+from .approvals import CONTINUATION_SCHEMA, propose
 
 ALLOWED_TOOLS = WORKSPACE_TOOLS
 CONTRACT_VERSION = "chat-tools-v1"
@@ -41,6 +41,7 @@ CALL_SCHEMA = object_schema(
         "request_id": UUID,
         "name": {"type": "string", "minLength": 1, "maxLength": 120},
         "arguments": {"type": "object"},
+        "continuation": CONTINUATION_SCHEMA,
     },
     ["request_id", "name", "arguments"],
 )
@@ -149,8 +150,8 @@ def evidence_for(read_id, name, data):
 
 # Function: Execute data-tool invocation authorized for this request and register stable evidence.
 # Inputs: ``owner`` is the employee determined by the Agent credential and ``payload`` matches the call schema.
-# Outputs: Successful receipt contains original business data, revision, http_status, and read_id or evidence_items; tool errors retain HTTP status.
-# Logic: After locking employee and request, obtain same tool declaration, validate Schema, and reuse original handler; successful operation and new ``ToolRead`` share a transaction; maintenance invocation reuses request-derived idempotency key and ``stage`` marks failure location.
+# Outputs: Reads return data/evidence; writes return 202 approval_required without mutation; tool errors retain HTTP status.
+# Logic: Validate live registration and arguments under request lock; non-read operations freeze continuation for independent browser approval and reads execute with stable evidence.
 # Constraints: Request errors propagate; business ``APIException`` returns scope=tool without ending chat; unknown exceptions roll back and propagate without retry or fabricated empty information.
 def read_tool(owner, payload):
     validate(payload, CALL_SCHEMA)
@@ -173,12 +174,8 @@ def read_tool(owner, payload):
                 stage = "arguments"
                 validate(payload["arguments"], spec["inputSchema"])
                 stage = "execute"
-                if name in EXPERIMENT_WRITE_TOOLS:
-                    # The same request, tool, and arguments write only once; an independent new question uses a different request UUID.
-                    digest = hashlib.sha256(json.dumps(payload["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-                    key = uuid.uuid5(uuid.UUID(str(request.pk)), name + ":" + digest)
-                    business = tool_services.invoke(owner, None, name, payload["arguments"], str(key))
-                    response = None
+                if spec["executionMode"] != "read":
+                    return propose(request, spec, payload["arguments"], payload.get("continuation"))
                 else:
                     response = execute(owner, spec, payload["arguments"])
             except APIException as error:
@@ -195,10 +192,9 @@ def read_tool(owner, payload):
                 }
             else:
                 stage = "response"
-                if response is not None and not 200 <= response.status_code < 300:
+                if not 200 <= response.status_code < 300:
                     raise APIException("读取及实验维护工具返回了非预期响应。")
-                if response is not None:
-                    business = {"tool": name, **tool_services.response_data(response)}
+                business = {"tool": name, **tool_services.response_data(response)}
                 if business["status"] != "completed":
                     raise APIException("读取及实验维护工具没有完成查询。")
                 read_id = uuid.uuid4()

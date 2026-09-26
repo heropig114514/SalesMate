@@ -1,5 +1,5 @@
 """Responsibility: Map the minimal BackendClient workflow protocol to the Django Agent HTTP API.
-Implementation: Maintain identity, ETag, and lease context; email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
+Implementation: Maintain identity, ETag, and lease context; chat writes carry a resumable checkpoint and can return approval_required without execution. Email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
 Relationships: Gmail/QQ workers share this transport; L2-L4 retain their protocols, parameters, and prompt versions.
 Directory:
 - BackendClient: Declare the minimal L1-L4 backend protocol.
@@ -22,7 +22,7 @@ Directory:
 - BackendClient.get_answer_context: Read customer and knowledge context bound to a request.
 - BackendClient.get_chat_tools: Discover this request's read and experiment maintenance tools.
 - BackendClient.get_chat_request_status: Read the current employee's request status.
-- BackendClient.read_chat_tool: Execute a customer or shared experiment query and validate the response.
+- BackendClient.read_chat_tool: Execute reads or propose checkpointed writes awaiting browser approval.
 - BackendClient.report_answer: Report a chat result with its prompt version.
 - BackendRetrievalError: Represent backend retrieval failure.
 - BackendConfigurationError: Represent configuration that does not meet call prerequisites.
@@ -239,12 +239,12 @@ class BackendClient(Protocol):
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
     # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
-    # Inputs: `request_id`: current employee's request UUID; `name`: fixed read or experiment maintenance tool name; `arguments`: JSON parameters; concrete implementations read instance authentication settings.
+    # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` for suspended writes; instance authentication supplies identity.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Declare the protocol only; concrete clients implement transport.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Constraints: Allow only request-scoped published tools; no identity overrides, self-approval, or implicit retries.
     def read_chat_tool(
-        self, request_id: str, name: str, arguments: JsonObject
+        self, request_id: str, name: str, arguments: JsonObject, *, continuation: JsonObject | None = None
     ) -> JsonObject: ...
 
     # Function: Report a chat result with its prompt version.
@@ -876,18 +876,18 @@ class DjangoBackendClient:
         document = self._object(response, "Chat request status")
         if (
             document.get("request_id") != request_id
-            or document.get("status") not in {"pending", "processing", "completed", "failed"}
+            or document.get("status") not in {"pending", "processing", "awaiting_approval", "completed", "failed", "cancelled"}
         ):
             raise BackendContractError("Chat request status does not match this request.")
         return document
 
     # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
-    # Inputs: `request_id`: current employee's request UUID; `name`: fixed read or experiment maintenance tool name; `arguments`: JSON parameters; concrete implementations read instance authentication settings.
-    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
-    # Logic: Validate the fixed name and argument object; issue one POST and verify response ownership and evidence arrays.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` holding Agent loop state; instance credentials supply identity.
+    # Outputs: Completed read receipt or approval_required with a frozen proposal; transport/contract errors propagate.
+    # Logic: Send one request, check request/tool bindings, and distinguish approval suspension from actual completion.
+    # Constraints: Never approve, retry, or interpret a pending proposal as successful business execution.
     def read_chat_tool(
-        self, request_id: str, name: str, arguments: Mapping[str, Any]
+        self, request_id: str, name: str, arguments: Mapping[str, Any], *, continuation: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
         """Invoke request-bound read and experiment maintenance tools; the backend confirms both tool results and evidence."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool request")
@@ -898,11 +898,17 @@ class DjangoBackendClient:
         response, _ = self._request(
             "POST",
             "chat/tool-reads/",
-            json={"request_id": request_id, "name": name, "arguments": dict(arguments)},
+            json={"request_id": request_id, "name": name, "arguments": dict(arguments),
+                  **({"continuation": dict(continuation)} if continuation is not None else {})},
         )
         document = self._object(response, "Chat tool")
         if document.get("request_id") != request_id or document.get("tool") != name:
             raise BackendContractError("Chat tool response does not match this request or tool.")
+        if document.get("status") == "approval_required":
+            proposal = self._object(document.get("approval"), "Chat approval")
+            if proposal.get("request_id") != request_id or proposal.get("tool") != name or proposal.get("status") != "pending" or not proposal.get("id"):
+                raise BackendContractError("Chat approval does not match the pending operation.")
+            return document
         if document.get("status") != "completed":
             raise BackendContractError("Chat tool did not confirm completion.")
         if not isinstance(document.get("data"), Mapping):

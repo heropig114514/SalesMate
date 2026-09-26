@@ -726,6 +726,29 @@ paths:
                   maxLength: 120
                 arguments:
                   type: object
+                continuation:
+                  type: object
+                  properties:
+                    next_turn:
+                      type: integer
+                      minimum: 1
+                    observations:
+                      type: array
+                      items:
+                        type: object
+                    signatures:
+                      type: array
+                      items:
+                        type: array
+                        items:
+                          type: string
+                        minItems: 2
+                        maxItems: 2
+                  required:
+                  - next_turn
+                  - observations
+                  - signatures
+                  additionalProperties: false
               required:
               - request_id
               - name
@@ -735,6 +758,13 @@ paths:
       - agentCredential: []
       responses:
         '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '202':
           content:
             application/json:
               schema:
@@ -1222,7 +1252,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this company.
+        description: 标识此 company 的 UUID 字符串。
         required: true
       tags:
       - companies
@@ -1246,7 +1276,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this company.
+        description: 标识此 company 的 UUID 字符串。
         required: true
       tags:
       - companies
@@ -1274,7 +1304,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this company.
+        description: 标识此 company 的 UUID 字符串。
         required: true
       tags:
       - companies
@@ -1301,7 +1331,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this company.
+        description: 标识此 company 的 UUID 字符串。
         required: true
       tags:
       - companies
@@ -1330,7 +1360,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this company.
+        description: 标识此 company 的 UUID 字符串。
         required: true
       tags:
       - companies
@@ -1982,7 +2012,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this mailbox.
+        description: 标识此 mailbox 的 UUID 字符串。
         required: true
       tags:
       - mailboxes
@@ -2001,7 +2031,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: UUID string identifying this mailbox.
+        description: 标识此 mailbox 的 UUID 字符串。
         required: true
       tags:
       - mailboxes
@@ -2261,6 +2291,48 @@ paths:
       - v1
       security:
       - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/chat/requests/{request_id}/approvals/{approval_id}/decision/:
+    post:
+      operationId: chat_approval_decide
+      parameters:
+      - in: path
+        name: approval_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: path
+        name: request_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
       - cookieAuth: []
       responses:
         '200':
@@ -3269,16 +3341,16 @@ components:
         username:
           type: string
           readOnly: true
-          title: Username
-          description: Required; at most 150 characters; may contain only letters, digits, and the special characters @, ., -, and _.
+          title: 用户名
+          description: 必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。
         first_name:
           type: string
           readOnly: true
-          title: First name
+          title: 名字
         last_name:
           type: string
           readOnly: true
-          title: Last name
+          title: 姓氏
       required:
       - first_name
       - id
@@ -3597,10 +3669,10 @@ components:
       - unknown
       type: string
       description: |-
-        * `半导体检测` - Semiconductor inspection
-        * `精密量测` - Precision metrology
-        * `光学检测` - Optical inspection
-        * `工业检测` - Industrial inspection
+        * `半导体检测` - 半导体检测
+        * `精密量测` - 精密量测
+        * `光学检测` - 光学检测
+        * `工业检测` - 工业检测
         * `unknown` - unknown
     Inference:
       type: object
@@ -4060,9 +4132,9 @@ components:
       - calendar
       type: string
       description: |-
-        * `gmail` - Gmail sending
-        * `qq` - QQ sending
-        * `calendar` - Google Calendar
+        * `gmail` - Gmail 发信
+        * `qq` - QQ 发信
+        * `calendar` - Google 日历
     QQConnect:
       type: object
       properties:
@@ -4402,4 +4474,4 @@ components:
       type: apiKey
       in: header
       name: X-Lab-User
-      description: Optional laboratory owner username, available only when LAB_OPEN_ACCESS=true; no token required. Omitting it uses the default laboratory identity. Unavailable in normal mode.
+      description: 仅 LAB_OPEN_ACCESS=true 时可选的实验归属用户名，无需令牌；省略使用实验默认身份。正式模式不可用。

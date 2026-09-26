@@ -1,5 +1,5 @@
 """Responsibility: Persist answer tasks, evidence snapshots, and employee-maintained internal knowledge.
-Implementation: Reuse sales conversations and messages; independently persist result and evidence for every tool read, while database constraints guarantee one task per conversation and a unique answer.
+Implementation: Reuse sales messages; persist tool receipts, approval checkpoints, and decisions separately. Database constraints guarantee one active task per conversation, including approval waits, and one pending approval per task.
 Relationships: ``chat.services`` maintains state; Agent reads and writes this module only through HTTP.
 Directory:
 - AnswerRequest: One non-overwritable answer attempt.
@@ -7,6 +7,8 @@ Directory:
 - Citation: Ordered evidence corresponding to assistant message.
 - Citation.Meta: Citation-position uniqueness constraint.
 - ToolRead: Request-bound, non-overwritable tool-read record.
+- ChatApproval: Frozen chat write, user decision, and resumable Agent checkpoint.
+- ChatApproval.Meta: Approval state and single-pending-operation constraints.
 - KnowledgeEntry: Internal knowledge with explicit version.
 - KnowledgeEntry.Meta: Employee knowledge-version uniqueness constraint.
 Variable index:
@@ -17,7 +19,8 @@ Variable index:
 - AnswerRequest.user_message: Original question; may be reused by multiple explicit attempts.
 - AnswerRequest.assistant_message: At most one immutable answer per attempt.
 - AnswerRequest.retry_of: Original failed request for explicit retry; each original has one successor.
-- AnswerRequest.status: pending, processing, completed, or failed.
+- AnswerRequest.status: pending, processing, awaiting_approval, completed, failed, or cancelled.
+- AnswerRequest.requested_by: User who submitted the question and may approve its writes; legacy rows use owner.
 - AnswerRequest.created_at: Creation time.
 - AnswerRequest.processing_started_at: Claim time.
 - AnswerRequest.finished_at: Terminal-state time.
@@ -35,11 +38,25 @@ Variable index:
 - Citation.content: Evidence content matching this request context or tool record; empty when unmatched.
 - ToolRead.id: Successful single-read UUID and source namespace.
 - ToolRead.request: Owning answer request; employee identity inherits from request.
-- ToolRead.tool: Actual executed read-only tool name.
+- ToolRead.tool: Executed read or explicitly approved mutation tool name.
 - ToolRead.arguments: Actual Schema-validated parameter snapshot.
 - ToolRead.result: Original business-tool receipt retaining pagination, status, version, and data.
 - ToolRead.evidence_items: Four-field evidence array returned by this read without overwriting old sources.
 - ToolRead.created_at: Creation time of successful read record.
+- ChatApproval.id: Stable approval identifier and mutation idempotency key.
+- ChatApproval.request: Chat request whose execution is suspended.
+- ChatApproval.tool: Frozen registered write-tool name.
+- ChatApproval.arguments: Exact proposed tool arguments.
+- ChatApproval.schema: Tool input contract captured at proposal time.
+- ChatApproval.target_fingerprint: Target version approved by the user, including in laboratory mode.
+- ChatApproval.continuation: Agent loop position, observations, and call signatures before the pending write.
+- ChatApproval.status: pending, approved, or rejected.
+- ChatApproval.created_at: Proposal creation time.
+- ChatApproval.expires_at: Approval deadline.
+- ChatApproval.decided_at: Time of the explicit user decision.
+- ChatApproval.decided_by: Authenticated browser user making the decision.
+- ChatApproval.receipt: Executed write and canonical evidence, persisted atomically.
+- ChatApproval.Meta.constraints: Single pending approval per request and valid decision states.
 - Citation.Meta.constraints: Citation positions unique within request.
 - KnowledgeEntry.id: Knowledge-record identifier.
 - KnowledgeEntry.owner: Employee allowed to consume this knowledge.
@@ -59,11 +76,15 @@ from django.db import models
 
 
 # Function: Record one answer attempt and authoritative bindings.
-# Logic: Empty company binding denotes general conversation and nonempty binding a fixed customer; active state is unique per conversation; user message may be reused by a new attempt after failure.
-# Constraints: Terminal state cannot be overwritten and protected services alone maintain snapshots and results.
+# Logic: Empty company binding denotes general conversation and nonempty binding a fixed customer; requested_by preserves the question submitter independently of shared ownership. Approval waits retain the unique active slot; failure may create a new attempt for the same message.
+# Constraints: Completed, failed, and cancelled states are terminal; protected services alone maintain snapshots, approval transitions, and results.
 class AnswerRequest(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True,
+        related_name="submitted_chat_requests",
+    )
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, null=True, blank=True
     )
@@ -88,18 +109,18 @@ class AnswerRequest(models.Model):
     error = models.JSONField(null=True)
 
     # Function: Declare active-request and enum constraints.
-    # Logic: Database prevents concurrent submission from bypassing conversation serialization.
+    # Logic: Database serializes pending, processing, and awaiting_approval requests per conversation and accepts cancelled as a terminal state.
     # Constraints: Services still check authorization and cross-model bindings.
     class Meta:
         constraints = [
             models.UniqueConstraint(
                 fields=["conversation"],
-                condition=models.Q(status__in=["pending", "processing"]),
+                condition=models.Q(status__in=["pending", "processing", "awaiting_approval"]),
                 name="chat_one_active_conversation",
             ),
             models.CheckConstraint(
                 condition=models.Q(
-                    status__in=["pending", "processing", "completed", "failed"]
+                    status__in=["pending", "processing", "awaiting_approval", "completed", "failed", "cancelled"]
                 ),
                 name="chat_request_status",
             ),
@@ -132,7 +153,7 @@ class Citation(models.Model):
 
 # Function: Persist one successful tool read and source content actually returned in that read.
 # Logic: Every read creates a new UUID without overwriting existing rows; shares transaction with request-state lock and failed reads are not registered.
-# Constraints: Created only by chat read-only service and cannot be read directly by browser; later company changes do not refresh this record.
+# Constraints: Created by chat reads or approval execution; browsers see cited evidence only and later data changes never refresh this record.
 class ToolRead(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     request = models.ForeignKey(
@@ -143,6 +164,34 @@ class ToolRead(models.Model):
     result = models.JSONField()
     evidence_items = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+# Function: Persist a write awaiting an independent browser decision.
+# Logic: Keep exact arguments and the Agent checkpoint; approval execution and receipt commit together.
+# Constraints: Only chat.approvals mutates decisions; a rejected write never executes and cannot be revived.
+class ChatApproval(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(AnswerRequest, on_delete=models.PROTECT, related_name="approvals")
+    tool = models.CharField(max_length=120)
+    arguments = models.JSONField()
+    schema = models.JSONField()
+    target_fingerprint = models.CharField(max_length=64, blank=True)
+    continuation = models.JSONField()
+    status = models.CharField(max_length=20, default="pending")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    decided_at = models.DateTimeField(null=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT)
+    receipt = models.JSONField(null=True)
+
+    # Function: Enforce legal decisions and one outstanding approval per chat request.
+    # Logic: Partial uniqueness complements the request lock used by the approval service.
+    # Constraints: Database constraints do not replace authentication or frozen-argument validation.
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["request"], condition=models.Q(status="pending"), name="chat_one_pending_approval"),
+            models.CheckConstraint(condition=models.Q(status__in=["pending", "approved", "rejected"]), name="chat_approval_status"),
+        ]
 
 
 # Function: Persist explicitly imported internal-knowledge versions.

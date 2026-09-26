@@ -1,5 +1,5 @@
 # Responsibility: Deploy main-branch commits to Lightsail directly while isolated tests report diagnostics independently.
-# Implementation: verify and deploy run in parallel without dependencies. Account-reset browser diagnostics do not block or cancel deployment; PRs run diagnostics only, while main pushes or manual runs deploy.
+# Implementation: verify and deploy run in parallel without dependencies. Chat-approval and account-reset browser diagnostics do not block or cancel deployment; PRs run diagnostics only, while main pushes or manual runs deploy.
 # Relationships: Restricted server SSH entry point and root deployment script; the read-only Git deploy key remains on the server.
 # Directory:
 # - verify: Runs non-blocking diagnostics.
@@ -125,6 +125,7 @@ jobs:
           export SALESMATE_BROWSER_PATH="$(node -e 'console.log(require(process.env.SALESMATE_PLAYWRIGHT_MODULE).chromium.executablePath())')"
           # QQ-specific browser checking remains disabled; chat and mail processing validate the current page contract with mocked interfaces.
           node backend/tools/browser_chat.cjs
+          node backend/tools/browser_chat_approvals.cjs
           node backend/tools/browser_processing.cjs
           node backend/tools/browser_workspace.cjs
           node backend/tools/browser_account_reset.cjs

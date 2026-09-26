@@ -1,5 +1,5 @@
 """Responsibility: Orchestrate request-scoped customer and shared experiment tools, validating model answer citations.
-Implementation: Constrain model calls with live tool catalogs, a fixed candidate set, and existing read/context budgets.
+Implementation: Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
 Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
 Directory:
 - ChatValidationError: Represent workspace contract validation failure.
@@ -160,13 +160,14 @@ def _source(value: object, path: str) -> dict[str, str]:
 
 
 # Function: Parse a claimed workspace request.
-# Inputs: `value`: five-field object returned by the backend claim endpoint.
-# Outputs: Validate the five fields and history roles, returning a normalized request dictionary.
-# Logic: Validate the five fields and history roles, returning a normalized request dictionary.
-# Constraints: Reject preselected companies and extra fields.
+# Inputs: `value`: five-field claim object with optional backend-owned resume data.
+# Outputs: Normalized request and optional resume object.
+# Logic: Validate identifiers and history; the workflow validates checkpoint contents before continuation.
+# Constraints: Reject preselected companies and all extra fields except resume.
 def parse_conversation_request(value: object) -> dict[str, Any]:
     """Parse a workspace request claimed from the backend."""
-    request = _keys(value, _REQUEST_FIELDS, "request")
+    fields = _REQUEST_FIELDS | ({"resume"} if isinstance(value, Mapping) and "resume" in value else set())
+    request = _keys(value, fields, "request")
     history = request["recent_history"]
     if not isinstance(history, list):
         raise ChatValidationError("recent_history must be an array.")
@@ -185,6 +186,7 @@ def parse_conversation_request(value: object) -> dict[str, Any]:
         "user_message_id": _nonblank(request["user_message_id"], "request.user_message_id"),
         "question": _nonblank(request["question"], "request.question"),
         "recent_history": parsed_history,
+        **({"resume": request["resume"]} if "resume" in request else {}),
     }
 
 
@@ -746,8 +748,8 @@ def _workspace_prompt_evidence(
 
 # Function: Process a workspace question and the read/experiment maintenance tool loop.
 # Inputs: `request`: backend claim object; `backend`: request-bound client; `chat_provider`: one-call model function.
-# Outputs: Load context, discover customer/experiment tools according to model decisions, and return an answer or stage failure after at most six reads.
-# Logic: Load context, discover customer/experiment tools according to model decisions, and return an answer or stage failure after at most six reads.
+# Outputs: Final answer, stage failure, or awaiting_approval suspension; the complete request still has at most six tool turns.
+# Logic: Persist observations and loop position with each proposed write; after approval restore canonical evidence and append its receipt, then continue from the next turn without replaying tools.
 # Constraints: backend is the real service boundary and chat_provider the model boundary; the backend persists evidence, with parameters and budgets unchanged.
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
     """At most six data tool calls, each selected by the model; the final answer cites only backend-registered evidence."""
@@ -779,7 +781,27 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
         observations: list[dict[str, Any]] = []
         signatures: set[tuple[str, str]] = set()
         catalog: dict[str, dict[str, Any]] | None = None
-        for turn in range(_WORKSPACE_MAX_TOOL_READS + 1):
+        start_turn = 0
+        if "resume" in request:
+            resume = _keys(request["resume"], {"continuation", "tool_result", "arguments", "evidence_items"}, "resume")
+            checkpoint = _keys(resume["continuation"], {"next_turn", "observations", "signatures"}, "continuation")
+            start_turn = checkpoint["next_turn"]
+            if type(start_turn) is not int or not 1 <= start_turn <= _WORKSPACE_MAX_TOOL_READS:
+                raise ChatValidationError("Invalid approval continuation turn.")
+            if not isinstance(checkpoint["observations"], list) or not all(isinstance(item, dict) for item in checkpoint["observations"]):
+                raise ChatValidationError("Invalid approval observations.")
+            observations = list(checkpoint["observations"])
+            signatures = {tuple(item) for item in checkpoint["signatures"]}
+            if len(observations) != start_turn - 1 or any(len(item) != 2 or not all(isinstance(part, str) for part in item) for item in signatures):
+                raise ChatValidationError("Approval continuation does not preserve the tool budget.")
+            name = resume["tool_result"].get("tool")
+            if name not in EXPERIMENT_WRITE_TOOLS:
+                raise ChatValidationError("Unexpected approved tool.")
+            summary, _ = _workspace_tool_result(resume["tool_result"], request_id, name)
+            _workspace_append_evidence(evidence, [_source(item, "resume.evidence") for item in resume["evidence_items"]])
+            observations.append({"tool": name, "arguments": resume["arguments"], "status": "completed", "data": summary})
+            catalog = _workspace_catalog(backend.get_chat_tools(request_id), request_id)
+        for turn in range(start_turn, _WORKSPACE_MAX_TOOL_READS + 1):
             visible_evidence, prompt_evidence = _workspace_prompt_evidence(
                 evidence, request["question"]
             )
@@ -845,7 +867,13 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             signatures.add(signature)
             code = "context_unavailable"
             try:
-                raw_result = backend.read_chat_tool(request_id, name, arguments)
+                if name in EXPERIMENT_WRITE_TOOLS:
+                    raw_result = backend.read_chat_tool(request_id, name, arguments, continuation={
+                        "next_turn": turn + 1, "observations": observations,
+                        "signatures": [list(item) for item in sorted(signatures)],
+                    })
+                else:
+                    raw_result = backend.read_chat_tool(request_id, name, arguments)
             except BackendRequestError as error:
                 if (
                     error.scope != "tool"
@@ -862,6 +890,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     request_id, name, error.status_code,
                 )
                 continue
+            if raw_result.get("status") == "approval_required":
+                if name not in EXPERIMENT_WRITE_TOOLS or raw_result.get("request_id") != request_id or raw_result.get("tool") != name:
+                    raise ChatValidationError("Approval response does not match this write.")
+                logger.info("workspace_chat_suspended request_id=%s tool=%s next_turn=%s", request_id, name, turn + 1)
+                return {"request_id": request_id, "status": "awaiting_approval", "error": None}
             summary, items = _workspace_tool_result(raw_result, request_id, name)
             _workspace_append_evidence(evidence, items)
             observations.append({
@@ -910,15 +943,15 @@ def _chat_report_is_saved(result: Mapping[str, Any], state: object) -> bool:
 
 # Function: Claim one workspace chat request and attempt one report.
 # Inputs: `backend`: backend client; `chat_provider`: single model-call boundary.
-# Outputs: dict[str, Any] | None.
-# Logic: Run only workspace chat after claiming; do not switch to a legacy flow based on customer binding or configuration.
+# Outputs: Final/local failure result, suspended request status, or None when no request is available.
+# Logic: Run workspace chat and report final results; approval suspension releases this worker without writing a terminal answer.
 # Constraints: Requests must have no preselected company; the backend controls employee visibility and authoritative result persistence.
 def process_chat_once(
     *,
     backend: Any,
     chat_provider: Any = bailian_chat_provider,
 ) -> dict[str, Any] | None:
-    """Claim and process at most one chat request, then attempt exactly one result report."""
+    """Claim one chat request; release approval waits without a terminal report and report final answers once."""
     claimed_request = backend.claim_answer_request()
     if claimed_request is None:
         return None
@@ -930,6 +963,17 @@ def process_chat_once(
     result = answer_workspace_request(
         claimed_request, backend=backend, chat_provider=chat_provider
     )
+    if result["status"] == "awaiting_approval":
+        return result
+    if result["status"] == "failed" and hasattr(backend, "get_chat_request_status"):
+        # A lost proposal response may have committed the suspension. Observe state once instead of reporting over it.
+        try:
+            state = backend.get_chat_request_status(request_id)
+            if state.get("status") in {"awaiting_approval", "pending", "cancelled"}:
+                logger.info("chat_suspension_confirmed request_id=%s status=%s", request_id, state["status"])
+                return {"request_id": request_id, "status": state["status"], "error": None}
+        except Exception as status_error:
+            logger.warning("chat_suspension_status_failed request_id=%s error_type=%s", request_id, type(status_error).__name__)
     try:
         backend.report_answer(result)
     except Exception as error:
