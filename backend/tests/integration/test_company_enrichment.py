@@ -14,6 +14,8 @@
 - EnrichmentTests.test_source_changes_revoke_cached_results：验证修改和删除批准后旧分析失效。
 - EnrichmentTests.test_integrity_failure_is_explicit：验证源数据漂移不是无匹配。
 - EnrichmentTests.test_no_match_and_legacy_input：验证无匹配和旧协议保持可用。
+- EnrichmentTests.test_batch_resolution_reuses_verified_rows_and_rechecks_changes：验证批量等价、清单仅读一次及下次调用重新核验。
+- EnrichmentTests.test_batch_resolution_keeps_owner_only_and_integrity_failure：验证批量不会绕过账号隔离或完整性错误。
 - EnrichmentLiveTests：真实网络上的 Agent 分析闭环。
 - EnrichmentLiveTests.setUp：初始化隔离夹具。
 - EnrichmentLiveTests.test_real_worker_client_and_cache：验证无 Tool 令牌的 L2/L3/L4 与缓存。
@@ -37,7 +39,7 @@ from agent.clients.backend_api import DjangoBackendClient
 from agent.workflows.customer_analysis import generate_analysis, _size_band
 from agent.workflows.orchestration import analyze_company
 from apps.crm import results, rules, selectors
-from apps.crm.enrichment import resolve
+from apps.crm.enrichment import resolve, resolve_many
 from apps.crm.models import AgentCredential, Analysis, Company, Job
 from apps.sales.experiments import APPROVED_BATCHES, load_batch, table_rows
 from apps.sales.experiment_writes import mutate
@@ -95,6 +97,35 @@ def provider(document):
 # 逻辑：用真实 HTTP 视图和事务数据库，构造准确匹配与攻击反例。
 # 约束：所有写入限测试数据库。
 class EnrichmentTests(TestCase):
+    # 功能：验证批量解析与独立解析相同且仅读取一次清单。
+    # 输入：测试实例中的获准夹具、匹配公司及无匹配公司。
+    # 输出：完整结果相等、实际 table_rows 调用一次，源变更后下一调用返回完整性错误。
+    # 逻辑：包装真实投影函数统计次数，保留数据库和指纹检查；没有模拟成功结果。
+    # 约束：变更只在隔离测试库，不缓存上一调用结果。
+    def test_batch_resolution_reuses_verified_rows_and_rechecks_changes(self):
+        other = Company.objects.create(owner=self.reader, group_key="batch-miss", domains=["unmatched.example"])
+        companies = [self.company, other]
+        expected = {company.pk: resolve(company) for company in companies}
+        with patch("apps.crm.enrichment.experiments.table_rows", wraps=table_rows) as project:
+            actual = resolve_many(companies)
+        self.assertEqual(actual, expected)
+        self.assertEqual(project.call_count, 1)
+        Company.objects.filter(pk=self.row["pk"]).update(name="changed-source")
+        self.assertEqual(resolve_many(companies)[self.company.pk]["reason"], "integrity_error")
+
+    # 功能：验证批量解析的隔离和失效边界。
+    # 输入：已批准清单、个人隔离开关和被删除的清单。
+    # 输出：个人隔离不读取共享表；清单缺失明确 unavailable；空集合无读取。
+    # 逻辑：保留真实表读取，检查调用次数和结果中的安全原因。
+    # 约束：不把清单失败变为正常无匹配，不修改运行环境默认值。
+    def test_batch_resolution_keeps_owner_only_and_integrity_failure(self):
+        with self.settings(WORKSPACE_OWNER_ONLY=True), patch("apps.crm.enrichment.experiments.table_rows", wraps=table_rows) as project:
+            self.assertEqual(resolve_many([self.company])[self.company.pk]["status"], "not_found")
+            self.assertEqual(resolve_many([]), {})
+            self.assertEqual(project.call_count, 0)
+        AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id=self.batch).delete()
+        self.assertEqual(resolve_many([self.company])[self.company.pk]["reason"], "batch_unavailable")
+
     # 功能：初始化隔离夹具。
     # 输入：无外部参数，测试实例。
     # 输出：initialize 建立的实例状态。

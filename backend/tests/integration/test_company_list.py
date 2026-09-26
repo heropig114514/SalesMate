@@ -12,6 +12,7 @@
 - CompanyListTests.test_invalid_latest_analysis_is_not_replaced_by_older_result：验证不可见分析不回退旧结果。
 - CompanyListTests.test_score_versions_and_repeated_reads：验证版本过滤与请求间变更可见性。
 - CompanyListTests.test_invalid_pagination_still_rejected：验证非法分页仍显式失败。
+- CompanyListTests.test_list_does_not_load_mail_body_or_old_extraction_facts：验证必要字段投影与最新摘要保持一致。
 变量索引：
 - 无
 """
@@ -34,6 +35,27 @@ from apps.sales.models import CompanySettings
 # 约束：只写独立测试库，不调用模型；通过不代表线上负载容量。
 @override_settings(ANALYSIS_PROVIDER="agent", LAB_OPEN_ACCESS=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class CompanyListTests(TestCase):
+    # 功能：验证列表不读取完整邮件正文或历史抽取事实。
+    # 输入：含大正文和两份摘要的真实隔离邮件记录。
+    # 输出：完整列表行与独立读取相等，payload 保持 deferred，构造行无附加查询。
+    # 逻辑：从真实 ORM 投影和 SQL 查询记录验证字段裁剪，避免仅比较合成返回值。
+    # 约束：正文保持数据库原值；详情和 Agent 完整上下文必须仍可读到正文。
+    def test_list_does_not_load_mail_body_or_old_extraction_facts(self):
+        company = self.company(1)
+        email = company.emails.get()
+        email.payload = {**email.payload, "body_text": "large-body-" * 10000}
+        email.save(update_fields=["payload"])
+        Extraction.objects.create(email=email, prompt_version="new-summary", status="completed", facts={"message_summary": "Latest summary"})
+        expected = selectors.company_row(company)
+        projection = selectors.list_projection([company])[company.pk]
+        self.assertIn("payload", projection["emails"][0].get_deferred_fields())
+        with CaptureQueriesContext(connection) as queries:
+            actual = selectors.company_row(company, projection)
+        self.assertEqual(len(queries), 0)
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["headline_summary"], "Latest summary")
+        self.assertEqual(selectors.context_pair(company, include_priority=False)[1]["emails"][0]["body_text"], email.payload["body_text"])
+
     # 功能：创建测试归属。
     # 输入：无显式参数，读取隔离测试数据库。
     # 输出：owner、other、mailbox 实例状态。
