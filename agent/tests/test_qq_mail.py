@@ -1,18 +1,18 @@
-"""职责：验证 QQ IMAP 协议解析和只读边界。
-实现：模拟 IMAP 传输，验证文件夹发现、UID 去重、代次和 MIME，不访问真实邮箱。
-关联：qq_mail 适配器；测试数据均为虚构邮件和授权码。
-目录：
-- QQMailTests：QQ 传输测试。
-- QQMailTests.test_connect_uses_tls_and_hides_provider_error：TLS 与脱敏错误。
-- QQMailTests.test_folders_requires_sent_and_supports_flags：发现已发送目录。
-- QQMailTests.test_uid_search_filters_reverse_star_range：增量下界过滤。
-- QQMailTests.test_message_ids_distinguish_folder_and_generation：消息身份边界。
-- QQMailTests.test_read_is_peek_and_preserves_dates：只读 MIME 读取。
-- QQMailTests.test_changed_validity_stops_before_fetch：代次改变拒绝读取。
-- QQMailTests.test_date_search_and_metadata_are_body_free：日期筛选及纯元数据读取。
-- QQMailTests.test_metadata_rejects_missing_or_invalid_responses：元数据缺失、重复或无效时拒绝。
-变量索引：
-- 无
+"""Responsibility: Verify QQ IMAP parsing and read-only boundaries.
+Implementation: Mock IMAP transport to verify folder discovery, UID deduplication, generations, and MIME without a real mailbox.
+Relationships: qq_mail adapter; all test emails and authorization codes are fictional.
+Directory:
+- QQMailTests: QQ transport tests.
+- QQMailTests.test_connect_uses_tls_and_hides_provider_error: TLS and sanitized errors.
+- QQMailTests.test_folders_requires_sent_and_supports_flags: Sent-folder discovery.
+- QQMailTests.test_uid_search_filters_reverse_star_range: Incremental lower-bound filtering.
+- QQMailTests.test_message_ids_distinguish_folder_and_generation: Message identity boundaries.
+- QQMailTests.test_read_is_peek_and_preserves_dates: Read-only MIME retrieval.
+- QQMailTests.test_changed_validity_stops_before_fetch: Reject reads after a generation change.
+- QQMailTests.test_date_search_and_metadata_are_body_free: Date filtering and metadata-only reads.
+- QQMailTests.test_metadata_rejects_missing_or_invalid_responses: Reject missing, duplicate, or invalid metadata.
+Variable index:
+- None
 """
 import imaplib
 from datetime import datetime, timezone
@@ -23,15 +23,15 @@ from unittest.mock import Mock, patch
 from agent.tools import qq_mail
 
 
-# 功能：验证 QQ 协议适配器的确定性行为。
-# 逻辑：模拟网络返回真实形状的 IMAP 响应。
-# 约束：不证明 QQ 真实账号授权或外网可达。
+# Function: Verify deterministic behavior of the QQ protocol adapter.
+# Logic: Mock network responses with realistic IMAP structures.
+# Constraints: Does not verify real QQ account authorization or external connectivity.
 class QQMailTests(unittest.TestCase):
-    # 功能：核验连接固定主机和证书验证。
-    # 输入：无外部参数；模拟 SSL 客户端与认证失败。
-    # 输出：使用 TLS 校验，错误不含模拟授权码。
-    # 逻辑：检查构造参数与失败清理。
-    # 约束：不连接 QQ，不记录凭证。
+    # Function: Verify connection to the fixed host and certificate validation.
+    # Inputs: No external parameters; mock the SSL client and authentication failure.
+    # Outputs: TLS validation is enabled and errors exclude the mock authorization code.
+    # Logic: Inspect constructor arguments and failure cleanup.
+    # Constraints: Do not connect to QQ or log credentials.
     def test_connect_uses_tls_and_hides_provider_error(self):
         with patch.object(qq_mail.imaplib, "IMAP4_SSL") as factory:
             client = factory.return_value
@@ -45,11 +45,11 @@ class QQMailTests(unittest.TestCase):
             self.assertNotIn("raw-secret", str(caught.exception))
             client.logout.assert_called_once()
 
-    # 功能：验证发送目录识别与不完整范围失败。
-    # 输入：无外部参数；三种 LIST 响应。
-    # 输出：标记/QQ 名称被识别，缺少发送目录时报错。
-    # 逻辑：测试特殊用途标志和固定服务名称。
-    # 约束：不把缺少文件夹作为只同步收件箱的理由。
+    # Function: Verify sent-folder identification and failure for incomplete scope.
+    # Inputs: No external parameters; three LIST responses.
+    # Outputs: Recognize flags/QQ names and fail if the sent folder is absent.
+    # Logic: Test special-use flags and fixed service names.
+    # Constraints: Do not treat a missing folder as permission to synchronize only the inbox.
     def test_folders_requires_sent_and_supports_flags(self):
         client = Mock()
         client.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "INBOX"', b'(\\Sent) "/" "Sent Messages"'])
@@ -60,11 +60,11 @@ class QQMailTests(unittest.TestCase):
         with self.assertRaises(qq_mail.QQMailError):
             qq_mail.folders(client)
 
-    # 功能：验证 IMAP 星号反向范围不会重复导入旧 UID。
-    # 输入：无外部参数；服务器返回下界之前和之后的 UID。
-    # 输出：仅保留严格大于已保存游标的值。
-    # 逻辑：显式排序和过滤。
-    # 约束：无自动回扫旧邮件。
+    # Function: Verify that IMAP asterisk reverse ranges do not reimport old UIDs.
+    # Inputs: No external parameters; the server returns UIDs below and above the lower bound.
+    # Outputs: Retain only values strictly greater than the saved cursor.
+    # Logic: Sort and filter explicitly.
+    # Constraints: Do not automatically rescan old emails.
     def test_uid_search_filters_reverse_star_range(self):
         client = Mock()
         client.uid.return_value = ("OK", [b"5 7 6 7"])
@@ -72,11 +72,11 @@ class QQMailTests(unittest.TestCase):
         client.uid.return_value = ("OK", [b"5"])
         self.assertEqual(qq_mail.list_uids(client, 5), [])
 
-    # 功能：验证持久消息标识唯一性与安全解析。
-    # 输入：无外部参数；相同 UID 位于不同文件夹或代次。
-    # 输出：互不相同且可逆的标识，非法编码拒绝。
-    # 逻辑：往返编解码和注入输入测试。
-    # 约束：不使用可重复的 RFC Message-ID 代替 IMAP 身份。
+    # Function: Verify persistent message identifier uniqueness and safe parsing.
+    # Inputs: No external parameters; the same UID appears in different folders or generations.
+    # Outputs: Distinct reversible identifiers; reject invalid encodings.
+    # Logic: Test encoding round trips and injection inputs.
+    # Constraints: Do not replace IMAP identity with a potentially repeated RFC Message-ID.
     def test_message_ids_distinguish_folder_and_generation(self):
         values = {qq_mail.message_id("INBOX", 10, 1), qq_mail.message_id("Sent Messages", 10, 1), qq_mail.message_id("INBOX", 11, 1)}
         self.assertEqual(len(values), 3)
@@ -84,11 +84,11 @@ class QQMailTests(unittest.TestCase):
         with self.assertRaises(qq_mail.QQMailError):
             qq_mail.split_message_id("qq:SU5CT1g:10:1\r\nLOGOUT")
 
-    # 功能：验证 MIME 解析与读取无副作用。
-    # 输入：无外部参数；模拟 INTERNALDATE 和一封虚构邮件。
-    # 输出：保留来源 ID、接收时间和正文。
-    # 逻辑：确认 readonly 与 BODY.PEEK[] 命令。
-    # 约束：不以运行当前时间替代实际接收时间。
+    # Function: Verify MIME parsing and side-effect-free reads.
+    # Inputs: No external parameters; mock INTERNALDATE and one fictional email.
+    # Outputs: Preserve source ID, reception time, and body.
+    # Logic: Verify readonly and BODY.PEEK[] commands.
+    # Constraints: Do not substitute current runtime time for actual reception time.
     def test_read_is_peek_and_preserves_dates(self):
         client = Mock()
         client.select.return_value = ("OK", [b"1"])
@@ -104,11 +104,11 @@ class QQMailTests(unittest.TestCase):
         client.select.assert_called_once_with('"INBOX"', readonly=True)
         client.uid.assert_called_once_with("fetch", "3", "(UID INTERNALDATE BODY.PEEK[])")
 
-    # 功能：阻止文件夹代次变化后的误读。
-    # 输入：无外部参数；持久代次与服务器代次不同。
-    # 输出：失败且没有 FETCH。
-    # 逻辑：身份检查先于原文读取。
-    # 约束：不隐式重置游标。
+    # Function: Prevent incorrect reads after folder generation changes.
+    # Inputs: No external parameters; persisted and server generations differ.
+    # Outputs: Failure without FETCH.
+    # Logic: Check identity before reading raw content.
+    # Constraints: Do not implicitly reset the cursor.
     def test_changed_validity_stops_before_fetch(self):
         client = Mock()
         client.select.return_value = ("OK", [b"1"])
@@ -117,11 +117,11 @@ class QQMailTests(unittest.TestCase):
             qq_mail.read_email(client, qq_mail.message_id("INBOX", 20, 3))
         client.uid.assert_not_called()
 
-    # 功能：验证日期粗筛覆盖时区边界且不请求正文。
-    # 输入：无外部参数；UTC 日期下界及两个有时区的 IMAP 日期响应。
-    # 输出：SINCE 提前一天，内部日期转换为 UTC，FETCH 仅请求元数据。
-    # 逻辑：检查实际命令参数与输出日期值。
-    # 约束：不联网，不以 MIME Date 头替代 INTERNALDATE。
+    # Function: Verify coarse date filtering covers timezone boundaries without requesting bodies.
+    # Inputs: No external parameters; a UTC date lower bound and two timezone-aware IMAP date responses.
+    # Outputs: Move SINCE back one day, convert internal dates to UTC, and request only metadata through FETCH.
+    # Logic: Inspect actual command arguments and returned dates.
+    # Constraints: No network; do not substitute MIME Date for INTERNALDATE.
     def test_date_search_and_metadata_are_body_free(self):
         client = Mock()
         client.uid.return_value = ("OK", [b"1 2"])
@@ -134,11 +134,11 @@ class QQMailTests(unittest.TestCase):
         self.assertEqual(dates[1], dates[2])
         client.uid.assert_called_once_with("fetch", "1,2", "(UID INTERNALDATE)")
 
-    # 功能：验证日期查询不能把不完整范围当作成功。
-    # 输入：无外部参数；缺失、重复、额外 UID 及非法日期的模拟响应。
-    # 输出：全部抛出 QQMailError。
-    # 逻辑：比较请求集合、解析结果和服务状态。
-    # 约束：不自动重试，也不读取正文补足元数据。
+    # Function: Verify date queries cannot report success for incomplete scope.
+    # Inputs: No external parameters; mocked responses contain missing, duplicate, extra UIDs, and invalid dates.
+    # Outputs: All cases raise QQMailError.
+    # Logic: Compare requested sets, parsed results, and service status.
+    # Constraints: Do not automatically retry or read bodies to fill missing metadata.
     def test_metadata_rejects_missing_or_invalid_responses(self):
         row = b'1 (UID 1 INTERNALDATE "14-Sep-2026 10:00:00 +0800")'
         for response in [("NO", []), ("OK", []), ("OK", [row, row]), ("OK", [row.replace(b'UID 1', b'UID 2')]), ("OK", [b'1 (UID 1 INTERNALDATE "invalid")'])]:

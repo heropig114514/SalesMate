@@ -1,13 +1,13 @@
-"""职责：声明账号 API 的命名空间与相对路由。
-实现：onboarding/ 维护个人产品方案与私有文件；company-profile/ 维护本公司资料，me/ 查询当前身份，me/reset/ 清空内部数据并保留登录；register/ 提供带 CSRF 保护的匿名普通账号注册。
-关联：由 config.urls 挂载到 api/v1/accounts/，分别委托 views、company_profile 和 registration。
+"""Responsibility: Declare the accounts API namespace and relative routes.
+Implementation: ``onboarding/`` maintains personal product plans and private files; ``company-profile/`` maintains company information; ``me/`` reads the current identity; ``me/reset/`` clears internal data while retaining login; ``register/`` provides CSRF-protected anonymous standard-account registration.
+Relationships: Mounted at ``api/v1/accounts/`` by ``config.urls`` and delegated to ``views``, ``company_profile``, and ``registration``.
 
-目录：
-- 无
+Directory:
+- None
 
-变量索引：
-- app_name：反向解析使用的 accounts 命名空间。
-- urlpatterns：当前用户、内部数据清空、公司资料、引导与账号注册的模块内路由。
+Variable index:
+- app_name: ``accounts`` namespace used for reverse resolution.
+- urlpatterns: Module-local routes for the current user, internal-data clearing, company information, onboarding, and account registration.
 """
 
 from django.urls import path

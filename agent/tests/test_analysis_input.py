@@ -1,4 +1,29 @@
-"""L2 AnalysisInput 的核心行为测试。"""
+"""Responsibility: Core behavior tests for L2 AnalysisInput.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- AnalysisInputTests: Group offline assertions and fixture behavior for AnalysisInputTests.
+- AnalysisInputTests.test_normal_snapshot_contains_sources_context_and_metrics: Verify normal snapshot contains sources context and metrics.
+- AnalysisInputTests.test_input_version_ignores_email_order_but_changes_with_snapshot: Verify input version ignores email order but changes with snapshot.
+- AnalysisInputTests.test_empty_company_is_valid_and_has_null_summary: Verify empty company is valid and has null summary.
+- AnalysisInputTests.test_optional_l4_context_is_local_and_not_submitted_as_l2: Verify optional l4 context is local and not submitted as l2.
+- AnalysisInputTests.test_optional_l4_context_is_local_and_not_submitted_as_l2.WithPriorityContext: Group offline assertions and fixture behavior for WithPriorityContext.
+- AnalysisInputTests.test_optional_l4_context_is_local_and_not_submitted_as_l2.WithPriorityContext.get_company_context: Read company business context.
+- AnalysisInputTests.test_v7_stage_reaches_rule_score_without_deal_or_seller: Verify v7 stage reaches rule score without deal or seller.
+- AnalysisInputTests.test_v7_stage_reaches_rule_score_without_deal_or_seller.StageBackend: Group offline assertions and fixture behavior for StageBackend.
+- AnalysisInputTests.test_v7_stage_reaches_rule_score_without_deal_or_seller.StageBackend.get_company_context: Read company business context.
+- AnalysisInputTests.test_old_l1_email_is_rejected: Verify old l1 email is rejected.
+- AnalysisInputTests.test_old_l1_email_is_rejected.OldEmailBackend: Group offline assertions and fixture behavior for OldEmailBackend.
+- AnalysisInputTests.test_old_l1_email_is_rejected.OldEmailBackend.get_company_context: Read company business context.
+- AnalysisInputTests.test_backend_retrieval_and_scope_errors_are_returned: Verify backend retrieval and scope errors are returned.
+- AnalysisInputTests.test_backend_retrieval_and_scope_errors_are_returned.WrongScope: Group offline assertions and fixture behavior for WrongScope.
+- AnalysisInputTests.test_backend_retrieval_and_scope_errors_are_returned.WrongScope.get_company_grouping: Read company grouping.
+- AnalysisInputTests.test_backend_retrieval_and_scope_errors_are_returned.WrongScope.get_company_context: Read company business context.
+
+Variable index:
+- NOW: Fixed timezone-aware test clock.
+"""
 
 import copy
 import unittest

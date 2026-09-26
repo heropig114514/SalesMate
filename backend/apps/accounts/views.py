@@ -1,13 +1,13 @@
-"""职责：提供当前已认证用户的身份查询接口。
-实现：继承全局 SessionAuthentication 和 IsAuthenticated，序列化 request.user；不实现登录或邮箱授权。
-关联：调用 CurrentUserSerializer，错误结构由 common.exceptions 统一包装。
+"""Responsibility: Provide an identity-query endpoint for the currently authenticated user.
+Implementation: Inherit global ``SessionAuthentication`` and ``IsAuthenticated`` and serialize ``request.user``; does not implement login or mailbox authorization.
+Relationships: Calls ``CurrentUserSerializer``; ``common.exceptions`` consistently wraps error structures.
 
-目录：
-- CurrentUserView：查询已认证用户的公开身份信息。
-- CurrentUserView.get：返回当前通过权限检查的用户身份。
+Directory:
+- CurrentUserView: Query public identity information for an authenticated user.
+- CurrentUserView.get: Return the identity of the user that passed the current permission check.
 
-变量索引：
-- 无
+Variable index:
+- None
 """
 
 from drf_spectacular.utils import extend_schema
@@ -19,15 +19,15 @@ from common.serializers import ApiErrorSerializer
 from .serializers import CurrentUserSerializer
 
 
-# 功能：查询已认证用户的公开身份信息。
-# 逻辑：使用项目默认认证和权限配置，GET 委托白名单序列化器。
-# 约束：不提供登录流程或团队、邮箱权限判断；未认证请求由 DRF 在进入 get 前拒绝。
+# Function: Query public identity information for an authenticated user.
+# Logic: Use the project's default authentication and permission configuration; GET delegates to the allowlist serializer.
+# Constraints: Provides no login flow or team or mailbox permission decision; DRF rejects unauthenticated requests before entering ``get``.
 class CurrentUserView(APIView):
-    # 功能：返回当前通过权限检查的用户身份。
-    # 输入：`request` 为 DRF Request，其 user 已由认证及权限流程处理。
-    # 输出：返回状态 200 的 Response，包含 id、username、first_name、last_name。
-    # 逻辑：直接序列化 request.user，避免另行查询或暴露模型全部字段。
-    # 约束：不写数据库、不变更会话；依赖全局 IsAuthenticated，序列化异常保持框架处理方式。
+    # Function: Return the identity of the user that passed the current permission check.
+    # Inputs: ``request`` is a DRF Request whose user was processed by authentication and permissions.
+    # Outputs: HTTP-200 ``Response`` containing id, username, first_name, and last_name.
+    # Logic: Serialize ``request.user`` directly, avoiding another query and exposure of all model fields.
+    # Constraints: Does not write the database or change the session; relies on global ``IsAuthenticated`` and leaves serialization errors to framework handling.
     @extend_schema(
         responses={200: CurrentUserSerializer, 403: ApiErrorSerializer},
         tags=["accounts"],

@@ -1,9 +1,9 @@
 /**
- * 职责：复现邮件复核切换邮箱时的异步响应竞争。
- * 实现：Node VM 执行实际 processing.js，以受控 Promise 和最小 DOM 验证展示结果。
- * 关联：processing.js；仅替换 API、翻译和来源标签，不连接服务器或模型。
- * 目录：fixture（创建隔离模块和元素）、page（构造空页）；其余为匿名测试回调。
- * 变量索引：无业务配置；所有状态限定在每次 fixture 调用中。
+ * Responsibility: Reproduce asynchronous response races when switching mailboxes during email review.
+ * Implementation: Execute actual processing.js in a Node VM with controlled Promises and minimal DOM to verify displayed results.
+ * Relationships: processing.js; replace API, translation, and source-label dependencies only, without servers or models.
+ * Directory: fixture creates an isolated module/elements; page creates an empty page; remaining tests use anonymous callbacks.
+ * Variable index: No business configuration; all state is local to each fixture call.
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,8 +11,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-/** 功能：加载真实界面模块并控制每次读取完成时机。输入：无。输出：模块、元素和请求队列。
- * 逻辑：VM 模块链接替换依赖，DOM 只实现本测试涉及的字段。约束：不证明浏览器布局或真实 HTTP 可用性。 */
+/** Function: Load the actual UI module and control each read's completion. Inputs: None. Outputs: Module, elements, and request queue.
+ * Logic: VM module linking replaces dependencies; the DOM implements only fields used by this test. Constraints: This does not verify browser layout or real HTTP availability. */
 async function fixture() {
   const elements = new Map();
   const requests = [];
@@ -41,8 +41,8 @@ async function fixture() {
   return { ui: module.namespace, element: id => document.getElementById(id), requests };
 }
 
-/** 功能：构造空邮件页。输入：count 用于识别新旧响应。输出：符合分页契约的对象。
- * 逻辑：省略邮件正文，专注请求时序。约束：数据均为合成夹具。 */
+/** Function: Construct an empty mail page. Inputs: count distinguishes old/new responses. Outputs: A pagination-contract object.
+ * Logic: Omit email bodies to focus on request ordering. Constraints: All data is synthetic fixture content. */
 function page(count = 0) { return { results: [], page: 1, page_size: 20, count }; }
 
 test('old mailbox failure cannot overwrite the newly opened mailbox', async () => {

@@ -1,16 +1,16 @@
-"""职责：显式重新提取指定旧新闻的公共销售线索。
-实现：显式选择原页面重提取或导入现有 Agent 的 dry-run 结果；默认预览，--apply 才通过版本化服务保存十三个字段。
-关联：world_insights 的来源/模型逻辑、WorldNewsSerializer 和 save_record；不改变采集去重，不写 CRM 或展会。
-目录：
-- refresh_one：提取并校验一条指定新闻，可选择保存。
-- read_preview：按来源精确匹配明确指定的 Agent 预览文件。
-- Command：受服务器运维权限保护的显式刷新入口。
-- Command.add_arguments：定义记录 ID 与应用开关。
-- Command.handle：预检全部目标、执行一次提取并报告每条结果。
-变量索引：
-- SIGNAL_FIELDS：唯一允许回写的十三个公共线索字段。
-- logger：记录目标、阶段及错误类型，不打印模型原始响应或凭证。
-- Command.help：命令用途及写入约束。
+"""Responsibility: Explicitly re-extract public sales leads for selected historical news.
+Implementation: Explicitly choose original-page extraction or existing Agent dry-run imports. Preview by default; only --apply saves thirteen fields through the versioned service.
+Relationships: Use world_insights source/model logic, WorldNewsSerializer, and save_record; preserve collection deduplication and do not write CRM or exhibition records.
+Directory:
+- refresh_one: Extract and validate one selected news record, optionally saving it.
+- read_preview: Match an explicitly selected Agent preview file by exact source.
+- Command: Explicit refresh entry point protected by server operations permissions.
+- Command.add_arguments: Define record IDs and the application switch.
+- Command.handle: Precheck all targets, extract once, and report each result.
+Variable index:
+- SIGNAL_FIELDS: The only thirteen public lead fields allowed for writeback.
+- logger: Log target, stage, and error type without raw model responses or credentials.
+- Command.help: Command purpose and write constraints.
 """
 
 import json
@@ -29,11 +29,11 @@ SIGNAL_FIELDS = ("company_name", "signal_type", "project_name", "demand_descript
 logger = logging.getLogger("salesmate.news_refresh")
 
 
-# 功能：用现有 Agent 重新提取指定新闻并选择性回写线索。
-# 输入：`record` 为未归档 Agent 新闻快照，`apply` 表示是否实际保存，`payload` 为显式导入的 Agent 新闻载荷或 None。
-# 输出：仅含公开概要的执行结果；来源、模型、校验或版本冲突异常交调用方报告。
-# 逻辑：无外部载荷时读取原页面并提取；有载荷时先确认来源一致；旧摘要不充当原文。十三字段校验后按旧 revision 更新，有变化才写入。
-# 约束：不改标题、正文、发布时间或来源，不生成 CRM；原页失败不会自动切换导入模式，不重试、不降级为旧摘要。
+# Function: Use the existing Agent to re-extract selected news and optionally write back leads.
+# Inputs: `record`: unarchived Agent news snapshot; `apply`: whether to save; `payload`: explicitly imported Agent news payload or None.
+# Outputs: Execution results containing public summaries only; callers report source, model, validation, or version-conflict exceptions.
+# Logic: Without an external payload, read and extract the original page; with a payload, verify source equality first. Never use the old summary as source text. Validate thirteen fields and update against the old revision only if changed.
+# Constraints: Preserve title, body, publication time, and source; do not generate CRM. Original-page failures never switch automatically to imports, retry, or fall back to old summaries.
 def refresh_one(record, apply, payload=None):
     from agent import world_insights
 
@@ -63,11 +63,11 @@ def refresh_one(record, apply, payload=None):
     return {"id": str(record.pk), "status": status, "changed_fields": changed, "company_name": data["company_name"], "amount": data["amount"], "currency": data["currency"], "amount_type": data["amount_type"]}
 
 
-# 功能：读取运维明确提供的 Agent dry-run 结果并固定导入目标。
-# 输入：`path` 为预览 JSON 文件路径，`records` 为已预检的 UUID 到新闻实例映射。
-# 输出：UUID 到唯一来源匹配的新闻载荷映射；缺失、重复或格式错误抛 CommandError。
-# 逻辑：只匹配 world_news.create 中与指定记录完全相同的 URL；忽略未选新闻与展会，写入仍需 serializer 校验。
-# 约束：不解析日志、不重采、不按标题猜测关系；必须提供完整 JSON，不接收任意数据库字段。
+# Function: Read an explicitly supplied Agent dry-run result and fix the import targets.
+# Inputs: `path`: preview JSON path; `records`: prechecked mapping of UUIDs to news instances.
+# Outputs: Mapping from UUIDs to uniquely source-matched news payloads; missing, duplicate, or malformed input raises CommandError.
+# Logic: Match only world_news.create URLs identical to selected records; ignore unselected news and exhibitions. Writes still require serializer validation.
+# Constraints: Do not parse logs, recollect, or infer relations by title; require complete JSON and reject arbitrary database fields.
 def read_preview(path, records):
     try:
         document = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -84,27 +84,27 @@ def read_preview(path, records):
     return selected
 
 
-# 功能：提供明确授权目标的维护入口。
-# 逻辑：全部 ID 预检通过后才调用外部来源；逐条报告，失败保留该条旧值，已完成条目不回滚。
-# 约束：仅有服务器命令执行权的维护者可运行；默认预览，不能隐式刷新全表或使用合成记录。
+# Function: Provide maintenance for explicitly authorized targets.
+# Logic: Call external sources only after every ID passes prechecks. Report each item; failed items retain old values, while completed items are not rolled back.
+# Constraints: Only maintainers with server command execution access may run this. Preview by default; no implicit full-table refresh or synthetic records.
 class Command(BaseCommand):
     help = "按明确新闻 ID 重新提取公共线索；默认预览，--apply 才保存。"
 
-    # 功能：声明有界刷新参数。
-    # 输入：`parser` 为 Django 命令行解析器。
-    # 输出：无；增加 news_ids、--apply 和 --agent-preview。
-    # 逻辑：至少一个 UUID，写入及导入模式必须显式提供。
-    # 约束：不接受任意来源 URL、模型覆盖或扩大范围的 all 开关。
+    # Function: Declare bounded refresh arguments.
+    # Inputs: `parser`: Django command-line parser.
+    # Outputs: None; add news_ids, --apply, and --agent-preview.
+    # Logic: Require at least one UUID; write and import modes must be explicit.
+    # Constraints: Reject arbitrary source URLs, model overrides, or an all switch that expands scope.
     def add_arguments(self, parser):
         parser.add_argument("news_ids", nargs="+", type=uuid.UUID)
         parser.add_argument("--apply", action="store_true", help="保存经过证据校验的十三个线索字段。")
         parser.add_argument("--agent-preview", type=Path, help="使用原 Agent --dry-run 的 JSON 结果，不重新调用模型。")
 
-    # 功能：执行一次明确范围的新闻刷新。
-    # 输入：`args` 为 Django 位置参数，`options` 包含 news_ids、apply、agent_preview 和标准命令选项。
-    # 输出：stdout JSON；任何条目失败最终抛 CommandError，退出非零。
-    # 逻辑：拒绝重复/失效/非 Agent/归档/非活跃 owner；明确选择文件导入或加载环境后重提取，错误不自动重试。
-    # 约束：错误只披露类型，Agent 自定义契约错误可附诊断原因；不输出模型响应或凭证，不修改采集配置。
+    # Function: Execute one news refresh within an explicit scope.
+    # Inputs: `args`: Django positional arguments; `options`: news_ids, apply, agent_preview, and standard command options.
+    # Outputs: stdout JSON; any failed item ultimately raises CommandError and exits nonzero.
+    # Logic: Reject duplicate, invalid, non-Agent, archived, or inactive-owner records. Explicitly choose file imports or load the environment for re-extraction; never retry errors automatically.
+    # Constraints: Errors disclose only type, with diagnostic reasons allowed for Agent contract errors. Do not output model responses/credentials or change collection configuration.
     def handle(self, *args, **options):
         from agent import world_insights
 

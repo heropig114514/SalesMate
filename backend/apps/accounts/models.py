@@ -1,36 +1,36 @@
-"""职责：声明项目用户身份及账号隔离的本公司资料模型。
-实现：继承 AbstractUser；CompanyProfile、SalesSetup 和 SetupDocument 按账号存储公司资料、引导信息及私有文件，不参与客户评分。
-关联：由 AUTH_USER_MODEL、Admin、身份和公司资料接口及 accounts 迁移共同引用；导入 reset_models 注册保留身份的重置协调状态。
+"""Responsibility: Declare project user identity and account-isolated company-profile models.
+Implementation: Inherit ``AbstractUser``; ``CompanyProfile``, ``SalesSetup``, and ``SetupDocument`` store company information, onboarding information, and private files by account without participating in customer scoring.
+Relationships: Referenced by ``AUTH_USER_MODEL``, Admin, identity and company-profile endpoints, and accounts migrations; importing ``reset_models`` registers reset-coordination state that preserves identity.
 
-目录：
-- User：声明项目自定义用户类型。
-- CompanyProfile：账号隔离的本公司资料及编辑版本。
-- SalesSetup：个人、产品和方案资料及引导进度。
-- SetupDocument：需要登录才能读取的引导附件。
+Directory:
+- User: Declare the project's custom user type.
+- CompanyProfile: Account-isolated company information and editing version.
+- SalesSetup: Personal, product, and solution information and onboarding progress.
+- SetupDocument: Onboarding attachment that requires login to read.
 
-变量索引：
-- CompanyProfile.owner：唯一所属账号，客户端不可修改。
-- CompanyProfile.company_name：本公司名称。
-- CompanyProfile.industry：公司行业。
-- CompanyProfile.size_band：公司规模，可留空。
-- CompanyProfile.website：公开网站地址。
-- CompanyProfile.email：业务联系邮箱，不含邮箱授权。
-- CompanyProfile.phone：业务联系电话。
-- CompanyProfile.address：业务地址。
-- CompanyProfile.description：公司简介。
-- CompanyProfile.revision：乐观锁版本。
-- CompanyProfile.updated_at：最近保存时间。
-- SalesSetup.owner：资料所属账号。
-- SalesSetup.personal：个人身份与负责区域行业。
-- SalesSetup.products：参考产品目录，不代替成交报价。
-- SalesSetup.solutions：方案及私有附件引用。
-- SalesSetup.completed：是否已完成或跳过引导。
-- SalesSetup.revision：并发编辑版本。
-- SetupDocument.id：不透明文件标识。
-- SetupDocument.owner：唯一有权读取文件的账号。
-- SetupDocument.name：显示文件名。
-- SetupDocument.content_type：经校验的 PDF 或纯文本类型。
-- SetupDocument.content：最大 5 MiB 文件内容，随数据库备份。
+Variable index:
+- CompanyProfile.owner: Sole owning account; clients cannot modify it.
+- CompanyProfile.company_name: The company's name.
+- CompanyProfile.industry: Company industry.
+- CompanyProfile.size_band: Company size; may be blank.
+- CompanyProfile.website: Public website address.
+- CompanyProfile.email: Business contact mailbox, excluding mailbox authorization.
+- CompanyProfile.phone: Business contact phone number.
+- CompanyProfile.address: Business address.
+- CompanyProfile.description: Company overview.
+- CompanyProfile.revision: Optimistic-lock version.
+- CompanyProfile.updated_at: Most recent save time.
+- SalesSetup.owner: Account that owns the information.
+- SalesSetup.personal: Personal identity and responsible region and industry.
+- SalesSetup.products: Reference product catalog; does not replace signed quotes.
+- SalesSetup.solutions: Solutions and private attachment references.
+- SalesSetup.completed: Whether onboarding is completed or skipped.
+- SalesSetup.revision: Concurrent-edit version.
+- SetupDocument.id: Opaque file identifier.
+- SetupDocument.owner: The sole account authorized to read the file.
+- SetupDocument.name: Display file name.
+- SetupDocument.content_type: Validated PDF or plain-text type.
+- SetupDocument.content: File content up to 5 MiB, backed up with the database.
 """
 
 from django.contrib.auth.models import AbstractUser
@@ -38,16 +38,16 @@ from django.db import models
 import uuid
 
 
-# 功能：声明项目自定义用户类型。
-# 逻辑：完整继承 AbstractUser，使后续身份扩展不需要更换 AUTH_USER_MODEL。
-# 约束：当前没有团队、邮箱绑定和 Agent 服务身份能力；数据库结构以迁移为准。
+# Function: Declare the project's custom user type.
+# Logic: Fully inherit ``AbstractUser`` so later identity extensions do not require changing ``AUTH_USER_MODEL``.
+# Constraints: Team, mailbox-binding, and Agent-service identity capabilities are not currently available; migrations define the database structure.
 class User(AbstractUser):
     """Own the user model from the first migration so identity can evolve safely."""
 
 
-# 功能：账号隔离的本公司资料及编辑版本。
-# 逻辑：一名用户一份资料，包含可选公司规模；与 CRM 客户和销售目标画像分别存储。
-# 约束：不是跨账号组织或团队权限模型；仅经认证接口显式保存，未知资料保持空白。
+# Function: Account-isolated company information and editing version.
+# Logic: One profile per user, including optional company size; stored separately from CRM customer and sales-target profiles.
+# Constraints: Not a cross-account organization or team-permission model; data is saved explicitly only through authenticated endpoints, and unknown information remains blank.
 class CompanyProfile(models.Model):
     owner = models.OneToOneField(User, primary_key=True, on_delete=models.CASCADE)
     company_name = models.CharField(max_length=240)
@@ -62,9 +62,9 @@ class CompanyProfile(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
-# 功能：保存销售代表的引导资料。
-# 逻辑：一账号一份，JSON 结构由 onboarding 序列化器严格验证。
-# 约束：读取不自动建档；仅显式保存递增版本，不触发评分或外部调用。
+# Function: Persist sales-representative onboarding information.
+# Logic: One record per account; the onboarding serializer strictly validates the JSON structure.
+# Constraints: Reads do not automatically create a record; only explicit saves increment the version and do not trigger scoring or external calls.
 class SalesSetup(models.Model):
     owner = models.OneToOneField(User, primary_key=True, on_delete=models.CASCADE)
     personal = models.JSONField(default=dict)
@@ -74,9 +74,9 @@ class SalesSetup(models.Model):
     revision = models.PositiveIntegerField(default=0)
 
 
-# 功能：保存本账号的产品规格书与销售方案。
-# 逻辑：内容与元数据在同一数据库事务中保存，避免文件落盘成功但记录失败。
-# 约束：API 限制 5 MiB、PDF/UTF-8 文本；不公开静态 URL，不执行文件内容。
+# Function: Persist this account's product specifications and sales solutions.
+# Logic: Save content and metadata in the same database transaction to avoid a successful file write with a failed record.
+# Constraints: The API limits content to 5 MiB of PDF or UTF-8 text; it exposes no public static URL and does not execute file content.
 class SetupDocument(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(User, on_delete=models.CASCADE)

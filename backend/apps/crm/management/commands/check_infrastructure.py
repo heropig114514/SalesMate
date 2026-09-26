@@ -1,12 +1,12 @@
-"""职责：提供部署期 Redis、pgvector 和 Celery 消费能力检查。
-实现：检查真实连接；可选向两个队列发送无业务副作用的随机标识并验证回传。
-关联：蓝绿部署在切换前检查基础设施、启动消费者后检查完整消息链。
-目录：
-- Command：基础设施检查命令。
-- Command.add_arguments：定义消费者探测选项。
-- Command.handle：执行脱敏检查并明确报告失败。
-变量索引：
-- Command.help：命令用途。
+"""Responsibility: Provide deployment-time checks for Redis, pgvector, and Celery consumer availability.
+Implementation: Check real connections and optionally send a random non-business identifier to two queues and verify its return.
+Relationships: Blue-green deployment checks infrastructure before switchover and the full message chain after consumers start.
+Directory:
+- Command: Infrastructure-check command.
+- Command.add_arguments: Define the consumer-probe option.
+- Command.handle: Execute redacted checks and report failures explicitly.
+Variable index:
+- Command.help: Command purpose.
 """
 import secrets
 from django.conf import settings
@@ -15,25 +15,25 @@ from django.db import connection
 from redis import Redis
 
 
-# 功能：验证实际基础设施可用。
-# 逻辑：使用配置地址，不读取或打印凭证明文。
-# 约束：不把网络探测当作真实邮件发送验收。
+# Function: Verify that actual infrastructure is available.
+# Logic: Use configured addresses without reading or printing plaintext credentials.
+# Constraints: Does not treat a network probe as acceptance testing for real email delivery.
 class Command(BaseCommand):
-    help = "检查 Redis、pgvector，按需检查 Celery 两个队列的消息往返。"
+    help = "Check Redis and pgvector, and optionally round-trip messages through Celery's two queues."
 
-    # 功能：声明检查选项。
-    # 输入：`parser` 为命令解析器。
-    # 输出：注册 workers 开关。
-    # 逻辑：默认只检查基础连接，部署消费者启动后才传 workers。
-    # 约束：不会启动消费者或自动修复失败。
+    # Function: Declare check options.
+    # Inputs: `parser` is the command parser.
+    # Outputs: Registers the workers switch.
+    # Logic: Check basic connectivity by default and accept workers only after deployment consumers start.
+    # Constraints: Does not start consumers or automatically repair failures.
     def add_arguments(self, parser):
         parser.add_argument("--workers", action="store_true")
 
-    # 功能：检查数据库扩展、broker 与结果存储。
-    # 输入：`args` 位置参数；`options` 包含 workers，隐式读取 Django 配置。
-    # 输出：成功写 stdout；失败抛脱敏 CommandError。
-    # 逻辑：执行 vector 运算和 Redis PING；可选各队列任务结果需在 20 秒内匹配。
-    # 约束：不修改业务表；随机探测结果读取后删除，异常不自动重试。
+    # Function: Check the database extension, broker, and result store.
+    # Inputs: `args` are positional arguments; `options` includes workers and implicitly reads Django configuration.
+    # Outputs: Writes success to stdout or raises a redacted CommandError on failure.
+    # Logic: Perform a vector operation and Redis PING; optionally require each queue's task result to match within 20 seconds.
+    # Constraints: Does not modify business tables; removes each random probe result after reading it and does not retry exceptions automatically.
     def handle(self, *args, **options):
         try:
             if settings.TASK_EXECUTION_MODE != "celery":

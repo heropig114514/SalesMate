@@ -1,13 +1,13 @@
-/** 职责：提供个人、公司、产品、方案四步引导及后续编辑。
- * 实现：编辑时保留条目 id 和显式 linked_product_id；账号资料通过版本化 API 保存；草稿仅驻留当前页；手动产品与 CSV 进入同一编辑列表，文件经私有接口读取。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；company-settings.js 负责公司步骤；onboarding.css 管理布局；accounts/onboarding 接口持久化。
- * 目录：text、field、tags、fileLink、status、save、chooseStep、personalForm、renderProducts、renderSolutions、upload、parseCSV、importProducts、mountOnboarding。
- * 变量索引：$ 查询 DOM；text 选择语言；industries 对齐收件箱行业；regions 为区域选项；steps 为四步标签；data 当前账号快照；step 当前步骤；wizard 首次引导标志；busy 防重提交；editing 当前编辑产品索引。
+/** Responsibility: Provide personal, company, product, and solution onboarding steps and subsequent editing.
+ * Implementation: Preserve item id and explicit linked_product_id during edits; save account information through versioned APIs. Drafts stay on this page; manual products and CSV imports share an edit list, and files use private endpoints.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; company-settings.js owns the company step, onboarding.css supplies layout, and accounts/onboarding persists data.
+ * Directory: text, field, tags, fileLink, status, save, chooseStep, personalForm, renderProducts, renderSolutions, upload, parseCSV, importProducts, mountOnboarding.
+ * Variable index: $ queries DOM; text selects language; industries matches inbox industries; regions contains region options; steps contains four step labels; data is the current account snapshot; step is the active step; wizard flags first onboarding; busy prevents duplicate submissions; editing is the current product index.
  */
 import { language, t } from "./i18n.js?v=20260921-product";
 import { request, escapeHtml as e } from "./api.js?v=20260921-product";
 const $ = (id) => document.getElementById(id);
-/** 功能：选择界面语言。输入：zh/en 两种文案。输出：文本。逻辑：沿用语言偏好。约束：不翻译用户输入。 */
+/** Function: Select interface language. Inputs: zh/en text. Outputs: Text. Logic: Use language preferences. Constraints: Never translate user input. */
 const text = (zh, en) => (language === "en" ? en : zh);
 const industries = ["半导体检测", "精密量测", "光学检测", "工业检测"];
 const regions = ["亚太", "欧洲", "北美", "南美", "中东", "非洲"];
@@ -23,26 +23,26 @@ let data,
   busy = false,
   editing = null;
 
-/** 功能：构造表单字段。输入：name、label、value、type。输出：安全 HTML。逻辑：使用原生表单。约束：必填仅在对应表单定义。 */
+/** Function: Build a form field. Inputs: name, label, value, type. Outputs: Safe HTML. Logic: Use native forms. Constraints: Required status is defined only by the corresponding form. */
 function field(name, label, value = "", type = "text") {
   return `<label>${e(label)}<input name="${name}" type="${type}" value="${e(value)}" maxlength="${name === "email" ? 254 : 150}"></label>`;
 }
-/** 功能：绘制多选。输入：name、values 选项、selected 当前值。输出：HTML。逻辑：独立 checkbox。约束：未选择保留空数组。 */
+/** Function: Render a multiple selection. Inputs: name, option values, and selected values. Outputs: HTML. Logic: Independent checkboxes. Constraints: No selection remains an empty array. */
 function tags(name, values, selected = []) {
   return `<div class="setup-tags">${values.map((value) => `<label><input type="checkbox" name="${name}" value="${e(value)}" ${selected.includes(value) ? "checked" : ""}>${e(t(value))}</label>`).join("")}</div>`;
 }
-/** 功能：生成私有附件入口。输入：id。输出：链接或未上传文本。逻辑：同源 UUID 路由。约束：服务端始终检查账号归属。 */
+/** Function: Generate a private-attachment entry. Inputs: id. Outputs: A link or missing-upload text. Logic: Same-origin UUID routes. Constraints: The server always checks account ownership. */
 function fileLink(id) {
   return id
     ? `<a href="/api/v1/accounts/onboarding/documents/${encodeURIComponent(id)}/" target="_blank" rel="noopener">${e(text("在线阅读 ↗", "Read online ↗"))}</a>`
     : e(text("未上传", "No file"));
 }
-/** 功能：显示操作反馈。输入：message 和 error。输出：无。逻辑：纯文本并切换颜色。约束：不显示请求编号或敏感输入。 */
+/** Function: Display action feedback. Inputs: message and error. Outputs: None. Logic: Plain text with state-dependent color. Constraints: Never display request IDs or sensitive input. */
 function status(message, error = false) {
   $("setup-status").textContent = message;
   $("setup-status").classList.toggle("is-error", error);
 }
-/** 功能：保存指定步骤。输入：patch。输出：成功布尔值。逻辑：版本冲突保留草稿、提示刷新。约束：无重试，不自动舍弃输入。 */
+/** Function: Save a specified step. Inputs: patch. Outputs: Success boolean. Logic: Version conflicts preserve drafts and request a refresh. Constraints: No retries or automatic input discarding. */
 async function save(patch) {
   if (busy) return false;
   busy = true;
@@ -90,7 +90,7 @@ async function save(patch) {
       });
   }
 }
-/** 功能：切换步骤。输入：index 为 0–3。输出：无。逻辑：保持未提交表单 DOM 与内存草稿，显示进度。约束：切换不写数据。 */
+/** Function: Switch steps. Inputs: index from 0 to 3. Outputs: None. Logic: Preserve unsubmitted form DOM and memory drafts while showing progress. Constraints: Switching does not write data. */
 function chooseStep(index) {
   step = index;
   $("company-step").hidden = index !== 1;
@@ -111,12 +111,12 @@ function chooseStep(index) {
       : text("跳过此步", "Skip this step");
   $("setup-title").textContent = steps[index];
 }
-/** 功能：绘制个人信息。输入：无，读取 data.personal。输出：表单 HTML。逻辑：身份字段与负责范围独立保存。约束：邮箱填写不等于 OAuth 授权。 */
+/** Function: Render personal information. Inputs: None; reads data.personal. Outputs: Form HTML. Logic: Save identity fields and responsibility scope separately. Constraints: Entering an email address is not OAuth authorization. */
 function personalForm() {
   const p = data.personal;
   return `<form id="personal-form" class="setup-form" data-setup-step="0"><h2>${text("让每一次沟通，都有你的身份", "Make every conversation yours")}</h2><p class="muted">${text("填写你的身份和负责范围。所有步骤都可以跳过，之后在基础信息中补充。", "Add your identity and territory. You can skip any step and return later.")}</p><div class="setup-fields">${field("name", text("姓名", "Name"), p.name)}${field("title", text("职位 / 头衔", "Job title"), p.title)}${field("email", text("工作邮箱", "Work email"), p.email, "email")}${field("phone", text("电话（选填）", "Phone (optional)"), p.phone, "tel")}</div><p class="muted">${text("填写 Gmail 地址后，仍需前往邮箱设置完成 Google 授权。", "Gmail access requires a separate Google authorization in Email Settings.")}</p><fieldset><legend>${text("负责区域", "Regions")}</legend>${tags("regions", regions, p.regions)}</fieldset><fieldset><legend>${text("负责行业", "Industries")}</legend>${tags("industries", industries, p.industries)}</fieldset><button class="primary" type="submit">${wizard ? text("保存并继续 →", "Save and continue →") : text("保存个人信息", "Save profile")}</button></form>`;
 }
-/** 功能：绘制产品列表。输入：内存 data.products。输出：无。逻辑：明确参考价和未知价格；编辑/移除暂不写库。约束：文件链接需后端鉴权。 */
+/** Function: Render the product list. Inputs: In-memory data.products. Outputs: None. Logic: Distinguish reference prices from unknown prices; editing/removal does not yet write to storage. Constraints: File links require backend authorization. */
 function renderProducts() {
   $("product-rows").innerHTML = data.products.length
     ? data.products
@@ -128,7 +128,7 @@ function renderProducts() {
     : `<tr><td colspan="6" class="setup-empty">${text("还没有产品。添加第一款产品，或导入 CSV 表格。", "Add your first product or import a CSV file.")}</td></tr>`;
   $("product-count").textContent = data.products.length;
 }
-/** 功能：绘制方案卡片。输入：data.solutions。输出：无。逻辑：显示名称与真实私有附件链接。约束：不声称文件已经被模型解析。 */
+/** Function: Render solution cards. Inputs: data.solutions. Outputs: None. Logic: Show names and real private-attachment links. Constraints: Do not claim that a model has parsed the files. */
 function renderSolutions() {
   $("solution-list").innerHTML = data.solutions.length
     ? data.solutions
@@ -139,7 +139,7 @@ function renderSolutions() {
         .join("")
     : `<p class="setup-empty">${text("添加常用销售方案，方便随时查阅。", "Add sales proposals for easy reference.")}</p>`;
 }
-/** 功能：上传私有文件。输入：file 对象。输出：UUID 或 null。逻辑：multipart 交给后端验证。约束：可选文件为空不请求；失败向调用方传播。 */
+/** Function: Upload a private file. Inputs: file object. Outputs: UUID or null. Logic: Submit multipart data for backend validation. Constraints: Empty optional files send no request; propagate failures to the caller. */
 async function upload(file) {
   if (!file?.size) return null;
   const form = new FormData();
@@ -151,7 +151,7 @@ async function upload(file) {
   data.documents.push(result);
   return result.id;
 }
-/** 功能：解析带引号的 CSV。输入：source UTF-8 文本。输出：二维数组。逻辑：支持双引号转义、逗号及换行，拒绝未闭合引号。约束：不执行公式，不推断列含义。 */
+/** Function: Parse quoted CSV. Inputs: source is UTF-8 text. Outputs: A two-dimensional array. Logic: Support escaped quotes, commas, and newlines; reject unclosed quotes. Constraints: Never execute formulas or infer column meanings. */
 export function parseCSV(source) {
   const rows = [];
   let row = [],
@@ -180,7 +180,7 @@ export function parseCSV(source) {
   if (row.some((cell) => cell.trim())) rows.push(row);
   return rows;
 }
-/** 功能：原子导入表格到当前草稿。输入：file CSV。输出：无。逻辑：先验证所有行及列，再整体追加。约束：最多 200 产品，错误不部分导入；保存仍需用户点击。 */
+/** Function: Atomically import a spreadsheet into the current draft. Inputs: CSV file. Outputs: None. Logic: Validate all rows/columns before appending the batch. Constraints: At most 200 products; errors prevent partial import, and saving still requires a user click. */
 async function importProducts(file) {
   if (!file) return;
   if (file.size > 1024 * 1024)
@@ -250,9 +250,9 @@ async function importProducts(file) {
     ),
   );
 }
-/** 功能：挂载四步流程。输入：页面、登录会话和 onboarding 查询项。输出：Promise。
- * 逻辑：先读取账号资料再绘制，产品编辑保留 id 与目录关联；保存、上传、导入均显式触发；公司保存由既有模块通知；完成或最后一步跳过后进入收件箱。
- * 约束：未保存输入只留在当前页，权限由 API 校验，不触发邮件发送、AI 或评分。 */
+/** Function: Mount the four-step flow. Inputs: Page, login session, and onboarding query parameter. Outputs: Promise.
+ * Logic: Read account information before rendering; retain product IDs/catalog links during edits. Saves, uploads, and imports are explicit; the existing company module signals saves. Completion or skipping the last step opens the inbox.
+ * Constraints: Unsaved input remains on the current page; the API enforces permissions. Never trigger sending, AI, or scoring. */
 export async function mountOnboarding() {
   data = await request("accounts/onboarding/");
   wizard = new URLSearchParams(location.search).get("onboarding") === "1";

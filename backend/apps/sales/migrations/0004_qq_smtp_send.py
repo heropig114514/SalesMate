@@ -1,19 +1,19 @@
-"""职责：允许独立 QQ 发信连接和 qq.send 动作。
-实现：扩展枚举选项，保留原 Gmail 和日历值及既有数据。
-关联：sales.models 的 Connection 与 ToolAction；不修改 QQ 只读凭证表。
-目录：
-- Migration：声明 QQ 发信枚举变更。
-变量索引：
-- Migration.dependencies：既有 sales.0003 迁移。
-- Migration.operations：扩展 provider 和 tool 的 choices。
+"""Responsibility: Allow independent QQ sending connections and qq.send actions.
+Implementation: Extend choices while retaining existing Gmail/calendar values and data.
+Relationships: Connection and ToolAction in sales.models; preserve the QQ read-only credential table.
+Directory:
+- Migration: Declare QQ sending choice changes.
+Variable index:
+- Migration.dependencies: Existing sales.0003 migration.
+- Migration.operations: Extend provider and tool choices.
 """
 
 from django.db import migrations, models
 
 
-# 功能：同步 QQ 发信模型枚举。
-# 逻辑：仅增加 choices，保留既有字段与数据。
-# 约束：不创建连接或发送邮件。
+# Function: Synchronize QQ sending model choices.
+# Logic: Add choices only, retaining existing fields and data.
+# Constraints: Do not create connections or send emails.
 class Migration(migrations.Migration):
 
     dependencies = [

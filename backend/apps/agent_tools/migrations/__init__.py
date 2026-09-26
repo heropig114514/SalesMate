@@ -1,8 +1,8 @@
-"""职责：标识业务工具迁移包。
-实现：无初始化副作用。
-关联：Django 迁移加载器。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Identify the business-tools migration package.
+Implementation: Initialization has no side effects.
+Relationships: Used by Django's migration loader.
+Directory:
+- None
+Variable index:
+- None
 """

@@ -1,8 +1,12 @@
-# 职责：运行独立版本的 Gunicorn/Uvicorn Web 实例。
-# 实现：端口实例从 slots 读取固定版本及独立虚拟环境，双进程承载 ASGI。
-# 关联：蓝绿发布在健康检查后切换 Nginx；每个实例使用同一份受保护运行配置。
-# 目录：无。
-# 变量索引：%i 为 8001/8002 端口；workers 为 2；TimeoutStopSec 等待请求自然结束。
+# Responsibility: Run an independent-version Gunicorn/Uvicorn Web instance.
+# Implementation: The port instance reads a fixed release and isolated virtual environment from slots; two processes host ASGI.
+# Relationships: Blue-green release switches Nginx after health checking; every instance uses the same protected runtime configuration.
+# Directory:
+# - None
+# Variable index:
+# - %i: Port 8001 or 8002.
+# - workers: Fixed at 2.
+# - TimeoutStopSec: Lets requests finish naturally.
 [Unit]
 Description=SalesMate Web release on %i
 After=network.target postgresql.service

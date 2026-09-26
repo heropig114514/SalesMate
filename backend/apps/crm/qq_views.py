@@ -1,16 +1,16 @@
-"""职责：提供 QQ 邮箱连接与移除的员工 HTTP 入口。
-实现：严格输入字段、Session/CSRF 和当前员工隔离；凭证写入后只返回安全邮箱状态。
-关联：sync_scope 提供 Gmail/QQ 共用范围校验；urls 注册路径，qq_connection 处理网络与持久化，response_schemas 描述响应。
-目录：
-- QQConnectSerializer：限制 QQ 地址和 16 位授权码。
-- QQConnectView：验证并连接 QQ 邮箱。
-- QQConnectView.post：保存连接并返回已排队状态。
-- QQDisconnectView：移除指定 QQ 连接。
-- QQDisconnectView.delete：验证所有权后移除密文。
-变量索引：
-- QQConnectSerializer.address：仅允许 qq.com/foxmail.com 地址。
-- QQConnectSerializer.authorization_code：只写授权码，不回显。
-- QQConnectSerializer.sync_options：本次至少一项的天数或封数限制。
+"""Responsibility: Provide employee HTTP endpoints to connect and remove QQ mailboxes.
+Implementation: Strict input fields, Session/CSRF, and current-employee isolation; return only safe mailbox state after writing credentials.
+Relationships: sync_scope supplies shared Gmail/QQ scope validation, urls registers paths, qq_connection handles network and persistence, and response_schemas describes responses.
+Directory:
+- QQConnectSerializer: Restrict QQ addresses and 16-character authorization codes.
+- QQConnectView: Validate and connect a QQ mailbox.
+- QQConnectView.post: Save a connection and return queued state.
+- QQDisconnectView: Remove a specified QQ connection.
+- QQDisconnectView.delete: Validate ownership and remove ciphertext.
+Variable index:
+- QQConnectSerializer.address: Allows qq.com and foxmail.com addresses only.
+- QQConnectSerializer.authorization_code: Write-only authorization code that is never echoed.
+- QQConnectSerializer.sync_options: At least one day or message-count limit for this run.
 """
 from django.utils.decorators import method_decorator
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
@@ -26,25 +26,25 @@ from .serializers import StrictSerializer
 from .sync_scope import MailboxSyncOptionsSerializer
 
 
-# 功能：声明只允许 QQ 服务的连接请求。
-# 逻辑：拒绝任意服务器、owner 和未知字段；共用范围校验仍要求至少一项限制，授权码不进入读响应。
-# 约束：格式检查不能证明已授权，服务层仍须真实登录验证。
+# Function: Declare a connection request that allows QQ service only.
+# Logic: Reject arbitrary servers, owners, and unknown fields; shared scope validation still requires one limit and authorization codes never enter read responses.
+# Constraints: Format validation cannot prove authorization; the service layer must still validate a real login.
 class QQConnectSerializer(StrictSerializer):
     address = serializers.RegexField(r"(?i)^[^\s@]+@(qq|foxmail)\.com$", max_length=254)
     authorization_code = serializers.RegexField(r"^[A-Za-z]{16}$", write_only=True, trim_whitespace=True)
     sync_options = MailboxSyncOptionsSerializer()
 
 
-# 功能：连接当前会话员工的 QQ 邮箱。
-# 逻辑：沿用全局 SessionAuthentication 与权限。
-# 约束：不允许匿名或 Agent token 替员工提交授权码。
+# Function: Connect the current session employee's QQ mailbox.
+# Logic: Retain global SessionAuthentication and permissions.
+# Constraints: Does not permit anonymous callers or Agent tokens to submit authorization codes for employees.
 @method_decorator(sensitive_post_parameters("authorization_code"), name="dispatch")
 class QQConnectView(APIView):
-    # 功能：验证输入并建立连接。
-    # 输入：`request` 含 address、authorization_code 和 sync_options。
-    # 输出：HTTP 202 安全邮箱状态，首次同步已排队。
-    # 逻辑：序列化后调用真实验证服务。
-    # 约束：不返回授权码，不接受账号密码；debug 报告隐藏请求中的敏感值。
+    # Function: Validate input and establish a connection.
+    # Inputs: `request` contains address, authorization_code, and sync_options.
+    # Outputs: HTTP 202 safe mailbox state with initial synchronization queued.
+    # Logic: Call the real validation service after serialization.
+    # Constraints: Does not return authorization codes or accept account passwords; debug reports hide sensitive request values.
     @extend_schema(request=QQConnectSerializer, responses={202: MailboxResponseSerializer}, tags=["mailboxes"])
     @sensitive_variables()
     def post(self, request):
@@ -55,15 +55,15 @@ class QQConnectView(APIView):
         return Response(mailbox_status(mailbox), status=202)
 
 
-# 功能：管理已有 QQ 连接的删除。
-# 逻辑：仅 DELETE 到指定员工邮箱。
-# 约束：不会删除历史业务记录或 Google 凭证。
+# Function: Manage deletion of an existing QQ connection.
+# Logic: Permit DELETE only for the specified employee mailbox.
+# Constraints: Does not delete historical business records or Google credentials.
 class QQDisconnectView(APIView):
-    # 功能：移除本地 QQ 密文连接。
-    # 输入：`request` 为员工会话；`mailbox_id` 为邮箱 UUID。
-    # 输出：安全邮箱状态。
-    # 逻辑：服务层执行 owner 和活动批次校验。
-    # 约束：不存在或越权返回 404，活动批次返回 409。
+    # Function: Remove a local QQ ciphertext connection.
+    # Inputs: `request` is an employee session and `mailbox_id` is the mailbox UUID.
+    # Outputs: Safe mailbox state.
+    # Logic: The service layer validates owner and active batches.
+    # Constraints: Absence or unauthorized access returns 404; active batches return 409.
     @extend_schema(responses=MailboxResponseSerializer, tags=["mailboxes"])
     def delete(self, request, mailbox_id):
         return Response(mailbox_status(qq_connection.disconnect_mailbox(request.user, mailbox_id)))

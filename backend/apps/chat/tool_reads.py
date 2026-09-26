@@ -1,17 +1,17 @@
-"""职责：为聊天请求提供读取及实验维护工具发现、执行及稳定证据登记。
-实现：员工与请求锁保护工作空间 processing 边界，拒绝继续执行旧公司请求；复用原工具 Schema、处理器和权限，独立保存每次成功结果。
-关联：tool_views 暴露 Agent HTTP；services.save_answer 仅从本请求上下文和 ToolRead 附加引用正文。
-目录：
-- processing_request：授权并锁定处理中的请求。
-- catalog_for：返回请求可用的读取及实验维护工具目录。
-- evidence_for：把实际业务响应投影为完整四字段来源。
-- read_tool：执行一次数据操作并登记返回证据。
-变量索引：
-- ALLOWED_TOOLS：客户读取及共享实验读取、维护的固定工具集合。
-- CONTRACT_VERSION：工具对接协议标识，不限制回答提示词版本。
-- CALL_SCHEMA：请求绑定工具调用的封闭 JSON Schema。
-- CATALOG_SCHEMA：目录查询的 UUID 与分页 Schema。
-- logger：仅输出请求、员工、工具、状态、耗时和异常类型。
+"""Responsibility: Provide chat requests with read and experiment-maintenance tool discovery, execution, and stable evidence registration.
+Implementation: Employee and request locks protect workspace processing boundary and reject continuing a legacy company request; reuse original tool Schema, handlers, and permissions and independently persist every successful result.
+Relationships: ``tool_views`` exposes Agent HTTP; ``services.save_answer`` attaches citation content only from this request context and ``ToolRead``.
+Directory:
+- processing_request: Authorize and lock a request being processed.
+- catalog_for: Return the request's available read and experiment-maintenance tool catalog.
+- evidence_for: Project actual business response into complete four-field sources.
+- read_tool: Execute one data operation and register returned evidence.
+Variable index:
+- ALLOWED_TOOLS: Fixed tool set for customer reads and shared experiment reads and maintenance.
+- CONTRACT_VERSION: Tool-integration contract identifier that does not limit answer prompt version.
+- CALL_SCHEMA: Closed JSON Schema for request-bound tool invocation.
+- CATALOG_SCHEMA: UUID and pagination Schema for catalog query.
+- logger: Emits only request, employee, tool, status, duration, and exception type.
 """
 
 import hashlib
@@ -48,11 +48,11 @@ CATALOG_SCHEMA = object_schema({"request_id": UUID, **PAGE}, ["request_id"])
 logger = logging.getLogger("salesmate.chat.tools")
 
 
-# 功能：取得当前员工正在处理的聊天请求。
-# 输入：`owner` 为已认证员工，`request_id` 为已验证 UUID。
-# 输出：带行锁的 AnswerRequest；越权为 404，非 processing 为 409。
-# 逻辑：沿用聊天员工锁与全链路归属校验，仅允许无预选公司且 processing 的请求调用读取或实验维护工具。
-# 约束：调用方必须处于事务中，锁顺序与保存回答一致。
+# Function: Obtain chat request the current employee is processing.
+# Inputs: Authenticated employee ``owner`` and validated UUID ``request_id``.
+# Outputs: Row-locked ``AnswerRequest``; unauthorized is 404 and non-processing is 409.
+# Logic: Reuse chat employee lock and end-to-end ownership checks; only processing requests without preselected company may invoke read or experiment-maintenance tools.
+# Constraints: Caller must be in a transaction and lock ordering matches answer saving.
 def processing_request(owner, request_id):
     lock_owner(owner)
     request = request_for(owner, request_id, lock=True)
@@ -62,11 +62,11 @@ def processing_request(owner, request_id):
     return request
 
 
-# 功能：发现本次请求允许执行的工具及准确参数 Schema。
-# 输入：`owner` 为认证员工，`query` 含 request_id 及可选整数 page/page_size。
-# 输出：版本、请求 ID、tools/count/page/page_size，不包含业务数据。
-# 逻辑：验证请求后复用原目录，按固定白名单与逐工具期望执行模式双重过滤，再分页。
-# 约束：仅发布实验维护写入，不发布确认或未获明确授权的其他读取及实验维护工具，不隐式扩大权限。
+# Function: Discover tools allowed for this request and their exact parameter Schema.
+# Inputs: Authenticated employee ``owner`` and ``query`` containing request_id and optional integer page and page_size.
+# Outputs: Version, request ID, tools, count, page, and page_size without business data.
+# Logic: Validate request, reuse original catalog, filter twice by fixed allowlist and per-tool expected execution mode, then paginate.
+# Constraints: Publishes only experiment-maintenance writes and does not publish confirm or otherwise unauthorized read or maintenance tools or implicitly expand permissions.
 @transaction.atomic
 def catalog_for(owner, query):
     validate(query, CATALOG_SCHEMA)
@@ -88,11 +88,11 @@ def catalog_for(owner, query):
     }
 
 
-# 功能：为实际返回的查询数据创建不会与其他读取冲突的来源。
-# 输入：`read_id` 为新读取 UUID，`name` 为已允许工具名，`data` 为 JSON 业务结果。
-# 输出：具有 source_id/source_type/title_or_label/content 的证据数组。
-# 逻辑：客户搜索和实验表拆分行及分页证据；实验维护回执登记 experiment_mutation 来源，其他读取完整序列化。
-# 约束：来源由读取 UUID 和记录标识区分，正文可能较长；Agent 自行选择预算内证据，不能把节选称为完整。
+# Function: Create sources from actual returned query data without conflicts with other reads.
+# Inputs: New-read UUID ``read_id``, allowed tool name ``name``, and JSON business result ``data``.
+# Outputs: Evidence array containing source_id, source_type, title_or_label, and content.
+# Logic: Customer search and experiment tables split row and pagination evidence; experiment-maintenance receipts register an ``experiment_mutation`` source and other reads serialize completely.
+# Constraints: Sources differ by read UUID and record identifier and content may be long; Agent selects evidence within budget and cannot call an excerpt complete.
 def evidence_for(read_id, name, data):
     prefix = f"chat-tool:{read_id}"
     if name == "customers.search":
@@ -147,11 +147,11 @@ def evidence_for(read_id, name, data):
     ]
 
 
-# 功能：执行本请求授权的数据工具调用并登记稳定证据。
-# 输入：`owner` 为 Agent 凭证确定的员工，`payload` 为 CALL_SCHEMA 对象。
-# 输出：成功回执含原业务 data、revision、http_status 及 read_id/evidence_items；工具错误保留 HTTP 状态。
-# 逻辑：锁员工和请求后取同一工具声明，验证 Schema 并复用原处理器；成功操作与新 ToolRead 同事务；维护调用复用请求派生幂等键，stage 标记失败位置。
-# 约束：请求错误向上抛出；业务 APIException 返回 scope=tool 且不结束聊天；未知异常回滚并传播，不重试或伪装空资料。
+# Function: Execute data-tool invocation authorized for this request and register stable evidence.
+# Inputs: ``owner`` is the employee determined by the Agent credential and ``payload`` matches the call schema.
+# Outputs: Successful receipt contains original business data, revision, http_status, and read_id or evidence_items; tool errors retain HTTP status.
+# Logic: After locking employee and request, obtain same tool declaration, validate Schema, and reuse original handler; successful operation and new ``ToolRead`` share a transaction; maintenance invocation reuses request-derived idempotency key and ``stage`` marks failure location.
+# Constraints: Request errors propagate; business ``APIException`` returns scope=tool without ending chat; unknown exceptions roll back and propagate without retry or fabricated empty information.
 def read_tool(owner, payload):
     validate(payload, CALL_SCHEMA)
     started = perf_counter()
@@ -174,7 +174,7 @@ def read_tool(owner, payload):
                 validate(payload["arguments"], spec["inputSchema"])
                 stage = "execute"
                 if name in EXPERIMENT_WRITE_TOOLS:
-                    # 相同请求、工具及参数只写一次；独立新问题使用不同请求 UUID。
+                    # The same request, tool, and arguments write only once; an independent new question uses a different request UUID.
                     digest = hashlib.sha256(json.dumps(payload["arguments"], sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
                     key = uuid.uuid5(uuid.UUID(str(request.pk)), name + ":" + digest)
                     business = tool_services.invoke(owner, None, name, payload["arguments"], str(key))

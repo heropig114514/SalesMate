@@ -1,28 +1,28 @@
 /**
- * 职责：持续读取当前客户结果，并以保留节点的方式更新详情。
- * 实现：单通道 GET 轮询、代次隔离及显式失败暂停；按稳定键复用 DOM，恢复阅读锚点。
- * 关联：app.js 提供授权请求、渲染与错误展示；不提交分析、重试业务或保存草稿。
- * 目录：nodeKey、sameKind、patchNode、patchChildren、patchHTML、preserveReading、
- * DetailObserver、DetailObserver.constructor、DetailObserver.start、DetailObserver.stop、DetailObserver.tick。
- * 变量索引：无模块状态；DetailObserver 的 read/apply/fail 为回调，interval 为既有 3000ms 间隔，
- * epoch 隔离失效请求，timer 保存待执行定时器，companyId 标识当前客户。
+ * Responsibility: Continuously read the current customer's results and update details while preserving nodes.
+ * Implementation: Serial GET polling, generation isolation, and explicit pauses on failure; reuse DOM by stable keys and restore reading anchors.
+ * Relationships: app.js supplies authorized requests, rendering, and errors; this module never submits analysis, retries business operations, or saves drafts.
+ * Directory: nodeKey, sameKind, patchNode, patchChildren, patchHTML, preserveReading,
+ * DetailObserver, DetailObserver.constructor, DetailObserver.start, DetailObserver.stop, DetailObserver.tick.
+ * Variable index: No module state; DetailObserver read/apply/fail are callbacks; interval retains the existing 3000ms period;
+ * epoch isolates invalidated requests; timer stores the scheduled timer; companyId identifies the current customer.
  */
 
-/** 功能：取得渲染节点的稳定身份。输入：node。输出：键字符串或空字符串。
- * 逻辑：优先 DOM id，再取邮件天然键或显式展示键。约束：不使用邮件正文作为身份。 */
+/** Function: Get a rendering node's stable identity. Inputs: node. Outputs: A key or empty string.
+ * Logic: Prefer DOM id, then natural email keys or explicit presentation keys. Constraints: Never use email bodies as identity. */
 function nodeKey(node) {
   return node.nodeType === Node.ELEMENT_NODE ? node.id || node.getAttribute('data-email-ref') || node.getAttribute('data-live-key') || '' : '';
 }
 
-/** 功能：判断是否可原位更新节点。输入：current、next。输出：布尔值。
- * 逻辑：比较节点类型、标签及稳定键。约束：不同邮件不共享身份，即使标签相同。 */
+/** Function: Determine whether a node can be updated in place. Inputs: current and next. Outputs: Boolean.
+ * Logic: Compare node type, tag, and stable key. Constraints: Different emails never share identity even with matching tags. */
 function sameKind(current, next) {
   return current && current.nodeType === next.nodeType && current.nodeName === next.nodeName && nodeKey(current) === nodeKey(next);
 }
 
-/** 功能：同步一个已有节点。输入：current、next。输出：无。
- * 逻辑：只改动变化的文本与属性，再递归子节点；data-live-preserve 的内容由独立渲染器维护。
- * 约束：仅用于可信模板、已转义数据；不处理表单控件的输入值，不替换未变化文本选择节点。 */
+/** Function: Synchronize one existing node. Inputs: current and next. Outputs: None.
+ * Logic: Modify changed text/attributes only, then recurse into children; independent renderers own data-live-preserve content.
+ * Constraints: Trusted templates and escaped data only; never manage form input values or replace unchanged text-selection nodes. */
 function patchNode(current, next) {
   if (current.nodeType !== Node.ELEMENT_NODE) {
     if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
@@ -37,9 +37,9 @@ function patchNode(current, next) {
   if (!next.hasAttribute('data-live-preserve')) patchChildren(current, next);
 }
 
-/** 功能：按稳定身份同步子节点。输入：current、next 容器。输出：无。
- * 逻辑：键控节点可重排并保留原 DOM；无键节点按位置和类型匹配，删除失效尾部。
- * 约束：作用范围不包括独立助手与编辑对话框，禁止以字符串执行脚本。 */
+/** Function: Synchronize children by stable identity. Inputs: current and next containers. Outputs: None.
+ * Logic: Reorder keyed nodes while preserving DOM; match unkeyed nodes by position/type and remove obsolete trailing nodes.
+ * Constraints: Exclude the independent assistant and edit dialogs; never execute string-based scripts. */
 function patchChildren(current, next) {
   const desired = [...next.childNodes];
   desired.forEach((node, index) => {
@@ -56,17 +56,17 @@ function patchChildren(current, next) {
   while (current.childNodes.length > desired.length) current.lastChild.remove();
 }
 
-/** 功能：以可信模板更新局部容器。输入：container、html。输出：无。
- * 逻辑：在离屏 template 解析后复用已有节点。约束：调用方必须转义所有不可信字段。 */
+/** Function: Update a local container from a trusted template. Inputs: container and html. Outputs: None.
+ * Logic: Parse in an offscreen template and reuse existing nodes. Constraints: Callers must escape every untrusted field. */
 export function patchHTML(container, html) {
   const template = document.createElement('template');
   template.innerHTML = html;
   patchChildren(container, template.content);
 }
 
-/** 功能：在局部刷新期间保留阅读位置。输入：root、同步 update 回调。输出：无。
- * 逻辑：记录可见内容锚点与滚动容器位置，更新后校正高度变化；无锚点保留页面坐标。
- * 约束：不恢复已被业务删除的文本，不触碰助手输入及焦点；浏览器最大滚动范围仍生效。 */
+/** Function: Preserve reading position during partial updates. Inputs: root and synchronous update callback. Outputs: None.
+ * Logic: Record visible anchors and scroll-container positions, then compensate for height changes; without anchors, preserve page coordinates.
+ * Constraints: Never restore business-deleted text or touch assistant input/focus; browser maximum scroll limits still apply. */
 export function preserveReading(root, update) {
   const x = window.scrollX, y = window.scrollY;
   const anchor = [...root.querySelectorAll('[data-email-ref], [data-live-key]')].find(node => {
@@ -80,18 +80,18 @@ export function preserveReading(root, update) {
   window.scrollTo(x, y + (anchor?.isConnected ? anchor.getBoundingClientRect().top - top : 0));
 }
 
-/** 功能：独立观察当前客户的完整结果。逻辑：一次 GET 完成后再计时，无并行累积。
- * 约束：不依赖邮箱批次完成；离开、重新请求及失败都会使旧响应失效。 */
+/** Function: Independently observe a customer's complete results. Logic: Start the next timer only after one GET completes, preventing parallel accumulation.
+ * Constraints: Independent of mailbox-batch completion; leaving, restarting, and failure invalidate old responses. */
 export class DetailObserver {
-  /** 功能：建立观察器。输入：read/apply/fail 回调及 interval 毫秒间隔。输出：实例。
-   * 逻辑：保存回调与初始代次，默认沿用页面 3 秒检查周期。约束：构造不发请求。 */
+  /** Function: Construct an observer. Inputs: read/apply/fail callbacks and interval in milliseconds. Outputs: An instance.
+   * Logic: Store callbacks and the initial generation; default to the existing three-second page-check interval. Constraints: Construction sends no request. */
   constructor({ read, apply, fail, interval = 3000 }) {
     this.read = read; this.apply = apply; this.fail = fail; this.interval = interval;
     this.epoch = 0; this.timer = null; this.companyId = null;
   }
 
-  /** 功能：在初次 GET 后持续观察。输入：companyId。输出：无。
-   * 逻辑：废弃旧代次，间隔后读取当前客户。约束：只安排读取，不自动创建或重试分析任务。 */
+  /** Function: Continue observation after the initial GET. Inputs: companyId. Outputs: None.
+   * Logic: Discard the old generation and read the current customer after the interval. Constraints: Schedule reads only; never automatically create/retry analysis. */
   start(companyId) {
     this.stop();
     this.companyId = companyId;
@@ -99,15 +99,15 @@ export class DetailObserver {
     this.timer = setTimeout(() => this.tick(companyId, epoch), this.interval);
   }
 
-  /** 功能：取消后续检查并使在途响应失效。输入：无，读取实例状态。输出：无。
-   * 逻辑：清理 timer、递增 epoch、解除客户绑定。约束：已经发送的只读 HTTP 可以结束但不得渲染。 */
+  /** Function: Cancel subsequent checks and invalidate in-flight responses. Inputs: None; reads instance state. Outputs: None.
+   * Logic: Clear timer, increment epoch, and unbind the customer. Constraints: Already-sent read-only HTTP calls may finish but cannot render. */
   stop() {
     clearTimeout(this.timer); this.timer = null; this.companyId = null; this.epoch += 1;
   }
 
-  /** 功能：读取并应用一个观察周期。输入：companyId、epoch。输出：Promise<void>。
-   * 逻辑：响应前后校验代次；失败停止并交给界面显示，成功后继续计时。
-   * 约束：旧请求的成功和失败均不能覆盖新客户；没有静默网络重试。 */
+  /** Function: Read and apply one observation cycle. Inputs: companyId and epoch. Outputs: Promise<void>.
+   * Logic: Validate generations before/after the response; stop on failure and delegate error display, or restart the timer after success.
+   * Constraints: Neither success nor failure from old requests may overwrite a new customer; no silent network retries. */
   async tick(companyId, epoch) {
     if (epoch !== this.epoch) return;
     try {

@@ -1,32 +1,32 @@
-"""职责：生成可精确撤销的百级业务夹具，供 KG 建模和页面联调。
-实现：合成来源与实际事实结构分别标注；明确批次、固定事件时间、事务写入、主键清单及内容指纹；验证和删除拒绝漂移及外部引用。
-关联：复用现有 ORM、规则抽取和只读投影；common.fixture_integrity 与实验共享统一行指纹；不调用外部服务或入队 Worker，不修改既有记录。
-目录：
-- attachment_path：限定附件文件位于批次目录。
-- FixtureBuilder：构建一个关联完整的虚构批次。
-- FixtureBuilder.__init__：保存批次与归属状态。
-- FixtureBuilder.add：验证并创建记录，登记创建顺序。
-- FixtureBuilder.label：生成可检索显示标记。
-- FixtureBuilder.accounts：创建禁用的资料占位账号。
-- FixtureBuilder.business：创建客户及关系业务。
-- FixtureBuilder.mail_and_analysis：生成合成邮件、历史及当前分析快照。
-- FixtureBuilder.knowledge_and_chat：生成知识、外部资料和显式模拟聊天记录。
-- FixtureBuilder.build：串行组装全部记录并保存附件。
-- load_manifest：读取唯一批次清单。
-- verify_manifest：校验清单完整性、行指纹及附件。
-- external_references：检查清单之外的外键引用。
-- run_seed：事务生成或验证重放批次。
-- deletion_order：根据当前外键关系生成子记录优先的删除序列。
-- run_delete：先核验再按当前依赖删除精确清单中的记录。
-- Command：管理命令入口。
-- Command.add_arguments：声明显式参数与写入确认开关。
-- Command.handle：校验环境并路由生成、验证或删除预览。
-变量索引：
-- BASE_TIME：本批次模拟事件基准时间，非模型运行时间。
-- EVENT：数据库内清单的唯一审计事件类型。
-- INDUSTRIES：循环分配的演示行业。
-- EXCLUDED：不灌入夹具的凭证、调度和账号控制模型。
-- logger：仅输出批次、阶段、表名和数量的操作日志。
+"""Responsibility: Generate precisely reversible business fixtures at hundred-record scale for KG modeling and page integration.
+Implementation: Label synthetic provenance separately from actual fact structures. Use explicit batches, fixed event times, transactional writes, primary-key manifests, and content fingerprints; verification/deletion rejects drift and external references.
+Relationships: Reuse existing ORM, rule extraction, and read-only projections; common.fixture_integrity shares row fingerprints with experiment sharing. No external services, worker enqueueing, or existing-record mutations.
+Directory:
+- attachment_path: Restrict attachment files to the batch directory.
+- FixtureBuilder: Build a fictional batch with complete relationships.
+- FixtureBuilder.__init__: Store batch and ownership state.
+- FixtureBuilder.add: Validate/create records and register creation order.
+- FixtureBuilder.label: Generate searchable display markers.
+- FixtureBuilder.accounts: Create disabled profile placeholder accounts.
+- FixtureBuilder.business: Create companies and related business records.
+- FixtureBuilder.mail_and_analysis: Generate synthetic emails and historical/current analysis snapshots.
+- FixtureBuilder.knowledge_and_chat: Generate knowledge, external profiles, and explicitly simulated chats.
+- FixtureBuilder.build: Assemble all records serially and save attachments.
+- load_manifest: Read the unique batch manifest.
+- verify_manifest: Validate manifest integrity, row fingerprints, and attachments.
+- external_references: Check foreign-key references outside the manifest.
+- run_seed: Generate a batch transactionally or verify replay.
+- deletion_order: Build a child-first deletion sequence from current foreign-key relations.
+- run_delete: Verify first, then delete exact manifest records in current dependency order.
+- Command: Management-command entry point.
+- Command.add_arguments: Declare explicit parameters and the write-confirmation switch.
+- Command.handle: Validate the environment and route generation, verification, or deletion previews.
+Variable index:
+- BASE_TIME: Baseline simulated event time for this batch, not model execution time.
+- EVENT: Unique audit event type for database manifests.
+- INDUSTRIES: Demonstration industries assigned cyclically.
+- EXCLUDED: Credential, scheduling, and account-control models excluded from fixtures.
+- logger: Operation logs limited to batch, stage, table, and count.
 """
 
 import hashlib
@@ -65,11 +65,11 @@ EXCLUDED = {
 logger = logging.getLogger("salesmate.kg_seed")
 
 
-# 功能：限定夹具附件的访问边界。
-# 输入：`actor_id` 归属用户 ID、`batch` 合法批次、`key` 相对存储键。
-# 输出：经过解析的绝对 Path；越界抛 CommandError。
-# 逻辑：仅允许当前账号当前批次目录内的单个文件，删除不使用递归或正则目录匹配。
-# 约束：调用方须先校验 batch；不接受现有普通业务附件路径。
+# Function: Restrict access to fixture attachments.
+# Inputs: `actor_id`: owner user ID; `batch`: valid batch; `key`: relative storage key.
+# Outputs: Resolved absolute Path; path escape raises CommandError.
+# Logic: Allow only one file within the current account/batch directory; deletion uses neither recursion nor regex directory matching.
+# Constraints: The caller must validate batch first; existing ordinary business attachment paths are not accepted.
 def attachment_path(actor_id, batch, key):
     root = (settings.BASE_DIR / "private_uploads").resolve()
     scope = (root / str(actor_id) / batch).resolve()
@@ -79,26 +79,26 @@ def attachment_path(actor_id, batch, key):
     return path
 
 
-# 功能：生成明确标注为人工合成的跨表业务场景。
-# 逻辑：每个场景一个客户及配套业务；历史分析独立失效，当前分析仍可展示。
-# 约束：add 直接写夹具，不调用会入队或发送的业务写服务；不存在真实交易或模型执行。
+# Function: Generate cross-table business scenarios explicitly labeled as manually synthetic.
+# Logic: Each scenario has one company and related business records; historical analyses are independently invalidated while current analyses remain displayable.
+# Constraints: add writes fixtures directly without business write services that enqueue or send; no real transactions or model execution occur.
 class FixtureBuilder:
-    # 功能：保存生成上下文。
-    # 输入：`actor` 既有员工、`batch` 批次字符串、`count` 场景数。
-    # 输出：新实例；记录顺序、待写附件和标签真值保存在实例状态。
-    # 逻辑：可见名称使用统一前缀；time 为固定模拟事件时间。
-    # 约束：actor 不会被改写；调用方管理数据库事务。
+    # Function: Store generation context.
+    # Inputs: `actor`: existing employee; `batch`: batch string; `count`: scenario count.
+    # Outputs: New instance; record order, pending attachments, and label truth reside in instance state.
+    # Logic: Visible names use a common prefix; time is the fixed simulated event time.
+    # Constraints: Do not mutate actor; the caller manages the database transaction.
     def __init__(self, actor, batch, count):
         self.actor, self.batch, self.count = actor, batch, count
         self.rows, self.files, self.truth = [], [], []
         self.sequence = Counter()
         self.time = BASE_TIME
 
-    # 功能：创建并登记单条夹具。
-    # 输入：`model_label` 模型名及 `fields` 字段参数；读取批次和模型内序号。
-    # 输出：持久化模型实例。
-    # 逻辑：UUID 使用批次与模型序号确定生成，执行字段、唯一性和数据库约束校验。
-    # 约束：空的默认 JSON 和可空字段按模型持久化契约跳过表单必填检查；不覆盖旧行。
+    # Function: Create and register one fixture.
+    # Inputs: `model_label`: model name; `fields`: field arguments; read batch and per-model sequence state.
+    # Outputs: Persisted model instance.
+    # Logic: Derive UUIDs deterministically from batch and model sequence; validate fields, uniqueness, and database constraints.
+    # Constraints: Empty default JSON and nullable fields skip form-required checks according to model persistence contracts; never overwrite existing rows.
     def add(self, model_label, **fields):
         model = apps.get_model(model_label)
         self.sequence[model_label] += 1
@@ -112,19 +112,19 @@ class FixtureBuilder:
         self.rows.append({"model": model_label, "pk": str(obj.pk)})
         return obj
 
-    # 功能：生成批次可见标记。
-    # 输入：`text` 业务描述、`index` 场景序号。
-    # 输出：包含批次及虚构提示的字符串。
-    # 逻辑：文本前缀固定，便于正则发现批次。
-    # 约束：删除仍使用清单主键，不按任意正文命中批量删除。
+    # Function: Generate a visible batch marker.
+    # Inputs: `text`: business description; `index`: scenario number.
+    # Outputs: String containing batch and fiction markers.
+    # Logic: Use a fixed text prefix so batches are discoverable by regex.
+    # Constraints: Deletion still uses manifest primary keys, never arbitrary body matches for bulk deletion.
     def label(self, text, index):
         return f"[{self.batch}][虚构] {text} {index:03d}"
 
-    # 功能：为一对一资料表生成独立禁用账号。
-    # 输入：`index` 场景号、`industry` 行业；读取实例的员工和批次状态。
-    # 输出：禁用用户；创建其资料、引导文档、引导配置及销售目标资料。
-    # 逻辑：密码不可用且账号禁用，无组权限，无凭证，不修改真实员工资料。
-    # 约束：这些账号仅满足一对一约束，不用于登录或后台领取任务。
+    # Function: Generate an independent disabled account for one-to-one profile tables.
+    # Inputs: `index`: scenario number; `industry`: industry; read employee and batch instance state.
+    # Outputs: Disabled user, with profile, onboarding document/configuration, and sales-goal profile created.
+    # Logic: Use an unusable password and disabled account with no group permissions or credentials; preserve real employee profiles.
+    # Constraints: These accounts satisfy one-to-one constraints only, never login or background task claiming.
     def accounts(self, index, industry):
         user = self.add("accounts.User", username=f"{self.batch.lower().replace('_', '-')}_{index:03d}",
                         password="!synthetic-unusable", is_active=False,
@@ -142,11 +142,11 @@ class FixtureBuilder:
                  "target_industries": [industry], "target_regions": ["SG"], "timezone": "Asia/Singapore"})
         return user
 
-    # 功能：建立客户、产品、交易草稿及协作关系。
-    # 输入：`index` 场景号、`user` 禁用资料账号、`industry` 行业。
-    # 输出：场景字典，包含后续邮件与知识所需 ORM 对象。
-    # 逻辑：报价和订单均为草稿，跟进为取消状态，外部动作明确取消；团队仅包含禁用账号。
-    # 约束：不创建可执行动作、真实成交或外部连接；不会同步或修改其他客户的优先级。
+    # Function: Create companies, products, transaction drafts, and collaboration relations.
+    # Inputs: `index`: scenario number; `user`: disabled profile account; `industry`: industry.
+    # Outputs: Scenario dictionary with ORM objects needed for subsequent emails and knowledge.
+    # Logic: Quotes and orders are drafts, follow-ups are cancelled, external actions are explicitly cancelled, and teams contain disabled accounts only.
+    # Constraints: No executable actions, real completed transactions, or external connections; do not synchronize or modify other companies' priorities.
     def business(self, index, user, industry):
         owner = self.actor
         domain = f"c{index:03d}.{self.batch.lower().replace('_', '-')}.example"
@@ -205,11 +205,11 @@ class FixtureBuilder:
         return {"company": company, "contact": contact, "product": product, "opportunity": opportunity,
                 "conversation": conversation, "industry": industry, "domain": domain}
 
-    # 功能：创建三封合成邮件及两代可追溯分析。
-    # 输入：`index` 场景号、`scene` 客户业务对象字典。
-    # 输出：扩展 scene，保存 mailbox、emails、snapshots。
-    # 逻辑：使用现有规则提取和模板，分别保存实际事实结构版本和合成来源；旧快照失效，新快照保留。
-    # 约束：无 LLM 调用，评分值为未知且版本隔离；不把模拟关系当作真实 Agent 执行记录。
+    # Function: Create three synthetic emails and two traceable analysis generations.
+    # Inputs: `index`: scenario number; `scene`: company business-object dictionary.
+    # Outputs: Extend scene with mailbox, emails, and snapshots.
+    # Logic: Use existing rule extraction and templates; store actual fact-schema versions separately from synthetic provenance. Invalidate old snapshots and retain new ones.
+    # Constraints: No LLM calls; scores remain unknown and versions isolated. Simulated relations are not real Agent execution records.
     def mail_and_analysis(self, index, scene):
         company, contact = scene["company"], scene["contact"]
         mailbox = self.add("crm.Mailbox", owner=self.actor, address=f"sales-{index}@{self.batch.lower().replace('_', '-')}.example",
@@ -255,11 +255,11 @@ class FixtureBuilder:
             snapshots.append(snapshot)
         scene.update(mailbox=mailbox, emails=emails, snapshots=snapshots)
 
-    # 功能：创建公告样例、内部知识与显式模拟的引用关系。
-    # 输入：`index` 场景号、`scene` 已有客户及邮件。
-    # 输出：无；登记知识、公告样例、聊天、向量和附件元数据。
-    # 逻辑：5 种事件场景循环；标注真值独立放入批次清单，未泄露到资讯正文。
-    # 约束：新闻和运行记录均为虚构；合成向量使用独立空间，不能用于评估真实语义检索。
+    # Function: Create announcement examples, internal knowledge, and explicitly simulated citations.
+    # Inputs: `index`: scenario number; `scene`: existing company and emails.
+    # Outputs: None; register knowledge, announcement examples, chats, vectors, and attachment metadata.
+    # Logic: Cycle through 5 event scenarios; store label truth separately in the batch manifest without leaking it into news bodies.
+    # Constraints: News and execution records are fictional; synthetic vectors use a separate space and cannot evaluate real semantic retrieval.
     def knowledge_and_chat(self, index, scene):
         owner, company = self.actor, scene["company"]
         kinds = ("扩产计划", "项目延期", "预算未定", "同名企业", "旧闻更新")
@@ -302,11 +302,11 @@ class FixtureBuilder:
         self.truth.append({"company_id": str(company.pk), "external_knowledge_id": str(external.pk), "scenario": kind,
                            "expected_company_match": kind != "同名企业", "purchase_confirmed": False})
 
-    # 功能：组装整个批次。
-    # 输入：无外部参数；读取实例的员工、批次和数量状态。
-    # 输出：含精确行清单、指纹、附件和独立标注的字典。
-    # 逻辑：先创建关联数据，再从数据库重读计算指纹；附件使用排他创建。
-    # 约束：异常交由 run_seed 回滚；每个附件创建后立即登记实际路径用于失败清理。
+    # Function: Assemble the entire batch.
+    # Inputs: No external parameters; read employee, batch, and count from instance state.
+    # Outputs: Dictionary containing exact row manifests, fingerprints, attachments, and separate labels.
+    # Logic: Create related data, then reread it from the database to compute fingerprints; create attachments exclusively.
+    # Constraints: Delegate rollback to run_seed; register each attachment's actual path immediately after creation for failure cleanup.
     def build(self):
         for index in range(1, self.count + 1):
             industry = INDUSTRIES[(index - 1) % len(INDUSTRIES)]
@@ -338,20 +338,20 @@ class FixtureBuilder:
                 "truth": self.truth, "excluded_models": EXCLUDED}
 
 
-# 功能：定位数据库内的唯一批次清单。
-# 输入：`actor` 员工、`batch` 完整批次。
-# 输出：首条匹配的 AuditEvent 或 None；正常导入由员工锁避免重复。
-# 逻辑：使用精确事件与 object_id，不按正文模糊匹配。
-# 约束：不同账号使用同一批次被 Command 的身份检查拒绝。
+# Function: Locate the unique database batch manifest.
+# Inputs: `actor`: employee; `batch`: complete batch name.
+# Outputs: First matching AuditEvent or None; ordinary imports prevent duplicates using the employee lock.
+# Logic: Match exact event and object_id, never fuzzy body text.
+# Constraints: Command identity checks reject reuse of the same batch by different accounts.
 def load_manifest(actor, batch):
     return AuditEvent.objects.filter(owner=actor, event=EVENT, object_id=batch).first()
 
 
-# 功能：核对已导入的夹具是否完整且未被修改。
-# 输入：`manifest` 批次清单。
-# 输出：按模型汇总数量；缺失、漂移、文件损坏均抛 CommandError。
-# 逻辑：分模型重读所有主键，比较内容指纹与文件摘要。
-# 约束：不修改数据，也不接受部分缺失为成功；附件清理期间不使用本函数。
+# Function: Verify that imported fixtures remain complete and unchanged.
+# Inputs: `manifest`: batch manifest.
+# Outputs: Counts by model; missing rows, drift, or file corruption raise CommandError.
+# Logic: Reread all primary keys by model and compare content fingerprints and file digests.
+# Constraints: No data mutations or successful partial results; do not call during attachment cleanup.
 def verify_manifest(manifest):
     grouped = defaultdict(list)
     for row in manifest["rows"]:
@@ -368,11 +368,11 @@ def verify_manifest(manifest):
     return {label: len(rows) for label, rows in grouped.items()}
 
 
-# 功能：检测非夹具记录对夹具的引用。
-# 输入：`manifest` 批次清单。
-# 输出：外部引用说明列表。
-# 逻辑：遍历当前 ORM 的实际外键，包括自动多对多表，排除同一批次行。
-# 约束：无法自动识别任意 JSON 中的业务引用，删除说明要求在人工扩展业务前保留批次隔离。
+# Function: Detect references from nonfixture records to fixtures.
+# Inputs: `manifest`: batch manifest.
+# Outputs: List of external-reference descriptions.
+# Logic: Inspect actual foreign keys in the current ORM, including automatic many-to-many tables, excluding same-batch rows.
+# Constraints: Arbitrary JSON business references cannot be detected automatically; deletion guidance requires batch isolation before manual business extensions.
 def external_references(manifest):
     keys = defaultdict(list)
     for row in manifest["rows"]:
@@ -390,11 +390,11 @@ def external_references(manifest):
     return blockers
 
 
-# 功能：原子导入批次或验证幂等重放。
-# 输入：`actor` 已授权目标账号、`batch` 批次、`count` 场景数。
-# 输出：数据库内清单；首次导入失败时全部业务行回滚。
-# 逻辑：锁定账号；以审计事件保存精确主键，附件异常时仅删除本次实际创建文件。
-# 约束：既有同批次参数不同直接失败；不自动重试；提交后的报告写入失败不触发业务回滚。
+# Function: Import a batch atomically or verify idempotent replay.
+# Inputs: `actor`: authorized target account; `batch`: batch; `count`: scenario count.
+# Outputs: Database manifest; failed initial imports roll back all business rows.
+# Logic: Lock the account; store exact primary keys in an audit event. On attachment errors remove only files actually created by this invocation.
+# Constraints: Fail directly when existing batch parameters differ; no automatic retries. Report-write failures after commit do not roll back business data.
 def run_seed(actor, batch, count):
     builder = FixtureBuilder(actor, batch, count)
     try:
@@ -419,11 +419,11 @@ def run_seed(actor, batch, count):
         raise
 
 
-# 功能：按当前关系计算清单的删除顺序。
-# 输入：`manifest` 已校验的批次清单。
-# 输出：子记录优先的模型与主键序列。
-# 逻辑：读取实际外键构建依赖图，拓扑排序避免编辑关系后原创建顺序失效。
-# 约束：循环引用明确报错，不隐式断开关系；调用方在同一事务持有清单与行锁。
+# Function: Compute manifest deletion order from current relations.
+# Inputs: `manifest`: validated batch manifest.
+# Outputs: Child-first sequence of models and primary keys.
+# Logic: Build a dependency graph from actual foreign keys and topologically sort it, avoiding stale creation order after relation edits.
+# Constraints: Report cycles explicitly without breaking relations implicitly; the caller holds manifest and row locks in one transaction.
 def deletion_order(manifest):
     rows = {(row["model"], row["pk"]): row for row in manifest["rows"]}
     dependencies = {key: set() for key in rows}
@@ -447,18 +447,18 @@ def deletion_order(manifest):
     return result
 
 
-# 功能：删除预览或执行精确批次清理。
-# 输入：`actor` 员工、`batch` 批次、`apply` 是否明确执行。
-# 输出：删除数量或预览说明。
-# 逻辑：锁定员工、清单及夹具行，校验指纹并拒绝外部引用，按当前依赖删除；提交后清理精确附件。
-# 约束：数据库提交后保留清理状态和文件清单，文件失败可显式重跑；不自动重试、不删除其他批次。
+# Function: Preview deletion or perform exact batch cleanup.
+# Inputs: `actor`: employee; `batch`: batch; `apply`: explicit execution flag.
+# Outputs: Deletion counts or preview details.
+# Logic: Lock employee, manifest, and fixture rows; verify fingerprints and reject external references. Delete according to current dependencies, then clean exact attachments after commit.
+# Constraints: Retain cleanup state and file manifests after database commit so file failures can be explicitly rerun; no automatic retries or deletion of other batches.
 def run_delete(actor, batch, apply):
     with transaction.atomic():
         get_user_model().objects.select_for_update().get(pk=actor.pk)
         entry = load_manifest(actor, batch)
         if not entry:
             raise CommandError("没有找到该账号的批次清单。")
-        # 与共享维护使用同一清单行锁，等待后必须重新读取 JSON，避免清理使用旧指纹。
+        # Use the same manifest row lock as shared maintenance; reread JSON after waiting so cleanup never uses stale fingerprints.
         entry = AuditEvent.objects.select_for_update().get(pk=entry.pk)
         manifest = entry.changes
         if manifest.get("cleanup_state") != "files_pending":
@@ -484,15 +484,15 @@ def run_delete(actor, batch, apply):
     return {"action": "deleted", "batch": batch, "rows": len(manifest["rows"]), "files": len(manifest["files"])}
 
 
-# 功能：提供夹具创建、核验和后续清理入口。
-# 逻辑：绑定明确数据库名；写入必须指定 --apply，非隔离测试库另需 --allow-live-database。
-# 约束：不切换 .env、不创建权限凭证、不应用迁移；数据库必须已具备当前目标表。
+# Function: Provide fixture creation, verification, and subsequent cleanup.
+# Logic: Bind an explicit database name; writes require --apply, and nonisolated test databases additionally require --allow-live-database.
+# Constraints: Do not switch .env, create permission credentials, or apply migrations; the database must already contain current target tables.
 class Command(BaseCommand):
-    # 功能：定义命令参数。
-    # 输入：`parser` Django 参数解析器。
-    # 输出：无，注册账号、批次、数量、操作及报告路径。
-    # 逻辑：默认 seed 预览，100 场景；完整批次必须显式提供。
-    # 约束：--apply 是本工具的防误操作开关，不替代操作者授权。
+    # Function: Define command arguments.
+    # Inputs: `parser`: Django argument parser.
+    # Outputs: None; register account, batch, count, operation, and report path.
+    # Logic: Default to a seed preview with 100 scenarios; require an explicit complete batch name.
+    # Constraints: --apply prevents accidental operations in this tool; it does not replace operator authorization.
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True)
         parser.add_argument("--batch", required=True)
@@ -503,11 +503,11 @@ class Command(BaseCommand):
         parser.add_argument("--allow-live-database", action="store_true")
         parser.add_argument("--report")
 
-    # 功能：校验命令上下文并执行单项操作。
-    # 输入：`args` 未使用的位置参数、`options` 已解析参数及本地设置。
-    # 输出：标准输出摘要；可写 JSON 报告，失败以非零状态退出。
-    # 逻辑：校验批次、账号和数据库；拒绝跨账号复用标记；明确区分预览和写入。
-    # 约束：只接受明确命名的 PostgreSQL；线上写入需显式开关，报告失败不隐式重复导入。
+    # Function: Validate command context and execute one operation.
+    # Inputs: `args`: unused positional arguments; `options`: parsed arguments and local settings.
+    # Outputs: Standard-output summary and optional JSON report; failures exit nonzero.
+    # Logic: Validate batch, account, and database; reject cross-account marker reuse and distinguish previews from writes explicitly.
+    # Constraints: Accept only explicitly named PostgreSQL databases; live writes require an explicit switch, and report failures never implicitly repeat imports.
     def handle(self, *args, **options):
         batch = options["batch"]
         if not re.fullmatch(r"KGSEED_[0-9]{8}_[A-Z0-9]{2,12}", batch):

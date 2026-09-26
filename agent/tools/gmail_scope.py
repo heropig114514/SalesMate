@@ -1,22 +1,22 @@
-"""职责：按用户冻结的天数或封数范围分页读取 Gmail 消息标识。
-实现：服务器端时间筛选、最新优先分页，默认最多 50 封；超过 50 封须携带对明确封数的批准。
-关联：Django durable_sync 与一次性 Agent 共用此选择器，不依赖 Django 或邮箱凭证存储。
-目录：
-- gmail_message_limit：验证批准状态并返回本次允许的邮件上限。
-- scoped_message_pages：逐页产生本次允许处理的消息 ID。
-变量索引：
-- GMAIL_MESSAGE_LIMIT：无需超量批准的单批上限 50 封。
+"""Responsibility: Page through Gmail message IDs within the user's frozen day or message-count scope.
+Implementation: Use server-side time filtering and newest-first pagination; default to at most 50 emails, requiring approval for an explicit count above 50.
+Relationships: Django durable_sync and the one-shot agent share this selector without depending on Django or stored mailbox credentials.
+Directory:
+- gmail_message_limit: Validate approval and return the allowed email limit for this run.
+- scoped_message_pages: Yield pages of message IDs allowed for this run.
+Variable index:
+- GMAIL_MESSAGE_LIMIT: Per-batch limit of 50 emails without excess-count approval.
 """
 from datetime import datetime
 
 GMAIL_MESSAGE_LIMIT = 50
 
 
-# 功能：确定本次 Gmail 同步或重试允许处理的最大封数。
-# 输入：`options` 为请求或冻结范围，包含可选 max_messages 和 allow_large_sync。
-# 输出：正整数上限；非法数量或未批准的超量请求抛 ValueError。
-# 逻辑：未填封数使用 50；批准只适用于明确提供的封数，不允许批准无限量。
-# 约束：不静默截断用户明确要求的超量请求；批准随批次保存，不是账号永久开关。
+# Function: Determine the maximum email count allowed for this Gmail synchronization or retry.
+# Inputs: `options`: request or frozen scope containing optional max_messages and allow_large_sync.
+# Outputs: Positive integer limit; invalid counts or unapproved excess requests raise ValueError.
+# Logic: Default to 50 when count is absent; approval applies only to an explicit count, never unlimited access.
+# Constraints: Do not silently truncate explicitly requested excess counts; approval is stored per batch rather than as a permanent account switch.
 def gmail_message_limit(options):
     limit = options.get("max_messages")
     approved = options.get("allow_large_sync", False)
@@ -31,11 +31,11 @@ def gmail_message_limit(options):
     return limit if limit is not None else GMAIL_MESSAGE_LIMIT
 
 
-# 功能：枚举明确范围中的 Gmail ID，不读取正文。
-# 输入：`service` 为已授权 Gmail SDK；`options` 为冻结的天数、封数和 UTC 窗口；`page_size` 为调用方既定单页大小。
-# 输出：按 Gmail 最新优先顺序产生去重 ID 页；非法范围、响应和分页循环抛 ValueError/RuntimeError。
-# 逻辑：范围包含收件箱和已发送；纯天数也最多 50 封，超量须批准；先限量再由调用方去重。
-# 约束：时间使用 Gmail 秒级 after/before 条件；不使用 History 失效回退，不隐式重试网络错误；只保存已见 ID/页标识。
+# Function: Enumerate Gmail IDs within an explicit scope without reading bodies.
+# Inputs: `service`: authorized Gmail SDK; `options`: frozen days, count, and UTC window; `page_size`: caller's established page size.
+# Outputs: Yield deduplicated ID pages in Gmail newest-first order; invalid scope, responses, or pagination loops raise ValueError/RuntimeError.
+# Logic: Include inbox and sent mail; day-only requests still allow at most 50 emails unless approved; apply the limit before caller deduplication.
+# Constraints: Use Gmail second-resolution after/before conditions; no expired-History fallback or implicit network retries; retain only seen IDs/page tokens.
 def scoped_message_pages(service, options, page_size=20):
     if not isinstance(options, dict):
         raise ValueError("Gmail sync must select the most recent N days or N messages.")

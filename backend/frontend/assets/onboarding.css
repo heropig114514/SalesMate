@@ -1,8 +1,8 @@
-/* 职责：四步基础信息的进度、表单、目录和附件卡片布局。
- * 实现：沿用共享深色语义变量，宽屏双列表单，手机单列与横向可滚动产品表。
- * 关联：共享语言/API 资源随需求界面统一版本；onboarding.js 与 company-settings.html；不覆盖全局主题。
- * 目录：无函数或类；区域为引导头、步骤、表单、产品表和手机布局。
- * 变量索引：无新增变量，使用 design-system.css 的语义变量。 */
+/* Responsibility: Lay out four-step onboarding progress, forms, catalogs, and attachment cards.
+ * Implementation: Use shared dark-theme semantic variables, two-column desktop forms, and single-column mobile forms with horizontally scrollable product tables.
+ * Relationships: Shared language/API resource versions follow the requirements interface; onboarding.js and company-settings.html; no global theme overrides.
+ * Directory: No functions or classes; sections cover onboarding header, steps, forms, product tables, and mobile layout.
+ * Variable index: No new variables; uses design-system.css semantic variables. */
 #setup-root {
   max-width: 1120px;
   margin: 28px auto 0;

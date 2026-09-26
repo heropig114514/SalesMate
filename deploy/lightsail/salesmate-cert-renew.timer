@@ -1,8 +1,11 @@
-# 职责：为 IP 和域名证书安排每日两次续期检查。
-# 实现：机器离线后补执行错过的检查，检查与实际续期决策由 Certbot 分离。
-# 关联：salesmate-cert-renew.service。
-# 目录：无函数或类。
-# 变量索引：OnCalendar 为每日检查时刻；Persistent 为恢复后补检查开关。
+# Responsibility: Schedule twice-daily renewal checks for IP and domain certificates.
+# Implementation: Run missed checks after machine recovery; Certbot separates checks from the actual renewal decision.
+# Relationships: salesmate-cert-renew.service.
+# Directory:
+# - None
+# Variable index:
+# - OnCalendar: Daily check times.
+# - Persistent: Enables catch-up checks after recovery.
 [Unit]
 Description=Schedule SalesMate certificate renewal checks
 

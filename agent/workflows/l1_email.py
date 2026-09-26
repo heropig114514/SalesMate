@@ -1,4 +1,53 @@
-"""Gmail 单封邮件的 L1 事实理解工作流。"""
+"""Responsibility: L1 fact-understanding workflow for one Gmail email.
+Implementation: Classify direction and non-business messages, validate exact extraction/submission contracts, and preserve source evidence with the existing retry boundary.
+Relationships: Uses the extraction skill and Bailian client; synchronization submits its results through the backend protocol.
+
+Directory:
+- FactValidationError: Candidate facts violate the exact L1 structure or original-text evidence constraints.
+- EmailSubmissionValidationError: Candidate EmailSubmission violates the exact public contract.
+- bailian_extraction_provider: Extract L1 facts from the current email using the project's existing Bailian client.
+- classify_direction: Determine direction by case-insensitive complete email address comparison; direction is unknown without a valid From address.
+- select_contact: Select one primary external contact in original recipient order.
+- classify_non_business_reason: Return a fixed, safe, deterministic non-business reason in stable priority order.
+- validate_facts: Validate and copy multi-value single-email extract-v7 facts in fixed order.
+- validate_email_submission: Validate and copy the exact 19-field EmailSubmission in fixed order.
+- process_email: Assemble and validate one email's exact EmailSubmission in fixed order.
+- _base_submission: Assemble only the 19 authoritative fields; exclude internal fields and legacy aliases.
+- _string_or_empty: Retain string metadata or return an empty string.
+- _nullable_nonblank_string: Retain nonblank string metadata or return None.
+- _mailbox_list_or_empty: Normalize mailbox-list metadata.
+- _reject_duplicate_keys: Reject duplicate JSON object keys that the standard decoder would silently overwrite.
+- _validate_nullable_nonblank_string: Accept only null or nonblank strings while preserving original values.
+- _validate_evidences: Validate evidence arrays while preserving model-provided order and text.
+- _validate_fact_groups: Validate a regular fact field containing multiple value/evidences groups.
+- _validate_evidence: Allow whitespace and invisible-format differences and report locatable failure reasons.
+- _compact_evidence_text: Remove whitespace and Unicode formatting characters such as zero-width characters without changing visible characters.
+- _require_string: Require string-valued contract data.
+- _require_nonblank_string: Require nonblank string-valued contract data.
+- _require_mailbox: Validate basic complete-mailbox syntax.
+- _validate_nullable_mailbox: Validate nullable mailbox metadata.
+- _validate_mailbox_list: Validate recipient mailbox lists.
+- _extract_mailbox: Extract the first basically valid bare mailbox from an address value.
+- _address_key: Generate a case-insensitive key for complete-address comparison.
+
+Variable index:
+- AUTO_SUBMITTED_REASON: Localized deterministic automatic-message reason.
+- DIRECTION_VALUES: Allowed inbound, outbound, and unknown directions.
+- EMAIL_SUBMISSION_FIELDS: Exact public 19-field submission sequence.
+- EXTRACT_PROMPT_VERSION: Extraction skill version attached to persisted results.
+- EXTRACT_STATUS_VALUES: Allowed extraction terminal states.
+- FACT_FIELDS: Exact extract-v7 fact field sequence.
+- INTENT_HINT_VALUES: Allowed L1 purchasing-stage labels.
+- L1_EXTRACTION_PROMPT: Runtime extraction instructions, preserved in their original language.
+- LIST_UNSUBSCRIBE_REASON: Localized deterministic unsubscribe classification reason.
+- MULTI_VALUE_FACT_FIELDS: Fact fields containing value/evidence arrays.
+- NON_BUSINESS_REASONS: Closed set of deterministic non-business explanations.
+- NO_REPLY_REASON: Localized deterministic no-reply reason.
+- SAFE_EXTRACTION_ERROR: Safe localized extraction failure text.
+- _EXTRACTION_SKILL: Loaded single-email extraction skill.
+- _PRECEDENCE_NON_BUSINESS: Recognized non-business Precedence values.
+- logger: Stage and failure diagnostics without credentials.
+"""
 
 import json
 import logging
@@ -80,11 +129,11 @@ NON_BUSINESS_REASONS = frozenset(
 
 
 class FactValidationError(ValueError):
-    """候选事实不满足 L1 精确结构与原文证据约束。"""
+    """Candidate facts violate the exact L1 structure or original-text evidence constraints."""
 
 
 class EmailSubmissionValidationError(ValueError):
-    """候选 EmailSubmission 不满足精确对外契约。"""
+    """Candidate EmailSubmission violates the exact public contract."""
 
 
 def bailian_extraction_provider(
@@ -94,7 +143,7 @@ def bailian_extraction_provider(
     direction: str | None = None,
     validation_error: str | None = None,
 ) -> str:
-    """用项目现有百炼客户端抽取当前单封邮件的 L1 事实。"""
+    """Extract L1 facts from the current email using the project's existing Bailian client."""
     retry_instruction = ""
     if validation_error:
         retry_instruction = (
@@ -119,7 +168,7 @@ def bailian_extraction_provider(
 
 
 def classify_direction(from_address: str | None, mailbox_address: str) -> str:
-    """按完整邮箱地址不区分大小写判断方向；无合法 From 时方向未知。"""
+    """Determine direction by case-insensitive complete email address comparison; direction is unknown without a valid From address."""
     sender = _extract_mailbox(from_address)
     if sender is None:
         return "unknown"
@@ -131,7 +180,7 @@ def classify_direction(from_address: str | None, mailbox_address: str) -> str:
 
 
 def select_contact(email: dict, mailbox_address: str, direction: str) -> str | None:
-    """按原始收件人顺序选择一个主要外部联系人。"""
+    """Select one primary external contact in original recipient order."""
     if direction == "unknown":
         return None
     if direction == "inbound":
@@ -150,7 +199,7 @@ def select_contact(email: dict, mailbox_address: str, direction: str) -> str | N
 
 
 def classify_non_business_reason(email: dict) -> str | None:
-    """按稳定优先级返回固定、安全的确定性非业务原因。"""
+    """Return a fixed, safe, deterministic non-business reason in stable priority order."""
     raw_headers = email.get("headers") or {}
     headers = (
         {
@@ -182,7 +231,7 @@ def classify_non_business_reason(email: dict) -> str | None:
 
 
 def validate_facts(candidate, subject: str, body_text: str) -> dict:
-    """按固定顺序校验并复制 extract-v7 的多值单封邮件 facts。"""
+    """Validate and copy multi-value single-email extract-v7 facts in fixed order."""
     if isinstance(candidate, str):
         try:
             candidate = json.loads(candidate, object_pairs_hook=_reject_duplicate_keys)
@@ -236,7 +285,7 @@ def validate_facts(candidate, subject: str, body_text: str) -> dict:
 
 
 def validate_email_submission(candidate, eligible_body_text: str | None = None) -> dict:
-    """按固定顺序校验并复制精确的 19 字段 EmailSubmission。"""
+    """Validate and copy the exact 19-field EmailSubmission in fixed order."""
     if not isinstance(candidate, dict):
         raise EmailSubmissionValidationError("EmailSubmission must be an object.")
     if set(candidate) != set(EMAIL_SUBMISSION_FIELDS):
@@ -333,7 +382,7 @@ def validate_email_submission(candidate, eligible_body_text: str | None = None) 
 
 
 def process_email(email: dict, mailbox_address: str, extraction_provider=None) -> dict:
-    """按固定顺序组装并校验一封邮件的精确 EmailSubmission。"""
+    """Assemble and validate one email's exact EmailSubmission in fixed order."""
     started = perf_counter()
     normalized_mailbox = _extract_mailbox(mailbox_address)
     sender = _extract_mailbox(email.get("from"))
@@ -395,8 +444,8 @@ def process_email(email: dict, mailbox_address: str, extraction_provider=None) -
             type(first_error).__name__,
             first_error if isinstance(first_error, FactValidationError) else "provider_unavailable",
         )
-        # 百炼偶尔会返回格式正确但证据片段无法定位的结果。只对这种模型
-        # 校验错误立即重试一次；网络、配置和自定义 provider 错误留到下轮同步。
+        # Bailian sometimes returns structurally valid output whose evidence snippets cannot be located. Retry immediately once only for this model
+        # validation failure; leave network, configuration, and custom-provider errors for the next synchronization pass.
         if (
             provider is bailian_extraction_provider
             and isinstance(first_error, FactValidationError)
@@ -461,7 +510,7 @@ def _base_submission(
     contact_email: str | None,
     non_business_hint: bool,
 ) -> dict:
-    """只组装权威来源的 19 字段；内部字段和旧别名不进入结果。"""
+    """Assemble only the 19 authoritative fields; exclude internal fields and legacy aliases."""
     return {
         "dedupe_key": (
             mailbox_address.casefold()
@@ -514,7 +563,7 @@ def _mailbox_list_or_empty(value) -> list[str]:
 
 
 def _reject_duplicate_keys(pairs) -> dict:
-    """拒绝 JSON object 中被标准解码器静默覆盖的重复键。"""
+    """Reject duplicate JSON object keys that the standard decoder would silently overwrite."""
     result = {}
     for key, value in pairs:
         if key in result:
@@ -528,7 +577,7 @@ def _validate_nullable_nonblank_string(
     field: str,
     error_type=FactValidationError,
 ) -> None:
-    """严格接受 null 或保留原值的非空白字符串。"""
+    """Accept only null or nonblank strings while preserving original values."""
     if value is not None and (not isinstance(value, str) or not value.strip()):
         raise error_type(f"{field} must be null or a nonblank string.")
 
@@ -541,7 +590,7 @@ def _validate_evidences(
     *,
     allow_empty: bool,
 ) -> list[str]:
-    """校验证据数组，并保留模型给出的原始顺序和文本。"""
+    """Validate evidence arrays while preserving model-provided order and text."""
     if not isinstance(candidate, list):
         raise FactValidationError(f"{field} must be an array.")
     if not allow_empty and not candidate:
@@ -572,7 +621,7 @@ def _validate_fact_groups(
     subject: str,
     body_text: str,
 ) -> list[dict]:
-    """校验一个可包含多组 value/evidences 的普通事实字段。"""
+    """Validate a regular fact field containing multiple value/evidences groups."""
     if not isinstance(candidate, list):
         raise FactValidationError(f"{field} must be an array.")
 
@@ -609,7 +658,7 @@ def _validate_evidence(
     *,
     field: str,
 ) -> None:
-    """允许空白和不可见格式差异，并报告可定位的失败原因。"""
+    """Allow whitespace and invisible-format differences and report locatable failure reasons."""
     if evidence is None:
         return
     if evidence in subject or evidence in body_text:
@@ -642,7 +691,7 @@ def _validate_evidence(
 
 
 def _compact_evidence_text(value: str) -> str:
-    """移除空白及零宽等 Unicode 格式字符，不改变可见字符。"""
+    """Remove whitespace and Unicode formatting characters such as zero-width characters without changing visible characters."""
     return "".join(
         character
         for character in value
@@ -679,7 +728,7 @@ def _validate_mailbox_list(value, field: str) -> None:
 
 
 def _extract_mailbox(value) -> str | None:
-    """从一个地址值中取得首个基本合法的 bare mailbox。"""
+    """Extract the first basically valid bare mailbox from an address value."""
     if not isinstance(value, str) or not value.strip():
         return None
     addresses = getaddresses([value])
@@ -695,7 +744,7 @@ def _extract_mailbox(value) -> str | None:
 
 
 def _address_key(value) -> str:
-    """生成供完整地址比较使用的大小写无关键。"""
+    """Generate a case-insensitive key for complete-address comparison."""
     mailbox = _extract_mailbox(value)
     if mailbox is not None:
         return mailbox.casefold()

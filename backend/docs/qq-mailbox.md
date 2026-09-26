@@ -1,59 +1,59 @@
-# QQ 邮箱接入与试用
+# QQ mailbox integration and trial
 
-## 当前状态：暂时停用
+## Current status: temporarily disabled
 
-QQ 收信与发信默认关闭（`QQ_MAIL_ENABLED=false`）。页面隐藏连接、同步与发信入口；后端拒绝 QQ 连接、新同步、重试、发信准备、批准和外部核对。工具目录不再发布 `actions.prepare_qq`。Gmail 保持可用。
+QQ receiving/sending is disabled by default (`QQ_MAIL_ENABLED=false`). Pages hide connection, synchronization, and sending entry points; the backend rejects QQ connections, new syncs, retries, send preparation/approval, and external reconciliation. Tool catalogs no longer publish `actions.prepare_qq`. Gmail remains available.
 
-既有 QQ 邮件、画像、授权密文和同步检查点保留；历史邮件可继续通过客户详情及已保存邮件 API 查询。已排队同步暂停领取；已有已批准发信任务若进入 Worker，会在外部调用前记为失败，不自动重发。历史邮件的本地修复及分析仍可执行，不连接 QQ。
+Existing QQ emails, profiles, encrypted authorizations, and checkpoints remain. Historical emails are accessible through company details/saved-email APIs. Queued sync claims pause; approved sending tasks reaching workers fail before external calls without automatic resending. Local repair/analysis of historical emails remains available without connecting to QQ.
 
-需要恢复时，在目标环境显式设置 `QQ_MAIL_ENABLED=true` 并重启 Web、CRM 和销售 Worker/Celery 进程，使各进程配置一致；原排队同步随后可被领取。恢复后应先核对队列及连接状态。下文描述启用时的完整使用流程。
+To restore, explicitly set `QQ_MAIL_ENABLED=true` in the target environment and restart Web, CRM, and sales Worker/Celery processes for consistent settings; queued syncs then become claimable. Inspect queue/connection state first. The following describes the enabled workflow.
 
-QQ 接入与原 Gmail OAuth 并存。QQ 使用 `imap.qq.com:993` 的 TLS 连接和客户端授权码，不使用 Google OAuth、浏览器回调或自有域名。收信读取收件箱及已发送邮件，复用当前 L1–L4 分析和持久批次；发信使用独立的 QQ SMTP 连接和人工确认动作。原有 Gmail 发信及日历功能保留。
+QQ coexists with Gmail OAuth. It uses TLS at `imap.qq.com:993` and client authorization codes, without Google OAuth, browser callbacks, or an owned domain. Receiving reads inbox/sent folders and reuses L1–L4/persistent batches; sending uses separate QQ SMTP connections and manual confirmation. Existing Gmail sending/calendar features remain.
 
-## 部署准备
+## Deployment preparation
 
-1. 在当前项目 Python 环境、仓库根目录执行 `python backend/manage.py migrate`，应用 `crm.0007_qq_mailbox` 和 `crm.0008_mailboxsyncrun_sync_options`，增加 QQ 凭证、检查点及批次范围字段。
-2. 在根 `.env` 配置现有的 `SALESMATE_VAULT_KEY`。Web 与 `crm_worker` 必须使用同一个 Fernet 密钥。如果已经配置，继续使用原值；不要覆盖，否则原外部连接和 QQ 授权码将无法解密。
-3. 仅在尚无密钥时生成一次：
+1. From the repository root in the project Python environment, run `python backend/manage.py migrate` to apply `crm.0007_qq_mailbox` and `crm.0008_mailboxsyncrun_sync_options`, adding QQ credentials, checkpoints, and batch scope fields.
+2. Configure existing `SALESMATE_VAULT_KEY` in root `.env`. Web and `crm_worker` must share the same Fernet key. Preserve an already configured value; replacing it makes existing external connections/QQ authorization codes undecryptable.
+3. Generate once only if no key exists:
 
    ```powershell
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
    ```
 
-   将输出保存为 `.env` 的 `SALESMATE_VAULT_KEY` 并妥善备份。不要提交 Git、放进网页或分享给其他人。应用不会自动生成密钥，也不会将授权码回退为明文存储。
-4. 重启 Web 和共享 `crm_worker`。沿用内部 HTTP 地址；Worker 自动发现所有有效员工的排队任务，每个执行单元使用独立临时身份，不依赖固定员工的 `SALESMATE_AGENT_SERVICE_TOKEN`。QQ 和 Gmail 都走此 Worker；旧 `--sync-authorized-mailboxes-once` CLI 仍仅领取 Gmail。
-5. 服务器须能出站访问 `imap.qq.com:993`。网页无需 OAuth 回调域名，但公网提交授权码仍应使用 HTTPS；不要为此关闭既有 HTTPS 和安全 Cookie 设置。
+   Save the output as `.env` `SALESMATE_VAULT_KEY` and back it up securely. Never commit, place in pages, or share it. The application neither generates keys automatically nor falls back to plaintext authorization storage.
+4. Restart Web/shared `crm_worker`, retaining internal HTTP addresses. Workers discover queued tasks for all active employees and use separate temporary identities per unit, without a fixed employee's `SALESMATE_AGENT_SERVICE_TOKEN`. QQ/Gmail share this worker; legacy `--sync-authorized-mailboxes-once` claims Gmail only.
+5. Servers require outbound `imap.qq.com:993`. No OAuth callback domain is needed, but public authorization-code submission should use HTTPS; retain existing HTTPS/secure-cookie settings.
 
-## 页面操作
+## Page workflow
 
-1. 在 QQ 邮箱网页版「设置 → 账号与安全 → 安全设置」开启 IMAP/SMTP 服务并生成 16 位授权码。详见 [QQ 官方说明](https://help.mail.qq.com/detail/106/985)。填写授权码，不是 QQ 登录密码。
-2. 登录 SalesMate，点击顶部或客户列表的「QQ 邮箱」，输入完整 `@qq.com` 或 `@foxmail.com` 地址与授权码，并填写「最近 N 天」或「最多 N 封」至少一项，再点击「验证连接并同步」。两项无预填，填写正整数；两项都填时同时生效。请使用实际收发邮件所用的邮箱地址；本功能不推断别名关系。
-3. 后端先验证 QQ 登录与收发文件夹，成功才加密保存并请求首次同步。表单提交后清空授权码；邮箱列表和进度接口不会返回授权码或密文。
-4. 在工作台查看本批次范围、逐封邮件及公司画像进度。后续点击「同步 QQ」或刷新收件箱，每次重新选择 QQ 范围，取消不创建新批次。Gmail 沿用原同步规则。每页 20 封、L1 最多四路并发，沿用现有提示词和参数。
-5. 同步失败后查看批次与 Worker 日志，再点「重试未完成邮件」。普通新增同步不自动重试旧失败记录。批次活动期间不可替换或移除 QQ 凭证。
-6. 「移除连接」只删除本地 QQ 密文，保留历史邮件、画像和游标；如需撤销授权码在其他客户端的权限，到 QQ 邮箱官方页面将该授权码设为失效。
+1. In QQ Mail web settings, enable IMAP/SMTP under account/security settings and generate a 16-character authorization code. See [QQ's official instructions](https://help.mail.qq.com/detail/106/985). Supply this code, not the QQ login password.
+2. Log in to SalesMate, open QQ Mail from the top bar/company list, and enter a complete `@qq.com`/`@foxmail.com` address plus authorization code. Supply at least recent N days or maximum N messages, then validate/connect/synchronize. Neither field is prefilled; use positive integers. Both constraints apply when both are supplied. Use the actual sending/receiving address; aliases are not inferred.
+3. The backend validates login and receiving/sent folders before encrypted persistence and initial synchronization. Submission clears the authorization-code form; lists/progress never return codes or ciphertext.
+4. View batch scope, individual-email progress, and company profiles in the workspace. Subsequent QQ sync/inbox refresh asks for scope again; cancellation creates no batch. Gmail retains its rules. Pages contain 20 emails and L1 supports at most four concurrent calls, using existing prompts/parameters.
+5. On failure inspect batch/worker logs, then explicitly retry unfinished emails. Ordinary new synchronization does not retry old failures. Active batches prevent credential replacement/removal.
+6. Removing a connection deletes local QQ ciphertext only, retaining historical emails, profiles, and cursors. Revoke the authorization code on QQ's official page to remove access from other clients.
 
-核对邮件时，在 QQ 账号下点击「查看已同步邮件」。该入口只读取指定邮箱已入库的邮件，默认包含业务、非业务和待复核邮件，显示来源、接收时间、分类及可展开的正文；不触发同步或模型调用。客户工作台按公司归组且只展示业务邮件，不能用它核对完整邮箱列表。以前导入的演示邮件会在客户列表标为「演示样例」，不会被当作 QQ 邮件来源；既有样例及历史邮件均保留。
+To reconcile emails, open the account's saved-email view. It reads only persisted emails for that mailbox, including business, nonbusiness, and review-pending messages by default, showing source, received time, classification, and expandable bodies without sync/model calls. The company workspace groups business emails and cannot verify the complete mailbox list. Imported demonstration emails remain labeled as demonstrations rather than QQ sources; existing examples/history remain.
 
-「最近 N 天」按请求确认时刻往前 N × 24 小时计算，以 IMAP INTERNALDATE 为依据，并冻结时间上下界；不是邮件可自行填写的 Date 头。「最多 N 封」是本批次收件箱和已发送的合计待处理数量，按内部日期从新到旧选择，失败尝试也占一封。已经完成当前版本抽取的邮件不占封数，普通同步不自动重试失败邮件。只填天数可能仍匹配大量邮件，若需控制单次处理量请同时填写封数。
+Recent N days means N × 24 hours before request confirmation, using IMAP INTERNALDATE with frozen lower/upper bounds, not the email's self-declared Date header. Maximum N messages counts the combined selected inbox/sent workload, newest internal dates first; failed attempts count. Emails already extracted successfully at the current version do not count; ordinary sync does not retry failures. A day-only limit may still match many emails, so also specify a message limit to bound volume.
 
-筛选会读取候选邮件的 UID 和日期元数据，元数据数量可能大于封数上限；只有选中邮件才读取正文并进入分析，已有 pending 也不能绕过限制。未选中的邮件留待后续手动同步；扩大天数可补采旧邮件，不会被最大 UID 跳过。重试保留原失败 ID 或冻结时间范围。升级前没有范围的旧批次若尚未登记任何 ID，需要重新选择范围后同步；已登记失败邮件仍可明确重试。已处理历史邮件不会因新范围而被删除。
+Filtering reads candidate UIDs/date metadata, potentially more entries than the message cap. Only selected emails have bodies read/analyzed; existing pending work cannot bypass limits. Unselected emails await later manual sync. Expanding days can backfill old emails without maximum-UID skipping. Retries retain original failed IDs or frozen ranges. Legacy batches without scope or registered IDs require a newly selected range; registered failed emails remain explicitly retryable. New ranges never delete processed history.
 
-QQ 授权码本身可能允许收发等操作；收信同步只执行只读 EXAMINE、UID SEARCH、日期元数据 FETCH 与 BODY.PEEK[]，不改变已读状态，不发送或删除邮件。
+QQ authorization codes may themselves permit sending/receiving. Receiving synchronization uses only read-only EXAMINE, UID SEARCH, date-metadata FETCH, and BODY.PEEK[], without changing read status, sending, or deletion.
 
-## API 与兼容边界
+## API and compatibility boundaries
 
-- `POST /api/v1/mailboxes/qq-connect/`：请求 `address`、`authorization_code`、`sync_options`，成功 202 返回安全邮箱状态，首次同步已排队。沿用员工 Session/CSRF。
-- `DELETE /api/v1/mailboxes/{mailbox_id}/qq-authorization/`：移除当前员工非活动 QQ 连接。越权 404，活动状态冲突 409。
-- 原 `GET /api/v1/mailboxes/` 新增 `qq_authorized`；`gmail_authorized` 继续只表示 Google 授权。
-- `GET /api/v1/mailboxes/{mailbox_id}/email-reviews/?status=saved`：按接收时间倒序查看本邮箱全部已入库邮件，包含原文、`source`、`received_at` 与分类；每页 20 封，员工归属隔离。客户列表另返回 `email_sources`，表示实际业务邮件的来源集合。
-- 原 `POST /api/v1/mailboxes/{mailbox_id}/request-sync/`、批次查询及失败重试接口同时支持 Gmail 和 QQ。QQ 同步必须传 `{"sync_options":{"recent_days":7,"max_messages":20}}`（示例值，不是默认值），任意一项可省略或为 `null`，两项都为空返回 400。批次进度返回冻结的 `sync_options`。Gmail 同样必须提供显式范围，默认最多 50 封，超过时需明确批准；Gmail 的最近 N 封先限量再跳过已同步邮件，不向更早邮件补足。QQ 既有“已完成邮件不占封数”的语义保持不变。
-- QQ 邮件 `source=qq_real`；为兼容既有 L1/HTTP 契约，`gmail_message_id` 字段承载 `qq:{文件夹Base64URL}:{UIDVALIDITY}:{UID}`，不是 Gmail 服务端 ID。`dedupe_key` 仍由邮箱地址与该 ID 组成，QQ 的 `thread_id=null`。
-- 文件夹是独立身份空间；不会仅凭可重复的 MIME Message-ID 合并不同文件夹中的物理副本。已导入邮件移出文件夹后仍保留本地历史。
-- 检查点推进前先持久登记消息，原文在模型调用前落库，写入失败后可复用已成功抽取。UIDVALIDITY 改变或已发送目录改名会明确停止，不静默重置、重扫或冒充同步成功。
-- 只支持服务返回的唯一 `\\Sent` 特殊文件夹或 QQ 已知 Sent/Sent Messages/已发送名称。无法识别时完整报错，不改为只同步收件箱。
+- `POST /api/v1/mailboxes/qq-connect/`: `address`, `authorization_code`, `sync_options`; success returns 202 with safe mailbox state and initial sync queued, using employee Session/CSRF.
+- `DELETE /api/v1/mailboxes/{mailbox_id}/qq-authorization/`: remove the current employee's inactive QQ connection; unauthorized access returns 404, active conflicts 409.
+- Existing `GET /api/v1/mailboxes/` adds `qq_authorized`; `gmail_authorized` still means Google authorization only.
+- `GET /api/v1/mailboxes/{mailbox_id}/email-reviews/?status=saved`: all persisted mailbox emails by descending received time, including bodies, `source`, `received_at`, and classification; 20 per page with employee isolation. Company lists additionally expose `email_sources` from actual business emails.
+- Existing `POST /api/v1/mailboxes/{mailbox_id}/request-sync/`, batch queries, and failure retries support both Gmail/QQ. QQ requires `{"sync_options":{"recent_days":7,"max_messages":20}}` (examples, not defaults); either field may be omitted/null, but both empty returns 400. Progress returns frozen `sync_options`. Gmail also requires explicit scope, defaults to at most 50 emails, and requires explicit approval above that. Gmail's recent N first limits then skips synchronized messages without backfilling older ones. QQ retains its rule that completed emails do not consume the cap.
+- QQ emails use `source=qq_real`. For existing L1/HTTP compatibility, `gmail_message_id` carries `qq:{folderBase64URL}:{UIDVALIDITY}:{UID}`, not a Gmail server ID. `dedupe_key` still combines mailbox address and this ID; QQ `thread_id=null`.
+- Folders are independent identity namespaces; repeatable MIME Message-ID alone never merges physical copies across folders. Moving imported messages out of folders retains local history.
+- Persist message registration before checkpoint advancement and source text before model calls; failed writes can reuse successful extractions. UIDVALIDITY changes or renamed sent folders stop explicitly without silent resets, rescans, or fabricated success.
+- Support only the unique server-returned `\\Sent` special folder or known QQ Sent/Sent Messages/已发送 names. Unrecognized layouts fail completely rather than falling back to inbox-only synchronization.
 
-## 验证
+## Validation
 
 ```powershell
 python -m unittest agent.tests.test_qq_mail
@@ -61,19 +61,19 @@ python backend/manage.py test tests.integration.test_qq_mail
 python backend/tools/check_docs.py
 ```
 
-测试模拟 IMAP 与 LLM，数据库、协议校验、权限及持久状态使用真实实现。它们不证明真实 QQ 授权、网络连通性、邮箱实际文件夹布局或百炼输出已验证；首次试用需用自己的邮箱在页面确认。
+Tests mock IMAP/LLM while exercising real database, protocol validation, authorization, and persistent-state implementations. They do not establish real QQ authorization/network access/folder layouts or Bailian output quality; confirm initial trials with your mailbox through the page.
 
-## QQ 发信
+## QQ sending
 
-1. 应用 `sales.0004_qq_smtp_send` 迁移，重启 Web。发信执行进程 `python backend/manage.py sales_worker` 与 Web 使用同一数据库和 `SALESMATE_VAULT_KEY`。该进程处理所有员工已经明确批准的外部动作，启动前应核对待执行队列。
-2. 打开「业务管理 → 外部连接 → 新增 → 连接 QQ 发信」，输入邮箱与客户端授权码。后端仅验证 `smtp.qq.com:465` 的 TLS/SMTP 登录，成功后独立加密保存；不自动复用收信授权，不发送测试邮件。无需 OAuth 回调或自有域名，服务器须能出站连接该服务。
-3. 在客户的助手会话中保存含收件人、主题和正文的邮件草稿；打开「外部动作 → 新增」，选择「QQ 发送邮件」及对应发信连接、客户、草稿，可附带已审核报价。
-4. 生成计划后审阅完整发件账号、收件人、主题和正文，再点「确认并加入执行队列」。准备计划不会发信；执行使用已展示的冻结内容，不因后来编辑草稿而改变。连接版本或报价变化会拒绝执行。
-5. 所有收件人获准后才提交正文，任一收件人被拒绝则整封不提交。SMTP 明确拒绝记录为失败，正文提交中断记录为「结果待核对」。同一动作不会自动重发。
-6. 「执行成功 / QQ 服务器已接受」仅表示 SMTP 接受提交，不保证最终送达。若结果未知，可点击「到外部服务核对结果」：只读查询 QQ 已发送目录中的唯一 Message-ID，并核对收发地址及主题。此查询需要 IMAP 和服务器保留发送副本；查不到仍保持未知，不认定未发送。程序不会自行追加发送副本。
+1. Apply `sales.0004_qq_smtp_send` and restart Web. `python backend/manage.py sales_worker` must share Web's database and `SALESMATE_VAULT_KEY`. It processes explicitly approved external actions for all employees; inspect the execution queue before starting.
+2. In business management, add a QQ sending connection under external connections. Enter mailbox/client authorization code. The backend validates only TLS/SMTP login at `smtp.qq.com:465`, then encrypts/stores separately. It neither reuses receiving authorization automatically nor sends test email. No OAuth callback/domain is required; outbound service access is necessary.
+3. Save an email draft with recipients, subject, and body in a company assistant conversation. Add an external action selecting QQ send, the sending connection, company, and draft; optionally attach a reviewed quote.
+4. Review the complete sender, recipients, subject, and body, then explicitly confirm/enqueue. Preparation does not send. Execution uses displayed frozen content regardless of later draft edits; changed connection versions/quotes reject execution.
+5. Submit the body only after every recipient is accepted; any rejection prevents the entire body submission. Explicit SMTP rejection is failed; interrupted body submission is uncertain. Actions never resend automatically.
+6. Success/server acceptance means SMTP accepted submission, not guaranteed inbox delivery. For unknown outcomes, external reconciliation read-only queries a unique Message-ID in QQ's sent folder and checks sender, recipients, and subject. This requires IMAP and server-retained sent copies. Missing copies remain unknown, never proof of no send. The program never appends sent copies itself.
 
-API：`POST /api/v1/sales/connections/qq/` 接受 `address`、只写 `authorization_code`，成功 201；非法输入 400，SMTP 认证失败 409，未完成动作占用连接时禁止更换凭证。它继承员工 Session/CSRF，响应不返回密文。`POST /api/v1/sales/records/actions/` 新增 `tool=qq.send`，沿用既有准备、确认、执行与核对契约。
+API: `POST /api/v1/sales/connections/qq/` accepts `address` and write-only `authorization_code`, returning 201 on success; invalid inputs return 400, SMTP authentication failures 409. Nonterminal actions prevent credential replacement. It inherits employee Session/CSRF and never returns ciphertext. `POST /api/v1/sales/records/actions/` adds `tool=qq.send` with existing preparation, confirmation, execution, and reconciliation contracts.
 
-发信自动检查：`python backend/manage.py test tests.integration.test_qq_send`；网络完全模拟，覆盖登录不发信、加密、权限、冻结内容、全部收件人门槛、失败/未知分类及只读核对。真实 QQ SMTP 认证、最终投递和服务器保存副本需在试用中另行验证。
+Sending checks: `python backend/manage.py test tests.integration.test_qq_send`. Fully mocked networking covers authentication without sending, encryption, permissions, frozen content, all-recipient acceptance, failed/unknown distinctions, and read-only reconciliation. Real SMTP authentication, delivery, and server sent-copy retention require separate trials.
 
-Lightsail 可将 `backend/deploy/lightsail/salesmate-sales.service` 安装到 `/etc/systemd/system/`，执行 `systemctl daemon-reload` 并启用 `salesmate-sales`。安装前核对已批准队列；更新网站前同时停止该进程，完成迁移和就绪检查后再启动。该服务依赖 `salesmate-web` 和 PostgreSQL，不自动重启失败进程；日志通过 `journalctl -u salesmate-sales` 查看，不包含邮件正文或凭证。
+On Lightsail, install `backend/deploy/lightsail/salesmate-sales.service` under `/etc/systemd/system/`, run `systemctl daemon-reload`, and enable `salesmate-sales`. Inspect approved queues first. Stop this process alongside website updates, restarting after migrations/readiness checks. It depends on `salesmate-web` and PostgreSQL and does not automatically restart failed processes. View logs with `journalctl -u salesmate-sales`; logs omit email bodies/credentials.

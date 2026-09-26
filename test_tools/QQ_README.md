@@ -1,18 +1,18 @@
-# QQ 测试邮件注入器
+# QQ Test Mail Injector
 
-此工具与 Gmail 注入器一起发布在 `salesmate-test-tools` 下载包中。通过 QQ IMAP 将合成邮件追加到自己登录账号的 `INBOX`，用于验证 SalesMate 的 QQ 同步、逐封原文、公司归组与 L1–L4 分析。它不会向模板中的发件地址或其他外部地址发送邮件。
+This tool is distributed with the Gmail injector in the `salesmate-test-tools` download package. It appends synthetic mail to the `INBOX` of the QQ account that you sign in to through QQ IMAP. Use it to verify SalesMate QQ synchronization, per-message originals, company grouping, and L1–L4 analysis. It never sends mail to template sender addresses or other external addresses.
 
-只需要 Python 3.10 或以上版本的标准库，可脱离 SalesMate 独立运行，不需要安装 Gmail 依赖、Google OAuth 配置或自有回调域名。工具使用固定 `imap.qq.com:993` 并验证 TLS 证书，不读取主项目的 `.env` 或已保存的 QQ 连接。
+It requires only the Python 3.10+ standard library and can run independently from SalesMate. It does not require Gmail dependencies, Google OAuth configuration, or a custom callback domain. The tool uses fixed `imap.qq.com:993` and validates the TLS certificate. It does not read the main project's `.env` or saved QQ connections.
 
-## 1. 准备合成邮件
+## 1. Prepare synthetic mail
 
-解压后在工具目录执行：
+After extracting the package, run this in the tools directory:
 
 ```powershell
 Copy-Item .\qq_test_messages.template.json .\qq_test_messages.local.json
 ```
 
-编辑 `qq_test_messages.local.json`，把顶层 `mailbox_address` 改为自己的完整 QQ 或 foxmail 邮箱。其余格式与 Gmail 模板一致：
+Edit `qq_test_messages.local.json` and change top-level `mailbox_address` to your complete QQ or foxmail address. The remaining format matches the Gmail template:
 
 ```json
 {
@@ -27,48 +27,48 @@ Copy-Item .\qq_test_messages.template.json .\qq_test_messages.local.json
 }
 ```
 
-每封邮件仅允许 `from`、`subject`、`body`，统一写入顶层邮箱；不接受额外 `to`、服务器、文件夹或授权码字段。模板自带六封合成场景，涵盖同公司多联系人、不同公司、公共邮箱与非业务通知。模板内容应避免真实客户资料。
+Each message permits only `from`, `subject`, and `body`, and all messages are written to the top-level mailbox. Additional `to`, server, folder, or authorization-code fields are rejected. The template contains six synthetic scenarios covering multiple contacts from one company, different companies, shared mailboxes, and non-business notices. Template content must not contain real customer data.
 
-## 2. 离线预览
+## 2. Offline preview
 
 ```powershell
 python .\qq_test_injector.py --messages-file .\qq_test_messages.local.json --dry-run
 ```
 
-输出目标邮箱、批次标记、数量、发件人和主题；不读取授权码、不连接 QQ。省略 `--messages-file` 时读取随包示例。必须明确选择 `--dry-run` 或 `--apply`，不指定模式不会写入。
+This outputs target mailbox, batch marker, count, sender, and subject. It does not read an authorization code or connect to QQ. When `--messages-file` is omitted, it reads the packaged example. You must explicitly choose either `--dry-run` or `--apply`; no mode means no write.
 
-## 3. 明确写入自己的收件箱
+## 3. Explicitly write to your own inbox
 
-在 QQ 邮箱中开启 IMAP/SMTP 并生成客户端授权码，然后执行：
+Enable IMAP/SMTP in QQ Mail and generate a client authorization code, then run:
 
 ```powershell
 python .\qq_test_injector.py --messages-file .\qq_test_messages.local.json --apply
 ```
 
-程序以 JSON 中的邮箱地址登录，提示输入 16 位客户端授权码，不回显且不保存到文件。它不接受命令行授权码。受控脚本环境也可预先设置 `QQ_TEST_AUTHORIZATION_CODE`；未设置才提示安全输入，没有安全输入终端时明确失败，不降级为回显。不要把真实授权码放入 JSON、GitHub Actions、提交记录或共享日志。
+The program signs in using the mailbox address in JSON and prompts for a 16-character client authorization code. It does not echo the code or save it to a file, and it does not accept an authorization code on the command line. A controlled script environment may preset `QQ_TEST_AUTHORIZATION_CODE`; otherwise it prompts for secure input. It fails explicitly when no secure-input terminal exists and does not fall back to echoing input. Never place a real authorization code in JSON, GitHub Actions, commit history, or shared logs.
 
-程序使用标准库的 [IMAP APPEND](https://docs.python.org/3/library/imaplib.html#imaplib.IMAP4.append)，逐封等待服务端确认。QQ 服务必须允许当前账号执行 APPEND；如果拒绝，程序报告失败，不切换为 SMTP。预览与模拟测试不能证明真实 QQ 服务已允许写入。
+The program uses standard-library [IMAP APPEND](https://docs.python.org/3/library/imaplib.html#imaplib.IMAP4.append) and waits for server confirmation for every message. The QQ service must allow the current account to perform APPEND. If it rejects the action, the program reports failure and does not switch to SMTP. Preview and mocked tests do not prove that the real QQ service permits writes.
 
-输出说明：
+Output states:
 
-- `completed`：所有邮件收到明确成功响应。
-- `failed`：认证、模板或明确拒绝等失败；`inserted_count` 是本批已确认成功数量，先前成功的邮件不会被回滚。
-- `uncertain`：当前 APPEND 中断或响应不明确，邮件可能已经写入。记录 `uncertain_message_id`，先按批次主题和 Message-ID 核对邮箱，不要直接重跑。
+- `completed`: Every mail item received an explicit success response.
+- `failed`: Authentication, template, or explicit-rejection failure. `inserted_count` is the number confirmed successful in this batch; previously successful mail is not rolled back.
+- `uncertain`: The current APPEND was interrupted or response was unclear, so mail may already be written. Record `uncertain_message_id`, inspect the mailbox by batch subject and Message-ID first, and do not rerun directly.
 
-没有自动重试。每次执行生成不同批次，重复执行 `--apply` 会创建新的测试邮件。没有删除、EXPUNGE 或自动清理功能。程序只向自己的收件箱追加邮件，模板 `From` 是合成数据，不是实际 SMTP 发件身份。
+There is no automatic retry. Each run generates a different batch, so repeated `--apply` creates new test mail. There is no deletion, EXPUNGE, or automatic cleanup feature. The program appends mail only to your own inbox; template `From` values are synthetic data rather than real SMTP sender identities.
 
-## 4. 在 SalesMate 验证
+## 4. Verify in SalesMate
 
-1. 登录 SalesMate，连接与 JSON 一致的 QQ 收信账号。
-2. 手动选择「最近 N 天」或「最多 N 封」范围，再同步；若只设封数且邮箱有更新邮件，可能先处理那些邮件，应据实选择范围。
-3. 在 QQ 账号下点击「查看已同步邮件」，按输出中的批次标记核对主题和原文，再检查业务邮件对应的公司与分析。
-4. 需要清理时，在 QQ 网页端搜索输出中的 `search_subject` 或批次编号，核实后手动删除。删除 QQ 邮件不会自动清除 SalesMate 中的历史记录。
+1. Sign in to SalesMate and connect the QQ receiving account that matches JSON.
+2. Manually choose a recent-days or maximum-message-count scope, then synchronize. If only a count is set and the mailbox has newer mail, those messages may be processed first; choose scope according to actual conditions.
+3. Under the QQ account, view synchronized mail. Use the output batch marker to verify subject and original text, then inspect the company and analysis corresponding to business mail.
+4. To clean up, search QQ Web Mail for output `search_subject` or batch number and manually delete only after verification. Deleting QQ mail does not automatically remove SalesMate history.
 
-此注入器验证收信与分析链路，不验证 SMTP 投递、SPF/DKIM 或垃圾邮件分类。要测试正式 QQ 发信，请在 SalesMate「外部连接」中连接 QQ 发信，在「外部动作」中准备邮件草稿并预览、确认；打包流水线不会替你执行这些操作。
+This injector verifies the receiving and analysis path. It does not verify SMTP delivery, SPF/DKIM, or spam classification. To test production QQ sending, connect QQ sending under SalesMate external connections, then prepare, preview, and confirm a mail draft under external actions. The package workflow does not perform these actions for you.
 
-## 5. 开发者检查
+## 5. Developer checks
 
-在完整仓库根目录运行：
+From the complete repository root, run:
 
 ```powershell
 python -m unittest discover -s test_tools/tests -v
@@ -76,4 +76,4 @@ python backend/tools/check_docs.py test_tools/qq_test_injector.py test_tools/tes
 python test_tools/qq_test_injector.py --dry-run
 ```
 
-测试模拟网络和凭证输入，覆盖离线预览、显式写入、头部校验、固定目标、部分成功、未知结果与日志脱敏。GitHub Actions 使用 Python 3.11，分发目录另以 `python -I` 复验两种工具，避免隐式依赖主项目模块。
+Tests mock network and credential input, covering offline preview, explicit write, header validation, fixed target, partial success, uncertain result, and log redaction. GitHub Actions uses Python 3.11. The distribution directory separately rechecks both tools with `python -I` to avoid implicit dependencies on main-project modules.

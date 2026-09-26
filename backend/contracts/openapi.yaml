@@ -1222,7 +1222,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 company 的 UUID 字符串。
+        description: UUID string identifying this company.
         required: true
       tags:
       - companies
@@ -1246,7 +1246,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 company 的 UUID 字符串。
+        description: UUID string identifying this company.
         required: true
       tags:
       - companies
@@ -1274,7 +1274,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 company 的 UUID 字符串。
+        description: UUID string identifying this company.
         required: true
       tags:
       - companies
@@ -1301,7 +1301,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 company 的 UUID 字符串。
+        description: UUID string identifying this company.
         required: true
       tags:
       - companies
@@ -1330,7 +1330,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 company 的 UUID 字符串。
+        description: UUID string identifying this company.
         required: true
       tags:
       - companies
@@ -1603,6 +1603,198 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/v1/graph/entities/:
+    get:
+      operationId: v1_graph_entities_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/episodes/:
+    get:
+      operationId: graph_episodes_list
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+    post:
+      operationId: v1_graph_episodes_create
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/episodes/{episode_id}/:
+    get:
+      operationId: graph_episode_detail
+      parameters:
+      - in: path
+        name: episode_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/episodes/{episode_id}/retract/:
+    post:
+      operationId: v1_graph_episodes_retract_create
+      parameters:
+      - in: path
+        name: episode_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/facts/:
+    get:
+      operationId: v1_graph_facts_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/facts/{fact_id}/lineage/:
+    get:
+      operationId: v1_graph_facts_lineage_retrieve
+      parameters:
+      - in: path
+        name: fact_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/schema/:
+    get:
+      operationId: v1_graph_schema_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/graph/status/:
+    get:
+      operationId: v1_graph_status_retrieve
+      tags:
+      - v1
+      security:
+      - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/v1/health/live/:
     get:
       operationId: v1_health_live_retrieve
@@ -1790,7 +1982,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 mailbox 的 UUID 字符串。
+        description: UUID string identifying this mailbox.
         required: true
       tags:
       - mailboxes
@@ -1809,7 +2001,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: 标识此 mailbox 的 UUID 字符串。
+        description: UUID string identifying this mailbox.
         required: true
       tags:
       - mailboxes
@@ -3077,16 +3269,16 @@ components:
         username:
           type: string
           readOnly: true
-          title: 用户名
-          description: 必填；长度为150个字符或以下；只能包含字母、数字、特殊字符“@”、“.”、“-”和“_”。
+          title: Username
+          description: Required; at most 150 characters; may contain only letters, digits, and the special characters @, ., -, and _.
         first_name:
           type: string
           readOnly: true
-          title: 名字
+          title: First name
         last_name:
           type: string
           readOnly: true
-          title: 姓氏
+          title: Last name
       required:
       - first_name
       - id
@@ -3405,10 +3597,10 @@ components:
       - unknown
       type: string
       description: |-
-        * `半导体检测` - 半导体检测
-        * `精密量测` - 精密量测
-        * `光学检测` - 光学检测
-        * `工业检测` - 工业检测
+        * `半导体检测` - Semiconductor inspection
+        * `精密量测` - Precision metrology
+        * `光学检测` - Optical inspection
+        * `工业检测` - Industrial inspection
         * `unknown` - unknown
     Inference:
       type: object
@@ -3868,9 +4060,9 @@ components:
       - calendar
       type: string
       description: |-
-        * `gmail` - Gmail 发信
-        * `qq` - QQ 发信
-        * `calendar` - Google 日历
+        * `gmail` - Gmail sending
+        * `qq` - QQ sending
+        * `calendar` - Google Calendar
     QQConnect:
       type: object
       properties:
@@ -4210,4 +4402,4 @@ components:
       type: apiKey
       in: header
       name: X-Lab-User
-      description: 仅 LAB_OPEN_ACCESS=true 时可选的实验归属用户名，无需令牌；省略使用实验默认身份。正式模式不可用。
+      description: Optional laboratory owner username, available only when LAB_OPEN_ACCESS=true; no token required. Omitting it uses the default laboratory identity. Unavailable in normal mode.

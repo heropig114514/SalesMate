@@ -1,4 +1,138 @@
-"""离线检查：使用内存邮件、模拟 HTTP 响应和 fake provider，不访问外部服务。"""
+"""Responsibility: Offline checks use in-memory emails, mocked HTTP responses, and fake providers without external services.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- BailianClientTests: Group offline assertions and fixture behavior for BailianClientTests.
+- BailianClientTests.successful_response: Build a successful mocked model response.
+- BailianClientTests.test_missing_config_never_sends_request: Verify missing config never sends request.
+- BailianClientTests.test_generate_json_sends_generic_two_argument_payload: Verify generate json sends generic two argument payload.
+- BailianClientTests.test_thinking_configuration_is_forwarded: Verify thinking configuration is forwarded.
+- BailianClientTests.test_truncated_output_is_rejected: Verify truncated output is rejected.
+- BailianClientTests.test_http_failure_does_not_expose_server_body_or_key: Verify http failure does not expose server body or key.
+- BailianClientTests.test_timeout_does_not_automatically_retry: Verify timeout does not automatically retry.
+- BailianChatRegressionTests: Task 1.3 ordered-chat coverage; every transport call is mocked.
+- BailianChatRegressionTests.generate_chat: Invoke the chat client with mocked transport.
+- BailianChatRegressionTests.test_generate_chat_json_preserves_order_and_transport_contract: Verify generate chat json preserves order and transport contract.
+- BailianChatRegressionTests.test_generate_chat_json_rejects_invalid_input_before_transport: Verify generate chat json rejects invalid input before transport.
+- BailianChatRegressionTests.test_generate_chat_json_fails_safely_without_retry: Verify generate chat json fails safely without retry.
+- BailianChatRegressionTests.test_generate_json_legacy_contract_remains_unchanged: Verify generate json legacy contract remains unchanged.
+- AgentMainCliTests: Task 4.2 one-shot CLI wiring tests; every dependency is mocked.
+- AgentMainCliTests.invoke: Invoke the CLI with mocked dependencies and captured output.
+- AgentMainCliTests.test_command_selection_remains_required_exclusive_and_validated: Verify command selection remains required exclusive and validated.
+- AgentMainCliTests.test_chat_no_work_completed_failed_and_report_failed_json_exit_contract: Verify chat no work completed failed and report failed json exit contract.
+- AgentMainCliTests.test_existing_analysis_command_keeps_parsing_and_call_path: Verify existing analysis command keeps parsing and call path.
+- AgentMainCliTests.test_existing_jobs_command_keeps_parsing_and_call_path: Verify existing jobs command keeps parsing and call path.
+- AgentMainCliTests.test_existing_mailbox_sync_command_keeps_parsing_and_call_path: Verify existing mailbox sync command keeps parsing and call path.
+- GmailResourceContractTests: Task 3.1 Gmail resource/profile contract; all inputs are in memory.
+- GmailResourceContractTests.raw_message: Build a raw MIME message fixture.
+- GmailResourceContractTests.service_for: Build a mocked Gmail service for a resource fixture.
+- GmailResourceContractTests.test_message_id_raw_thread_and_internal_date_use_their_own_resource_fields: **Validates: Requirements 2.2, 2.4, 2.5, 2.6, 3.3**
+- GmailResourceContractTests.test_optional_resource_metadata_is_normalized_without_rejecting_message: **Validates: Requirements 2.5, 2.6**
+- GmailResourceContractTests.test_internal_date_never_falls_back_to_mime_date: **Validates: Requirements 2.6**
+- GmailResourceContractTests.test_non_empty_message_id_and_raw_are_required: **Validates: Requirements 2.2, 2.4, 3.8**
+- GmailResourceContractTests.test_valid_explicit_mailbox_overrides_profile_and_invalid_value_falls_back: **Validates: Requirements 2.2, 2.3, 3.2**
+- GmailResourceContractTests.test_invalid_profile_mailbox_is_a_safe_read_boundary_failure: **Validates: Requirements 2.3, 3.8**
+- EmailMetadataContractTests: Task 3.2 MIME normalization contract; all messages stay in memory.
+- EmailMetadataContractTests.parse: Parse an in-memory MIME fixture.
+- EmailMetadataContractTests.test_normalizes_metadata_without_legacy_fields_and_preserves_mime_content: **Validates: Requirements 2.2, 2.5, 2.6, 2.8, 3.3**
+- EmailMetadataContractTests.test_nullable_headers_and_attachment_only_message_use_contract_empty_values: **Validates: Requirements 2.2, 2.5, 2.7, 2.8**
+- EmailMetadataContractTests.test_sent_and_received_times_are_independent_across_source_combinations: **Validates: Requirements 2.6**
+- EmailMetadataContractTests.test_rejects_timezone_naive_date_but_accepts_explicit_utc: **Validates: Requirements 2.6**
+- EmailMetadataContractTests.test_uses_visible_html_only_when_plain_body_is_empty: **Validates: Requirements 2.8, 3.3**
+- EligibleEvidenceBoundaryTests: Task 3.2 conservative current-body evidence boundary checks.
+- EligibleEvidenceBoundaryTests.parse_body: Parse a fixture body to inspect eligible evidence.
+- EligibleEvidenceBoundaryTests.test_removes_only_explicit_quoted_lines_without_changing_full_body: **Validates: Requirements 2.8, 3.7**
+- EligibleEvidenceBoundaryTests.test_recognized_reply_and_forward_boundaries_remove_history_suffix: **Validates: Requirements 2.8, 3.7**
+- EligibleEvidenceBoundaryTests.test_unrecognized_natural_language_is_preserved_conservatively: **Validates: Requirements 2.8, 3.7**
+- L1PromptContractTests: Task 3.3 snapshots for the single-message extract-v7 prompt contract.
+- L1PromptContractTests.prompt_contract: Load the extraction prompt contract for assertions.
+- L1PromptContractTests.test_extract_prompt_version_is_the_single_extract_v7_constant: Verify extract prompt version is the single extract v7 constant.
+- L1PromptContractTests.test_prompt_has_exact_complete_17_field_json_skeleton: Verify prompt has exact complete 17 field json skeleton.
+- L1PromptContractTests.test_prompt_snapshots_strict_scalar_pair_and_evidence_rules: Verify prompt snapshots strict scalar pair and evidence rules.
+- L1PromptContractTests.test_prompt_explains_every_intent_and_selection_boundary: Verify prompt explains every intent and selection boundary.
+- L1PromptContractTests.test_prompt_snapshots_substantive_update_and_untrusted_message_boundary: Verify prompt snapshots substantive update and untrusted message boundary.
+- L1PromptContractTests.test_prompt_snapshots_attribution_and_non_inference_constraints: Verify prompt snapshots attribution and non inference constraints.
+- L1PromptContractTests.test_process_provider_receives_subject_and_eligible_current_body_only: Verify process provider receives subject and eligible current body only.
+- CountingFakeProvider: Record subject and body calls without network access.
+- CountingFakeProvider.__init__: Initialize isolated fixture state and configured simulated responses.
+- CountingFakeProvider.__call__: Record a mocked provider call and return the configured fixture output.
+- l1_email: Build normalized email input for L1 tests.
+- valid_l1_facts: Build valid extract-v7 fixture facts.
+- L1ProcessingTests: Group offline assertions and fixture behavior for L1ProcessingTests.
+- L1ProcessingTests.assert_safe_extraction_failure: Assert stable safe failure output and provider behavior.
+- L1ProcessingTests.test_selects_deterministic_contact_for_inbound_outbound_to_and_cc: Verify selects deterministic contact for inbound outbound to and cc.
+- L1ProcessingTests.test_missing_contact_does_not_override_non_business_short_circuit: Verify missing contact does not override non business short circuit.
+- L1ProcessingTests.test_non_business_rules_short_circuit_without_calling_provider: Verify non business rules short circuit without calling provider.
+- L1ProcessingTests.test_successful_extraction_calls_provider_once_and_returns_validated_facts: Verify successful extraction calls provider once and returns validated facts.
+- L1ProcessingTests.test_default_provider_retries_one_validation_failure: Verify default provider retries one validation failure.
+- L1ProcessingTests.test_provider_exception_returns_sanitized_failure: Verify provider exception returns sanitized failure.
+- L1ProcessingTests.test_invalid_json_returns_sanitized_failure: Verify invalid json returns sanitized failure.
+- L1ProcessingTests.test_each_missing_required_fact_field_returns_sanitized_failure: Verify each missing required fact field returns sanitized failure.
+- L1ProcessingTests.test_evidence_absent_from_source_returns_sanitized_failure: Verify evidence absent from source returns sanitized failure.
+- L1PreservationPropertyTests: Finite Property 2 witnesses captured from the unfixed workflow.
+- L1PreservationPropertyTests.test_property_2_preserves_direction_and_ordered_contact_selection: Verify property 2 preserves direction and ordered contact selection.
+- L1PreservationPropertyTests.test_property_2_preserves_mime_decoding_body_choice_and_order: Verify property 2 preserves mime decoding body choice and order.
+- L1PreservationPropertyTests.test_property_2_preserves_non_business_short_circuit_and_mail_content: Verify property 2 preserves non business short circuit and mail content.
+- L1PreservationPropertyTests.test_property_2_preserves_provider_input_call_bound_and_safe_failure: Verify property 2 preserves provider input call bound and safe failure.
+- StrictFactsValidationTests: Task 3.4 extract-v7 multi-value facts validation, entirely offline.
+- StrictFactsValidationTests.setUp: Initialize independent fixed fixtures for each test.
+- StrictFactsValidationTests.assert_rejected: Assert that malformed fixture data raises validation errors.
+- StrictFactsValidationTests.test_accepts_exact_object_and_json_in_fixed_order_without_mutating_values: Verify accepts exact object and json in fixed order without mutating values.
+- StrictFactsValidationTests.test_accepts_all_intents_summary_boundary_and_empty_fact_arrays: Verify accepts all intents summary boundary and empty fact arrays.
+- StrictFactsValidationTests.test_no_purchase_stage_is_null_and_stage_requires_evidence: Verify no purchase stage is null and stage requires evidence.
+- StrictFactsValidationTests.test_accepts_multiple_values_and_multiple_evidences: Verify accepts multiple values and multiple evidences.
+- StrictFactsValidationTests.test_accepts_evidence_when_only_source_whitespace_differs: Verify accepts evidence when only source whitespace differs.
+- StrictFactsValidationTests.test_accepts_evidence_when_source_contains_invisible_format_characters: Verify accepts evidence when source contains invisible format characters.
+- StrictFactsValidationTests.test_unicode_character_rewrite_reports_precise_evidence_path: Verify unicode character rewrite reports precise evidence path.
+- StrictFactsValidationTests.test_missing_evidence_reports_path_and_model_text: Verify missing evidence reports path and model text.
+- StrictFactsValidationTests.test_rejects_invalid_json_non_object_and_every_key_set_mutation: Verify rejects invalid json non object and every key set mutation.
+- StrictFactsValidationTests.test_rejects_single_scalar_and_intent_evidences_mutations: Verify rejects single scalar and intent evidences mutations.
+- StrictFactsValidationTests.test_rejects_fact_group_shape_evidence_and_duplicate_value_mutations: Verify rejects fact group shape evidence and duplicate value mutations.
+- StrictFactsValidationTests.test_rejects_evidence_present_only_outside_eligible_current_body: Verify rejects evidence present only outside eligible current body.
+- EmailSubmissionValidationTests: Task 3.4 exact 19-field submission and state validation.
+- EmailSubmissionValidationTests.completed_submission: Build a completed submission fixture.
+- EmailSubmissionValidationTests.assert_rejected: Assert that malformed fixture data raises validation errors.
+- EmailSubmissionValidationTests.test_accepts_exact_completed_submission_and_returns_fixed_order_copy: Verify accepts exact completed submission and returns fixed order copy.
+- EmailSubmissionValidationTests.test_accepts_declared_nullable_and_empty_content_fields: Verify accepts declared nullable and empty content fields.
+- EmailSubmissionValidationTests.test_rejects_each_missing_key_and_each_legacy_or_internal_extra_key: Verify rejects each missing key and each legacy or internal extra key.
+- EmailSubmissionValidationTests.test_rejects_single_type_nullability_enum_version_and_dedupe_mutations: Verify rejects single type nullability enum version and dedupe mutations.
+- EmailSubmissionValidationTests.test_rejects_completed_facts_not_supported_by_eligible_body: Verify rejects completed facts not supported by eligible body.
+- EmailSubmissionValidationTests.test_accepts_exact_failed_and_skipped_status_relationships: Verify accepts exact failed and skipped status relationships.
+- EmailSubmissionValidationTests.test_rejects_each_single_status_relationship_mutation: Verify rejects each single status relationship mutation.
+- EmailSubmissionAssemblyTests: Task 3.5 exact assembly and deterministic processing-order checks.
+- EmailSubmissionAssemblyTests.test_completed_result_is_authoritative_exact_19_field_submission: **Validates: Requirements 2.1, 2.2, 2.4, 2.8, 2.11**
+- EmailSubmissionAssemblyTests.test_provider_receives_eligible_body_but_submission_keeps_full_body: **Validates: Requirements 2.8, 3.7**
+- EmailSubmissionAssemblyTests.test_non_business_short_circuits_before_provider_with_valid_submission: **Validates: Requirements 2.8, 2.11, 3.7**
+- NullableMetadataFlowTests: Task 3.5 nullable metadata must remain processable.
+- NullableMetadataFlowTests.test_each_nullable_metadata_field_stays_null_without_blocking_extraction: **Validates: Requirements 2.5, 2.6, 2.7, 3.8**
+- NullableMetadataFlowTests.test_missing_recipients_subject_and_body_use_contract_empty_values: **Validates: Requirements 2.2, 2.8**
+- DirectionContactTests: Task 3.5 deterministic direction/contact and provider eligibility.
+- DirectionContactTests.test_direction_and_contact_follow_from_then_to_cc_order: **Validates: Requirements 2.7, 3.4, 3.5**
+- DirectionContactTests.test_invalid_from_is_unknown_and_does_not_skip_provider: **Validates: Requirements 2.7, 3.7**
+- DirectionContactTests.test_outbound_without_external_contact_still_calls_provider_once: **Validates: Requirements 2.7, 3.5, 3.7**
+- NonBusinessReasonTests: Task 3.6 deterministic reason classification and stable priority.
+- NonBusinessReasonTests.test_returns_exact_fixed_reasons_for_each_normalized_rule: **Validates: Requirements 2.2, 2.8, 3.6**
+- NonBusinessReasonTests.test_first_matching_rule_wins_without_echoing_header_values: **Validates: Requirements 3.6, 3.9**
+- NonBusinessReasonTests.test_no_match_returns_none_and_hint_is_derived_from_reason: **Validates: Requirements 2.11, 3.6**
+- ExtractionStatusMatrixTests: Task 3.6 strict completed/failed/skipped relationships and call counts.
+- ExtractionStatusMatrixTests.test_completed_failed_and_skipped_follow_exact_matrix: **Validates: Requirements 2.11, 3.6, 3.9**
+- ExtractionStatusMatrixTests.test_each_extraction_failure_category_maps_to_one_safe_status: **Validates: Requirements 2.11, 3.9**
+- ExtractionStatusMatrixTests.test_nullable_metadata_and_reliable_body_are_retained_in_every_state: **Validates: Requirements 2.7, 2.8, 2.11, 3.8**
+- ExtractionStatusMatrixTests.test_validator_rejects_nonfixed_error_and_nonfixed_reason: **Validates: Requirements 2.11, 3.9**
+- SafeL1ErrorTests: Task 3.6 safe extraction failures versus unrecoverable CLI reads.
+- SafeL1ErrorTests.test_provider_details_never_enter_extract_error_or_submission: **Validates: Requirements 3.9**
+
+Variable index:
+- BAILIAN_CONFIG: Fake model connection settings for mocked transport tests.
+- EmailMetadataContractTests.NORMALIZED_KEYS: Expected normalized MIME metadata keys.
+- GENERIC_JSON_RESULT: Fixed JSON response returned by mocked transport.
+- GENERIC_SYSTEM_PROMPT: Synthetic non-sales system prompt for client contract tests.
+- GENERIC_USER_TEXT: Synthetic inventory input for client contract tests.
+- L1ProcessingTests.SAFE_EXTRACTION_ERROR: Expected safe localized extraction failure fixture.
+- L1PromptContractTests.FACT_FIELDS: Expected exact fact contract fields.
+- L1PromptContractTests.MULTI_VALUE_FACT_FIELDS: Expected multi-value extraction field subset.
+"""
 
 import base64
 import copy
@@ -1108,7 +1242,7 @@ class L1PromptContractTests(unittest.TestCase):
 
 
 class CountingFakeProvider:
-    """记录主题和正文调用，不访问网络。"""
+    """Record subject and body calls without network access."""
 
     def __init__(self, response=None, exception=None):
         self.response = response

@@ -1,8 +1,11 @@
-# 职责：运行共享所有有效员工的 CRM 调度器。
-# 实现：保留项目默认并发和轮询参数，读取环境文件的连接配置，按工作单元创建临时员工凭证。
-# 关联：Celery 消费者执行工作，调度命令保留轮询；依赖本机网站和数据库；业务日志进入 journal，不自动重试失败进程。
-# 目录：无函数或类。
-# 变量索引：EnvironmentFile 为运行配置；ExecStart 为 crm_worker 入口。
+# Responsibility: Run the CRM scheduler shared by every active employee.
+# Implementation: Retain project-default concurrency and polling, read connection configuration from the environment file, and create temporary employee credentials per work unit.
+# Relationships: Celery consumers execute work while the scheduler command retains polling. It depends on the local website and database; business logs enter the journal and failed processes are not retried automatically.
+# Directory:
+# - None
+# Variable index:
+# - EnvironmentFile: Runtime configuration.
+# - ExecStart: crm_worker entry point.
 [Unit]
 Description=SalesMate CRM worker
 After=network.target redis-server.service

@@ -1,10 +1,10 @@
 /**
- * 职责：验证助手提问、快速完成竞态、轮询、引用折叠、重试及 Markdown 安全排版。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：仅使用无公司绑定的工作空间会话；加载真实页面和共享悬浮 AssistantPanel，使用隔离静态服务与模拟 API；虚拟时钟控制观察间隔。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；assistant-widget.js/assistant.js/api.js；后端真实 HTTP 和 PostgreSQL 由 test_chat.py 单独验证。
- * 目录：verifyMarkdown 验证格式与边界；main 执行聊天生命周期；内联回调处理测试路由和断言。
- * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的浏览器截图目录；MARKDOWN 为含格式、宽内容与注入输入的模拟回答。
+ * Responsibility: Verify assistant questions, fast-completion races, polling, citation folding, retries, and safe Markdown layout.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so Chinese interaction assertions are independent of host language.
+ * Implementation: Use company-unbound workspace conversations, actual pages/shared AssistantPanel, an isolated static server, and mocked APIs; virtual time controls observation intervals.
+ * Relationships: Chat Markdown, 0919 interface, and shared language resources use coordinated versions; assistant-widget.js/assistant.js/api.js. test_chat.py separately verifies real backend HTTP/PostgreSQL.
+ * Directory: verifyMarkdown checks formatting/boundaries; main exercises chat lifetime; inline callbacks handle test routes/assertions.
+ * Variable index: FRONTEND is the page directory; OUTPUT is the ignored screenshot directory; MARKDOWN is a mock answer with formatting, wide content, and injection inputs.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -30,9 +30,9 @@ const MARKDOWN = [
   '```text', '未闭合围栏仍保留文本：<script>不可执行</script>',
 ].join('\n');
 
-/** 功能：验证真实助手 DOM 的 Markdown 语义、安全边界及布局。输入：page 为当前浏览器页。
- * 输出：断言结果和桌面/手机截图。逻辑：模型回答夹带 HTML、危险协议和图片；用户消息使用 Markdown 字面量。
- * 约束：通过真实渲染组件验证，不调用模型；宽内容只能在代码/表格内部滚动，不验证外站可用性。 */
+/** Function: Verify Markdown semantics, security boundaries, and layout in the actual assistant DOM. Inputs: page is the browser page.
+ * Outputs: Assertions and desktop/mobile screenshots. Logic: Mock model answers contain HTML, unsafe protocols, and images; user messages contain literal Markdown.
+ * Constraints: Exercise the actual renderer without model calls; wide content scrolls only inside code/table containers. External-site availability is outside scope. */
 async function verifyMarkdown(page) {
   const rendered = page.locator('#assistant-history .assistant-markdown');
   assert.equal(await rendered.count(), 1);
@@ -78,10 +78,10 @@ async function verifyMarkdown(page) {
   }
 }
 
-/** 功能：验证真实悬浮面板在模拟后端状态下的行为。
- * 输入：环境指定的 Playwright 和浏览器路径。输出：检查结果及截图。
- * 逻辑：完成、失败重试、错误暂停、保留编辑和切换取消均通过 DOM 验证；在状态查询时同步完成回答以复现旧消息快照竞态。
- * 约束：不调用真实模型或邮箱，所有外部网络禁止，不能代替真实后端联调。 */
+/** Function: Verify the real floating panel against mocked backend states.
+ * Inputs: Environment-specified Playwright/browser paths. Outputs: Results and screenshots.
+ * Logic: Use DOM assertions for completion, failed-answer retries, error pauses, edit preservation, and switch cancellation; complete an answer during status reads to reproduce stale-message races.
+ * Constraints: No real models/mailboxes; block all external network access. This does not replace backend integration testing. */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;

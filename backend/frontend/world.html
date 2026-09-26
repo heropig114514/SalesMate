@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 
-<!-- 职责：提供全球活动地图、联动活动详情、行业资讯和独立详情地址的页面骨架。
-实现：缺金额地图气泡保持白色半透明且可交互，同步缓存版本；资讯展示公共销售线索、精确来源金额及证据，事实与推断分区；共享活动使用明确日期范围及全天日历，入口缓存同步日期适配；Leaflet 绘制真实地理底图和数据库商机，地图脚本与样式缓存同步半透明及币种提示修复；world-news.js 管理活动筛选、日历下载与邀约草稿；虚拟来源逐条明确展示。
-关联：入口缓存同步侧栏优先级移除；入口缓存版本同步顶栏实验入口移除；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；assistant-widget.js/css 提供底部条状助手；product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；后端存储并验证资讯；world-map.js 绘制气泡；Django 的 /world/ 与 /world/news/<id>/ 共用模板。
-目录：无函数或类；workspace-profile 为底部公司与邮箱设置，world-map 地图、event-detail 活动详情、industry-news 资讯、news-detail 文章、world-status 无障碍状态、world-error 错误提示。
-国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
-变量索引：无脚本变量；活动筛选与联动 DOM 由页面模块维护。 -->
+<!-- Responsibility: Provide structure for global event maps, linked event details, industry news, and separate article-detail URLs.
+Implementation: Missing-amount bubbles remain translucent white and interactive, with coordinated caching. News displays public leads, exact source amounts, and evidence separated into facts/inferences. Shared events use explicit date ranges/all-day calendars, with entry versions following date support. Leaflet renders real geography/database opportunities; map scripts/styles coordinate opacity/currency-label fixes. world-news.js handles filters, calendar downloads, and invitation drafts; synthetic sources are labeled individually.
+Relationships: Entry versions reflect sidebar-priority/experiment removal. Chat Markdown, 0919 interface, language/API, and workspace-chat resources use coordinated versions. assistant-widget.js/css supplies bottom chat, product-header.js the header, and design-system.css Nocturne tokens. The backend stores/validates news; world-map.js draws bubbles; Django /world/ and /world/news/<id>/ share this template.
+Directory: No functions or classes; workspace-profile provides company/mail settings; world-map is the map, event-detail event details, industry-news news listing, news-detail the article, world-status accessible status, and world-error errors.
+Internationalization: data-i18n marks static text/attributes; language-bar offers selection and i18n.js initializes marked nodes only. Explicit option values retain protocol values.
+Variable index: No script variables; page modules manage filtering and linked DOM state. -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/>

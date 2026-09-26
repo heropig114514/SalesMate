@@ -1,16 +1,16 @@
-"""职责：显式维护已知 Eurostat 迁移的历史新闻来源地址。
-实现：仅接受指定 ID 与预期 revision，整批预检重复来源；默认预览，--apply 经原版本化保存服务更新。
-关联：复用 Agent source_url 的迁移规则及销售审计；与模型线索刷新分离，不调用模型或网站。
-目录：
-- target_spec：解析固定目标与版本。
-- maintain_sources：预览或原子维护来源。
-- Command：管理命令。
-- Command.add_arguments：声明目标及写入开关。
-- Command.handle：执行并输出结果。
-变量索引：
-- MIGRATION_URL：已核验旧/新地址范围。
-- logger：维护审计日志。
-- Command.help：命令说明。
+"""Responsibility: Explicitly maintain historical news source URLs affected by the known Eurostat migration.
+Implementation: Accept only specified IDs and expected revisions; precheck duplicate sources across the batch. Preview by default; --apply updates through the existing versioned save service.
+Relationships: Reuse Agent source_url migration rules and sales audits; keep this separate from model lead refreshes, without model or website calls.
+Directory:
+- target_spec: Parse fixed targets and versions.
+- maintain_sources: Preview or atomically maintain sources.
+- Command: Management command.
+- Command.add_arguments: Declare targets and the write switch.
+- Command.handle: Execute and output results.
+Variable index:
+- MIGRATION_URL: Verified old/new URL scope.
+- logger: Maintenance audit logs.
+- Command.help: Command description.
 """
 import argparse
 import json
@@ -33,11 +33,11 @@ MIGRATION_URL = re.compile(r"https://ec\.europa\.eu/eurostat/(?:product\?code=|e
 logger = logging.getLogger("salesmate.news_maintenance")
 
 
-# 功能：解析固定目标和预期版本。
-# 输入：`value` 为 UUID:revision 字符串。
-# 输出：UUID 与非负整数；格式不合法抛 argparse.ArgumentTypeError。
-# 逻辑：从最后冒号拆分并严格转换，不接受不带版本的全表修改。
-# 约束：不读取或修改数据库。
+# Function: Parse fixed targets and expected versions.
+# Inputs: `value`: UUID:revision string.
+# Outputs: UUID and nonnegative integer; invalid formats raise argparse.ArgumentTypeError.
+# Logic: Split at the final colon and convert strictly; reject unversioned full-table updates.
+# Constraints: No database reads or writes.
 def target_spec(value):
     try:
         identifier, revision = value.rsplit(":", 1)
@@ -48,11 +48,11 @@ def target_spec(value):
         raise argparse.ArgumentTypeError("目标须为 UUID:非负revision。") from None
 
 
-# 功能：预览或原子更新明确选择的历史来源。
-# 输入：`targets` 为 ID/revision 对列表，`apply` 为显式写入开关。
-# 输出：包含目标、前后 URL、版本和处理状态的公开元数据列表。
-# 逻辑：按服务锁序先锁所有者再锁新闻，核对版本、迁移范围及全局旧/新来源重复，最后统一保存。
-# 约束：即使实验模式也检查预期 revision；任何目标失败则整批回滚；不归档重复记录、不刷新线索或触发模型。
+# Function: Preview or atomically update explicitly selected historical sources.
+# Inputs: `targets`: ID/revision pairs; `apply`: explicit write switch.
+# Outputs: Public metadata containing targets, before/after URLs, versions, and processing status.
+# Logic: Follow service lock order: owners before news. Check versions, migration scope, and global old/new source duplicates, then save all targets together.
+# Constraints: Check expected revisions even in experiment mode; any target failure rolls back the batch. Do not archive duplicates, refresh leads, or invoke models.
 @transaction.atomic
 def maintain_sources(targets, apply=False):
     expected = dict(targets)
@@ -90,26 +90,26 @@ def maintain_sources(targets, apply=False):
     return plans
 
 
-# 功能：提供服务器管理员使用的有界来源维护入口。
-# 逻辑：明确输入 ID:revision，预览无写入，应用只改变来源并记录原审计。
-# 约束：不把地址维护当作新闻内容刷新，不执行隐式模型调用。
+# Function: Provide bounded source maintenance for server administrators.
+# Logic: Require explicit ID:revision inputs; previews do not write. Application changes only sources and records existing audits.
+# Constraints: URL maintenance is not news-content refresh; no implicit model calls.
 class Command(BaseCommand):
     help = "维护已知 Eurostat 来源迁移：UUID:revision；默认预览，--apply 才写入。"
 
-    # 功能：声明目标与写入开关。
-    # 输入：`parser` 为 Django 参数解析器。
-    # 输出：无，添加 targets 与 apply。
-    # 逻辑：至少一个有版本的 UUID，拒绝隐式全表范围。
-    # 约束：不提供任意 URL、模型参数或自动刷新选项。
+    # Function: Declare targets and the write switch.
+    # Inputs: `parser`: Django argument parser.
+    # Outputs: None; add targets and apply.
+    # Logic: Require at least one versioned UUID; reject implicit full-table scope.
+    # Constraints: No arbitrary URL, model parameter, or automatic refresh options.
     def add_arguments(self, parser):
         parser.add_argument("targets", nargs="+", type=target_spec)
         parser.add_argument("--apply", action="store_true")
 
-    # 功能：输出预览或应用结果。
-    # 输入：`args` 为位置参数，`options` 含 targets/apply 与标准选项。
-    # 输出：stdout JSON；版本或唯一性冲突退出非零。
-    # 逻辑：仅转换已知版本/唯一性错误，不泄漏 SQL 或数据库参数。
-    # 约束：失败不重试，其他校验异常保持原失败语义。
+    # Function: Output preview or application results.
+    # Inputs: `args`: positional arguments; `options`: targets/apply and standard options.
+    # Outputs: stdout JSON; version or uniqueness conflicts exit nonzero.
+    # Logic: Convert only known version/uniqueness errors; do not leak SQL or database parameters.
+    # Constraints: No retries; other validation exceptions retain their original failure semantics.
     def handle(self, *args, **options):
         try:
             plans = maintain_sources(options["targets"], options["apply"])

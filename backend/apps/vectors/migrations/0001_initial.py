@@ -1,12 +1,12 @@
-"""职责：创建员工隔离向量文档表并启用 pgvector。
-实现：先创建 vector 扩展再建表，使用可变维度字段与来源唯一约束。
-关联：vectors.models；服务器由管理员预先创建扩展，应用迁移不需要超级用户权限。
-目录：
-- Migration：向量存储初始迁移。
-变量索引：
-- Migration.initial：初始迁移标记。
-- Migration.dependencies：用户模型依赖。
-- Migration.operations：扩展及表创建操作。
+"""Responsibility: Create the employee-isolated vector-document table and enable pgvector.
+Implementation: Create the vector extension before the table, using a variable-dimension field and source uniqueness constraint.
+Relationships: Corresponds to vectors.models; administrators pre-install the extension on the server, so application migration needs no superuser permission.
+Directory:
+- Migration: Initial vector-storage migration.
+Variable index:
+- Migration.initial: Initial-migration marker.
+- Migration.dependencies: User-model dependency.
+- Migration.operations: Extension and table-creation operations.
 """
 import django.db.models.deletion
 import pgvector.django.vector
@@ -15,9 +15,9 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：初始化向量存储结构。
-# 逻辑：确保扩展存在后创建向量表。
-# 约束：需预装扩展软件；反向迁移会删除向量数据。
+# Function: Initialize vector-storage structures.
+# Logic: Ensure the extension exists before creating the vector table.
+# Constraints: Extension software must be preinstalled; a reverse migration deletes vector data.
 class Migration(migrations.Migration):
 
     initial = True

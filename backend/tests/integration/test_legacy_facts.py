@@ -1,13 +1,13 @@
-"""职责：验证旧规则数据升级后仍能进入当前分析链路。
-实现：在隔离 PostgreSQL 测试库构造旧抽取，运行迁移函数并验证审计保留、幂等和最新版本边界。
-关联：0004 迁移、selectors 邮箱投影及 rules L2/L3/L4；不调用 Gmail 或模型。
-目录：
-- LegacyFactTests：验证历史格式升级与当前业务衔接。
-- LegacyFactTests.setUp：建立旧版事实和缺少邮箱传输字段的邮件。
-- LegacyFactTests.test_upgrade_preserves_history_and_analysis：验证追加转换版本后完整分析可运行。
-- LegacyFactTests.test_newer_extraction_is_not_replaced：验证已有新抽取不被旧格式迁移覆盖。
-变量索引：
-- migration：0004 模块，测试与 Django migrate 使用同一转换函数。
+"""Responsibility: Verify that upgraded legacy rule data still enters the current analysis pipeline.
+Implementation: Construct legacy extractions in an isolated PostgreSQL test database, run the migration function, and verify retained audit history, idempotency, and latest-version boundaries.
+Relationships: Covers migration 0004, `selectors` mailbox projection, and rules L2/L3/L4; does not call Gmail or a model.
+Directory:
+- LegacyFactTests: Verify historical-format upgrades and current-business integration.
+- LegacyFactTests.setUp: Establish legacy facts and an email missing mailbox transport fields.
+- LegacyFactTests.test_upgrade_preserves_history_and_analysis: Verify that complete analysis runs after appending a conversion version.
+- LegacyFactTests.test_newer_extraction_is_not_replaced: Verify that an existing newer extraction is not overwritten by legacy-format migration.
+Variable index:
+- migration: Migration 0004 module; tests and Django migrate use the same conversion function.
 """
 from copy import deepcopy
 from importlib import import_module
@@ -24,15 +24,15 @@ from apps.crm.models import Analysis, Company, Email, Extraction, Mailbox
 migration = import_module("apps.crm.migrations.0004_legacy_fact_groups")
 
 
-# 功能：验证历史格式升级与当前业务衔接。
-# 逻辑：真实测试数据库承载旧版 JSON，每个测试事务独立回滚。
-# 约束：只构造合成规则记录，不评价模型质量。
+# Function: Verify historical-format upgrades and current-business integration.
+# Logic: Store legacy JSON in the real test database and roll back every test transaction independently.
+# Constraints: Construct synthetic rule records only and do not evaluate model quality.
 class LegacyFactTests(TestCase):
-    # 功能：建立旧版事实和缺少邮箱传输字段的邮件。
-    # 输入：测试框架实例状态，无外部参数。
-    # 输出：user、mailbox、email、old、original_facts、original_payload 和 initial_revision。
-    # 逻辑：先经正式入库服务建立关系，再精确还原迁移前单值 JSON 与旧邮件本体。
-    # 约束：旧版构造只在测试中写入，生产使用冻结的历史迁移函数。
+    # Function: Establish legacy facts and an email missing mailbox transport fields.
+    # Inputs: Test-framework instance state, with no external parameters.
+    # Outputs: `user`, `mailbox`, `email`, `old`, `original_facts`, `original_payload`, and `initial_revision`.
+    # Logic: Establish relationships through the production ingestion service, then exactly restore pre-migration single-value JSON and legacy email body.
+    # Constraints: Legacy construction writes only in tests; production uses the frozen historical migration function.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="migration-user")
         self.mailbox = Mailbox.objects.create(owner=self.user, address="sales@internal.example")
@@ -53,11 +53,11 @@ class LegacyFactTests(TestCase):
         self.original_payload = deepcopy(self.email.payload)
         self.initial_revision = self.email.company.revision
 
-    # 功能：验证追加转换版本后完整分析可运行。
-    # 输入：旧版成功抽取与模拟 schema_editor 的真实数据库连接。
-    # 输出：审计完整、单次版本递增、重复调用无变更和规则分析成功的断言。
-    # 逻辑：迁移后按真实 selector、Job 和结果服务处理，覆盖原浏览器 500 的完整路径。
-    # 约束：schema_editor 仅使用 connection.alias；未模拟数据库、事实或分析结果。
+    # Function: Verify that complete analysis can run after appending a conversion version.
+    # Inputs: A successful legacy extraction and real database connection in a mocked schema editor.
+    # Outputs: Assertions for intact audit history, one version increment, no change on repeated invocation, and successful rule analysis.
+    # Logic: After migration, use real selector, Job, and result services to cover the complete path that previously returned browser 500.
+    # Constraints: The schema editor uses `connection.alias` only; database, facts, and analysis results are not mocked.
     def test_upgrade_preserves_history_and_analysis(self):
         migration.migrate_facts(apps, SimpleNamespace(connection=connection))
         self.old.refresh_from_db()
@@ -81,11 +81,11 @@ class LegacyFactTests(TestCase):
         self.assertEqual(Analysis.objects.count(), 1)
         self.assertTrue(Analysis.objects.get().scores.exists())
 
-    # 功能：验证已有新抽取不被旧格式迁移覆盖。
-    # 输入：同一邮件在旧抽取之后已有新协议成功版本。
-    # 输出：抽取数量、当前版本和 revision 均保持不变的断言。
-    # 逻辑：迁移必须以单调 ID 判断当前版本，不能按版本名称或旧记录匹配强制覆盖。
-    # 约束：测试中的新事实来自确定性规则，不调用外部模型。
+    # Function: Verify that an existing newer extraction is not overwritten by legacy-format migration.
+    # Inputs: The same email has a successful new-protocol version after its legacy extraction.
+    # Outputs: Assertions that extraction count, current version, and revision remain unchanged.
+    # Logic: Migration must identify current version by monotonically increasing ID and must not force overwrite by version name or legacy-record matching.
+    # Constraints: New facts in the test come from deterministic rules and no external model is called.
     def test_newer_extraction_is_not_replaced(self):
         payload = rules.extract_email(self.mailbox, "buyer@client.example", "采购", "需求：设备\n预算：30 万")
         newer = Extraction.objects.create(email=self.email, prompt_version="extract-v7", status="completed", facts=payload["facts"])

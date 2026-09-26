@@ -1,11 +1,11 @@
-"""职责：将已授权工具绑定到现有业务处理器。
-实现：商机上下文、评分列表、地图及销售方资料读取共用固定视图；工具支持事实升级预览及显式排队；实验模式知识条目跨账号读取；使用显式方法白名单和最小请求上下文；资料及文件委托 support，共享批次委托 experiments，保留既有序列化、scope、事务、版本和状态机。
-关联：services 完成工具认证与输入验证后调用；这里不触发 DRF 二次认证、不构造网络回环。
-目录：
-- request_context：建立限定业务上下文。
-- execute：分派固定工具。
-变量索引：
-- 无
+"""Responsibility: Bind authorized tools to existing business handlers.
+Implementation: Opportunity context, score list, map, and seller-profile reads share fixed views; tools support fact-upgrade preview and explicit queueing; experiment mode reads knowledge entries across accounts; use an explicit method allowlist and minimal request context; information and files delegate to ``support``, shared batches to ``experiments``, retaining existing serialization, scope, transactions, versions, and state machines.
+Relationships: Called after ``services`` completes tool authentication and input validation; ``graph`` reuses the caller's own graph views; this module neither triggers second DRF authentication nor constructs a network loop.
+Directory:
+- request_context: Build restricted business context.
+- execute: Dispatch a fixed tool.
+Variable index:
+- None
 """
 
 from common.laboratory import owner_scope
@@ -20,13 +20,14 @@ from apps.sales import views as sales
 from apps.chat.models import KnowledgeEntry
 from .support import execute_support
 from .experiments import execute_experiment
+from .graph import execute_graph_tool
 
 
-# 功能：构造业务处理器所需上下文。
-# 输入：`actor` 用户、`query` 查询字典、`data` JSON、`revision` 旧版本。
-# 输出：最小请求对象。
-# 逻辑：只包含经工具 Schema 校验的参数及真实 actor。
-# 约束：不模拟 Session、不允许用户传入 HTTP URL、请求头或认证状态；仅供下列固定处理器。
+# Function: Construct context required by business handlers.
+# Inputs: User ``actor``, query dictionary ``query``, JSON ``data``, and stale version ``revision``.
+# Outputs: Minimal request object.
+# Logic: Contains only tool-Schema-validated parameters and the real actor.
+# Constraints: Does not emulate Session or allow a user-supplied HTTP URL, headers, or authentication state; for the fixed handlers below only.
 def request_context(actor, query=None, data=None, revision=None):
     params = QueryDict(mutable=True)
     params.update({key: str(value) for key, value in (query or {}).items()})
@@ -38,13 +39,15 @@ def request_context(actor, query=None, data=None, revision=None):
     )
 
 
-# 功能：执行业务适配。
-# 输入：`actor`、`spec` 白名单声明、`args` 校验后参数、`key` 可选幂等 UUID。
-# 输出：既有 Response。
-# 逻辑：algorithm_read 只分派四个固定只读视图；实验模式知识查询覆盖所有账号；事实升级固定 GET/POST 方法，其余按 kind 分派到业务视图。
-# 约束：调用前必须由 services 认证与校验；不分派任意路径、任意方法或动作批准。
+# Function: Execute a business adapter.
+# Inputs: ``actor``, allowlisted declaration ``spec``, validated arguments ``args``, and optional idempotency UUID ``key``.
+# Outputs: Existing ``Response``.
+# Logic: ``graph`` dispatches the caller's own graph; ``algorithm_read`` dispatches fixed read-only views, while remaining branches retain original business and experiment-mode boundaries.
+# Constraints: ``services`` must authenticate and validate before invocation; does not dispatch arbitrary paths, methods, or action approvals.
 def execute(actor, spec, args, key=None):
     kind = spec["kind"]
+    if kind == "graph":
+        return execute_graph_tool(actor, spec, args)
     request = request_context(actor, args, args.get("data"), args.get("revision"))
     if kind == "algorithm_read":
         from apps.sales.algorithm_views import SellerContextView, OpportunityContextView, PriorityBoardView
@@ -134,7 +137,7 @@ def execute(actor, spec, args, key=None):
             }
         )
     if kind == "proposal_get":
-        # 服务模块加载完毕后才按需取得投影函数，避免 dispatch 与 services 的模块初始化环。
+        # Resolve projection function lazily after service-module loading to avoid an initialization cycle between dispatch and services.
         from .models import ToolProposal
         from .services import proposal_data
 

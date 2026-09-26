@@ -1,9 +1,13 @@
-# 职责：执行已明确批准的销售外部动作及到期站内提醒。
-# 实现：使用既有 sales_worker 默认轮询与原子领取，失败不自动重启或重发。
-# 关联：Celery 消费者执行工作，调度命令保留轮询；与网站使用同一服务器数据库及凭证密钥；独立于只读邮件同步 Worker。
-# 目录：无函数或类。
-# 变量索引：EnvironmentFile 为服务器运行配置；ExecStart 为销售任务入口；
-# User/Group 限定普通服务身份；UMask 限制新建文件权限。
+# Responsibility: Execute explicitly approved sales external actions and due in-product reminders.
+# Implementation: Use the existing sales_worker default polling and atomic claim; it does not restart or resend automatically after failure.
+# Relationships: Celery consumers execute work while the scheduler command retains polling. It shares the website's server database and credential key and is separate from the read-only mail-sync Worker.
+# Directory:
+# - None
+# Variable index:
+# - EnvironmentFile: Server runtime configuration.
+# - ExecStart: Sales-task entry point.
+# - User/Group: Restrict normal service identity.
+# - UMask: Limits permissions of newly created files.
 [Unit]
 Description=SalesMate approved sales actions worker
 After=network.target redis-server.service postgresql.service

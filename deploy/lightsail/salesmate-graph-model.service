@@ -1,0 +1,33 @@
+# Responsibility: Run the isolated fine-tuned Q4 experimental inference service.
+# Implementation: Validate the fixed artifact, listen on loopback, use one slot and two threads, and do not restart or fall back automatically.
+# Relationships: backend/tools/run_graph_model.py; independent from the production default model.
+# Directory:
+# - None
+# Variable index:
+# - ExecStart: variant selects the experimental artifact.
+# - baseline: Default profile uses 16,384 context tokens.
+# - Nice: Lowers experiment scheduling priority.
+[Unit]
+Description=SalesMate semantic v2 experimental Q4 model
+After=network.target
+
+[Service]
+Type=simple
+User=salesmate-graph
+Group=salesmate-graph
+WorkingDirectory=/opt/salesmate-semantic/app
+ExecStart=/usr/bin/python3 /opt/salesmate-semantic/app/backend/tools/run_graph_model.py --executable /opt/salesmate-semantic/llama-b11146/llama-server --model /opt/salesmate-semantic/models/Qwen3-4B-SalesMate-Semantic-v2-Q4_K_M.gguf --variant semantic-v2 --threads 2 --port 8088
+Restart=no
+Nice=10
+CPUWeight=20
+OOMScoreAdjust=500
+KillMode=control-group
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -1,15 +1,15 @@
-"""职责：建立销售动作专用的 QQ 发信连接。
-实现：验证 SMTP 登录后独立加密保存授权码，不自动发信或请求同步。
-关联：urls 提供 Session/CSRF 入口；qq_smtp 验证服务；actions 仅执行已批准动作。
-目录：
-- QQSendConnectionSerializer：输入白名单。
-- connect_account：验证并保存员工发信账号。
-- QQSendConnectionView：独立发信连接入口。
-- QQSendConnectionView.post：返回安全连接信息。
-变量索引：
-- QQSendConnectionSerializer.address：QQ/foxmail 地址。
-- QQSendConnectionSerializer.authorization_code：只写授权码。
-- logger：安全连接生命周期日志。
+"""Responsibility: Create QQ sending connections dedicated to sales actions.
+Implementation: Validate SMTP login, then separately encrypt/store the authorization code without automatically sending or requesting synchronization.
+Relationships: urls provides Session/CSRF endpoints; qq_smtp validates service access; actions executes approved actions only.
+Directory:
+- QQSendConnectionSerializer: Input allowlist.
+- connect_account: Validate and save the employee's sending account.
+- QQSendConnectionView: Independent sending-connection endpoint.
+- QQSendConnectionView.post: Return safe connection information.
+Variable index:
+- QQSendConnectionSerializer.address: QQ/foxmail address.
+- QQSendConnectionSerializer.authorization_code: Write-only authorization code.
+- logger: Safe connection lifecycle logs.
 """
 import logging
 from django.contrib.auth import get_user_model
@@ -30,19 +30,19 @@ from .views import SalesView
 logger = logging.getLogger("salesmate.qq_send_connection")
 
 
-# 功能：验证发信连接的显式输入。
-# 逻辑：仅接受地址和授权码，不允许指定服务器或 owner。
-# 约束：格式检查后仍须真实 SMTP 认证；授权码不回显。
+# Function: Validate explicit sending-connection inputs.
+# Logic: Accept only address and authorization code, never server or owner selection.
+# Constraints: Real SMTP authentication is still required after format checks; never echo the authorization code.
 class QQSendConnectionSerializer(StrictSerializer):
     address = serializers.RegexField(r"(?i)^[A-Za-z0-9_.+-]+@(qq|foxmail)\.com$", max_length=254)
     authorization_code = serializers.RegexField(r"^[A-Za-z]{16}$", write_only=True, trim_whitespace=True)
 
 
-# 功能：验证账号并保存独立 QQ 发信密文。
-# 输入：`owner` 为当前员工；`address` 为 QQ 地址；`code` 为客户端授权码。
-# 输出：Connection，不创建发信或同步任务。
-# 逻辑：预先加密并验证 SMTP，锁员工串行保存；更新连接递增 revision。
-# 约束：关联未终结动作时拒绝换凭证，防止冻结动作身份被替换。
+# Function: Validate the account and save separately encrypted QQ sending credentials.
+# Inputs: `owner`: current employee; `address`: QQ address; `code`: client authorization code.
+# Outputs: Connection; no sending or synchronization tasks are created.
+# Logic: Encrypt first and validate SMTP, then serialize saves under the employee lock; connection updates increment revision.
+# Constraints: Reject credential replacement while nonterminal actions reference the connection, preserving frozen action identity.
 @sensitive_variables("code", "encrypted", "client")
 def connect_account(owner, address, code):
     qq_smtp.validate_credentials(address, code)
@@ -66,16 +66,16 @@ def connect_account(owner, address, code):
         return connection
 
 
-# 功能：提供独立 QQ 发信连接创建入口。
-# 逻辑：继承会话和错误边界，隐藏调试报告中的授权码。
-# 约束：连接成功不会批准或执行任何邮件。
+# Function: Provide independent QQ sending-connection creation.
+# Logic: Inherit session/error boundaries and hide authorization codes in debug reports.
+# Constraints: Successful connection never approves or executes email actions.
 @method_decorator(sensitive_post_parameters("authorization_code"), name="dispatch")
 class QQSendConnectionView(SalesView):
-    # 功能：验证并返回安全发信连接。
-    # 输入：`request` 含 address、authorization_code。
-    # 输出：201 和无凭证的 ConnectionSerializer 结果。
-    # 逻辑：校验后执行 SMTP 认证并保存密文。
-    # 约束：不创建 ToolAction，不回显授权码或密文。
+    # Function: Validate and return a safe sending connection.
+    # Inputs: `request`: address and authorization_code.
+    # Outputs: 201 with credential-free ConnectionSerializer output.
+    # Logic: After validation, authenticate SMTP and save ciphertext.
+    # Constraints: Do not create ToolAction or echo authorization codes/ciphertext.
     @extend_schema(request=QQSendConnectionSerializer, responses={201: ConnectionSerializer})
     @sensitive_variables()
     def post(self, request):

@@ -1,8 +1,8 @@
-"""职责：提供面向用户协作的 Agent 业务工具。
-实现：授权目录、严格调用、幂等写入与人工提案共享现有业务服务。
-关联：config.urls 注册 HTTP；独立 MCP/CLI 使用同一接口。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Provide Agent business tools for user collaboration.
+Implementation: Authorized discovery, strict invocation, idempotent writes, and human proposals share existing business services.
+Relationships: ``config.urls`` registers HTTP routes; standalone MCP and CLI clients use the same endpoints.
+Directory:
+- None
+Variable index:
+- None
 """

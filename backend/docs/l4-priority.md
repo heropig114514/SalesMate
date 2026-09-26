@@ -1,32 +1,32 @@
-# 公司级 L4 后端适配
+# Company-level L4 backend integration
 
-本次实现对接 Agent `score-v2`，保留公司级单一当前分数、L1→L4 流程、Agent HTTP 协议和员工邮件隔离。分数由 Agent 计算，后端提供权威输入、验证结果、保存解释并投影查询；不在后端复制评分算法。
+This implementation integrates Agent `score-v2` while retaining one current score per company, the L1→L4 flow, Agent HTTP protocol, and employee email isolation. Agent computes scores; the backend supplies authoritative inputs, validates results, stores explanations, and projects queries without duplicating scoring algorithms.
 
-2026-09-22 另补充商机级信号、结果存储与 `/priorities/` 展示，见 [联调支持](development-support.md)。该支持层接受算法显式提交，不会自动把本文件的公司级分数复制到每条商机；原 L4 验证与调度契约保持不变。下文关于公司详情尚未完整展示解释的限制，仍仅指原公司级页面。
+Opportunity-level signals, result storage, and `/priorities/` were added on 2026-09-22; see [integration support](development-support.md). This support layer accepts explicit algorithm submissions without copying company scores to every opportunity. Original L4 validation/scheduling remains unchanged. Limitations below concerning incomplete explanation display apply only to the original company-detail page.
 
-## 1. 已确认的数据口径
+## 1. Confirmed data definitions
 
-- 销售方资料、产品目录、商机及订单统计均按业务 `owner` 隔离，不把团队共享权限等价为私人邮箱或全组织统计权限。
-- 活跃商机是同客户未归档的 `new`、`qualified`、`proposal`。只汇总 `Opportunity`，不叠加报价。全部金额已知且同币种才求和；混币种、部分金额未知或总额不大于零时不输出 `deal_value`。
-- 商机产品使用显式填写的 `product_names`；任一活跃商机产品未知时，公司级产品也保持未知。名称去首尾空白、忽略大小写去重，不做同义词推断。
-- 历史均值来自该 owner 全部未归档 `confirmed`/`fulfilled` 订单，每单一次，按商机币种筛选。复用订单明细的 Decimal 净额算法，不统计草稿、取消订单或其他币种，不将报价或商机 won 再次计入。无明细的历史订单保持金额未知；同币种存在此类未知样本时不输出均值。不额外将均值截为整数或两位小数。
-- 相似赢单要求客户行业相同且至少一个相同规范产品。没有可靠历史、当前行业/产品未知，或缺失历史资料且没有已证实匹配时不输出布尔值。资料完整且无匹配才返回 `false`。
-- 国家、行业、人数来自权威客户资料，不从邮件补造。销售方目标资料由显式维护接口提供。
-- 列表按分数降序、紧急度贡献降序、公司 ID 升序排序；空分最后。
+- Seller profiles, product catalogs, opportunities, and order statistics are isolated by business `owner`; team sharing is not private-mailbox or organization-wide statistical access.
+- Active opportunities are unarchived `new`, `qualified`, or `proposal` records for the same company. Aggregate only `Opportunity`, without adding quotes. Sum only fully known same-currency amounts; omit `deal_value` for mixed currencies, unknown amounts, or nonpositive totals.
+- Products use explicitly entered `product_names`; if any active opportunity has unknown products, company-level products remain unknown. Trim names and deduplicate case-insensitively without synonym inference.
+- Historical averages use all of the owner's unarchived `confirmed`/`fulfilled` orders, once per order, filtered by opportunity currency. Reuse Decimal line-net calculations; exclude drafts, cancelled orders, and other currencies, without recounting quotes or won opportunities. Orders without lines have unknown amounts; any such same-currency sample suppresses the average. Do not additionally round averages to integers or two decimals.
+- Similar wins require the same industry and at least one identical canonical product. Omit the boolean when reliable history is absent, current industry/products are unknown, or historical information is incomplete without a verified match. Return `false` only for complete information with no match.
+- Country, industry, and headcount come from authoritative profiles, never invented from email. Explicit maintenance APIs supply seller targets.
+- Lists sort by descending score, descending urgency contribution, then ascending company ID; null scores appear last.
 
-## 2. 资料维护入口
+## 2. Profile maintenance
 
-### 销售方画像
+### Seller profile
 
-`GET /api/v1/sales/seller-profile/` 返回当前登录员工自己的配置：
+`GET /api/v1/sales/seller-profile/` returns only the authenticated employee's own configuration:
 
 ```json
 {"revision": 0, "profile": {}}
 ```
 
-响应附带 `ETag`。不存在配置时 GET 不创建记录，不补默认目标客户。
+Responses include `ETag`. Missing configuration does not cause GET to create records or fill default targets.
 
-`PATCH /api/v1/sales/seller-profile/` 携带 `If-Match`，仅合并明确提交字段：
+`PATCH /api/v1/sales/seller-profile/` requires `If-Match` and merges explicitly submitted fields only:
 
 ```json
 {
@@ -37,23 +37,23 @@
 }
 ```
 
-目标范围必须完整且非负，时区必须是有效 IANA 名称。空数组或允许的 `null` 清除资料；字段省略保留原值。均值、相似赢单、产品清单和 owner 不能从该接口写入。产品清单来自现有产品目录。配置发生实际变化时，同一事务递增画像版本、相关公司两个版本并合并 `external_updated` 待办。
+Ranges must be complete/nonnegative and timezones valid IANA names. Empty arrays or allowed `null` clear data; omitted fields retain values. Averages, similar wins, product lists, and owner cannot be written here. Product lists come from the existing catalog. Actual changes atomically increment profile version and both related-company versions and merge `external_updated` work.
 
-### 客户与商机
+### Companies and opportunities
 
-- 现有 `POST /api/v1/companies/{id}/register/` 增加可选 `country`；省略保留原值，`null` 清除。人数非空仍要求来源。
-- 现有 `/api/v1/sales/records/opportunities/` 创建和更新接口增加 `product_names`，例如 `["WMS", "OHT"]`。`null` 或 `[]` 表示未知；不从商机描述猜测产品。
-- 产品目录、订单、商机仍使用原有权限、状态机和 If-Match 协议。
+- Existing `POST /api/v1/companies/{id}/register/` adds optional `country`; omission retains it and `null` clears it. Nonnull headcount still requires provenance.
+- Existing `/api/v1/sales/records/opportunities/` create/update adds `product_names`, such as `["WMS", "OHT"]`. `null`/`[]` denote unknown; never infer products from descriptions.
+- Catalogs, orders, and opportunities retain permissions, state machines, and If-Match protocols.
 
-## 3. Agent 上下文
+## 3. Agent context
 
-`GET /api/v1/agent/context/?company_id=...` 保留原有字段、ETag 和授权范围，新增：
+`GET /api/v1/agent/context/?company_id=...` retains existing fields, ETag, and authorization, adding:
 
 ```json
 {
   "priority_context": {
     "customer": {
-      "customer_id": "公司 UUID",
+      "customer_id": "<company-UUID>",
       "company_name": "Example",
       "industry": "Manufacturing",
       "company_size": 100,
@@ -74,40 +74,40 @@
 }
 ```
 
-这是结构示例，真实资料不足时缺失相应字段。后端不重复传 `communications`，由 Agent 使用现有邮件生成。该上下文不插入 L2 的 `business_context` 或改变 L2 提交字段。
+This is a structural example; insufficient real data leaves corresponding fields absent. The backend does not duplicate `communications`; Agent generates it from existing emails. This context is not inserted into L2 `business_context` and does not change L2 submission fields.
 
-商机变化刷新当前公司；订单和产品变化传播到同 owner 的其他公司；客户行业变化及公司合并也传播相似赢单依赖。写入事务保持 `revision`、`external_version` 和任务一致，旧版本 Agent 写入返回冲突。待领取任务沿用现有合并机制，不增加自动失败重试。
+Opportunity changes refresh the current company. Order/product changes propagate to other same-owner companies; industry changes and company merges also propagate similar-win dependencies. Transactions keep `revision`, `external_version`, and jobs consistent; stale Agent writes conflict. Pending jobs retain existing merging without automatic failure retries.
 
-当前共享依赖采用保守的同 owner 全量版本更新，包含可能尚无业务邮件的公司；规模增大后应依据依赖关系缩小受影响范围。外部版本变化会改变 L2 输入版本，当前 Agent 的 L3 缓存也会失效。
+Shared dependencies currently conservatively update all same-owner company versions, including companies without business emails. Larger deployments should narrow affected scope by dependencies. External-version changes alter L2 input versions and invalidate current Agent L3 caches.
 
-## 4. 评分与解释提交
+## 4. Score and explanation submission
 
-`POST /api/v1/agent/scores/` 保留现有版本和租约头，新增可选 `score_details`。`score-v2` 非空结果必须有且仅有三项唯一整数贡献：`urgency`、`buying_intent`、`opportunity_value`，合计严格等于 `score`。不再检查旧 L3 特征是否齐全。
+`POST /api/v1/agent/scores/` retains version/lease headers and adds optional `score_details`. Nonnull `score-v2` results require exactly three unique integer contributions: `urgency`, `buying_intent`, and `opportunity_value`, summing exactly to `score`. Old L3 feature completeness is no longer checked.
 
-解释对象包含 `score_breakdown`、`top_reasons`、`evidence`、`recommended_next_action`。分项取 0–100 整数，解释贡献与主评分一致，原因最多三项且按影响降序。邮件原因必须提供来源并可定位原文；`DEAL_VALUE` 原因的 `source_id` 必须为 `null`。
+Explanations contain `score_breakdown`, `top_reasons`, `evidence`, and `recommended_next_action`. Components are integers 0–100; explanation contributions match the main score. At most three reasons appear in descending impact order. Email reasons require locatable sources; `DEAL_VALUE` reasons require `source_id=null`.
 
-空分若提交解释，只接受：
+When explanations accompany null scores, only this structure is accepted:
 
 ```json
 {"score_breakdown": null, "top_reasons": [], "evidence": [], "recommended_next_action": null}
 ```
 
-后端在当前版本与租约内验证邮件属于当前公司、属于对应 L2 成员且仍为业务邮件，再按 Agent 的空白归一规则验证原文。分数与解释一起存入现有 `Score.payload`，列表使用现有 `Score.value`，不新增第二个分数字段。同版本同 `scored_at` 的重复请求必须内容完全一致；不能事后覆盖已保存解释。
+Within the current revision/lease, the backend verifies emails belong to the company and corresponding L2 membership and remain business emails, then validates source text using Agent whitespace normalization. Scores/explanations share existing `Score.payload`; lists use existing `Score.value`, without another score field. Duplicate requests at the same version/scored_at must match completely; stored explanations cannot be overwritten later.
 
-公司详情现有 `score_detail` 是完整评分载荷，解释读取路径为 **`score_detail.score_details`**。邮件定位键为 `source_id == dedupe_key`，可在详情的授权 `context.emails` 中查找。原有血缘失效及邮件可见范围检查继续生效。
+Existing company-detail `score_detail` contains the full payload; read explanations at **`score_detail.score_details`**. Email location uses `source_id == dedupe_key` in authorized `context.emails`. Existing lineage invalidation/email visibility checks still apply.
 
-Agent `analyze_company()` 在资料齐全时将同一次计算的 `score_details` 作为可选字段随 `score` 一起提交；暂定分缺少完整分项时只提交 `score_reasons` 中的缺项说明。后端验证、保存并通过详情返回完整解释；前端目前尚未展示完整解释。
+With complete data, Agent `analyze_company()` submits `score_details` from the same computation alongside `score`. Provisional scores lacking complete components submit missing-data descriptions in `score_reasons` only. The backend validates/stores/returns full explanations; the frontend currently does not display them fully.
 
-## 5. 上线与后续范围
+## 5. Deployment and subsequent scope
 
-- 应用 `sales.0006_l4_priority_context`：创建 SellerProfile，并给商机添加可空 `product_names`。历史资料保持未知，不自动生成测试业务记录。
-- 生产继续显式使用 `ANALYSIS_PROVIDER=agent`；代码没有修改已有运行配置。正式模式页面仅取 `score-v2`，旧分数保留在数据库但不冒充正式结果；未重新评分时页面分数为空。
-- 维护真实客户、商机产品及销售方资料后，通过既有分析任务重新评分。解释完整展示还需前端接入。
-- 定时 `priority_refresh`、独立 Signal 生命周期、自动外部操作不在此次后端适配范围；没有为时间流逝伪造业务版本。
+- Apply `sales.0006_l4_priority_context` to create SellerProfile and nullable opportunity `product_names`. Historical data remains unknown without generated test records.
+- Production continues explicitly using `ANALYSIS_PROVIDER=agent`; code preserves runtime configuration. Production pages select only `score-v2`; old scores remain stored without posing as current results. Before rescoring, displayed scores are empty.
+- Maintain real company data, opportunity products, and seller profiles, then rescore through existing analysis jobs. Complete explanation display still needs frontend integration.
+- Scheduled `priority_refresh`, independent Signal lifecycle, and automatic external operations are outside this adaptation; elapsed time does not fabricate business versions.
 
-## 6. 验证
+## 6. Validation
 
-在 `backend/` 使用项目虚拟环境运行：
+Run in `backend/` using the project virtual environment:
 
 ```text
 python manage.py test tests.integration.test_priority --noinput
@@ -117,8 +117,8 @@ python tools/check_docs.py
 python tools/check_doc_changes.py
 ```
 
-数据库应具备项目已有的 PostgreSQL/pgvector 依赖。普通测试角色没有安装扩展权限时，可由数据库管理员仅在独立测试库预安装扩展，再以 `--keepdb` 使用该库；不要提升应用账号权限或跳过迁移。当前 CI 使用 pgvector 0.8.2。
+Databases need existing PostgreSQL/pgvector dependencies. If the ordinary test role cannot install extensions, an administrator may preinstall them only in an independent test database used with `--keepdb`; do not elevate application permissions or skip migrations. Current CI uses pgvector 0.8.2.
 
-测试使用合成记录和结构化信号，不调用真实模型或邮箱。新增覆盖包括同币种逐单统计、权限隔离、商机变更、共享依赖传播、旧 L3 特征缺失时保存新结果、解释及原文校验、幂等、空分、旧版本冲突和列表排序。
+Tests use synthetic records/structured signals without real model/mailbox calls. Added coverage includes per-order same-currency statistics, isolation, opportunity changes, dependency propagation, new results without old L3 features, explanations/source validation, idempotency, null scores, stale-version conflicts, and sorting.
 
-2026-09-19 本地验证：在独立 PostgreSQL 测试库预安装与 CI 一致的 pgvector 0.8.2 后，使用 `--keepdb` 运行新增 10 项测试及完整后端 198 项测试，均通过。OpenAPI 契约测试通过；模型迁移检查无差异；162 个 Python 文件注释结构检查通过，变更检查为 0 错误、0 待复核，并人工核对本次变更说明。新迁移的操作均满足现有保守发布门禁；该操作级检查不等于已核验生产迁移计划。未部署，未在业务数据库应用迁移，未进行真实模型或前端联调。
+Local validation on 2026-09-19: after preinstalling CI-matching pgvector 0.8.2 in an independent PostgreSQL test database, all 10 new and 198 complete backend tests passed with `--keepdb`. OpenAPI contract tests passed; migration checks found no differences. Documentation structure passed for 162 Python files; change checks reported 0 errors/0 review items, with manual review of descriptions. New migration operations satisfied existing conservative release gates; operation-level checks do not verify the production migration plan. No deployment, business-database migration, real-model testing, or frontend integration testing occurred.

@@ -1,23 +1,23 @@
-"""职责：验证账号内部数据清空、登录保留、账号隔离及并发和故障边界。
-实现：真实 PostgreSQL 事务与会话 HTTP，合成业务数据和临时附件；仅模拟文件删除失败。
-关联：accounts.reset、reset_locks、reset_middleware 及各模块外键。
-目录：
-- AccountResetTests：账户重置集成验收。
-- AccountResetTests.setUp：创建两个账号和临时附件根目录。
-- AccountResetTests.seed：创建带依赖、重试关系及凭证的合成业务数据。
-- AccountResetTests.reset：以真实登录会话调用清理接口。
-- AccountResetTests.test_scope_identity_files_sessions_and_tokens：验证清空范围、身份、附件、会话和凭证。
-- AccountResetTests.test_idempotency_does_not_delete_new_data：验证较早操作重放不影响新数据。
-- AccountResetTests.test_file_failure_can_resume：验证文件失败保持隔离且可显式继续。
-- AccountResetTests.test_busy_account_is_unchanged：验证正在执行的工作阻止清理且不修改数据。
-- AccountResetTests.test_stale_write_rejected：验证旧页面不能写回。
-- AccountResetTests.test_cross_owner_reference_rolls_back：验证共享业务引用不被隐式级联删除。
-- AccountResetTests.test_authentication_csrf_and_schema：验证匿名、CSRF 和操作键。
-- AccountResetTests.test_shared_membership_is_removed_without_deleting_other_team：验证解除关系不删除他人团队。
-- AccountResetTests.test_stale_sales_queue_is_cancelled：验证已清除动作不会执行外部调用。
-- AccountResetTests.test_shared_reminders_do_not_repopulate：验证解除负责人关联后不再生成本人通知。
-变量索引：
-- URL：当前登录账号重置路由。
+"""Responsibility: Verify internal account-data clearing, retained login, account isolation, and concurrency and failure boundaries.
+Implementation: Use real PostgreSQL transactions and session HTTP, synthetic business data, and temporary attachments; mock only file-deletion failure.
+Relationships: Covers `accounts.reset`, `reset_locks`, `reset_middleware`, and foreign keys across modules.
+Directory:
+- AccountResetTests: Account-reset integration acceptance tests.
+- AccountResetTests.setUp: Create two accounts and a temporary attachment root.
+- AccountResetTests.seed: Create synthetic business data with dependencies, retry relationships, and credentials.
+- AccountResetTests.reset: Call the clearing endpoint in a real logged-in session.
+- AccountResetTests.test_scope_identity_files_sessions_and_tokens: Verify clearing scope, identity, attachments, sessions, and credentials.
+- AccountResetTests.test_idempotency_does_not_delete_new_data: Verify that replaying an earlier operation does not affect new data.
+- AccountResetTests.test_file_failure_can_resume: Verify that a file failure preserves isolation and can be explicitly resumed.
+- AccountResetTests.test_busy_account_is_unchanged: Verify that running work blocks clearing without changing data.
+- AccountResetTests.test_stale_write_rejected: Verify that an old page cannot write data back.
+- AccountResetTests.test_cross_owner_reference_rolls_back: Verify that shared business references are not implicitly cascade-deleted.
+- AccountResetTests.test_authentication_csrf_and_schema: Verify anonymous access, CSRF, and operation keys.
+- AccountResetTests.test_shared_membership_is_removed_without_deleting_other_team: Verify that unlinking a membership does not delete another user's team.
+- AccountResetTests.test_stale_sales_queue_is_cancelled: Verify that a cleared action does not make an external call.
+- AccountResetTests.test_shared_reminders_do_not_repopulate: Verify that notifications are no longer generated for the user after the assignee association is removed.
+Variable index:
+- URL: Reset route for the currently logged-in account.
 """
 import hashlib
 from pathlib import Path
@@ -43,16 +43,16 @@ from apps.vectors.models import VectorDocument
 URL = "/api/v1/accounts/me/reset/"
 
 
-# 功能：验收保留登录身份的内部数据重置。
-# 逻辑：每个用例使用真实提交和独立账号；重置操作仅作用于隔离测试数据库。
-# 约束：不调用真实邮件、模型或外部服务，不操作用户已有附件。
+# Function: Accept internal-data reset while retaining login identity.
+# Logic: Each case uses real commits and independent accounts; reset operates only on the isolated test database.
+# Constraints: Do not call real email, model, or external services or operate on existing user attachments.
 @override_settings(LOCAL_DEBUG_AUTO_LOGIN=False)
 class AccountResetTests(TransactionTestCase):
-    # 功能：建立真实登录会话和两个账号。
-    # 输入：测试框架隐式生命周期。
-    # 输出：user、other、client、key、root 实例状态。
-    # 逻辑：临时目录限制附件副作用；force_login 保留正常 SessionAuthentication 路径。
-    # 约束：不使用 force_authenticate 绕过中间件或 CSRF 身份解析。
+    # Function: Establish a real logged-in session and two accounts.
+    # Inputs: Implicit test-framework lifecycle.
+    # Outputs: Instance state for `user`, `other`, `client`, `key`, and `root`.
+    # Logic: A temporary directory limits attachment side effects; `force_login` preserves the normal SessionAuthentication path.
+    # Constraints: Do not use `force_authenticate` to bypass middleware or CSRF identity parsing.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="reset-owner", password="SyntheticPassword123", email="login@example.test")
         self.other = get_user_model().objects.create_user(username="reset-other", password="OtherPassword123")
@@ -66,11 +66,11 @@ class AccountResetTests(TransactionTestCase):
         config.enable()
         self.addCleanup(config.disable)
 
-    # 功能：创建跨模块依赖和实际附件。
-    # 输入：`owner` 为数据所属测试账号。
-    # 输出：客户对象；数据库中保存分析、聊天、交易、工具和资料记录。
-    # 逻辑：包含 PROTECT 外键、聊天重试自引用、向量和二进制文档，验证真实删除依赖。
-    # 约束：凭证均为合成摘要；不产生外部调用。
+    # Function: Create cross-module dependencies and actual attachments.
+    # Inputs: `owner` is the test account owning the data.
+    # Outputs: A company object; the database stores analysis, chat, sales, tool, and reference records.
+    # Logic: Include PROTECT foreign keys, chat retry self-references, vectors, and binary documents to validate actual deletion dependencies.
+    # Constraints: Credentials are synthetic digests and no external calls occur.
     def seed(self, owner):
         now = timezone.now()
         company = crm.Company.objects.create(owner=owner, group_key="customer.test")
@@ -122,19 +122,19 @@ class AccountResetTests(TransactionTestCase):
         sales.Attachment.objects.create(owner=owner, company=company, name="test.txt", storage_key=key, content_type="text/plain", size=9, sha256="test")
         return company
 
-    # 功能：调用账号重置 API。
-    # 输入：`key` 为可选幂等键，默认当前操作。
-    # 输出：HTTP 响应。
-    # 逻辑：使用真实登录 cookie，不传账号或公司 ID。
-    # 约束：测试客户端未启用 CSRF 的用例只验证会话身份，CSRF 由专门用例覆盖。
+    # Function: Call the account-reset API.
+    # Inputs: `key` is an optional idempotency key and defaults to the current operation.
+    # Outputs: An HTTP response.
+    # Logic: Use a real logged-in cookie and pass no account or company ID.
+    # Constraints: Cases whose test client does not enforce CSRF verify session identity only; a dedicated case covers CSRF.
     def reset(self, key=None):
         return self.client.post(URL, {}, format="json", HTTP_IDEMPOTENCY_KEY=key or self.key)
 
-    # 功能：验证本人业务清空、他人数据和登录身份保留。
-    # 输入：两套完整合成业务和两份当前账号会话。
-    # 输出：所有本人查询为空，其他账号计数不变、密码哈希不变、当前登录仍有效。
-    # 逻辑：检查文件、文档、向量、凭证、旧会话 OAuth 缓存和 HTTP 缓存响应头。
-    # 约束：只清理内部授权记录，不声称撤销第三方平台账户。
+    # Function: Verify clearing of the user's business data while retaining other users' data and login identity.
+    # Inputs: Two complete synthetic businesses and two current-account sessions.
+    # Outputs: All user-owned queries are empty; other-account counts and password hash remain unchanged; the current login remains valid.
+    # Logic: Check files, documents, vectors, credentials, OAuth cache in an old session, and HTTP cache response headers.
+    # Constraints: Clear internal authorized records only and make no claim to revoke third-party platform accounts.
     def test_scope_identity_files_sessions_and_tokens(self):
         self.seed(self.user)
         self.seed(self.other)
@@ -163,11 +163,11 @@ class AccountResetTests(TransactionTestCase):
         stale_agent.credentials(HTTP_AUTHORIZATION="Agent " + str(self.user.pk))
         self.assertIn(stale_agent.post("/api/v1/agent/chat/requests/claim/", {}).status_code, [401, 403])
 
-    # 功能：验证网络重放不会再次清空重置后新创建的数据。
-    # 输入：两次独立操作键和之后的新公司。
-    # 输出：重放任意旧键后新公司仍存在，数据版本保持不变。
-    # 逻辑：先完成两次清空，再重放第一键，覆盖不能只记录最近一次键的问题。
-    # 约束：不自动重试 HTTP 请求。
+    # Function: Verify that network replay does not clear data newly created after reset.
+    # Inputs: Two independent operation keys and a subsequently created company.
+    # Outputs: The new company remains after replaying either old key and the data version remains unchanged.
+    # Logic: Complete two clearing operations, then replay the first key to cover implementations that record only the latest key.
+    # Constraints: Do not automatically retry HTTP requests.
     def test_idempotency_does_not_delete_new_data(self):
         self.assertEqual(self.reset().status_code, 200)
         self.assertEqual(self.reset(str(uuid.uuid4())).status_code, 200)
@@ -177,11 +177,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertEqual(response.data["generation"], 2)
         self.assertTrue(crm.Company.objects.filter(pk=company.pk).exists())
 
-    # 功能：验证数据库已清空但文件失败时不会误报成功。
-    # 输入：合成附件及一次 OSError。
-    # 输出：503 后 cleaning 为真，正常业务 409；显式重试后文件清理且版本不再递增。
-    # 逻辑：故障仅注入文件边界，数据库使用真实提交。
-    # 约束：不把失败自动转为成功或后台重试。
+    # Function: Verify that a cleared database with file failure is not falsely reported as successful.
+    # Inputs: A synthetic attachment and one OSError.
+    # Outputs: After 503, `cleaning` is true and normal business returns 409; after explicit retry, files are cleaned and the version does not increment again.
+    # Logic: Inject failure only at the file boundary while using real database commits.
+    # Constraints: Do not automatically convert failure to success or retry in the background.
     def test_file_failure_can_resume(self):
         self.seed(self.user)
         with patch("apps.accounts.reset.clean_files", side_effect=OSError("synthetic")):
@@ -199,11 +199,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertEqual(state.generation, 1)
         self.assertEqual(state.pending_files, [])
 
-    # 功能：验证共享工作锁与清空独占锁的真实跨连接互斥。
-    # 输入：本人和另一账号的持久业务记录。
-    # 输出：本人工作期间 409 且数据不变；他人持锁不影响本人清空。
-    # 逻辑：使用真实 PostgreSQL advisory lock，无锁行为模拟。
-    # 约束：不阻塞等待任务，也不停止其他账号工作。
+    # Function: Verify real cross-connection exclusion between a shared-work lock and the clearing exclusive lock.
+    # Inputs: Persistent business records for the user and another account.
+    # Outputs: The user's work period returns 409 with unchanged data; another user's lock does not affect the user's clearing.
+    # Logic: Use a real PostgreSQL advisory lock and do not mock lock behavior.
+    # Constraints: Do not block waiting tasks or stop another account's work.
     def test_busy_account_is_unchanged(self):
         company = crm.Company.objects.create(owner=self.user, group_key="test")
         with account_lock(self.user.pk):
@@ -212,11 +212,11 @@ class AccountResetTests(TransactionTestCase):
         with account_lock(self.other.pk):
             self.assertEqual(self.reset().status_code, 200)
 
-    # 功能：验证旧页面写请求被版本隔离。
-    # 输入：数据版本为零的旧请求。
-    # 输出：清空后 409，响应提供最新版本。
-    # 逻辑：完整 HTTP 中间件先检查版本再进入业务视图。
-    # 约束：不通过新增业务内容校验达到拒绝效果。
+    # Function: Verify that write requests from an old page are isolated by version.
+    # Inputs: An old request with data version zero.
+    # Outputs: Returns 409 after clearing and provides the latest version in the response.
+    # Logic: The complete HTTP middleware checks the version before entering the business view.
+    # Constraints: Do not achieve rejection by adding business-content validation.
     def test_stale_write_rejected(self):
         self.assertEqual(self.reset().status_code, 200)
         response = self.client.patch("/api/v1/accounts/onboarding/", {"completed": True}, format="json", HTTP_X_ACCOUNT_DATA_VERSION="0")
@@ -225,11 +225,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertEqual(response["X-Account-Data-Version"], "1")
         self.assertFalse(SalesSetup.objects.filter(owner=self.user).exists())
 
-    # 功能：验证他人拥有的业务记录不被删除或级联修改。
-    # 输入：他人的工单引用本人客户。
-    # 输出：整体事务回滚，客户与工单均保留。
-    # 逻辑：由真实数据库外键发现未纳入删除集合的共享引用。
-    # 约束：不存在关闭外键或删除他人业务的降级路径。
+    # Function: Verify that business records owned by another user are neither deleted nor cascade-modified.
+    # Inputs: Another user's ticket references the user's company.
+    # Outputs: The whole transaction rolls back and both company and ticket remain.
+    # Logic: Real database foreign keys find a shared reference absent from the deletion set.
+    # Constraints: There is no fallback path that disables foreign keys or deletes another user's business data.
     def test_cross_owner_reference_rolls_back(self):
         company = self.seed(self.user)
         ticket = sales.Ticket.objects.create(owner=self.other, company=company, title="shared")
@@ -239,11 +239,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertTrue(sales.Attachment.objects.filter(owner=self.user).exists())
         self.assertEqual(AccountReset.objects.get(owner=self.user).generation, 0)
 
-    # 功能：验证仅当前浏览器登录账号能够发起重置。
-    # 输入：匿名请求、缺 CSRF 的会话、非法操作键。
-    # 输出：匿名和缺 CSRF 403，非法键 400。
-    # 逻辑：真实 SessionAuthentication 与 Django CSRF 防护。
-    # 约束：不请求额外密码或要求业务字段。
+    # Function: Verify that only the account logged in to the current browser can initiate reset.
+    # Inputs: An anonymous request, a session without CSRF, and an invalid operation key.
+    # Outputs: Anonymous and missing-CSRF requests return 403; an invalid key returns 400.
+    # Logic: Use real SessionAuthentication and Django CSRF protection.
+    # Constraints: Do not request an extra password or require business fields.
     def test_authentication_csrf_and_schema(self):
         self.assertEqual(APIClient().post(URL, {}).status_code, 403)
         csrf_client = APIClient(enforce_csrf_checks=True)
@@ -251,11 +251,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertEqual(csrf_client.post(URL, {}, HTTP_IDEMPOTENCY_KEY=self.key).status_code, 403)
         self.assertEqual(self.reset("invalid").status_code, 400)
 
-    # 功能：验证账号清空只解除参与他人团队的关联。
-    # 输入：他人拥有的团队和本人参与关系。
-    # 输出：成员关系删除，团队保留。
-    # 逻辑：成员是关联记录，不沿关联删除团队。
-    # 约束：不改变其他成员权限。
+    # Function: Verify that account clearing only removes membership in another user's team.
+    # Inputs: A team owned by another user and the user's membership.
+    # Outputs: The membership is deleted and the team remains.
+    # Logic: Membership is an association record and does not cascade deletion to the team.
+    # Constraints: Do not change other members' permissions.
     def test_shared_membership_is_removed_without_deleting_other_team(self):
         team = sales.Team.objects.create(owner=self.other, name="shared")
         membership = sales.Membership.objects.create(owner=self.other, team=team, user=self.user, role="viewer")
@@ -263,11 +263,11 @@ class AccountResetTests(TransactionTestCase):
         self.assertFalse(sales.Membership.objects.filter(pk=membership.pk).exists())
         self.assertTrue(sales.Team.objects.filter(pk=team.pk).exists())
 
-    # 功能：验证清空后残留队列键不会执行外部动作或终止工作循环。
-    # 输入：曾获批准而后被清空的合成动作。
-    # 输出：cancelled，外部 provider 未调用。
-    # 逻辑：真实删除记录后调用后台入口，覆盖先取队列再清空的时间窗口。
-    # 约束：不执行真实网络请求。
+    # Function: Verify that a stale queue key after clearing neither executes an external action nor terminates the work loop.
+    # Inputs: A synthetic action that was approved and then cleared.
+    # Outputs: Returns `cancelled` and does not call the external provider.
+    # Logic: Call the background entry point after real record deletion, covering the window where a queue is fetched before clearing.
+    # Constraints: Do not execute a real network request.
     def test_stale_sales_queue_is_cancelled(self):
         from apps.sales.actions import run_action
         company = crm.Company.objects.create(owner=self.user, group_key="test")
@@ -277,11 +277,11 @@ class AccountResetTests(TransactionTestCase):
             self.assertEqual(run_action(action.pk), "cancelled")
         provider.assert_not_called()
 
-    # 功能：验证他人拥有的跟进不在清空后再次写入本人的通知。
-    # 输入：他人跟进的负责人设为本人，已有到期通知。
-    # 输出：跟进保留，负责人解除，本人通知持续为空。
-    # 逻辑：清空后再次运行真实提醒扫描，核对账号隔离和后台读写。
-    # 约束：仅解除关联，不删除他人跟进内容。
+    # Function: Verify that a follow-up owned by another user does not write the user's notifications again after clearing.
+    # Inputs: Another user's follow-up assigns the user and has an existing due notification.
+    # Outputs: The follow-up remains, its assignee is removed, and the user's notifications remain empty.
+    # Logic: Run the real reminder scan again after clearing to check account isolation and background reads and writes.
+    # Constraints: Remove the association only and do not delete another user's follow-up content.
     def test_shared_reminders_do_not_repopulate(self):
         from apps.sales.services import notify_due
         company = crm.Company.objects.create(owner=self.other, group_key="test")

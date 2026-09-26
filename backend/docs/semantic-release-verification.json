@@ -1,0 +1,78 @@
+{
+  "date": "2026-09-25",
+  "release_type": "experimental",
+  "default_model_changed": false,
+  "production_database_migrated": false,
+  "weight": {
+    "file": "Qwen3-4B-SalesMate-Semantic-v2-Q4_K_M.gguf",
+    "bytes": 2497278784,
+    "sha256": "cadbc0a850ad31c712b4441a39775a8969ecdf9c0a762730c2a9a1c4344efd09",
+    "server_sha256_verified": true
+  },
+  "server": {
+    "vcpu": 2,
+    "ram_gib_approx": 3.7,
+    "swap_gib": 8,
+    "context_tokens": 16384,
+    "threads": 2,
+    "gpu_layers": 0,
+    "model_health": "ok",
+    "model_memory_current_bytes_snapshot": 2800394240,
+    "model_swap_bytes_snapshot": 3540357120,
+    "api_address": "127.0.0.1:8090",
+    "model_address": "127.0.0.1:8088",
+    "public_website_health": "ok",
+    "anonymous_tools_status": 401,
+    "structured_http": "passed",
+    "structured_replay_same_episode": true,
+    "natural_language_300s": {
+      "http_status": 502,
+      "seconds": 301.3446640279726,
+      "reason": "ReadTimeout",
+      "episode_saved": false,
+      "prompt_progress": {
+        "tokens_processed": 2048,
+        "tokens_per_second": 7.99,
+        "progress": 0.5
+      }
+    },
+    "mcp_real_stdio_http": "passed",
+    "mcp_model_called": false,
+    "model_service_auto_start": false,
+    "api_service_auto_start": true
+  },
+  "validation": {
+    "graph_and_semantic_tests": {
+      "count": 39,
+      "passed": true
+    },
+    "tools_sdk_tests": {
+      "count": 8,
+      "passed": true
+    },
+    "formal_authorization_tests": {
+      "count": 13,
+      "passed": true
+    },
+    "docs_backend_files": 267,
+    "docs_integration_files": 11,
+    "docs_errors": 0,
+    "docs_review_items": 0,
+    "note": "Broader initial run inherited LAB_OPEN_ACCESS; formal authorization tests were rerun with LAB_OPEN_ACCESS=False and LOCAL_DEBUG_AUTO_LOGIN=False. Production settings were not changed.",
+    "release_backend_tests": {
+      "count": 60,
+      "passed": true,
+      "seconds": 80.749,
+      "environment": {
+        "LAB_OPEN_ACCESS": false,
+        "LOCAL_DEBUG_AUTO_LOGIN": false
+      }
+    }
+  },
+  "limitations": [
+    "Model load and structured MCP success do not prove natural-language endpoint success",
+    "300-second full-schema inference failed; no automatic retry or parameter fallback",
+    "Small synthetic fine-tuning evaluation shares templates; not real email quality",
+    "Experimental service uses substantial swap and is not a production replacement"
+  ]
+}

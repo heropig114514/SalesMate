@@ -1,17 +1,17 @@
-/** 职责：在分析依据按钮旁预览当前客户的真实邮件来源。
- * 实现：悬停、键盘聚焦及触摸点击打开可关闭浮层；仅从已授权详情解析引用，正文作为纯文本显示。
- * 关联：0919 界面及共享语言资源统一缓存版本；app.js 提供当前详情及原文定位回调；app.css 提供弹层样式；不新增 API 请求。
- * 目录：mountEvidencePreview、mountEvidencePreview.text、mountEvidencePreview.close、mountEvidencePreview.position、mountEvidencePreview.show、mountEvidencePreview.scheduleClose。
- * 变量索引：无模块状态；实例 popup 为预览节点，anchor 为来源按钮，timer 为离开延迟，pinned 为点击固定状态。
+/** Responsibility: Preview the current customer's actual email sources beside analysis-evidence buttons.
+ * Implementation: Hover, keyboard focus, and touch clicks open a dismissible overlay; resolve citations only from authorized details and display bodies as plain text.
+ * Relationships: The 0919 interface and shared language resources use coordinated cache versions; app.js supplies current details and a source-location callback; app.css supplies overlay styles. No additional API requests.
+ * Directory: mountEvidencePreview, mountEvidencePreview.text, mountEvidencePreview.close, mountEvidencePreview.position, mountEvidencePreview.show, mountEvidencePreview.scheduleClose.
+ * Variable index: No module state; popup is the preview node, anchor is the source button, timer manages delayed closing, and pinned records click-pinned state.
  */
 import { language, locale } from './i18n.js?v=20260921-product';
 import { escapeHtml as e } from './api.js?v=20260921-product';
 
-/** 功能：注册一个页面内的引用预览。输入：root 分析容器、getDetail 当前详情读取器、openSource 原文定位回调。
- * 输出：关闭浮层函数，供路由切换清理。逻辑：从 context.emails 按 dedupe_key 精确匹配，不从事实概括臆造引用原句。
- * 约束：缺失邮件明确说明无法预览；不将业务资料写入缓存、日志或外部请求。 */
+/** Function: Register citation previews within one page. Inputs: root analysis container, getDetail reader, and openSource location callback.
+ * Outputs: An overlay-close function for route cleanup. Logic: Match context.emails exactly by dedupe_key, never inventing quoted source sentences from fact summaries.
+ * Constraints: Explicitly report unavailable previews for missing emails; never write business data to caches, logs, or external requests. */
 export function mountEvidencePreview(root, getDetail, openSource) {
-  /** 功能：选择界面语言。输入：zh/en 文案。输出：当前语言文本。逻辑：沿用共享偏好。约束：不翻译邮件。 */
+  /** Function: Select interface language. Inputs: zh/en text. Outputs: Current-language text. Logic: Use the shared preference. Constraints: Never translate emails. */
   const text = (zh, en) => language === 'en' ? en : zh;
   const popup = document.createElement('aside');
   popup.id = 'evidence-preview';
@@ -21,8 +21,8 @@ export function mountEvidencePreview(root, getDetail, openSource) {
   popup.hidden = true;
   document.body.append(popup);
   let anchor = null, timer = null, pinned = false;
-  /** 功能：结束预览。输入：restoreFocus 是否返回来源按钮。输出：无。
-   * 逻辑：清理延迟和展开状态、删除私有正文。约束：路由切换不抢焦点。 */
+  /** Function: End a preview. Inputs: restoreFocus controls return to the source button. Outputs: None.
+   * Logic: Clear timers/expanded state and remove private body text. Constraints: Route changes do not steal focus. */
   function close(restoreFocus = false) {
     clearTimeout(timer);
     const previous = anchor;
@@ -32,16 +32,16 @@ export function mountEvidencePreview(root, getDetail, openSource) {
     if (restoreFocus && previous?.isConnected) previous.focus();
     anchor = null; pinned = false;
   }
-  /** 功能：定位浮层。输入：隐式 anchor、视口及弹层尺寸。输出：无。
-   * 逻辑：优先放按钮下方，空间不足时向上；左右保留边距。约束：滚动时更新位置，不改变页面滚动。 */
+  /** Function: Position the overlay. Inputs: Implicit anchor, viewport, and overlay dimensions. Outputs: None.
+   * Logic: Prefer below the button, move above when space is insufficient, and retain horizontal margins. Constraints: Reposition on scrolling without changing page scroll. */
   function position() {
     if (!anchor?.isConnected || !anchor.getClientRects().length) { close(); return; }
     const box = anchor.getBoundingClientRect();
     popup.style.left = Math.max(12, Math.min(box.left, innerWidth - popup.offsetWidth - 12)) + 'px';
     popup.style.top = Math.max(12, Math.min(box.bottom + 8, innerHeight - popup.offsetHeight - 12)) + 'px';
   }
-  /** 功能：显示授权详情中的来源。输入：button 来源按钮、pin 是否固定。输出：无。
-   * 逻辑：同一来源不重建以保留选区；显示发件人、时间、主题和逐字原文。约束：原协议没有引用字符偏移，因此明确标记全文而非精确摘录。 */
+  /** Function: Display a source from authorized details. Inputs: button is the source button; pin controls pinning. Outputs: None.
+   * Logic: Avoid rebuilding the same source to preserve selection; show sender, time, subject, and verbatim text. Constraints: The protocol lacks citation character offsets, so explicitly label this as full text rather than an exact excerpt. */
   function show(button, pin = false) {
     clearTimeout(timer);
     if (button === anchor) { pinned ||= pin; return; }
@@ -58,8 +58,8 @@ export function mountEvidencePreview(root, getDetail, openSource) {
     button.setAttribute('aria-controls', popup.id);
     popup.hidden = false; position();
   }
-  /** 功能：允许指针跨越按钮与浮层间隙。输入：无，读取 pinned 与焦点。输出：无。
-   * 逻辑：非固定预览在离开 180ms 后关闭；保留键盘正在操作的预览。约束：不延迟网络或业务动作。 */
+  /** Function: Let the pointer cross the button-overlay gap. Inputs: None; reads pinned and focus. Outputs: None.
+   * Logic: Close unpinned previews 180ms after leaving, retaining previews in keyboard use. Constraints: Never delay network or business actions. */
   function scheduleClose() {
     clearTimeout(timer);
     if (!pinned) timer = setTimeout(() => {

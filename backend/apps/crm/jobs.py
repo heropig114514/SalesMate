@@ -1,15 +1,15 @@
-"""职责：管理持久化分析任务、领取租约和回报。
-实现：租约缺失、失效、过期及输入变更分别返回可区分的 409 原因；实验模式可不带租约直接保存业务结果，显式 Worker 租约保持原状态校验；所有者锁与任务行锁保证公司级互斥，未完成 L1 修复阻塞画像；固定 revision、随机凭证，过期显式失败。
-关联：ingestion 入队，rules 或独立 Agent 消费，results 验证租约。
-目录：
-- enqueue：合并公司尚未领取的同类分析工作。
-- job_data：映射任务为 README Job 并附领取凭证。
-- claimable_jobs：查询未被公司运行任务或 L1 修复阻塞的待办。
-- claim：原子领取当前用户的待处理任务。
-- require_lease：核验任务领取凭证和上下文版本。
-- report：保存任务最终状态并核验产出声明。
-变量索引：
-- logger：模块脱敏诊断日志记录器
+"""Responsibility: Manage durable analysis jobs, claim leases, and reports.
+Implementation: Return distinguishable 409 reasons for missing, invalid, expired leases and changed input; experiment mode can save business results without leases while explicit Worker leases retain state validation. Owner and job row locks ensure company-level exclusion, unfinished L1 repairs block profiling, revision is frozen, credentials are random, and expiration fails explicitly.
+Relationships: ingestion queues work, rules or an isolated Agent consumes it, and results validates leases.
+Directory:
+- enqueue: Merge unclaimed analysis work of the same kind for a company.
+- job_data: Map a task to README Job and attach its claim credential.
+- claimable_jobs: Query work not blocked by a company running job or L1 repair.
+- claim: Atomically claim pending jobs for the current user.
+- require_lease: Validate a job claim credential and context version.
+- report: Save terminal job state and validate declared output.
+Variable index:
+- logger: Redacted diagnostic logger for this module.
 """
 from datetime import timedelta
 import logging
@@ -28,11 +28,11 @@ from .models import Analysis, Job
 logger = logging.getLogger("salesmate.jobs")
 
 
-# 功能：合并公司尚未领取的同类分析工作。
-# 输入：`company` 为已锁定公司；`trigger` 为业务事件名称。
-# 输出：新建或更新的 Job。
-# 逻辑：未领取任务吸收最新 revision，运行中同 revision 不重复建立。
-# 约束：调用方须持有 company 行锁；失败任务不自动重试。
+# Function: Merge unclaimed analysis work of the same kind for a company.
+# Inputs: `company` is locked and `trigger` is a business-event name.
+# Outputs: Newly created or updated Job.
+# Logic: An unclaimed job absorbs the latest revision, while a running job at that revision is not duplicated.
+# Constraints: Caller must hold the company row lock; failed jobs do not retry automatically.
 def enqueue(company, trigger):
     pending = company.jobs.select_for_update().filter(status="pending").order_by("enqueued_at").first()
     if pending:
@@ -47,11 +47,11 @@ def enqueue(company, trigger):
     return job
 
 
-# 功能：映射任务为 README Job 并附领取凭证。
-# 输入：`job` 为已授权任务。
-# 输出：Job 字典；lease_token 是显式的传输扩展。
-# 逻辑：传递后端 revision，让 Agent 保存快照时使用 If-Match。
-# 约束：不包含 Gmail 凭证；只向领取者返回 lease_token。
+# Function: Map a task to README Job and attach its claim credential.
+# Inputs: `job` is authorized.
+# Outputs: Job dictionary; lease_token is an explicit transport extension.
+# Logic: Pass backend revision so Agent uses If-Match when saving a snapshot.
+# Constraints: Contains no Gmail credentials and returns lease_token only to the claimant.
 def job_data(job):
     return {"job_id": str(job.pk), "trigger": job.trigger, "company_id": str(job.company_id),
             "enqueued_at": job.enqueued_at.isoformat(), "attempt": job.attempt,
@@ -60,11 +60,11 @@ def job_data(job):
             "expected_version": job.revision}
 
 
-# 功能：统一调度器和领取端的可执行工作条件。
-# 输入：`owner` 为已认证员工。
-# 输出：当前可领取的 Job QuerySet。
-# 逻辑：排除有效运行租约及未完成/失败的业务邮件补抽取，跨公司独立。
-# 约束：仅查询不加锁；实际领取仍须在所有者锁内重新求值。
+# Function: Unify executable-work conditions for scheduler and claimant.
+# Inputs: `owner` is an authenticated employee.
+# Outputs: QuerySet of currently claimable Jobs.
+# Logic: Exclude valid running leases and unfinished or failed business-email repair extraction, independently across companies.
+# Constraints: Query only without locking; actual claims must reevaluate under the owner lock.
 def claimable_jobs(owner):
     from .durable_models import ExtractionRepair
     running = Job.objects.filter(company_id=OuterRef("company_id"), status="running", lease_until__gt=timezone.now())
@@ -72,11 +72,11 @@ def claimable_jobs(owner):
     return Job.objects.filter(company__owner=owner, status="pending").annotate(company_running=Exists(running), repairing=Exists(repairing)).filter(company_running=False, repairing=False)
 
 
-# 功能：原子领取当前用户的待处理任务。
-# 输入：`owner` 为服务凭证用户；`limit` 为数量；`lease_seconds` 为显式租期；`company_id` 可限制公司。
-# 输出：领取后的 Job 数组。
-# 逻辑：过期任务显式失败；所有者锁串行化领取，排除运行中公司及等待或失败的业务 L1 修复。
-# 约束：不重派已过期任务，不自动重试；需用户显式重新分析。
+# Function: Atomically claim pending jobs for the current user.
+# Inputs: `owner` is the service-credential user, `limit` is count, `lease_seconds` is explicit lease duration, and `company_id` can limit the company.
+# Outputs: Array of claimed Jobs.
+# Logic: Explicitly fail expired jobs; owner lock serializes claims and excludes running companies and pending or failed business L1 repairs.
+# Constraints: Does not redispatch expired work or retry automatically; users must explicitly analyze again.
 @transaction.atomic
 def claim(owner, limit, lease_seconds, company_id=None):
     from django.contrib.auth import get_user_model
@@ -88,11 +88,11 @@ def claim(owner, limit, lease_seconds, company_id=None):
     expired = scope.filter(status="running", lease_until__lte=now).update(status="failed", report={"error": {"code": "invalid_state", "message": "任务租约已过期，请重新分析。"}})
     if expired:
         logger.warning("job_leases_expired count=%s owner_id=%s action=request_new_analysis", expired, owner.pk)
-    # 只锁任务表，避免先锁任务再锁公司的反向锁序；enqueue 在公司锁之后锁待办。
+    # Lock only jobs to avoid reverse ordering of job then company locks; enqueue locks pending work after the company lock.
     available = claimable_jobs(owner)
     if company_id:
         available = available.filter(company_id=company_id)
-    # 锁住所有者后再领取任务，使多个工作进程的公司互斥检查与领取原子化。
+    # Claim after locking the owner so company mutual-exclusion checks and claims are atomic across Worker processes.
     jobs = list(available.select_for_update(of=("self",), skip_locked=True).order_by("enqueued_at")[:limit])
     selected = []
     companies = set()
@@ -108,11 +108,11 @@ def claim(owner, limit, lease_seconds, company_id=None):
     return [job_data(job) for job in selected]
 
 
-# 功能：核验任务领取凭证和上下文版本。
-# 输入：`company` 为锁定公司；`job_id`、`token` 为请求头；`require_revision` 控制是否检查当前 revision。
-# 输出：锁定 Job；实验模式省略租约时返回 None；无效、已结束、过期或版本变化分别抛带原因的 Conflict。
-# 逻辑：实验模式无租约头时允许直接提交；提供租约的 Worker 仍检查状态、期限及版本，正式模式必须提供租约。
-# 约束：调用方处于事务中；租约凭证不得进入日志。
+# Function: Validate a job claim credential and context version.
+# Inputs: `company` is locked; `job_id` and `token` come from headers; `require_revision` controls current-revision validation.
+# Outputs: Locked Job; returns None when experiment mode omits a lease; invalid, ended, expired, and changed-version states each raise a reasoned Conflict.
+# Logic: Experiment mode allows direct submission with no lease headers; Workers that provide a lease still validate state, expiration, and version, while production requires leases.
+# Constraints: Caller is in a transaction and lease credentials never enter logs.
 def require_lease(company, job_id, token, require_revision=True):
     if enabled() and not job_id and not token:
         return None
@@ -133,11 +133,11 @@ def require_lease(company, job_id, token, require_revision=True):
     return job
 
 
-# 功能：保存任务最终状态并核验产出声明。
-# 输入：`owner` 为认证用户；`data` 为 JobReport；`token` 为领取凭证。
-# 输出：job_id 与最终状态。
-# 逻辑：成功回报需要当前版本实际存在分析及声明的评分；失败允许旧 revision 回报。
-# 约束：过期或重复回报返回冲突；错误不自动触发重试。
+# Function: Save terminal job state and validate declared output.
+# Inputs: `owner` is an authenticated user, `data` is JobReport, and `token` is a claim credential.
+# Outputs: job_id and terminal state.
+# Logic: Successful reports require analysis and declared scoring to exist at the current revision; failed reports may use an old revision.
+# Constraints: Expired or duplicate reports return conflict and errors do not automatically trigger retry.
 @transaction.atomic
 def report(owner, data, token):
     candidate = Job.objects.filter(pk=data["job_id"], company__owner=owner).first()

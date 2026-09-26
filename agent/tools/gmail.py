@@ -1,22 +1,22 @@
-"""职责：提供 Gmail 只读授权、历史扫描和可观察的逐封读取。
-实现：保留既有默认参数，独立 Worker 通过回调持久化阶段；兼容旧 CLI 调用。
-关联：软件 Worker 使用本模块，Gmail 工具提供原文，后端 HTTP 客户端保存业务数据。
-目录：
-- GmailHistoryExpiredError：标识 Gmail 历史游标过期。
-- create_service：使用短期令牌创建只读 Gmail 客户端。
-- create_service_from_authorization：使用后端授权创建 Gmail 客户端。
-- get_profile_address：查询授权账号地址。
-- get_profile_history_id：取得增量历史起点。
-- resolve_mailbox_address：解析已知业务邮箱或授权账号地址。
-- read_email：读取并解析一封 Gmail raw 邮件。
-- _normalize_mailbox_address：规范化一个完整邮箱地址。
-- _internal_date_to_utc：转换 Gmail 毫秒时间戳。
-- list_sync_message_ids：列出同步扫描的消息 ID。
-- list_history_message_ids：分页枚举新增 Gmail 消息。
-- read_messages：读取指定消息并可回报逐封进度。
-- read_sync_emails：读取同步范围内最近收发邮件。
-变量索引：
-- SCOPES：Gmail 只读授权范围。
+"""Responsibility: Provide read-only Gmail authorization, history scanning, and observable per-email reads.
+Implementation: Preserve existing defaults; independent workers persist stages through callbacks while legacy CLI calls remain supported.
+Relationships: Software workers use this module; Gmail tools provide raw content and backend HTTP clients persist business data.
+Directory:
+- GmailHistoryExpiredError: Identify an expired Gmail history cursor.
+- create_service: Create a read-only Gmail client with a short-lived token.
+- create_service_from_authorization: Create a Gmail client from backend authorization.
+- get_profile_address: Query the authorized account address.
+- get_profile_history_id: Obtain the incremental history starting point.
+- resolve_mailbox_address: Resolve a known business mailbox or authorized account address.
+- read_email: Read and parse one raw Gmail email.
+- _normalize_mailbox_address: Normalize a complete email address.
+- _internal_date_to_utc: Convert Gmail millisecond timestamps.
+- list_sync_message_ids: List message IDs for synchronization scanning.
+- list_history_message_ids: Enumerate new Gmail messages with pagination.
+- read_messages: Read selected messages with optional per-email progress reporting.
+- read_sync_emails: Read recent incoming and outgoing emails within the synchronization scope.
+Variable index:
+- SCOPES: Read-only Gmail authorization scope.
 """
 
 import json
@@ -34,20 +34,20 @@ from agent.tools.email_parser import parse_raw_email
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-# 功能：标识 Gmail 历史游标过期。
-# 逻辑：由 History 404 转换为专用异常。
-# 约束：仅表示同步历史失效，不表示邮箱授权无效。
+# Function: Identify an expired Gmail history cursor.
+# Logic: Convert History 404 responses into a dedicated exception.
+# Constraints: Indicates invalid synchronization history, not invalid mailbox authorization.
 class GmailHistoryExpiredError(RuntimeError):
-    """保存的 Gmail historyId 已不可用于增量读取。"""
+    """The saved Gmail historyId is no longer usable for incremental reads."""
 
 
-# 功能：使用短期令牌创建只读 Gmail 客户端。
-# 输入：`access_token` 为短期访问令牌。
-# 输出：返回 Gmail Service。
-# 逻辑：校验非空 token 并创建 Credentials/SDK。
-# 约束：SDK 构建异常转为安全 RuntimeError，不记录令牌。
+# Function: Create a read-only Gmail client with a short-lived token.
+# Inputs: `access_token`: short-lived access token.
+# Outputs: Return a Gmail Service.
+# Logic: Validate a nonempty token and construct Credentials/SDK objects.
+# Constraints: Convert SDK construction failures to safe RuntimeError without logging tokens.
 def create_service(access_token: str):
-    """使用前端传入的短期 access token 创建只读 Gmail Service。"""
+    """Create a read-only Gmail Service from the frontend's short-lived access token."""
     if not isinstance(access_token, str) or not access_token.strip():
         raise RuntimeError("Gmail access token must not be empty.")
     try:
@@ -57,13 +57,13 @@ def create_service(access_token: str):
         raise RuntimeError("Cannot connect using the Gmail access token.") from None
 
 
-# 功能：使用后端授权创建 Gmail 客户端。
-# 输入：`authorization` 为授权或邮箱同步请求对象。
-# 输出：Service 与可持久化的刷新凭证字典。
-# 逻辑：只在过期且有 refresh token 时刷新，然后构建 SDK。
-# 约束：刷新失败显式报错；返回凭证仅限后端保存，不给浏览器。
+# Function: Create a Gmail client from backend authorization.
+# Inputs: `authorization`: authorization or mailbox synchronization request object.
+# Outputs: Service and persistable refreshed-credential dictionary.
+# Logic: Refresh only when expired and a refresh token exists, then construct the SDK.
+# Constraints: Fail explicitly on refresh errors; returned credentials are for backend persistence only, never the browser.
 def create_service_from_authorization(authorization: Mapping) -> tuple[object, dict]:
-    """使用后端保存的授权信息创建 Gmail Service，并返回可能刷新的凭证。"""
+    """Create a Gmail Service from backend-stored authorization and return any refreshed credentials."""
     if not isinstance(authorization, Mapping) or not authorization:
         raise RuntimeError("Gmail authorization is empty.")
     try:
@@ -87,13 +87,13 @@ def create_service_from_authorization(authorization: Mapping) -> tuple[object, d
         raise RuntimeError("Cannot connect using the Gmail authorization.") from None
 
 
-# 功能：查询授权账号地址。
-# 输入：`service` 为已授权 Gmail SDK 客户端。
-# 输出：规范化邮箱字符串。
-# 逻辑：读取 profile 后验证完整邮箱地址。
-# 约束：网络或字段无效抛安全 RuntimeError。
+# Function: Query the authorized account address.
+# Inputs: `service`: authorized Gmail SDK client.
+# Outputs: Normalized mailbox string.
+# Logic: Read the profile and validate its complete email address.
+# Constraints: Raise a safe RuntimeError for network or invalid-field failures.
 def get_profile_address(service) -> str:
-    """返回当前已授权 Gmail 账号的有效完整邮箱地址。"""
+    """Return the current authorized Gmail account's valid complete email address."""
     try:
         profile = service.users().getProfile(userId="me").execute()
     except Exception:
@@ -106,13 +106,13 @@ def get_profile_address(service) -> str:
     return normalized
 
 
-# 功能：取得增量历史起点。
-# 输入：`service` 为已授权 Gmail SDK 客户端。
-# 输出：非空历史 ID 字符串。
-# 逻辑：从 profile 提取字符串或整数 historyId。
-# 约束：不接受布尔值；网络或数据无效明确报错。
+# Function: Obtain the incremental history starting point.
+# Inputs: `service`: authorized Gmail SDK client.
+# Outputs: Nonempty history ID string.
+# Logic: Extract a string or integer historyId from the profile.
+# Constraints: Reject booleans; report network or invalid-data failures explicitly.
 def get_profile_history_id(service) -> str:
-    """读取当前邮箱可作为下一次增量起点的 Gmail historyId。"""
+    """Read the current mailbox's Gmail historyId for the next incremental starting point."""
     try:
         profile = service.users().getProfile(userId="me").execute()
     except Exception:
@@ -127,26 +127,26 @@ def get_profile_history_id(service) -> str:
     return normalized
 
 
-# 功能：解析已知业务邮箱或授权账号地址。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`explicit_address` 为可选显式邮箱地址。
-# 输出：合法 bare address。
-# 逻辑：先验证显式地址，无效才调用 profile。
-# 约束：保留既有地址选择规则；profile 失败向上抛出。
+# Function: Resolve a known business mailbox or authorized account address.
+# Inputs: `service`: authorized Gmail SDK client; `explicit_address`: optional explicit mailbox address.
+# Outputs: Valid bare address.
+# Logic: Validate the explicit address first and call profile only if invalid.
+# Constraints: Preserve existing address selection rules; propagate profile failures.
 def resolve_mailbox_address(service, explicit_address: str | None) -> str:
-    """有效显式邮箱优先；否则只回退到 Gmail profile。"""
+    """Prefer a valid explicit address; otherwise fall back only to the Gmail profile."""
     normalized = _normalize_mailbox_address(explicit_address)
     if normalized is not None:
         return normalized
     return get_profile_address(service)
 
 
-# 功能：读取并解析一封 Gmail raw 邮件。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`message_id` 为指定 Gmail 消息 ID。
-# 输出：标准邮件字典。
-# 逻辑：读取 raw 与 ID，规范化内部时间后交 MIME 解析器。
-# 约束：SDK 异常脱敏为 RuntimeError；无发送、删除或已读修改。
+# Function: Read and parse one raw Gmail email.
+# Inputs: `service`: authorized Gmail SDK client; `message_id`: selected Gmail message ID.
+# Outputs: Standard email dictionary.
+# Logic: Read raw content and ID, normalize internal time, and delegate to the MIME parser.
+# Constraints: Sanitize SDK errors as RuntimeError; no sending, deletion, or read-flag changes.
 def read_email(service, message_id: str) -> dict:
-    """用一次 raw 请求读取指定消息，并规范化 Gmail resource 元数据。"""
+    """Read the selected message with one raw request and normalize Gmail resource metadata."""
     try:
         message = service.users().messages().get(
             userId="me", id=message_id, format="raw"
@@ -178,13 +178,13 @@ def read_email(service, message_id: str) -> dict:
     )
 
 
-# 功能：规范化一个完整邮箱地址。
-# 输入：`value` 为待验证原值。
-# 输出：合法地址或 None。
-# 逻辑：要求仅一个地址、一个 @ 且两侧非空无空白。
-# 约束：不推断公司归属，无网络副作用。
+# Function: Normalize a complete email address.
+# Inputs: `value`: original value to validate.
+# Outputs: Valid address or None.
+# Logic: Require one address with one @, nonempty parts, and no whitespace.
+# Constraints: Do not infer company ownership; no network side effects.
 def _normalize_mailbox_address(value) -> str | None:
-    """将单个基本合法的完整 mailbox 规范化为 bare address。"""
+    """Normalize one basically valid complete mailbox to a bare address."""
     if not isinstance(value, str) or not value.strip():
         return None
     addresses = getaddresses([value])
@@ -199,13 +199,13 @@ def _normalize_mailbox_address(value) -> str | None:
     return address
 
 
-# 功能：转换 Gmail 毫秒时间戳。
-# 输入：`value` 为待验证原值。
-# 输出：UTC ISO 字符串或 None。
-# 逻辑：检查整数及 ASCII 数字表示，从 Unix epoch 加毫秒。
-# 约束：布尔、格式错误和越界返回 None，不推算未知时间。
+# Function: Convert Gmail millisecond timestamps.
+# Inputs: `value`: original value to validate.
+# Outputs: UTC ISO string or None.
+# Logic: Check integer and ASCII-digit representations, then add milliseconds to the Unix epoch.
+# Constraints: Return None for booleans, malformed values, or overflow; do not infer unknown times.
 def _internal_date_to_utc(value) -> str | None:
-    """独立将可表示的 Gmail epoch 毫秒转换为 UTC ISO8601。"""
+    """Independently convert representable Gmail epoch milliseconds to UTC ISO8601."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -229,13 +229,13 @@ def _internal_date_to_utc(value) -> str | None:
         return None
 
 
-# 功能：列出同步扫描的消息 ID。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`limit` 为调用方明确的数量上限。
-# 输出：最多二十个字符串 ID。
-# 逻辑：固定 inbox/sent 查询并验证响应结构。
-# 约束：非法数量和响应报错；不读取正文。
+# Function: List message IDs for synchronization scanning.
+# Inputs: `service`: authorized Gmail SDK client; `limit`: explicit caller-specified count limit.
+# Outputs: At most twenty string IDs.
+# Logic: Use the fixed inbox/sent query and validate response structure.
+# Constraints: Reject invalid counts and responses; do not read bodies.
 def list_sync_message_ids(service, limit: int = 20) -> list[str]:
-    """列出最近收件和发件的 Gmail message ID，不读取邮件正文。"""
+    """List recent incoming and outgoing Gmail message IDs without reading bodies."""
     if type(limit) is not int:
         raise RuntimeError("Gmail sync count must be an integer.")
     max_results = max(1, min(limit, 20))
@@ -263,15 +263,15 @@ def list_sync_message_ids(service, limit: int = 20) -> list[str]:
     return message_ids
 
 
-# 功能：分页枚举新增 Gmail 消息。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`start_history_id` 为已保存 Gmail 历史游标。
-# 输出：新增 ID 列表与下一历史游标。
-# 逻辑：遍历 messageAdded 历史，按 inbox/sent 标签筛选并去重。
-# 约束：404 专门抛游标过期异常，分页循环或结构错误报错。
+# Function: Enumerate new Gmail messages with pagination.
+# Inputs: `service`: authorized Gmail SDK client; `start_history_id`: saved Gmail history cursor.
+# Outputs: New ID list and next history cursor.
+# Logic: Traverse messageAdded history, filtering inbox/sent labels and deduplicating.
+# Constraints: Raise the dedicated expired-cursor exception on 404; reject pagination loops and structural errors.
 def list_history_message_ids(
     service, start_history_id: str
 ) -> tuple[list[str], str]:
-    """列出 historyId 之后新增的收件和发件 ID，并返回最新游标。"""
+    """List incoming and outgoing IDs added after historyId and return the latest cursor."""
     if not isinstance(start_history_id, str) or not start_history_id.strip():
         raise RuntimeError("Gmail history cursor must not be empty.")
 
@@ -348,13 +348,13 @@ def list_history_message_ids(
     return message_ids, latest_history_id
 
 
-# 功能：读取指定消息并可回报逐封进度。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`message_ids` 为指定 Gmail ID 数组，None 表示既有扫描范围；`progress` 为可选阶段回调。
-# 输出：成功解析的邮件数组。
-# 逻辑：启用回调时先登记全体 ID，再逐封回报读取和安全错误并继续其余邮件。
-# 约束：无回调保留旧异常传播；回调写入失败向上传播，不能伪造持久进度。
+# Function: Read selected messages with optional per-email progress reporting.
+# Inputs: `service`: authorized Gmail SDK client; `message_ids`: selected Gmail IDs, or None for the existing scan scope; `progress`: optional stage callback.
+# Outputs: Array of successfully parsed emails.
+# Logic: With a callback, register all IDs first, then report individual reads and safe errors while continuing other emails.
+# Constraints: Without a callback, preserve legacy exception propagation; propagate callback persistence failures rather than inventing durable progress.
 def read_messages(service, message_ids: list[str], progress=None) -> list[dict]:
-    """按给定顺序读取 Gmail raw 邮件。"""
+    """Read raw Gmail emails in the supplied order."""
     if not isinstance(message_ids, list) or any(
         not isinstance(message_id, str) or not message_id.strip()
         for message_id in message_ids
@@ -375,11 +375,11 @@ def read_messages(service, message_ids: list[str], progress=None) -> list[dict]:
     return emails
 
 
-# 功能：读取同步范围内最近收发邮件。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`limit` 为调用方明确的数量上限；`progress` 为可选阶段回调。
-# 输出：成功邮件数组。
-# 逻辑：复用 ID 列表和逐封读取，传递可选进度回调。
-# 约束：保持二十封上限；无回调保持原调用约定。
+# Function: Read recent incoming and outgoing emails within the synchronization scope.
+# Inputs: `service`: authorized Gmail SDK client; `limit`: explicit caller-specified count limit; `progress`: optional stage callback.
+# Outputs: Array of successful emails.
+# Logic: Reuse ID listing and individual reads, forwarding the optional progress callback.
+# Constraints: Preserve the twenty-email limit and original call contract when no callback is supplied.
 def read_sync_emails(service, limit: int = 20, progress=None) -> list[dict]:
-    """读取本次同步使用的最近收件和发件邮件，最多二十封。"""
+    """Read recent incoming and outgoing emails for this synchronization, up to twenty."""
     return read_messages(service, list_sync_message_ids(service, limit), progress=progress) if progress else read_messages(service, list_sync_message_ids(service, limit))

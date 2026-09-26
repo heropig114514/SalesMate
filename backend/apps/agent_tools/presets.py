@@ -1,12 +1,12 @@
-"""职责：提供可审阅的一次性工具授权范围，减少逐项配置错误。
-实现：显式实验模式下无需登录或单独令牌；正式模式保留原授权。根据当前注册表列出明确的工具名；创建凭证时冻结列表，后续新增工具不自动扩权。
-关联：CredentialView 可接收 preset；PresetView 只查询范围，不能创建或提升权限。
-目录：
-- permission_presets：构造当前工具名快照。
-- PresetView：查询授权模板。
-- PresetView.get：返回模板及明确工具列表。
-变量索引：
-- PresetView.authentication_classes：允许已登录用户或有效 Tool 凭证读取无业务数据的授权说明。
+"""Responsibility: Provide reviewable one-time tool authorization scopes and reduce item-by-item configuration errors.
+Implementation: Explicit experiment mode requires no login or separate token; production mode retains original authorization. List explicit tool names from the current registry; credential creation freezes the list so later tools do not expand permission automatically.
+Relationships: ``CredentialView`` can accept a preset; ``PresetView`` only queries scope and cannot create or elevate permission.
+Directory:
+- permission_presets: Construct a snapshot of current tool names.
+- PresetView: Query authorization presets.
+- PresetView.get: Return presets and explicit tool lists.
+Variable index:
+- PresetView.authentication_classes: Permit a logged-in user or valid Tool credential to read authorization descriptions containing no business data.
 """
 
 from rest_framework.authentication import SessionAuthentication
@@ -16,11 +16,11 @@ from apps.sales.views import SalesView
 from .authentication import ToolAuthentication
 
 
-# 功能：构造可审阅的授权集合。
-# 输入：`registry` 为当前已注册工具。
-# 输出：按模板名索引的说明与名称列表。
-# 逻辑：read_only 收集只读工具，data_management 收集只读及已支持的直接写入工具。
-# 约束：不包含 confirm 操作；外部动作只可准备，不能批准或执行；返回值不修改现有凭证。
+# Function: Construct reviewable authorization sets.
+# Inputs: ``registry`` contains currently registered tools.
+# Outputs: Descriptions and name lists indexed by preset name.
+# Logic: ``read_only`` collects read tools; ``data_management`` collects read tools and supported direct-write tools.
+# Constraints: Excludes confirm operations; external actions may only be prepared, not approved or executed; return value does not modify existing credentials.
 def permission_presets(registry):
     return {
         "read_only": {"description": "当前全部只读工具；读取范围仍受本人及业务授权约束。", "allowed_tools": sorted(name for name, spec in registry.items() if spec["executionMode"] == "read")},
@@ -28,17 +28,17 @@ def permission_presets(registry):
     }
 
 
-# 功能：展示工具授权模板。
-# 逻辑：只查询注册表，不创建令牌。
-# 约束：Tool 身份不能据此增加权限。
+# Function: Present tool-authorization presets.
+# Logic: Queries only the registry and creates no token.
+# Constraints: Tool identity cannot use this to increase permissions.
 class PresetView(SalesView):
     authentication_classes = [ToolAuthentication, SessionAuthentication]
 
-    # 功能：返回可授权范围。
-    # 输入：`request` 认证身份。
-    # 输出：模板和名称快照。
-    # 逻辑：从实时注册表生成，说明显式重新授权才能获得新增工具。
-    # 约束：不含令牌或业务数据。
+    # Function: Return authorizable scope.
+    # Inputs: Authenticated identity from ``request``.
+    # Outputs: Preset and name snapshots.
+    # Logic: Generate from the live registry and indicate that new tools require explicit reauthorization.
+    # Constraints: Contains no tokens or business data.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="agent_tools_permission_presets")
     def get(self, request):
         from .registry import build_registry

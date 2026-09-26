@@ -1,10 +1,10 @@
 /**
- * 职责：为邮件、业务、世界洞察及设置页面提供共享主导航、底部 Profile 设置、客户上下文和真实待办概览及底部聊天入口。
- * 实现：左侧不再展示商机优先级入口；URL 保存客户身份及共享实验上下文；实验客户使用只读来源入口；概览来自授权 GET；Profile 提供明确确认后的账号内部数据清空，保留登录身份。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：顶栏使用移除实验入口后的缓存版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；app.js、business.js、world-news.js 与 company-settings.js 调用；workspace.css 与 product-header.js 提供统一外壳；复核及交易沿用原接口。
- * 目录：businessHref、renderWorkspaceNav、mountWorkspace、setWorkspaceContext、refreshWorkspace。
- * 变量索引：customerResources 为客户下的四类业务入口；context 为当前客户；activePage 为当前页面；refreshSequence 防止旧响应覆盖。
+ * Responsibility: Provide shared navigation, bottom Profile settings, customer context, real task summaries, and bottom chat across mail, business, world insights, and settings.
+ * Implementation: The sidebar no longer lists opportunity priorities; URLs retain customer identity/shared experiment context. Experiment customers use read-only source entries; summaries use authorized GETs. Profile offers explicitly confirmed internal account-data reset while preserving login identity.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: Header versions reflect removal of experiment navigation; chat Markdown, 0919 interface, and language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. app.js, business.js, world-news.js, and company-settings.js call this module; workspace.css/product-header.js share the shell; review and transactions retain existing APIs.
+ * Directory: businessHref, renderWorkspaceNav, mountWorkspace, setWorkspaceContext, refreshWorkspace.
+ * Variable index: customerResources contains four customer business entries; context is the current customer; activePage is the current page; refreshSequence prevents stale updates.
  */
 import { t, h } from './i18n.js?v=20260921-product';
 
@@ -17,16 +17,16 @@ import { language } from './i18n.js?v=20260921-product';
 const customerResources = [['opportunities', t('商机')], ['quotes', t('报价')], ['orders', t('订单')], ['tickets', t('工单')]];
 let context = null, activePage = 'home', refreshSequence = 0;
 
-/** 功能：生成保留客户的业务路由。输入：resource、company、extra 查询项。输出：同源 URL。
- * 逻辑：URLSearchParams 编码身份，hash 仅标识资源。约束：导航不授权访问，不推断客户。 */
+/** Function: Generate a business route retaining customer context. Inputs: resource, company, and extra query parameters. Outputs: A same-origin URL.
+ * Logic: URLSearchParams encodes identity; the hash identifies only the resource. Constraints: Navigation neither grants access nor infers customers. */
 export function businessHref(resource, company = context?.id, extra = {}) {
   const query = new URLSearchParams(extra);
   if (company) query.set('company', company);
   return `/business/${query.size ? '?' + query : ''}#${encodeURIComponent(resource)}`;
 }
 
-/** 功能：重建共享导航。输入：模块中的 activePage/context。输出：无。
- * 逻辑：展示工作台、全球洞察、Channels 与客户，移除商机优先级侧栏入口，底部设置不携带客户身份；账号清空按钮委托专用确认流程。约束：共享实验客户不进入私人邮件路由，其他客户仅传递到业务相关链接。 */
+/** Function: Rebuild shared navigation. Inputs: Module activePage/context. Outputs: None.
+ * Logic: Show workspace, global insights, Channels, and customers without a sidebar priority entry. Bottom settings omit customer identity; account reset delegates to its confirmation flow. Constraints: Shared experiment customers never enter private mail routes; other customer identities pass only to relevant business links. */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
@@ -38,8 +38,8 @@ function renderWorkspaceNav() {
   }
 }
 
-/** 功能：挂载同一导航外壳。输入：active 为当前页。输出：无。
- * 逻辑：替换主导航与 Profile；启用悬浮入口，重复点击同一复核或邮箱设置路由仍打开界面。约束：业务页面登录后调用，公开世界消息仅挂载入口；会话权限由 API 校验，不提交请求。 */
+/** Function: Mount the shared navigation shell. Inputs: active is the current page. Outputs: None.
+ * Logic: Replace navigation/Profile and enable the floating entry; repeated clicks on the same review/mail-settings route still open the view. Constraints: Business pages call after login; public world news mounts the entry only. APIs enforce session permissions; mounting submits no requests. */
 export function mountWorkspace(active = 'home') {
   activePage = active;
   enableAssistant();
@@ -58,9 +58,9 @@ export function mountWorkspace(active = 'home') {
   }
 }
 
-/** 功能：同步客户上下文和跨模块操作。输入：company 为 id/name 及可选 experiment 来源对象或 null，active 为页面。
- * 输出：无。逻辑：业务页生成客户导航，实验客户的邮件入口替换为来源与关联；清除入口返回全量目录。
- * 约束：不把客户保存到 localStorage，不通过导航修改业务数据。 */
+/** Function: Synchronize customer context and cross-module actions. Inputs: company contains id/name and optional experiment provenance, or null; active identifies the page.
+ * Outputs: None. Logic: Generate business-page customer navigation, replace experiment mail links with source/relations, and return to the full directory on clearing.
+ * Constraints: Never store customers in localStorage or modify business data through navigation. */
 export function setWorkspaceContext(company, active = activePage) {
   context = company;
   activePage = active;
@@ -71,9 +71,9 @@ export function setWorkspaceContext(company, active = activePage) {
   panel.innerHTML = h`<div><small>当前客户</small><strong>${e(company.name)}</strong></div><nav aria-label="当前客户工作区"><a href="${e(businessHref('directory'))}">客户档案</a>${company.experiment ? `<a href="/experiments/#${new URLSearchParams({ table: "crm.Company", pk: company.id })}">${language === "en" ? "Synthetic sources" : "实验来源与关联"}</a>` : `<a href="/#company/${encodeURIComponent(company.id)}">${t("邮件与分析")}</a>`}<a href="${e(businessHref('quotes'))}">报价</a><a href="${e(businessHref('orders'))}">订单</a><a href="${e(businessHref('follow-ups'))}">跟进</a><a href="${e(businessHref('actions'))}">沟通动作</a></nav><a class="context-clear" href="/business/#directory">全部客户 ↗</a>`;
 }
 
-/** 功能：更新首页待办摘要。输入：无，读取当前登录身份。输出：无。
- * 逻辑：仅含首页摘要的页面独立 GET 并行读取复核、概览及邮箱；三张待办卡使用服务器总数，不再渲染重复全局状态栏。
- * 约束：失败显示“暂不可用”与诊断，不以零代替；不自动同步、不确认动作、不改变业务状态。 */
+/** Function: Update the home task summary. Inputs: None; reads the current login identity. Outputs: None.
+ * Logic: Only pages containing the summary issue independent parallel GETs for review, overview, and mailboxes. Three task cards use server totals without a duplicate global status bar.
+ * Constraints: Show unavailable status and diagnostics on failure instead of zero; no automatic sync, action confirmation, or business-state changes. */
 export async function refreshWorkspace() {
   const sequence = ++refreshSequence;
   if (!document.getElementById('workspace-tasks')) return;

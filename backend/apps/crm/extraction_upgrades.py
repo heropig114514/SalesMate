@@ -1,11 +1,11 @@
-"""职责：提供按授权客户预览及显式排队历史 L1 升级的服务。
-实现：按共享契约区分事实结构和合成来源版本，复用持久修复队列；不改旧事实、不拉邮箱。
-关联：CompanyViewSet 暴露会话接口，lineage 执行重抽取，jobs 阻塞未完成修复的分析。
-目录：
-- upgrade_summary：读取当前客户的版本分布和修复状态。
-- queue_upgrades：在公司版本锁内排队旧事实升级。
-变量索引：
-- logger：仅输出 owner、公司身份及升级数量的诊断日志。
+"""Responsibility: Provide authorized-company preview and explicit queuing of historical L1 upgrades.
+Implementation: Distinguish fact schema and synthesized-source versions according to the shared contract and reuse the durable repair queue; neither alter old facts nor fetch mailboxes.
+Relationships: CompanyViewSet exposes the session interface, lineage performs re-extraction, and jobs block analyses with unfinished repairs.
+Directory:
+- upgrade_summary: Read the current company's version distribution and repair status.
+- queue_upgrades: Queue legacy-fact upgrades under the company version lock.
+Variable index:
+- logger: Diagnostic logger that outputs only owner and company identity and upgrade count.
 """
 import logging
 
@@ -21,11 +21,11 @@ from .selectors import latest_extraction
 logger = logging.getLogger("salesmate.extraction_upgrades")
 
 
-# 功能：读取客户当前业务邮件的版本兼容性和修复进度。
-# 输入：`company` 为已授权公司；调用方持公司锁以保证一致读取。
-# 输出：当前目标版本、各版本计数、不兼容邮件数及修复状态计数。
-# 逻辑：仅检查最新抽取；符合当前结构的合成来源不需要重新调用模型。
-# 约束：GET 不入队、不调用模型；不返回邮件正文或跨账户数据。
+# Function: Read version compatibility and repair progress for a company's current business emails.
+# Inputs: `company` is an authorized company; the caller holds its lock for a consistent read.
+# Outputs: Current target version, counts by version, incompatible-email count, and repair-status counts.
+# Logic: Inspect only the latest extraction; synthesized sources that satisfy the current schema need no model call.
+# Constraints: GET neither queues nor calls models, and returns no email bodies or cross-account data.
 def upgrade_summary(company):
     versions = {}
     incompatible = 0
@@ -42,11 +42,11 @@ def upgrade_summary(company):
             "incompatible_emails": incompatible, "repairs": repairs}
 
 
-# 功能：显式排队一个 owner 下指定客户的旧版事实升级。
-# 输入：`owner` 为认证员工，`company_id` 为客户 UUID，`expected` 为 If-Match revision。
-# 输出：更新后的预览和本次新建、复用的任务数量及公司 revision。
-# 逻辑：先验证公司归属及版本；仅排队结构不兼容的业务邮件；失败任务在此明确请求后重排。
-# 约束：不修改人工决定、不删除旧抽取、不调用模型；排队递增 revision，阻止旧分析写回。
+# Function: Explicitly queue legacy-fact upgrades for one company under an owner.
+# Inputs: `owner` is the authenticated employee, `company_id` is the company UUID, and `expected` is the If-Match revision.
+# Outputs: Updated preview, counts of jobs created and reused this time, and the company revision.
+# Logic: Validate company ownership and version first; queue only structurally incompatible business emails; failed jobs are rescheduled only through this explicit request.
+# Constraints: Does not alter human decisions, delete old extractions, or call a model; queuing increments revision and prevents old analyses from writing back.
 @transaction.atomic
 def queue_upgrades(owner, company_id, expected):
     company = company_for(owner, company_id, lock=True)

@@ -1,26 +1,26 @@
-"""职责：静态核对 Python 声明注释、文件目录与变量索引，不导入业务模块。
-实现：解析 AST 获取实际符号，比较结构化说明；汇总问题并以非零退出码阻止误报通过。
-关联：默认检查软件根目录 backend/ 内全部 Python 文件；格式见 docs/coding-agent-guidelines.md。
+"""Responsibility: Statically check Python declaration comments, declaration directories, and variable indexes without importing business modules.
+Implementation: Parse AST symbols and compare structured documentation; aggregate issues and return nonzero to prevent false success.
+Relationships: Check all Python files under backend/ by default; see docs/coding-agent-guidelines.md for the format.
 
-目录：
-- Inventory：收集声明与赋值名称的 AST 访问器。
-- Inventory.__init__：初始化作用域栈、声明表和变量集合。
-- Inventory.qualified：按当前词法作用域生成限定名称。
-- Inventory.visit_ClassDef：记录类并进入类作用域。
-- Inventory.visit_FunctionDef：记录函数并进入函数作用域。
-- Inventory.visit_AsyncFunctionDef：按相同规则记录异步函数。
-- Inventory.visit_Name：收集模块或类作用域中的赋值名称。
-- sections：解析固定标题的结构化说明。
-- check_index：校验索引格式、重复、缺失及失效条目。
-- declaration_doc：读取声明前注释，或声明自身的 docstring。
-- check_source：检查源码文本，供工作区及 Git 快照使用同一结构规则。
-- check_file：检查单文件并返回全部可定位的问题。
-- main：解析路径、扫描文件、报告问题并返回退出码。
+Directory:
+- Inventory: Visit AST declarations and assignment names.
+- Inventory.__init__: Initialize scope, declaration, and variable collections.
+- Inventory.qualified: Qualify names using the current lexical scope.
+- Inventory.visit_ClassDef: Record a class and enter its scope.
+- Inventory.visit_FunctionDef: Record a function and enter its scope.
+- Inventory.visit_AsyncFunctionDef: Apply the same rules to asynchronous functions.
+- Inventory.visit_Name: Collect assignments in module or class scopes.
+- sections: Parse structured documentation with fixed headings.
+- check_index: Validate index formatting, duplicates, missing names, and stale entries.
+- declaration_doc: Read preceding comments or the declaration's own docstring.
+- check_source: Apply identical structural rules to working-tree and Git source snapshots.
+- check_file: Check one file and return all located issues.
+- main: Parse paths, scan files, report issues, and return an exit code.
 
-变量索引：
-- PROJECT_ROOT：由脚本位置确定的软件根目录 backend，不依赖启动目录。
-- MODULE_SECTIONS：模块说明必须包含的标题。
-- DECLARATION_SECTIONS：声明说明可用的标题，函数要求全部提供。
+Variable index:
+- PROJECT_ROOT: Locate the backend software root from this script, independently of the working directory.
+- MODULE_SECTIONS: Required module-documentation headings.
+- DECLARATION_SECTIONS: Allowed declaration headings; functions require all of them.
 """
 
 import argparse
@@ -31,37 +31,37 @@ import sys
 import tokenize
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODULE_SECTIONS = ("职责", "实现", "关联", "目录", "变量索引")
-DECLARATION_SECTIONS = ("功能", "输入", "输出", "逻辑", "约束")
+MODULE_SECTIONS = ("Responsibility", "Implementation", "Relationships", "Directory", "Variable index")
+DECLARATION_SECTIONS = ("Function", "Inputs", "Outputs", "Logic", "Constraints")
 
 
-# 功能：收集实际实现的声明及模块、类作用域赋值名称。
-# 逻辑：维护词法作用域栈，声明用点分限定名；函数局部变量不进入文件变量索引。
-# 约束：不执行代码、不枚举继承成员、导入别名、属性或字典键；同名条件分支合并索引。
+# Function: Collect implemented declarations and module/class assignment names.
+# Logic: Maintain lexical scope, using dotted declaration names; exclude function locals from variable indexes.
+# Constraints: Never execute code or enumerate inherited members, imports, attributes, or dictionary keys; merge names repeated across conditional branches.
 class Inventory(ast.NodeVisitor):
-    # 功能：建立一次文件扫描的独立状态。
-    # 输入：无外部参数。
-    # 输出：无返回值；初始化 scope、declarations、variables 三个实例属性。
-    # 逻辑：栈记录作用域类型与名称，声明保留 AST 节点，变量按集合去重。
-    # 约束：每个文件创建新实例，避免不同模块的符号互相污染。
+    # Function: Create independent state for one file scan.
+    # Inputs: No external arguments.
+    # Outputs: None; initialize scope, declarations, and variables instance attributes.
+    # Logic: Track scope type/name on a stack, retain declaration AST nodes, and deduplicate variables with a set.
+    # Constraints: Create a fresh instance per file to avoid mixing module symbols.
     def __init__(self):
         self.scope = []
         self.declarations = []
         self.variables = set()
 
-    # 功能：生成索引使用的限定名称。
-    # 输入：`name` 为当前声明或变量的原始名称。
-    # 输出：以点连接的作用域路径字符串。
-    # 逻辑：依次连接外层类或函数名与当前名称。
-    # 约束：不解析运行时别名或继承关系。
+    # Function: Generate a qualified index name.
+    # Inputs: `name` is the current declaration or variable name.
+    # Outputs: A dotted scope-path string.
+    # Logic: Join enclosing class/function names and the current name in order.
+    # Constraints: Do not resolve runtime aliases or inheritance.
     def qualified(self, name):
         return ".".join([entry[1] for entry in self.scope] + [name])
 
-    # 功能：记录类声明并扫描其内部实现。
-    # 输入：`node` 为 ClassDef AST 节点。
-    # 输出：无返回值；更新声明、变量和暂时的作用域状态。
-    # 逻辑：先记录外层限定名，再压入类作用域并访问类体，最后弹栈。
-    # 约束：只遍历类体，类装饰器和基类表达式不属于该类的声明目录。
+    # Function: Record a class and scan its implementation.
+    # Inputs: `node` is a ClassDef AST node.
+    # Outputs: None; update declarations, variables, and temporary scope state.
+    # Logic: Record the outer qualified name, push class scope, visit the body, then pop.
+    # Constraints: Visit the body only; decorators and base expressions are not this class's declaration directory.
     def visit_ClassDef(self, node):
         self.declarations.append((self.qualified(node.name), node))
         self.scope.append(("class", node.name))
@@ -69,11 +69,11 @@ class Inventory(ast.NodeVisitor):
             self.visit(child)
         self.scope.pop()
 
-    # 功能：记录函数或方法，并查找内部嵌套声明。
-    # 输入：`node` 为 FunctionDef 或结构兼容的 AsyncFunctionDef 节点。
-    # 输出：无返回值；更新声明及暂时的作用域状态。
-    # 逻辑：在函数作用域中访问函数体，避免把普通局部变量列入模块索引。
-    # 约束：装饰器、默认参数表达式不作为函数体扫描；嵌套类仍独立收集类变量。
+    # Function: Record a function/method and find nested declarations.
+    # Inputs: `node` is a FunctionDef or structurally compatible AsyncFunctionDef.
+    # Outputs: None; update declarations and temporary scope state.
+    # Logic: Visit the body in function scope so ordinary locals do not enter module indexes.
+    # Constraints: Do not scan decorators/default expressions as the body; nested classes still collect their own class variables.
     def visit_FunctionDef(self, node):
         self.declarations.append((self.qualified(node.name), node))
         self.scope.append(("function", node.name))
@@ -81,80 +81,80 @@ class Inventory(ast.NodeVisitor):
             self.visit(child)
         self.scope.pop()
 
-    # 功能：让异步声明遵循同步声明的检查规则。
-    # 输入：`node` 为 AsyncFunctionDef 节点。
-    # 输出：无返回值；更新同一份符号清单。
-    # 逻辑：委托 visit_FunctionDef 完成作用域管理。
-    # 约束：仅分析语法，不启动或等待协程。
+    # Function: Apply synchronous declaration rules to asynchronous declarations.
+    # Inputs: `node` is an AsyncFunctionDef.
+    # Outputs: None; update the same symbol inventory.
+    # Logic: Delegate scope management to visit_FunctionDef.
+    # Constraints: Syntax analysis only; never start or await coroutines.
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
-    # 功能：记录模块或类作用域中的变量绑定。
-    # 输入：`node` 为 Name AST 节点。
-    # 输出：无返回值；必要时向 variables 加入限定名称。
-    # 逻辑：仅收集 Store 上下文，涵盖赋值、解构、注解赋值和循环绑定。
-    # 约束：推导式有独立作用域，其绑定由 check_file 的扫描准备步骤排除。
+    # Function: Record module/class variable bindings.
+    # Inputs: `node` is a Name AST node.
+    # Outputs: None; add qualified names to variables when applicable.
+    # Logic: Collect Store contexts, including assignments, unpacking, annotations, and loop bindings.
+    # Constraints: Comprehension bindings have separate scopes and are excluded during check_source preparation.
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Store) and (not self.scope or self.scope[-1][0] == "class"):
             self.variables.add(self.qualified(node.id))
 
 
-# 功能：从说明文本提取指定标题的内容。
-# 输入：`text` 为说明字符串；`headings` 为允许的标题序列。
-# 输出：标题到去除首尾空白的内容映射；重复标题或标题外正文导致 ValueError。
-# 逻辑：按行识别全角冒号标题，后续行归属最近标题。
-# 约束：不进行自然语言语义校验；标题必须独占行首且不可重复。
+# Function: Extract content under specified documentation headings.
+# Inputs: `text` is documentation; `headings` is the allowed heading sequence.
+# Outputs: Headings mapped to stripped content; duplicate headings or unclassified introductory text raise ValueError.
+# Logic: Recognize English headings followed by ASCII colons; subsequent lines belong to the latest heading.
+# Constraints: No natural-language semantic validation; headings must start the line and cannot repeat.
 def sections(text, headings):
     result = {}
     current = None
     for line in text.splitlines():
         line = line.strip()
-        match = re.match(r"^(" + "|".join(map(re.escape, headings)) + r")：(.*)$", line)
+        match = re.match(r"^(" + "|".join(map(re.escape, headings)) + r"):(.*)$", line)
         if match:
             current = match.group(1)
             if current in result:
-                raise ValueError(f"重复标题：{current}")
+                raise ValueError(f"Duplicate heading: {current}")
             result[current] = [match.group(2).strip()]
         elif line:
             if current is None:
-                raise ValueError("标题前存在未归类正文")
+                raise ValueError("Unclassified text before the first heading")
             result[current].append(line)
     return {key: "\n".join(value).strip() for key, value in result.items()}
 
 
-# 功能：检查人工维护的索引是否与 AST 符号集合一致。
-# 输入：`text` 为索引正文；`expected` 为实际名称集合；`label` 为诊断中的索引类型。
-# 输出：问题字符串列表，空列表表示结构一致。
-# 逻辑：解析每行的名称与用途，比较集合并单独报告重复和格式错误。
-# 约束：空索引必须写“- 无”；用途是否准确仍由人工核验。
+# Function: Compare manually maintained indexes with AST symbol sets.
+# Inputs: `text` is index content; `expected` is the actual name set; `label` identifies the index in diagnostics.
+# Outputs: Issue strings; an empty list means structural agreement.
+# Logic: Parse names/purposes by line, compare sets, and report duplicates/format errors separately.
+# Constraints: Empty indexes must say '- None'; purpose accuracy still requires human review.
 def check_index(text, expected, label):
     names = set()
     errors = []
-    if text.strip() == "- 无":
+    if text.strip() == "- None":
         lines = []
     else:
         lines = text.splitlines()
     for line in lines:
-        match = re.fullmatch(r"- ([\w.]+)：\s*(\S.*)", line)
+        match = re.fullmatch(r"- ([\w.]+):\s*(\S.*)", line)
         if not match:
-            errors.append(f"{label}条目格式错误，应为 '- 名称：用途'：{line}")
+            errors.append(f"{label} invalid entry format; expected '- name: purpose': {line}")
             continue
         name = match.group(1)
         if name in names:
-            errors.append(f"{label}重复条目：{name}")
+            errors.append(f"{label} duplicate entry: {name}")
         names.add(name)
     for name in sorted(expected - names):
-        errors.append(f"{label}缺少：{name}")
+        errors.append(f"{label} missing: {name}")
     for name in sorted(names - expected):
-        errors.append(f"{label}失效条目：{name}")
+        errors.append(f"{label} stale entry: {name}")
     return errors
 
 
-# 功能：取得函数或类的结构化实现说明。
-# 输入：`node` 为声明节点；`lines` 为文件源码行列表。
-# 输出：声明前连续注释的正文，或不存在该注释时的 docstring 字符串。
-# 逻辑：从最早装饰器或声明行向前读取连续注释，剥离 # 前缀。
-# 约束：声明说明与装饰器或声明之间不能有空行；已有 docstring 不修改。
+# Function: Retrieve structured implementation documentation for a function/class.
+# Inputs: `node` is a declaration; `lines` contains the source lines.
+# Outputs: Consecutive preceding comment content, or the declaration docstring if absent.
+# Logic: Scan backward from the earliest decorator/declaration and remove comment prefixes.
+# Constraints: No blank line may separate comments from decorators/declarations; existing docstrings remain untouched.
 def declaration_doc(node, lines):
     start = min([node.lineno] + [item.lineno for item in node.decorator_list]) - 1
     comments = []
@@ -167,34 +167,34 @@ def declaration_doc(node, lines):
     return ast.get_docstring(node) or ""
 
 
-# 功能：验证一个 Python 文件的说明结构及符号同步情况。
-# 输入：`path` 为待检查文件的 Path。
-# 输出：包含文件路径和行号的问题列表；无问题时为空。
-# 逻辑：按源码编码只读文件，委托 check_source 核对说明，保证 Git 快照使用同一规则。
-# 约束：读取、编码或语法错误均明确报错；不导入模块，不检查自然语言真实性或 Git 原子性。
+# Function: Check documentation structure and symbol synchronization for one Python file.
+# Inputs: `path` is the file Path.
+# Outputs: Located issues with file/line information, or an empty list.
+# Logic: Read using the source encoding and delegate to check_source, keeping Git snapshots under identical rules.
+# Constraints: Report read/encoding/syntax failures explicitly; never import modules or claim semantic truth or Git atomicity.
 def check_file(path):
     try:
         with tokenize.open(path) as source_file:
             source = source_file.read()
     except (OSError, UnicodeError, SyntaxError, LookupError) as exc:
-        return [f"{path}:{getattr(exc, 'lineno', None) or 1}: 无法读取或解析源码（{type(exc).__name__}）；检查编码、权限和语法"]
+        return [f"{path}:{getattr(exc, 'lineno', None) or 1}: Cannot read or parse source ({type(exc).__name__}); check encoding, permissions, and syntax"]
     return check_source(source, path)
 
 
-# 功能：验证内存源码的说明结构与实际声明是否一致。
-# 输入：`source` 为解码后的 Python 源码；`path` 为仅用于错误定位的文件标签。
-# 输出：可定位的问题列表，空列表表示结构检查通过。
-# 逻辑：静态解析 AST，核对模块索引、声明标题及输入参数；不读取标签对应的文件。
-# 约束：源码不会被执行；语法错误返回诊断，说明真实性与 Git 原子性不在本检查范围。
+# Function: Compare in-memory documentation structure with actual declarations.
+# Inputs: `source` is decoded Python source; `path` is a diagnostic label only.
+# Outputs: Located issues; an empty list means the structural check passed.
+# Logic: Statically parse the AST and check module indexes, declaration headings, and input parameters without reading the labeled path.
+# Constraints: Never execute source; syntax errors return diagnostics. Documentation accuracy and Git atomicity are outside this check.
 def check_source(source, path):
     try:
         tree = ast.parse(source, filename=str(path))
     except (SyntaxError, ValueError) as exc:
-        return [f"{path}:{getattr(exc, 'lineno', None) or 1}: 无法解析源码（{type(exc).__name__}）"]
+        return [f"{path}:{getattr(exc, 'lineno', None) or 1}: Cannot parse source ({type(exc).__name__})"]
 
     inventory = Inventory()
-    # 推导式的迭代变量不会泄露到模块或类命名空间；扫描其余 AST 保留原始行号。
-    # 推导式中的海象赋值可能绑定外部变量，因此保留 NamedExpr 节点继续扫描。
+    # Comprehension iteration variables do not leak into module/class namespaces; preserve original positions while scanning other nodes.
+    # Walrus expressions may bind outer variables, so retain NamedExpr nodes for scanning.
     for node in ast.walk(tree):
         if isinstance(node, ast.comprehension):
             for name in ast.walk(node.target):
@@ -205,12 +205,12 @@ def check_source(source, path):
     try:
         module = sections(ast.get_docstring(tree) or "", MODULE_SECTIONS)
     except ValueError as exc:
-        errors.append(f"{path}:1: 模块说明格式错误：{exc}")
+        errors.append(f"{path}:1: Invalid module documentation format: {exc}")
         module = {}
     for heading in MODULE_SECTIONS:
         if not module.get(heading):
-            errors.append(f"{path}:1: 模块说明缺少非空标题：{heading}")
-    for label, expected in (("目录", {name for name, _ in inventory.declarations}), ("变量索引", inventory.variables)):
+            errors.append(f"{path}:1: Module documentation missing nonempty heading: {heading}")
+    for label, expected in (("Directory", {name for name, _ in inventory.declarations}), ("Variable index", inventory.variables)):
         errors.extend(f"{path}:1: {error}" for error in check_index(module.get(label, ""), expected, label))
 
     for name, node in inventory.declarations:
@@ -218,34 +218,34 @@ def check_source(source, path):
         try:
             doc = sections(declaration_doc(node, source.splitlines()), DECLARATION_SECTIONS)
         except ValueError as exc:
-            errors.append(f"{location} 声明说明格式错误：{exc}")
+            errors.append(f"{location} Invalid declaration documentation format: {exc}")
             doc = {}
-        required = ("功能", "逻辑", "约束") if isinstance(node, ast.ClassDef) else DECLARATION_SECTIONS
+        required = ("Function", "Logic", "Constraints") if isinstance(node, ast.ClassDef) else DECLARATION_SECTIONS
         for heading in required:
             if not doc.get(heading):
-                errors.append(f"{location} 缺少非空说明：{heading}")
+                errors.append(f"{location} Missing nonempty documentation: {heading}")
         if not isinstance(node, ast.ClassDef):
             args = node.args
             parameters = args.posonlyargs + args.args + args.kwonlyargs
             parameters += [arg for arg in (args.vararg, args.kwarg) if arg is not None]
-            documented = set(re.findall(r"`([A-Za-z_]\w*)`", doc.get("输入", "")))
+            documented = set(re.findall(r"`([A-Za-z_]\w*)`", doc.get("Inputs", "")))
             actual = {parameter.arg for parameter in parameters}
             for parameter in parameters:
-                if parameter.arg not in {"self", "cls"} and f"`{parameter.arg}`" not in doc.get("输入", ""):
-                    errors.append(f"{location} 输入说明缺少参数：{parameter.arg}（须用反引号标识）")
+                if parameter.arg not in {"self", "cls"} and f"`{parameter.arg}`" not in doc.get("Inputs", ""):
+                    errors.append(f"{location} Inputs missing parameter: {parameter.arg} (use backticks)")
             for parameter in sorted(documented - actual):
-                errors.append(f"{location} 输入说明含失效参数：{parameter}")
+                errors.append(f"{location} Inputs contain stale parameter: {parameter}")
     return errors
 
 
-# 功能：执行只读文档规范检查并返回可用于开发流程的状态码。
-# 输入：`argv` 为可选命令行参数序列；None 表示读取进程参数。
-# 输出：通过返回 0，发现问题返回 1；argparse 参数错误按标准行为退出 2。
-# 逻辑：默认扫描软件根目录 backend，包含移入的 tools；显式路径可为 Python 文件或目录。
-# 约束：缺失路径、空目录或非 Python 文件均失败；不会自动生成说明或修改源码。
+# Function: Run read-only documentation checks with development-workflow exit codes.
+# Inputs: `argv` is an optional argument sequence; None reads process arguments.
+# Outputs: Return 0 on success or 1 for issues; argparse retains exit 2 for argument errors.
+# Logic: Scan backend including tools by default; explicit paths may select Python files or directories.
+# Constraints: Missing paths, empty directories, and non-Python files fail; never generate documentation or modify source automatically.
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="检查 Python 声明说明、目录和变量索引；语义一致性仍需人工审核。")
-    parser.add_argument("paths", nargs="*", type=Path, help="可选 Python 文件或目录，默认软件根目录 backend/（包含 tools/）")
+    parser = argparse.ArgumentParser(description="Check Python declaration documentation, directories, and variable indexes; semantics still require human review.")
+    parser.add_argument("paths", nargs="*", type=Path, help="Optional Python files/directories; defaults to backend/ including tools/")
     args = parser.parse_args(argv)
     paths = args.paths or [PROJECT_ROOT]
     files = set()
@@ -254,19 +254,19 @@ def main(argv=None):
         if path.is_dir():
             found = {p.resolve() for p in path.rglob("*.py") if "__pycache__" not in p.parts}
             if not found:
-                errors.append(f"{path}:1: 目录没有 Python 文件，请检查扫描路径")
+                errors.append(f"{path}:1: No Python files in directory; check the scan path")
             files.update(found)
         elif path.is_file() and path.suffix == ".py":
             files.add(path.resolve())
         else:
-            errors.append(f"{path}:1: 路径不存在或不是 Python 文件/目录")
+            errors.append(f"{path}:1: Path is missing or is not a Python file/directory")
     for path in sorted(files):
         errors.extend(check_file(path))
     if errors:
         print("\n".join(errors), file=sys.stderr)
-        print(f"文档检查失败：检查 {len(files)} 个文件，发现 {len(errors)} 项问题。", file=sys.stderr)
+        print(f"Documentation check failed: {len(files)} files checked, {len(errors)} issues.", file=sys.stderr)
         return 1
-    print(f"文档结构检查通过：{len(files)} 个文件；仍须人工核对说明语义及代码与注释的同步交付。")
+    print(f"Documentation structure check passed: {len(files)} files; review semantics and synchronized code/documentation delivery manually.")
     return 0
 
 

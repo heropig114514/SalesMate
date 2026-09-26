@@ -1,12 +1,12 @@
-"""职责：验证、加密保存及移除当前员工的 QQ 邮箱连接。
-实现：能力开关控制连接和解密；固定 IMAP 验证登录及文件夹，邮箱锁保护活动同步关系。
-关联：qq_views 提供 Session 接口，qq_sync/worker 消费凭证，sync_scope 冻结本次范围，复用 sales 的显式加密器。
-目录：
-- connect_mailbox：验证授权后保存并请求首次同步。
-- authorization_code：解密已保存授权码。
-- disconnect_mailbox：移除非活动 QQ 连接并保留历史。
-变量索引：
-- logger：只记录邮箱 ID 与连接操作。
+"""Responsibility: Validate, encrypt and store, and remove the current employee's QQ mailbox connection.
+Implementation: A capability switch controls connection and decryption; fixed IMAP checks validate login and folders, and the mailbox lock protects active synchronization relationships.
+Relationships: qq_views provides the Session interface, qq_sync and worker consume credentials, sync_scope freezes this scope, and the explicit sales encryptor is reused.
+Directory:
+- connect_mailbox: Save verified authorization and request the initial synchronization.
+- authorization_code: Decrypt a stored authorization code.
+- disconnect_mailbox: Remove an inactive QQ connection while preserving history.
+Variable index:
+- logger: Records only mailbox ID and connection operation.
 """
 import logging
 
@@ -24,11 +24,11 @@ from .sync_scope import snapshot
 logger = logging.getLogger("salesmate.qq_connection")
 
 
-# 功能：连接当前员工的 QQ 邮箱并排队首次同步。
-# 输入：`owner` 为当前会话员工；`address` 为验证后地址；`code` 为授权码；`sync_options` 为本次限制。
-# 输出：已授权 Mailbox；网络或配置失败不创建连接。
-# 逻辑：先检查 QQ 能力，再校验范围及 IMAP 登录/文件夹，最后锁邮箱保存和排队。
-# 约束：活动批次中不可换凭证；Gmail 连接不能被覆盖；网络错误只输出安全说明。
+# Function: Connect the current employee's QQ mailbox and queue its initial synchronization.
+# Inputs: `owner` is the current session employee; `address` is the validated address; `code` is an authorization code; and `sync_options` limits this run.
+# Outputs: An authorized Mailbox; network or configuration failure does not create a connection.
+# Logic: Check QQ capability, validate scope and IMAP login/folders, then lock the mailbox to save and queue.
+# Constraints: Credentials cannot change during an active batch, Gmail connections cannot be overwritten, and network errors expose only safe guidance.
 @sensitive_variables("code", "cipher", "client")
 def connect_mailbox(owner, address, code, sync_options):
     require_qq_enabled("connect_mailbox")
@@ -61,11 +61,11 @@ def connect_mailbox(owner, address, code, sync_options):
         return mailbox
 
 
-# 功能：获取运行批次需要的 QQ 授权码。
-# 输入：`credential` 为已通过邮箱 owner 校验的 QQCredential。
-# 输出：明文授权码，仅用于本次内存内 IMAP 登录。
-# 逻辑：先检查 QQ 能力，再通过显式 vault 密钥认证解密。
-# 约束：缺失/不匹配密钥时报错，不生成新密钥、不记录密文或明文。
+# Function: Obtain the QQ authorization code needed by a running batch.
+# Inputs: `credential` is a QQCredential already validated through its mailbox owner.
+# Outputs: Plaintext authorization code for this in-memory IMAP login only.
+# Logic: Check QQ capability first, then decrypt with authentication through the explicit vault key.
+# Constraints: Raise for absent or mismatched keys; do not generate a new key or log ciphertext or plaintext.
 @sensitive_variables()
 def authorization_code(credential):
     require_qq_enabled("read_authorization")
@@ -75,11 +75,11 @@ def authorization_code(credential):
         raise InvalidState("QQ 授权码无法解密，请检查 SALESMATE_VAULT_KEY 或重新连接邮箱。") from None
 
 
-# 功能：移除员工 QQ 本地连接。
-# 输入：`owner` 为当前员工；`mailbox_id` 为目标邮箱。
-# 输出：更新后的邮箱实例。
-# 逻辑：邮箱锁内拒绝活动批次，删除 QQ 密文并更新显示状态。
-# 约束：保留历史邮件、检查点与画像；拒绝用此接口移除 Gmail 授权。
+# Function: Remove an employee's local QQ connection.
+# Inputs: `owner` is the current employee and `mailbox_id` is the target mailbox.
+# Outputs: Updated mailbox instance.
+# Logic: Reject active batches while holding the mailbox lock, delete QQ ciphertext, and update display state.
+# Constraints: Retains historical emails, checkpoints, and profiles; rejects removal of Gmail authorization through this interface.
 @transaction.atomic
 def disconnect_mailbox(owner, mailbox_id):
     mailbox = mailbox_for(owner, mailbox_id, lock=True)

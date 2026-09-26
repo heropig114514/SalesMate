@@ -1,16 +1,16 @@
-"""职责：验证 QQ 临时停用覆盖入口、队列和外部执行，同时保留历史数据及 Gmail。
-实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；隔离 PostgreSQL、真实服务及 HTTP 视图；网络调用用 Mock 证明未发生。
-关联：common.mail_features、CRM 调度、销售动作及运行时能力接口。
-目录：
-- QQDisabledTests：QQ 默认关闭集成验证。
-- QQDisabledTests.setUp：准备个人 QQ/Gmail 邮箱与客户端。
-- QQDisabledTests.test_connections_fail_before_network：连接在网络前拒绝。
-- QQDisabledTests.test_queue_pauses_qq_and_keeps_gmail：新请求拒绝，既有队列暂停，Gmail 仍可领取。
-- QQDisabledTests.test_history_and_credentials_remain：历史原文和凭证继续保留。
-- QQDisabledTests.test_sales_actions_cannot_send_or_verify：批准、准备、执行及核对无法访问 QQ。
-- QQDisabledTests.test_capabilities_and_restoration：能力发现与恢复配置一致。
-变量索引：
-- 无
+"""Responsibility: Verify that temporary QQ disablement covers entry points, queues, and external execution while retaining historical data and Gmail.
+Implementation: Gmail test batches explicitly select at most 20 messages rather than the runtime default; use isolated PostgreSQL, real services and HTTP views, and mocks to prove network calls do not occur.
+Relationships: Covers `common.mail_features`, CRM scheduling, sales actions, and runtime capability APIs.
+Directory:
+- QQDisabledTests: QQ-default-disabled integration verification.
+- QQDisabledTests.setUp: Prepare personal QQ/Gmail mailboxes and a client.
+- QQDisabledTests.test_connections_fail_before_network: Reject connections before network access.
+- QQDisabledTests.test_queue_pauses_qq_and_keeps_gmail: Reject new requests, pause existing queues, and keep Gmail claimable.
+- QQDisabledTests.test_history_and_credentials_remain: Retain historical source data and credentials.
+- QQDisabledTests.test_sales_actions_cannot_send_or_verify: Approval, preparation, execution, and verification cannot access QQ.
+- QQDisabledTests.test_capabilities_and_restoration: Keep capability discovery consistent with restored configuration.
+Variable index:
+- None
 """
 import uuid
 from unittest.mock import patch
@@ -30,16 +30,16 @@ from apps.sales import actions
 from apps.sales.models import ToolAction
 
 
-# 功能：验证禁用配置的所有外部边界。
-# 逻辑：固定 QQ 关闭，每例使用独立数据库事务。
-# 约束：不连接真实邮箱，不删除业务数据，不验证第三方授权有效性。
+# Function: Verify every external boundary of disabled configuration.
+# Logic: Keep QQ disabled and use an independent database transaction per case.
+# Constraints: Do not connect to real mailboxes, delete business data, or verify third-party authorization validity.
 @override_settings(QQ_MAIL_ENABLED=False, ANALYSIS_PROVIDER="agent")
 class QQDisabledTests(TestCase):
-    # 功能：建立个人邮箱与登录客户端。
-    # 输入：无外部参数，使用隔离测试库。
-    # 输出：user、qq、credential、client 实例状态。
-    # 逻辑：QQ 密文故意不可解密，确保禁用判断发生在解密前。
-    # 约束：不使用真实邮箱凭证。
+    # Function: Establish a personal mailbox and logged-in client.
+    # Inputs: No external parameters; uses an isolated test database.
+    # Outputs: Instance state for `user`, `qq`, `credential`, and `client`.
+    # Logic: QQ ciphertext is intentionally undecryptable to ensure disablement is checked before decryption.
+    # Constraints: Do not use real mailbox credentials.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="qq-disabled")
         self.qq = Mailbox.objects.create(owner=self.user, address="fixture@qq.com")
@@ -47,11 +47,11 @@ class QQDisabledTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
-    # 功能：验证连接入口不访问网络。
-    # 输入：合成 QQ 地址、授权码和同步范围。
-    # 输出：两个入口返回 503，授权记录数量不变。
-    # 逻辑：Mock IMAP/SMTP 连接并断言没有调用。
-    # 约束：只覆盖已认证请求；匿名权限沿用现有测试。
+    # Function: Verify that connection entry points do not access the network.
+    # Inputs: Synthetic QQ address, authorization code, and synchronization range.
+    # Outputs: Both entry points return 503 and authorization-record count remains unchanged.
+    # Logic: Mock IMAP/SMTP connections and assert they are not called.
+    # Constraints: Cover authenticated requests only; existing tests cover anonymous permissions.
     def test_connections_fail_before_network(self):
         with patch("apps.crm.qq_connection.qq_mail.connect") as imap, patch("apps.sales.qq_smtp.smtplib.SMTP_SSL") as smtp:
             data = {"address": "fixture@qq.com", "authorization_code": "abcdefghijklmnop"}
@@ -65,11 +65,11 @@ class QQDisabledTests(TestCase):
             authorization_code(self.credential)
         self.assertEqual(QQCredential.objects.count(), 1)
 
-    # 功能：验证 QQ 队列暂停但不阻塞 Gmail。
-    # 输入：较早 QQ 排队记录及同账户较晚 Gmail 记录。
-    # 输出：QQ 原队列不变；调度器仅在有 Gmail 时选择该员工。
-    # 逻辑：先验证 QQ-only 无待办，再添加 Gmail 并实际领取。 Gmail 批次显式提供 20 封范围，QQ 开关不改变其可领取性。
-    # 约束：不执行任何邮箱网络请求。
+    # Function: Verify that QQ queues pause without blocking Gmail.
+    # Inputs: An earlier queued QQ record and a later Gmail record for the same account.
+    # Outputs: The original QQ queue remains unchanged; the scheduler selects the user only when Gmail exists.
+    # Logic: First verify QQ-only has no pending work, then add Gmail and claim it; the Gmail batch explicitly supplies a 20-message range and the QQ switch does not change claimability.
+    # Constraints: Do not execute any mailbox network request.
     def test_queue_pauses_qq_and_keeps_gmail(self):
         pending = MailboxSyncRun.objects.create(mailbox=self.qq)
         with self.assertRaises(QQMailDisabled):
@@ -84,11 +84,11 @@ class QQDisabledTests(TestCase):
         pending.refresh_from_db()
         self.assertEqual(pending.status, "queued")
 
-    # 功能：验证历史仍可查询。
-    # 输入：模拟已入库的 QQ 来源邮件。
-    # 输出：已保存邮件接口返回 200 且包含邮件；邮箱和凭证保留。
-    # 逻辑：通过正式入库服务准备历史，不执行同步。
-    # 约束：原文属于合成测试，不代表真实 QQ 采集。
+    # Function: Verify that history remains queryable.
+    # Inputs: A synthetic QQ-source message that has been ingested.
+    # Outputs: Saved-message API returns 200 and includes the message; mailbox and credential remain.
+    # Logic: Prepare history through the production ingestion service without running synchronization.
+    # Constraints: The original text is synthetic test data and does not represent real QQ collection.
     def test_history_and_credentials_remain(self):
         payload = rules.extract_email(self.qq, "buyer@example.com", "采购询价", "需求：采购设备")
         payload["source"] = "qq_real"
@@ -99,11 +99,11 @@ class QQDisabledTests(TestCase):
         self.assertEqual(Email.objects.count(), 1)
         self.assertTrue(QQCredential.objects.filter(pk=self.credential.pk).exists())
 
-    # 功能：验证存量发信任务不会突破开关。
-    # 输入：合成 QQ 待确认、已批准和结果未知动作。
-    # 输出：准备/批准/核对拒绝；已批准执行记为 failed 且没有外部调用。
-    # 逻辑：构造冻结任务并检查 execute_provider 未触发，再验证用户仍可取消旧提案。
-    # 约束：不改变 Gmail 动作审批及失败语义。
+    # Function: Verify that existing send actions cannot bypass the switch.
+    # Inputs: Synthetic QQ pending-confirmation, approved, and uncertain actions.
+    # Outputs: Preparation, approval, and verification reject; approved execution is marked failed with no external call.
+    # Logic: Construct a frozen action and check `execute_provider` is not called, then verify the user can still cancel an old proposal.
+    # Constraints: Do not change Gmail action approval or failure semantics.
     def test_sales_actions_cannot_send_or_verify(self):
         company = Company.objects.create(owner=self.user, group_key="manual:qq-disabled")
         action = ToolAction.objects.create(owner=self.user, company=company, tool="qq.send", parameters={}, idempotency_key=uuid.uuid4())
@@ -122,11 +122,11 @@ class QQDisabledTests(TestCase):
         with self.assertRaises(QQMailDisabled):
             actions.verify_action(action, self.user, action.revision)
 
-    # 功能：验证客户端能力和恢复行为。
-    # 输入：关闭配置及显式启用的局部设置。
-    # 输出：运行时与工具目录一致；开启后原 QQ 队列可领取。
-    # 逻辑：不删除任务，恢复仅改变可用性。
-    # 约束：未证明真实 SMTP/IMAP 可达。
+    # Function: Verify client capabilities and restoration behavior.
+    # Inputs: Disabled configuration and explicitly enabled local settings.
+    # Outputs: Runtime and tool registry agree; after enablement, the original QQ queue is claimable.
+    # Logic: Do not delete tasks; restoration changes availability only.
+    # Constraints: Does not prove real SMTP/IMAP reachability.
     def test_capabilities_and_restoration(self):
         self.assertFalse(self.client.get("/api/v1/demo/runtime/").data["qq_enabled"])
         self.assertNotIn("actions.prepare_qq", build_registry())

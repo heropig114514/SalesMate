@@ -1,24 +1,24 @@
-"""职责：验证 Windows/macOS/POSIX 本地启动器的锁、配置保护、分离会话及协作停止边界。
-实现：使用标准库、隔离临时目录和真实轻量子进程；POSIX 额外执行 Bash 入口及空依赖虚拟环境初始化。
-关联：local_server.py、start-local.sh；Django 和 Homebrew 的调用使用明确模拟，不访问业务数据库或外部服务。
+"""Responsibility: Verify lock, configuration-protection, detached-session, and cooperative-stop boundaries of the Windows/macOS/POSIX local launcher.
+Implementation: Use the standard library, isolated temporary directories, and real lightweight child processes; POSIX additionally executes the Bash entry point and empty-dependency virtual-environment setup.
+Relationships: Tests `local_server.py` and `start-local.sh`; Django and Homebrew calls use explicit mocks and never access business databases or external services.
 
-目录：
-- LocalServerTests：启动器边界测试集合。
-- LocalServerTests.test_lock_releases：检查独占锁及正常释放。
-- LocalServerTests.test_missing_env_generates_template：检查首次模板初始化及明确失败。
-- LocalServerTests.test_existing_env_is_not_overwritten：检查既有配置不被替换。
-- LocalServerTests.test_corrupt_state_is_not_ignored：检查状态损坏保留错误语义。
-- LocalServerTests.test_stop_dispatches_sigterm：检查停止文件能触发子进程主线程的 SIGTERM 处理器。
-- LocalServerTests.test_lock_visible_to_other_process：验证不同进程竞争同一运行锁。
-- LocalServerTests.test_spawn_detaches_session：验证日志及 POSIX 会话隔离，兼顾包含空格的目录。
-- LocalServerTests.test_database_options_are_platform_specific：检查平台、互斥及 Homebrew 服务名约束。
-- LocalServerTests.test_brew_run_existing_service：模拟验证显式 Homebrew 运行方式，保持迁移调用与现有配置。
-- LocalServerTests.test_shell_setup_and_actions：用空依赖及受控入口验证 Bash 3.2 兼容脚本的初始化、复用与动作转发。
-- LocalServerTests.test_shell_rejects_foreign_venv：验证 shell 不覆盖其他平台虚拟环境。
-- LocalServerTests.test_start_reports_current_failure：验证启动失败直接显示本轮诊断，同时排除历史错误。
+Directory:
+- LocalServerTests: Collection of launcher-boundary tests.
+- LocalServerTests.test_lock_releases: Check the exclusive lock and normal release.
+- LocalServerTests.test_missing_env_generates_template: Check initial template creation and explicit failure.
+- LocalServerTests.test_existing_env_is_not_overwritten: Check that existing configuration is not replaced.
+- LocalServerTests.test_corrupt_state_is_not_ignored: Check that a corrupt state preserves error semantics.
+- LocalServerTests.test_stop_dispatches_sigterm: Check that a stop file triggers the child main-thread SIGTERM handler.
+- LocalServerTests.test_lock_visible_to_other_process: Verify that separate processes contend for the same runtime lock.
+- LocalServerTests.test_spawn_detaches_session: Verify logs and POSIX session isolation, including directories with spaces.
+- LocalServerTests.test_database_options_are_platform_specific: Check platform, mutual-exclusion, and Homebrew service-name constraints.
+- LocalServerTests.test_brew_run_existing_service: Mock and verify explicit Homebrew execution while preserving migration calls and existing configuration.
+- LocalServerTests.test_shell_setup_and_actions: Verify initialization, reuse, and action forwarding in the Bash 3.2-compatible script with empty dependencies and a controlled entry point.
+- LocalServerTests.test_shell_rejects_foreign_venv: Verify that the shell does not overwrite a virtual environment from another platform.
+- LocalServerTests.test_start_reports_current_failure: Verify that startup failures show diagnostics from the current run while excluding historical errors.
 
-变量索引：
-- 无
+Variable index:
+- None
 """
 
 import json
@@ -35,15 +35,15 @@ from unittest.mock import Mock, MagicMock, patch
 import local_server
 
 
-# 功能：在隔离目录验证启动器控制边界。
-# 逻辑：对 Django/Homebrew 使用模拟，锁、停止信号、会话分离及 shell 入口通过真实 OS 行为验证。
-# 约束：不启动业务服务、不读取仓库 .env；空依赖 shell 测试不能证明完整依赖在该平台可安装。
+# Function: Verify launcher control boundaries in isolated directories.
+# Logic: Mock Django and Homebrew, while validating locks, stop signals, session isolation, and shell entry points through real OS behavior.
+# Constraints: Do not start business services or read the repository `.env`; empty-dependency shell tests cannot prove full dependencies install on that platform.
 class LocalServerTests(unittest.TestCase):
-    # 功能：验证后台启动失败时终端能显示本次安全原因，且不会误报旧状态。
-    # 输入：无外部参数；模拟退出的监督器、本轮与历史状态及固定时间。
-    # 输出：断言当前失败说明可见，历史说明不会出现在终端异常中。
-    # 逻辑：使用真实 control 路径，模拟进程退出而不启动实际服务。
-    # 约束：不读取日志或 .env，不访问数据库；本测试仅验证诊断传递。
+    # Function: Verify that a terminal shows the current safe reason when background startup fails and does not misreport old state.
+    # Inputs: No external parameters; mocks an exited supervisor, current and historical state, and a fixed time.
+    # Outputs: Asserts that the current failure detail is visible and historical detail is absent from the terminal exception.
+    # Logic: Use the real `control` path while mocking process exit without starting an actual service.
+    # Constraints: Do not read logs or `.env` or access a database; this test verifies diagnostic propagation only.
     def test_start_reports_current_failure(self):
         args = SimpleNamespace(action='start', wsl_distro=None, brew_service=None, no_browser=True)
         process = Mock()
@@ -58,11 +58,11 @@ class LocalServerTests(unittest.TestCase):
                 if timestamp < 100:
                     self.assertNotIn('Configure DATABASE_URL', str(caught.exception))
 
-    # 功能：验证并发启动保护能在句柄关闭后解除。
-    # 输入：无外部参数；创建独立临时运行目录。
-    # 输出：断言锁持有与释放状态。
-    # 逻辑：实际获得当前平台的文件锁，通过 running 探测竞争。
-    # 约束：finally 释放句柄；不触碰真实运行目录。
+    # Function: Verify that concurrent-start protection is removed after the handle closes.
+    # Inputs: No external parameters; creates an independent temporary runtime directory.
+    # Outputs: Asserts lock-held and lock-released states.
+    # Logic: Actually acquire the current-platform file lock and use `running` to detect contention.
+    # Constraints: Release the handle in `finally`; do not touch the real runtime directory.
     def test_lock_releases(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(local_server, 'RUNTIME', Path(directory)):
             self.assertFalse(local_server.running())
@@ -73,11 +73,11 @@ class LocalServerTests(unittest.TestCase):
                 handle.close()
             self.assertFalse(local_server.running())
 
-    # 功能：验证首次生成模板不会伪造数据库已配置。
-    # 输入：无外部参数；临时目录仅含受控模板。
-    # 输出：断言随机密钥已生成且明确要求配置数据库。
-    # 逻辑：调用 prepare 的无配置路径，禁止进入 Django 初始化。
-    # 约束：无数据库、WSL 或网络访问。
+    # Function: Verify that initial template creation does not pretend the database is configured.
+    # Inputs: No external parameters; the temporary directory contains only a controlled template.
+    # Outputs: Asserts that a random key is generated and database configuration is explicitly required.
+    # Logic: Call the unconfigured `prepare` path and prevent Django initialization.
+    # Constraints: No database, WSL, or network access.
     def test_missing_env_generates_template(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(local_server, 'ROOT', Path(directory)):
             root = Path(directory)
@@ -88,11 +88,11 @@ class LocalServerTests(unittest.TestCase):
             self.assertNotIn('replace-with-a-local-random-string', text)
             self.assertIn('DATABASE_URL=placeholder', text)
 
-    # 功能：验证现有 .env 在初始化失败时逐字节保留。
-    # 输入：无外部参数；使用虚构配置和失败的 Django setup。
-    # 输出：断言原配置字节不变且错误向上传递。
-    # 逻辑：以模拟 Django 模块在读取既有配置后截断初始化，隔离外部服务及第三方包安装要求。
-    # 约束：只验证文件保护，不证明数据库有效；恢复模块、导入路径及环境。
+    # Function: Verify that an existing `.env` is preserved byte-for-byte when initialization fails.
+    # Inputs: No external parameters; uses fabricated configuration and failed Django setup.
+    # Outputs: Asserts unchanged original bytes and propagated error.
+    # Logic: Use a mocked Django module to stop initialization after reading existing configuration, isolating external services and third-party-package installation requirements.
+    # Constraints: Verify file protection only and do not prove database validity; restore modules, import paths, and environment.
     def test_existing_env_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(local_server, 'ROOT', Path(directory)), \
                 patch.dict(sys.modules, {'django': Mock(setup=Mock(side_effect=RuntimeError('setup boundary')))}), \
@@ -104,22 +104,22 @@ class LocalServerTests(unittest.TestCase):
                 local_server.prepare(None)
             self.assertEqual(path.read_bytes(), original)
 
-    # 功能：验证损坏状态文件不会被当作已停止。
-    # 输入：无外部参数；临时状态文件包含非法 JSON。
-    # 输出：断言 ValueError。
-    # 逻辑：直接读取损坏状态，不模拟解析器。
-    # 约束：只验证诊断边界，不修改真实状态。
+    # Function: Verify that a corrupt state file is not treated as stopped.
+    # Inputs: No external parameters; a temporary state file contains invalid JSON.
+    # Outputs: Asserts `ValueError`.
+    # Logic: Read corrupt state directly without mocking the parser.
+    # Constraints: Verify the diagnostic boundary only and do not modify real state.
     def test_corrupt_state_is_not_ignored(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(local_server, 'RUNTIME', Path(directory)):
             (Path(directory) / 'state.json').write_text('{broken', encoding='utf-8')
             with self.assertRaises(ValueError):
                 local_server.read_state()
 
-    # 功能：验证当前平台后台子进程可协作响应停止文件。
-    # 输入：无外部参数；临时目录预置停止请求。
-    # 输出：断言子进程在五秒内正常退出并执行 SIGTERM 回调。
-    # 逻辑：使用实际后台进程选项；子进程注册信号处理器与 watch_stop，主线程等待回调。
-    # 约束：不运行 Worker，不发业务请求；测试超时只影响自己创建的测试进程。
+    # Function: Verify that a current-platform background child process cooperatively responds to a stop file.
+    # Inputs: No external parameters; the temporary directory contains a pre-created stop request.
+    # Outputs: Asserts that the child exits normally within five seconds and runs its SIGTERM callback.
+    # Logic: Use actual background-process options; the child registers a signal handler and `watch_stop`, while its main thread waits for the callback.
+    # Constraints: Do not run a Worker or issue business requests; a test timeout affects only its own test process.
     def test_stop_dispatches_sigterm(self):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / 'probe.stop').touch()
@@ -140,11 +140,11 @@ print('graceful-stop-observed')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('graceful-stop-observed', result.stdout)
 
-    # 功能：验证独占锁对其他进程生效而非仅在进程内生效。
-    # 输入：无外部参数；隔离临时目录及轻量子进程。
-    # 输出：断言持锁时其他进程读到 running，释放后读到 stopped。
-    # 逻辑：子进程实际导入同一模块并尝试锁定相同文件。
-    # 约束：无业务数据库或服务进程；句柄在 finally 释放。
+    # Function: Verify that the exclusive lock affects other processes rather than only the current process.
+    # Inputs: No external parameters; an isolated temporary directory and lightweight child process.
+    # Outputs: Asserts that another process reads running while held and stopped after release.
+    # Logic: The child actually imports the same module and attempts to lock the same file.
+    # Constraints: No business database or service process; release the handle in `finally`.
     def test_lock_visible_to_other_process(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(local_server, 'RUNTIME', Path(directory)):
             code = 'import pathlib,sys,local_server; local_server.RUNTIME=pathlib.Path(sys.argv[1]); print(local_server.running())'
@@ -160,11 +160,11 @@ print('graceful-stop-observed')
             self.assertEqual(held.stdout.strip(), 'True')
             self.assertEqual(released.stdout.strip(), 'False')
 
-    # 功能：验证跨平台 spawn 的路径传递、日志和 POSIX 独立会话。
-    # 输入：无外部参数；含空格的临时目录及仅输出进程信息的测试入口。
-    # 输出：断言子进程成功、参数保真；POSIX 中会话 ID 等于子进程 ID。
-    # 逻辑：替换脚本路径并调用真实 spawn，以 OS 结果验证进程隔离。
-    # 约束：只运行测试脚本，不导入 Django 或启动服务器。
+    # Function: Verify cross-platform `spawn` path passing, logs, and POSIX independent sessions.
+    # Inputs: No external parameters; a temporary directory with spaces and a test entry point that outputs process information only.
+    # Outputs: Asserts child success and argument fidelity; on POSIX, the session ID equals the child PID.
+    # Logic: Replace the script path and call the real `spawn`, using OS results to verify process isolation.
+    # Constraints: Run only the test script and do not import Django or start a server.
     def test_spawn_detaches_session(self):
         with tempfile.TemporaryDirectory(prefix='salesmate launch ') as directory:
             root = Path(directory)
@@ -179,11 +179,11 @@ print('graceful-stop-observed')
             if os.name != 'nt':
                 self.assertEqual(result['sid'], result['pid'])
 
-    # 功能：验证 WSL 与 Homebrew 选项只能用于其明确支持的平台。
-    # 输入：无外部参数；仅模拟 sys.platform。
-    # 输出：断言不合法组合报错，合法 PostgreSQL 公式通过校验。
-    # 逻辑：覆盖服务名注入、跨平台误用和互斥条件。
-    # 约束：不执行实际 Homebrew/WSL，不代表 macOS 服务已验证。
+    # Function: Verify that WSL and Homebrew options are limited to their explicitly supported platforms.
+    # Inputs: No external parameters; mocks `sys.platform` only.
+    # Outputs: Asserts errors for invalid combinations and validation for a valid PostgreSQL formula.
+    # Logic: Cover service-name injection, cross-platform misuse, and mutual-exclusion conditions.
+    # Constraints: Do not execute real Homebrew or WSL and do not represent macOS services as verified.
     def test_database_options_are_platform_specific(self):
         with patch.object(sys, 'platform', 'darwin'):
             local_server.validate_database_options(None, 'postgresql@16')
@@ -199,11 +199,11 @@ print('graceful-stop-observed')
         with self.assertRaisesRegex(RuntimeError, 'cannot be combined'):
             local_server.validate_database_options('Ubuntu', 'postgresql@16')
 
-    # 功能：验证显式 Homebrew 启动不会安装软件或注册登录启动。
-    # 输入：无外部参数；模拟本地 rules 配置、Django 连接与 brew 可执行路径。
-    # 输出：断言调用 services run、保留原配置并执行原 check/migrate。
-    # 逻辑：模拟连接就绪但使用真实 prepare 控制流；不让测试访问现有数据库。
-    # 约束：此测试只验证调用契约；不证明 Homebrew、pgvector 或数据库迁移实际成功。
+    # Function: Verify that explicit Homebrew startup neither installs software nor registers login startup.
+    # Inputs: No external parameters; mocks local rules configuration, Django connections, and the brew executable path.
+    # Outputs: Asserts the `services run` call, preserved existing configuration, and original `check`/`migrate` execution; PostgreSQL services include graph.
+    # Logic: Mock a ready connection while using the real `prepare` control flow and preventing access to an existing database.
+    # Constraints: This test verifies the call contract only and does not prove Homebrew, pgvector, or database migrations actually succeed.
     def test_brew_run_existing_service(self):
         settings = Mock(DEBUG=True, TASK_EXECUTION_MODE='local', ANALYSIS_PROVIDER='rules',
                         LOCAL_DEBUG_AUTO_LOGIN=False,
@@ -219,17 +219,17 @@ print('graceful-stop-observed')
                 patch('local_server.subprocess.run') as run, patch('local_server.socket.create_connection', return_value=MagicMock()):
             path = Path(directory) / '.env'
             path.write_text('existing settings', encoding='utf-8')
-            self.assertEqual(local_server.prepare(None, 'postgresql@16'), ['web', 'sales'])
+            self.assertEqual(local_server.prepare(None, 'postgresql@16'), ['web', 'sales', 'graph'])
             run.assert_called_once_with(['/opt/homebrew/bin/brew', 'services', 'run', 'postgresql@16'], check=True, timeout=90)
             self.assertEqual(path.read_text(encoding='utf-8'), 'existing settings')
             self.assertEqual(command.call_args_list[0].args, ('check',))
             self.assertEqual(command.call_args_list[1].args, ('migrate',))
 
-    # 功能：验证 shell 入口从含空格目录初始化虚拟环境并正确转发所有动作。
-    # 输入：无外部参数；POSIX 上隔离副本、空依赖清单及只记录 argv 的假业务入口。
-    # 输出：断言首次创建环境、二次启动复用安装摘要、status/stop 正确传参。
-    # 逻辑：实际执行 /bin/bash 与 venv/pip（macOS 对应系统 Bash），使用 PIP_NO_INDEX 避免外部下载。
-    # 约束：Windows 跳过；不复制 .env，不安装真实业务依赖；子命令最多 90 秒。
+    # Function: Verify that the shell entry point initializes a virtual environment from a directory with spaces and correctly forwards every action.
+    # Inputs: No external parameters; on POSIX, an isolated copy, empty dependency lists, and a fake business entry point that records argv only.
+    # Outputs: Asserts initial environment creation, installation-summary reuse on the second startup, and correct arguments for status and stop.
+    # Logic: Actually execute `/bin/bash` with venv and pip, using the system Bash on macOS and `PIP_NO_INDEX` to avoid external downloads.
+    # Constraints: Skip on Windows; do not copy `.env` or install actual business dependencies; each subcommand runs at most 90 seconds.
     @unittest.skipIf(os.name == 'nt', 'Bash/POSIX entry is exercised on macOS and Linux.')
     def test_shell_setup_and_actions(self):
         with tempfile.TemporaryDirectory(prefix='salesmate shell ') as directory:
@@ -257,11 +257,11 @@ print('graceful-stop-observed')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f'ARGS=["{action}"]', result.stdout)
 
-    # 功能：验证 shell 入口不会在 Windows 虚拟环境上叠加 POSIX 环境。
-    # 输入：无外部参数；POSIX 临时目录中的 Windows 风格标记文件。
-    # 输出：断言非零退出且原环境文件不变。
-    # 逻辑：系统 /bin/bash 在创建环境前检测不兼容目录并停止。
-    # 约束：Windows 跳过；无依赖安装或数据库操作。
+    # Function: Verify that the shell entry point does not layer a POSIX environment over a Windows virtual environment.
+    # Inputs: No external parameters; a Windows-style marker file in a POSIX temporary directory.
+    # Outputs: Asserts nonzero exit and unchanged original environment file.
+    # Logic: The system `/bin/bash` detects the incompatible directory and stops before environment creation.
+    # Constraints: Skip on Windows; no dependency installation or database operations.
     @unittest.skipIf(os.name == 'nt', 'Bash/POSIX entry is exercised on macOS and Linux.')
     def test_shell_rejects_foreign_venv(self):
         with tempfile.TemporaryDirectory() as directory:

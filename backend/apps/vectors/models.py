@@ -1,29 +1,29 @@
-"""职责：保存按员工和模型版本隔离的向量文档。
-实现：变长 vector 允许显式选定不同嵌入维度；唯一约束防止同来源同模型重复记录。
-关联：services 验证向量并读写；不自动调用模型或替代 CRM 权威数据。
-目录：
-- VectorDocument：文档内容、来源和向量。
-- VectorDocument.Meta：来源唯一约束。
-变量索引：
-- VectorDocument.owner：归属员工。
-- VectorDocument.namespace：调用方显式指定的知识空间。
-- VectorDocument.source：空间内的来源标识。
-- VectorDocument.model：嵌入模型及版本标识。
-- VectorDocument.dimensions：向量长度，用于隔离不同维度。
-- VectorDocument.content：与向量对应的文本。
-- VectorDocument.content_hash：文本 SHA-256，供来源一致性检查。
-- VectorDocument.embedding：pgvector 变长向量。
-- VectorDocument.updated_at：最后写入时间。
-- VectorDocument.Meta.constraints：同员工、空间、来源、模型唯一。
+"""Responsibility: Persist vector documents isolated by employee and model version.
+Implementation: A variable-length vector permits explicit embedding dimensions; a unique constraint prevents duplicate records for the same source and model.
+Relationships: ``services`` validates and reads or writes vectors; this module neither invokes models automatically nor replaces authoritative CRM data.
+Directory:
+- VectorDocument: Document content, source, and vector.
+- VectorDocument.Meta: Source uniqueness constraint.
+Variable index:
+- VectorDocument.owner: Employee that owns the document.
+- VectorDocument.namespace: Knowledge namespace explicitly selected by the caller.
+- VectorDocument.source: Source identifier within the namespace.
+- VectorDocument.model: Embedding model and version identifier.
+- VectorDocument.dimensions: Vector length, used to isolate differing dimensions.
+- VectorDocument.content: Text represented by the vector.
+- VectorDocument.content_hash: SHA-256 of the text, used for source-consistency checks.
+- VectorDocument.embedding: Variable-length pgvector vector.
+- VectorDocument.updated_at: Time of the most recent write.
+- VectorDocument.Meta.constraints: Unique across employee, namespace, source, and model.
 """
 from django.conf import settings
 from django.db import models
 from pgvector.django import VectorField
 
 
-# 功能：保存独立向量检索资料。
-# 逻辑：记录显式模型版本和维度，不混用不同向量空间。
-# 约束：所有应用访问必须经 services 传入员工；本表不授予跨员工读取权限。
+# Function: Persist standalone vector-retrieval material.
+# Logic: Record an explicit model version and dimension without mixing vector spaces.
+# Constraints: All application access must pass an employee through ``services``; this table grants no cross-employee read permission.
 class VectorDocument(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     namespace = models.CharField(max_length=100)
@@ -35,8 +35,8 @@ class VectorDocument(models.Model):
     embedding = VectorField()
     updated_at = models.DateTimeField(auto_now=True)
 
-    # 功能：约束重复来源的向量记录。
-    # 逻辑：同一文档允许不同模型版本并存。
-    # 约束：维度变化须对应新的模型版本标识。
+    # Function: Constrain vector records for duplicate sources.
+    # Logic: The same document may coexist under different model versions.
+    # Constraints: A changed dimension requires a new model-version identifier.
     class Meta:
         constraints = [models.UniqueConstraint(fields=["owner", "namespace", "source", "model"], name="vector_owner_source_model_unique")]

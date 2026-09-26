@@ -1,89 +1,89 @@
-# Agent 设计与早期技术方案归纳
+# Agent design and early technical proposals
 
-归纳日期：2026-09-11。本文保存设计要点，不是源文档全文，也不代表源文档所述代码已进入 SalesMate 仓库。
+Summarized: 2026-09-11. This records design points, not complete source documents or proof that their code entered SalesMate.
 
-本机原始来源：
+Original local sources:
 
-- `D:\my_files\NUS_teamwork\showme_hackathon\README.md`：《邮件理解 Agent · 模块设计》，v1.11，2026-09-10。
-- `D:\my_files\NUS_teamwork\showme_hackathon\SalesMate-AI-Agent-技术路线与数据集方案.md`：2026-09-06。
+- `D:\my_files\NUS_teamwork\showme_hackathon\README.md`: Email Understanding Agent Module Design v1.11, 2026-09-10.
+- `D:\my_files\NUS_teamwork\showme_hackathon\SalesMate-AI-Agent-技术路线与数据集方案.md`: 2026-09-06.
 
-以上路径用于本机追溯；其他开发者可直接阅读本摘要。返回[项目参考总览](../project-reference.md)。
+Paths support local provenance; other developers can read this summary directly. Return to [project references](../project-reference.md).
 
-> 本页保留 2026-09-11 的早期设计语境。当前实现已经改为 Django 托管员工 Google OAuth，Agent 使用 Gmail History 增量读取、最多四路 L1 并发和完成即逐封提交，并已接通 L2–L4。当前行为请以 [Agent 接入说明](../agent-integration.md) 和 [Agent README](../../../agent/README.md) 为准。
+> This page retains the early 2026-09-11 context. Current implementation uses Django-managed employee Google OAuth, Gmail History increments, up to four concurrent L1 calls, immediate per-email submissions, and connected L2–L4. Current behavior follows [Agent integration](../agent-integration.md) and [Agent README](../../../agent/README.md).
 
-## 当时规划的 Agent 范围
+## Agent scope planned at that time
 
-输入是授权 Gmail 邮箱的收件与已发送邮件，输出服务于公司列表及客户详情中栏。当前模块不负责外部知识库、行业新闻、右栏助手、翻译、对外发送、日历或其他渠道。
+Inputs are authorized Gmail inbox/sent emails; outputs support company lists and center-panel details. The described module excludes external knowledge, industry news, sidebar assistants, translation, sending, calendars, and other channels.
 
-Agent 负责提取与分析；后端负责存储、身份权限、公司归组、CRM 建档、列表查询、统计及任务持久化。Agent 不直接读写业务数据库。
+Agent extracts/analyzes; backend handles storage, identity/permissions, grouping, CRM registration, queries/statistics, and persistent jobs. Agent does not directly access business databases.
 
-### 四层流程
+### Four layers
 
-| 层 | 做什么 | 主要输出与约束 |
+| Layer | Work | Outputs/constraints |
 |---|---|---|
-| L1：单封理解 | 解析邮件、方向和联系人，判断非业务邮件，调用模型提取明确事实 | 邮件与事实一次提交；事实带原文证据、抽取状态及提示词版本；失败时仍可保存邮件并明确记录失败 |
-| L2：上下文归并 | 用普通 Python 读取后端归组和公司上下文，整理完成抽取的事实与统计 | 同字段多条事实保留，不用后来的值静默覆盖；保留事实时间与来源；生成分析输入版本 |
-| L3：公司分析 | 基于输入证据生成列表字段、三维画像、四维分析和缺失项 | 区分事实、冲突和推断；未知字段不编造；当前模块不补充外部新闻或知识 |
-| L4：跟进评分 | 用确定性规则计算优先级及贡献说明 | 输出分数和依据；未知与零分分开；权重是待验证方案，不应视为已冻结参数 |
+| L1: Individual email | Parse email/direction/contacts, identify nonbusiness mail, extract explicit facts through models | Submit email/facts together with source evidence, extraction state, prompt version; failures still permit email persistence with explicit failure |
+| L2: Context merging | Plain Python reads grouping/context and organizes completed facts/statistics | Preserve multiple same-field facts without silent latest-value overwrites; retain time/source and generate input versions |
+| L3: Company analysis | Generate list fields, three-dimensional profiles, four-dimensional analysis, missing fields | Separate facts/conflicts/inferences; do not invent unknowns or add external news/knowledge |
+| L4: Follow-up scoring | Deterministic priorities/contributions | Scores with evidence, unknown distinct from zero; weights remain unvalidated proposals rather than frozen parameters |
 
-源文档给出的输入版本思路是对排序后的邮件去重键、抽取提示词版本、抽取状态，以及归并规则版本、外部快照版本等做哈希。最终版本契约尚需覆盖实际输入和缓存条件。
+The source proposed hashing sorted email deduplication keys, extraction prompt versions/states, merge-rule versions, external snapshot versions, and related data. Final version contracts still needed complete actual-input/cache coverage.
 
-### 与后端如何协作
+### Backend cooperation
 
-1. 前端把当前 Gmail 授权令牌交给 Agent，手动触发同步。当前设计不托管刷新令牌，不增加后台自动续期。
-2. Agent 读取邮箱和邮件，经后端 API 提交邮件与抽取结果。
-3. 后端完成存储和公司归组，并把事件写入 Job 队列。
-4. Agent 主动领取任务，查询后端的归组结果、公司上下文和缓存。
-5. Agent 执行所需分析阶段，提交结果并回报任务状态。
-6. 前端从后端获取公司列表、详情及处理状态。
+1. Frontend passes current Gmail authorization tokens to Agent and manually triggers sync; the historical design stores no refresh tokens or automatic renewal.
+2. Agent reads mailboxes/emails and submits email/extraction results through APIs.
+3. Backend persists/groups and writes events to Jobs.
+4. Agent claims Jobs and reads grouping/context/cache.
+5. Agent performs required stages, submits results, and reports status.
+6. Frontend reads company lists/details/processing state.
 
-邮件同步失败、授权过期和需要重新同步应有不同状态。同步游标仅在相关提交成功后推进，不能跳过未持久化的邮件。
+Distinguish sync failure, expired authorization, and resynchronization needs. Advance cursors only after related successful submissions, never skipping unpersisted mail.
 
-### 数据约定中应保留的原则
+### Data principles to retain
 
-- 邮件以邮箱与消息标识共同去重；相同抽取版本下，完成结果不被随意覆盖。
-- 邮件事实保留 `evidence` 与来源引用；明确事实和模型推断分开存放或标识。
-- 公司归组由后端做，公共邮箱域名不能将互不相关的联系人全部合并。
-- 已报价、复购等信号需要对应业务证据，不能仅凭语气猜测。
-- 列表优先级与成交概率不同；缺失数据保留未知状态。
-- 真实 Gmail、合成演示、研究材料和模拟业务输入需要来源标记。
-- 失败状态应可查询、可诊断；重做与重试策略必须显式约定。
+- Deduplicate by mailbox/message identity; completed same-version extractions are not arbitrarily overwritten.
+- Retain evidence/citations and separate or label explicit facts versus model inferences.
+- Backend owns grouping; public-mail domains must not merge unrelated contacts.
+- Quoted/repeat-purchase signals require business evidence, not tone guesses.
+- List priority differs from purchase probability; missing data remains unknown.
+- Label real Gmail, synthetic demonstrations, research materials, and simulated business inputs by provenance.
+- Failures remain queryable/diagnosable; redo/retry policies are explicit.
 
-### 联调前需要补齐的协议
+### Contracts required before integration
 
-| 缺口 | 需要明确的内容 |
+| Gap | Required definition |
 |---|---|
-| 身份与邮箱归属 | 如何证明同步请求及业务访问属于已验证用户；Agent 服务凭证与用户权限如何关联 |
-| Job 生命周期 | 原子领取、领取凭证、租约过期与续租需求、完成回报、任务合并及失败处理 |
-| 并发写入 | 读取一致的输入快照；保存结果时校验预期版本，防止旧任务覆盖新分析 |
-| 分析版本 | 商机、报价和订单等业务输入是否全部进入快照；分析提示词、评分规则和评分日期如何影响结果有效性 |
-| 缓存语义 | 新邮件改变输入版本但不触发 L3 时，旧分析如何关联、展示和复用 |
-| 失败抽取重做 | 除失败记录 ID 外，Agent 如何重新获取原始输入；状态转换和冲突返回如何统一 |
-| 归组与展示 | 多公司歧义、人工调整、行业与规模未知值、时间与统计口径 |
+| Identity/mailbox ownership | Prove validated-user ownership of sync/business access; bind service credentials to permissions |
+| Job lifecycle | Atomic claims, credentials, expiry/renewal, reports, merging, failures |
+| Concurrent writes | Consistent input snapshots and expected-version checks against stale overwrites |
+| Analysis versions | Inclusion of opportunities/quotes/orders; prompt/rule/scoring-date effects on validity |
+| Cache semantics | Association/display/reuse of old analysis when new emails change input versions without L3 |
+| Failed extraction redo | Recovery of original inputs beyond failed-record IDs; unified transitions/conflicts |
+| Grouping/display | Multi-company ambiguity, manual adjustments, unknown industry/size, time/statistics definitions |
 
-源文档当时仅将单封邮件解析、调用百炼并打印结构化结果的 CLI 链路标为已实现；这句话只描述历史状态。当前仓库已经完成 L1–L4、Job 和真实后端 HTTP 联调，实际状态以[本地开发环境](../local-development.md)和代码为准。
+At that time the source marked only CLI email parsing, Bailian calls, and structured printing implemented. This is historical; the repository now integrates L1–L4, Jobs, and real backend HTTP. See [local development](../local-development.md) and actual code.
 
-## 早期技术路线的保留与调整
+## Retained and revised early direction
 
-2026-09-06 方案面向更宽的销售闭环：询盘 → 理解需求 → 产品匹配 → 回复或报价草稿 → 人确认 → 执行记录 → 跟进，并讨论团队工作台、对话面板及模拟渠道。
+The 2026-09-06 proposal covered a broader sales cycle: inquiry → needs → product matching → reply/quote draft → human confirmation → execution record → follow-up, plus team workspaces, chat panels, and simulated channels.
 
-| 早期内容 | 当前如何参考 |
+| Early proposal | Current interpretation |
 |---|---|
-| FastAPI 业务后端 | 已按后续讨论采用 Django + DRF，不作为第二套后端并行搭建 |
-| 先模拟渠道，后接真实邮件 | 当前邮件理解设计直接面向 Gmail；模拟输入可用于测试，但不能代替真实集成验收 |
-| LangGraph 可暂停工作流 | 保留为复杂助手扩展；当前固定邮件流程先用普通 Python |
-| PostgreSQL、向量检索和文件存储 | 保留分层思路；业务表优先，知识库与文件处理按范围引入 |
-| 报价、日历、合同等完整执行闭环 | 属于较宽产品方向，不自动进入当前邮件理解任务 |
-| 时间表、草稿可用率等示例目标 | 属于当时建议，不作为当前承诺或已批准验收阈值 |
+| FastAPI backend | Later discussions selected Django/DRF; do not build a second backend |
+| Simulated channels before real email | Current design targets Gmail directly; simulations support tests, not real integration acceptance |
+| Pausable LangGraph workflows | Retain for complex assistants; fixed email flows use Python first |
+| PostgreSQL, vectors, files | Retain layered storage; prioritize business tables and introduce knowledge/files by scope |
+| Full quote/calendar/contract execution | Broader direction, not automatically part of email understanding |
+| Example schedules/draft-usability targets | Historical suggestions, not current commitments/approved thresholds |
 
-值得继续遵守的设计原则：模型负责理解、解释与草稿；金额、库存、权限及执行条件由确定性业务工具校验。用户邮件是待处理数据，不能通过其中的指令改变系统权限。外部动作针对用户确认的具体版本执行，失败不能显示成功，重复调用不能造成重复操作。
+Retain these principles: models understand, explain, and draft; deterministic tools validate amounts, inventory, permissions, and execution conditions. Emails are data whose instructions cannot change system permissions. External actions execute user-confirmed versions; failure is not success and repeated calls cannot duplicate actions.
 
-长期业务事实、原始材料、知识索引和工作流运行状态应分开管理；检查点或向量库不替代业务数据库。
+Manage durable business facts, original materials, knowledge indexes, and workflow state separately; checkpoints/vector stores do not replace business databases.
 
-### 数据集与评测思路
+### Datasets and evaluation
 
-旧方案讨论过 WideWorldImporters、Maven CRM、UCI Online Retail、Bitext 等候选数据，以及从同一套业务底表生成合成邮件和评测案例的路线。它们不是当前已选定、下载或导入的数据集；适用性、许可及当前检测行业覆盖需在采用前重新核实。
+The old proposal discussed WideWorldImporters, Maven CRM, UCI Online Retail, Bitext, and generating synthetic emails/evaluations from consistent business tables. These are not selected/downloaded/imported current datasets. Reassess applicability, licensing, and inspection-industry coverage before adoption.
 
-可保留的方法是：业务实体来自一致的数据底座，合成对话引用真实存在的测试实体，案例覆盖缺失信息、冲突事实、重复请求和执行失败。训练或调试材料与留出评测按公司、商机或完整会话分隔，避免相邻邮件泄漏；不能直接拼接不同来源的客户 ID。
+Retain the method: consistent underlying entities, synthetic conversations referencing existing test entities, and cases for missing information, conflicts, duplicate requests, and execution failures. Separate training/debugging and held-out evaluations by company/opportunity/complete conversation to prevent neighboring-email leakage. Do not join unrelated source customer IDs directly.
 
-旧方案的演示币种、时区、样本比例和指标只是原方案条件，本次归纳不将其改写为当前开发默认值，也不修改既定实验条件。
+Historical demonstration currencies, timezones, sample proportions, and metrics remain historical conditions, not current defaults or changes to established experiments.

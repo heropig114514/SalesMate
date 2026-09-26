@@ -1,10 +1,10 @@
-"""职责：声明聊天适配的浏览器及固定 Agent 路由。
-实现：相对 /api/v1/ 挂载，增加请求绑定工具目录、读取和状态核对，不改变既有 Router。
-关联：chat.views 与 tool_views 实施两种独立认证。
-目录：
-- 无
-变量索引：
-- urlpatterns：浏览器操作、Agent 领取/上下文/回报及工具目录/读取/状态映射。
+"""Responsibility: Declare browser and fixed Agent routes for chat adaptation.
+Implementation: Mount relative to ``/api/v1/``, adding request-bound tool catalog, reads, and status checks without changing the existing Router.
+Relationships: ``chat.views`` and ``tool_views`` implement two independent authentication schemes.
+Directory:
+- None
+Variable index:
+- urlpatterns: Browser actions; Agent claim, context, and reports; tool catalog, reads, and status mappings.
 """
 
 from django.urls import path

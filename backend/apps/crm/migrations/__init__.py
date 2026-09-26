@@ -1,8 +1,8 @@
-"""职责：声明业务数据库迁移包。
-实现：导入时无数据库操作。
-关联：Django 迁移发现器加载 0001_initial。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the business database-migration package.
+Implementation: Importing performs no database operation.
+Relationships: Django migration discovery loads ``0001_initial``.
+Directory:
+- None
+Variable index:
+- None
 """

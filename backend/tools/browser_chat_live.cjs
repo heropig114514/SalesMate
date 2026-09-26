@@ -1,17 +1,17 @@
 /**
- * 职责：对临时 Django 服务执行真实助手网页提问及引用验收。
- * 实现：浏览器显式使用 zh-CN；按 pathname 匹配启动入口，不混入缓存查询参数；有客户数据时挂载工作空间助手，通用模式使用真实主页，业务 API 全部访问测试服务器。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；chat_browser_e2e.py 提供隔离用户/会话并执行 Agent；模型模拟发生在 Python 边界。
- * 目录：main 建立会话并验证真实完成结果。
- * 变量索引：无模块业务变量；测试 URL、模式、临时 cookie 从环境读取且不打印。
+ * Responsibility: Verify actual assistant-page questions and citations against a temporary Django service.
+ * Implementation: Explicit zh-CN locale; match startup entries by pathname without cache query parameters. Mount workspace chat when customer data exists; general mode uses the real homepage. All business APIs target the test server.
+ * Relationships: Chat Markdown, 0919 interface, and language resources use coordinated versions; chat_browser_e2e.py supplies isolated users/sessions and runs the Agent. Model mocking occurs at the Python boundary.
+ * Directory: main establishes a session and verifies actual completed results.
+ * Variable index: No module business variables; URL, mode, and temporary cookie come from the environment and are never printed.
  */
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 
-/** 功能：执行真实 HTTP 网页闭环。
- * 输入：CHAT_TEST_* 合成测试环境和显式浏览器路径。输出：成功标记或非零退出。
- * 逻辑：固定中文浏览器语言；登录 cookie 仅用于当前浏览器，提问后等待 Python Agent 写入并由网页自动刷新，通用模式收起再展开，刷新整页后点击悬浮入口验证历史恢复。
- * 约束：不拦截任何业务 API；禁止连接测试服务以外的网络，不打印 cookie。 */
+/** Function: Execute the complete real-HTTP browser flow.
+ * Inputs: Synthetic CHAT_TEST_* environment and explicit browser path. Outputs: Success marker or nonzero exit.
+ * Logic: Use Chinese locale and a browser-local login cookie; after asking, wait for Python Agent persistence and automatic page refresh. General mode collapses/reopens chat; a full reload followed by the floating entry verifies history restoration.
+ * Constraints: Do not intercept business APIs; block networks outside the test service and never print cookies. */
 async function main() {
   const browser = await chromium.launch({ executablePath: process.env.SALESMATE_BROWSER_PATH, headless: true });
   try {

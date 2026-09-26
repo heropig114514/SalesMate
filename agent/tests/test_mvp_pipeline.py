@@ -1,68 +1,68 @@
-"""职责：验证 SalesMate Agent MVP 的 L2–L4、同步和编排行为。
-实现：使用模拟后端、Gmail 和模型；网页领取测试显式传入冻结范围，其余既定实验参数保持原值。
-关联：fake_backend 提供内存业务状态，workflows 执行实际编排；不验证真实外部服务。
-目录：
-- _IncrementalBackend：为 Gmail 增量同步测试提供现有 Django sync-state 契约。
-- _IncrementalBackend.__init__：初始化可版本校验的内存邮箱状态。
-- _IncrementalBackend.get_sync_state：返回邮箱同步状态的独立副本。
-- _IncrementalBackend.save_sync_state：按版本保存同步状态并递增版本。
-- _IncrementalBackend.get_stored_email：返回指定天然键的独立邮件副本。
-- _IncrementalBackend.assert_mailbox：拒绝访问夹具之外的邮箱。
-- _PartialSubmitBackend：模拟指定单封邮件提交失败的后端。
-- _PartialSubmitBackend.__init__：记录失败 ID 和提交批次大小。
-- _PartialSubmitBackend.submit_emails：记录调用大小并拒绝指定邮件。
-- _payload：构造来源引用明确的合成 L3 输出。
-- _payload.dimension：构造单个分析维度的事实与推断。
-- _provider：用固定合成 JSON 模拟分析提供方。
-- _completed_submission：构造已完成的标准邮件提交。
-- AnalysisAndScoreTests：验证 L2 上下文、L3 校验和 L4 评分。
-- AnalysisAndScoreTests.setUp：建立固定邮件和分析输入。
-- AnalysisAndScoreTests.test_l2_contains_company_and_business_context：Verify l2 contains company and business context。
-- AnalysisAndScoreTests.test_l3_generates_three_profile_and_four_analysis_dimensions：验证当前 L3 版本、三个画像和四个分析维度。
-- AnalysisAndScoreTests.test_l3_provider_sends_compact_skill_input：Verify l3 provider sends compact skill input。
-- AnalysisAndScoreTests.test_l3_provider_compacts_company_enrichment_metadata：验证模型输入排除补充资料维护元数据。
-- AnalysisAndScoreTests.test_l3_provider_compacts_unavailable_enrichment：验证不可用补充资料只传递状态和原因。
-- AnalysisAndScoreTests.test_l3_accepts_single_json_code_fence_without_model_retry：Verify l3 accepts single json code fence without model retry。
-- AnalysisAndScoreTests.test_l3_derives_size_source_from_backend_context：Verify l3 derives size source from backend context。
-- AnalysisAndScoreTests.test_l3_normalizes_and_validates_conflict_fields_before_submission：Verify l3 normalizes and validates conflict fields before submission。
-- AnalysisAndScoreTests.test_l3_rejects_unknown_source_and_percentage：Verify l3 rejects unknown source and percentage。
-- AnalysisAndScoreTests.test_l3_allows_business_percentage_and_normalizes_typed_source_ref：Verify l3 allows business percentage and normalizes typed source ref。
-- AnalysisAndScoreTests.test_default_l3_provider_retries_one_validation_failure：Verify default l3 provider retries one validation failure。
-- AnalysisAndScoreTests.test_no_purchase_basis_only_accepts_unknown_signal：Verify no purchase basis only accepts unknown signal。
-- AnalysisAndScoreTests.test_signal_gates_use_quote_order_and_new_lead_context：Verify signal gates use quote order and new lead context。
-- AnalysisAndScoreTests.test_l4_requires_formal_priority_context_without_legacy_fallback：Verify l4 requires formal priority context without legacy fallback。
-- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available：Verify company analysis uses priority l4 when context is available。
-- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext：WithPriorityContext。
-- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext.get_company_context：get company context。
-- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call：Verify analysis cache avoids second model call。
-- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call.provider：provider。
-- SyncAndOrchestrationTests：验证同步去重、并发提交和公司编排。
-- SyncAndOrchestrationTests.test_access_token_builds_gmail_service：Verify access token builds gmail service。
-- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis：Verify authorized sync reports mailbox before company analysis。
-- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis.process_jobs：记录公司任务开始事件并返回空队列。
-- SyncAndOrchestrationTests.test_sync_deduplicates_second_scan：Verify sync deduplicates second scan。
-- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently：Verify l1 processes multiple new emails concurrently。
-- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently.process：模拟本场景的单封处理、同步屏障或异常。
-- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread：Verify l1 progress callbacks are serialized on sync thread。
-- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread.process：模拟本场景的单封处理、同步屏障或异常。
-- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes：Verify completed l1 email is submitted before slower email finishes。
-- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend：观察首封提交是否早于较慢邮件完成。
-- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend.submit_emails：记录提交时机并委托内存后端入库。
-- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.process：模拟本场景的单封处理、同步屏障或异常。
-- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails：Verify one l1 exception does not block other emails。
-- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails.process：模拟本场景的单封处理、同步屏障或异常。
-- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails：Verify one backend rejection does not roll back other emails。
-- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails.process：模拟本场景的单封处理、同步屏障或异常。
-- SyncAndOrchestrationTests.test_incremental_cursor_avoids_second_l1_call_when_history_is_empty：Verify incremental cursor avoids second l1 call when history is empty。
-- SyncAndOrchestrationTests.test_initial_scan_skips_existing_completed_extraction_before_l1：Verify initial scan skips existing completed extraction before l1。
-- SyncAndOrchestrationTests.test_incremental_cursor_retries_failed_l1_message：Verify incremental cursor retries failed l1 message。
-- SyncAndOrchestrationTests.test_existing_failed_extraction_is_preserved_when_retry_still_fails：Verify existing failed extraction is preserved when retry still fails。
-- SyncAndOrchestrationTests.test_incremental_cursor_preserves_overflow_for_the_next_sync：Verify incremental cursor preserves overflow for the next sync。
-- SyncAndOrchestrationTests.test_expired_history_cursor_falls_back_to_recent_scan：Verify expired history cursor falls back to recent scan。
-- SyncAndOrchestrationTests.test_failed_submission_can_be_replaced_and_nonbusiness_has_no_job：Verify failed submission can be replaced and nonbusiness has no job。
-- SyncAndOrchestrationTests.test_one_job_runs_l2_l3_l4_and_reports：Verify one job runs l2 l3 l4 and reports。
-变量索引：
-- NOW：固定测试基准时间，不表示运行时当前日期。
+"""Responsibility: Verify L2-L4, synchronization, and orchestration behavior in the SalesMate Agent MVP.
+Implementation: Use mocked backend, Gmail, and model dependencies; web claim tests explicitly supply frozen scopes, preserving other experiment parameters.
+Relationships: fake_backend supplies in-memory business state and workflows run actual orchestration; real external services are not verified.
+Directory:
+- _IncrementalBackend: Provide the existing Django sync-state contract for incremental Gmail synchronization tests.
+- _IncrementalBackend.__init__: Initialize version-checked in-memory mailbox state.
+- _IncrementalBackend.get_sync_state: Return an independent copy of mailbox synchronization state.
+- _IncrementalBackend.save_sync_state: Save synchronization state with version checking and increment its version.
+- _IncrementalBackend.get_stored_email: Return an independent email copy for a natural key.
+- _IncrementalBackend.assert_mailbox: Reject access to mailboxes outside the fixture.
+- _PartialSubmitBackend: Simulate a backend that rejects submission of a specified email.
+- _PartialSubmitBackend.__init__: Record the failing ID and submission batch sizes.
+- _PartialSubmitBackend.submit_emails: Record call sizes and reject the specified email.
+- _payload: Build synthetic L3 output with explicit source references.
+- _payload.dimension: Build facts and inferences for one analysis dimension.
+- _provider: Simulate an analysis provider with fixed synthetic JSON.
+- _completed_submission: Build a completed standard email submission.
+- AnalysisAndScoreTests: Verify L2 context, L3 validation, and L4 scoring.
+- AnalysisAndScoreTests.setUp: Set up fixed emails and analysis input.
+- AnalysisAndScoreTests.test_l2_contains_company_and_business_context: Verify l2 contains company and business context.
+- AnalysisAndScoreTests.test_l3_generates_three_profile_and_four_analysis_dimensions: Verify the current L3 version, three profiles, and four analysis dimensions.
+- AnalysisAndScoreTests.test_l3_provider_sends_compact_skill_input: Verify l3 provider sends compact skill input.
+- AnalysisAndScoreTests.test_l3_provider_compacts_company_enrichment_metadata: Verify that model input excludes supplementary-data maintenance metadata.
+- AnalysisAndScoreTests.test_l3_provider_compacts_unavailable_enrichment: Verify that unavailable supplementary data exposes only status and reason.
+- AnalysisAndScoreTests.test_l3_accepts_single_json_code_fence_without_model_retry: Verify l3 accepts single json code fence without model retry.
+- AnalysisAndScoreTests.test_l3_derives_size_source_from_backend_context: Verify l3 derives size source from backend context.
+- AnalysisAndScoreTests.test_l3_normalizes_and_validates_conflict_fields_before_submission: Verify l3 normalizes and validates conflict fields before submission.
+- AnalysisAndScoreTests.test_l3_rejects_unknown_source_and_percentage: Verify l3 rejects unknown source and percentage.
+- AnalysisAndScoreTests.test_l3_allows_business_percentage_and_normalizes_typed_source_ref: Verify l3 allows business percentage and normalizes typed source ref.
+- AnalysisAndScoreTests.test_default_l3_provider_retries_one_validation_failure: Verify default l3 provider retries one validation failure.
+- AnalysisAndScoreTests.test_no_purchase_basis_only_accepts_unknown_signal: Verify no purchase basis only accepts unknown signal.
+- AnalysisAndScoreTests.test_signal_gates_use_quote_order_and_new_lead_context: Verify signal gates use quote order and new lead context.
+- AnalysisAndScoreTests.test_l4_requires_formal_priority_context_without_legacy_fallback: Verify l4 requires formal priority context without legacy fallback.
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available: Verify company analysis uses priority l4 when context is available.
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext: WithPriorityContext.
+- AnalysisAndScoreTests.test_company_analysis_uses_priority_l4_when_context_is_available.WithPriorityContext.get_company_context: get company context.
+- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call: Verify analysis cache avoids second model call.
+- AnalysisAndScoreTests.test_analysis_cache_avoids_second_model_call.provider: provider.
+- SyncAndOrchestrationTests: Verify synchronization deduplication, concurrent submission, and company orchestration.
+- SyncAndOrchestrationTests.test_access_token_builds_gmail_service: Verify access token builds gmail service.
+- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis: Verify authorized sync reports mailbox before company analysis.
+- SyncAndOrchestrationTests.test_authorized_sync_reports_mailbox_before_company_analysis.process_jobs: Record the start of company job processing and return an empty queue.
+- SyncAndOrchestrationTests.test_sync_deduplicates_second_scan: Verify sync deduplicates second scan.
+- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently: Verify l1 processes multiple new emails concurrently.
+- SyncAndOrchestrationTests.test_l1_processes_multiple_new_emails_concurrently.process: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread: Verify l1 progress callbacks are serialized on sync thread.
+- SyncAndOrchestrationTests.test_l1_progress_callbacks_are_serialized_on_sync_thread.process: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes: Verify completed l1 email is submitted before slower email finishes.
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend: Observe whether the first email is submitted before a slower email completes.
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.StreamingBackend.submit_emails: Record submission timing and delegate persistence to the in-memory backend.
+- SyncAndOrchestrationTests.test_completed_l1_email_is_submitted_before_slower_email_finishes.process: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails: Verify one l1 exception does not block other emails.
+- SyncAndOrchestrationTests.test_one_l1_exception_does_not_block_other_emails.process: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails: Verify one backend rejection does not roll back other emails.
+- SyncAndOrchestrationTests.test_one_backend_rejection_does_not_roll_back_other_emails.process: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+- SyncAndOrchestrationTests.test_incremental_cursor_avoids_second_l1_call_when_history_is_empty: Verify incremental cursor avoids second l1 call when history is empty.
+- SyncAndOrchestrationTests.test_initial_scan_skips_existing_completed_extraction_before_l1: Verify initial scan skips existing completed extraction before l1.
+- SyncAndOrchestrationTests.test_incremental_cursor_retries_failed_l1_message: Verify incremental cursor retries failed l1 message.
+- SyncAndOrchestrationTests.test_existing_failed_extraction_is_preserved_when_retry_still_fails: Verify existing failed extraction is preserved when retry still fails.
+- SyncAndOrchestrationTests.test_incremental_cursor_preserves_overflow_for_the_next_sync: Verify incremental cursor preserves overflow for the next sync.
+- SyncAndOrchestrationTests.test_expired_history_cursor_falls_back_to_recent_scan: Verify expired history cursor falls back to recent scan.
+- SyncAndOrchestrationTests.test_failed_submission_can_be_replaced_and_nonbusiness_has_no_job: Verify failed submission can be replaced and nonbusiness has no job.
+- SyncAndOrchestrationTests.test_one_job_runs_l2_l3_l4_and_reports: Verify one job runs l2 l3 l4 and reports.
+Variable index:
+- NOW: Fixed test reference time, not the current runtime date.
 """
 
 import copy
@@ -89,17 +89,17 @@ from agent.tests.fake_backend import FakeBackend
 NOW = datetime(2024, 1, 3, 13, 18, tzinfo=timezone.utc)
 
 
-# 功能：为 Gmail 增量同步测试提供现有 Django sync-state 契约。
-# 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Provide the existing Django sync-state contract for incremental Gmail synchronization tests.
+# Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 class _IncrementalBackend(FakeBackend):
-    """为 Gmail 增量同步测试提供现有 Django sync-state 契约。"""
+    """Provide the existing Django sync-state contract for incremental Gmail synchronization tests."""
 
-    # 功能：初始化可版本校验的内存邮箱状态。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：初始化父类，按此测试后端定义建立状态字典或失败邮件 ID 和提交大小列表。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Initialize version-checked in-memory mailbox state.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Initialize the parent and establish state dictionaries or failing email IDs and submission-size lists for this test backend.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def __init__(self):
         super().__init__()
         self.sync_state = {
@@ -111,20 +111,20 @@ class _IncrementalBackend(FakeBackend):
             "version": 0,
         }
 
-    # 功能：返回邮箱同步状态的独立副本。
-    # 输入：`mailbox_id` 为测试邮箱标识。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：核对 mb1 后返回状态副本。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Return an independent copy of mailbox synchronization state.
+    # Inputs: `mailbox_id`: test mailbox identifier.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Check mb1 and return a copy of its state.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def get_sync_state(self, mailbox_id):
         self.assert_mailbox(mailbox_id)
         return copy.deepcopy(self.sync_state)
 
-    # 功能：按版本保存同步状态并递增版本。
-    # 输入：`sync_state` 为待保存状态。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：核对邮箱和版本后保存副本、递增版本并返回状态；冲突抛 ValueError。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Save synchronization state with version checking and increment its version.
+    # Inputs: `sync_state`: state to save.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Validate mailbox and version, save a copy, increment the version, and return state; raise ValueError on conflict.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def save_sync_state(self, sync_state):
         self.assert_mailbox(sync_state.get("mailbox_id"))
         if sync_state.get("version") != self.sync_state["version"]:
@@ -133,46 +133,46 @@ class _IncrementalBackend(FakeBackend):
         self.sync_state["version"] += 1
         return copy.deepcopy(self.sync_state)
 
-    # 功能：返回指定天然键的独立邮件副本。
-    # 输入：`mailbox_id` 为测试邮箱标识；`dedupe_key` 为邮件去重键。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：核对邮箱后返回指定内存邮件副本或 None。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Return an independent email copy for a natural key.
+    # Inputs: `mailbox_id`: test mailbox identifier; `dedupe_key`: email deduplication key.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Validate the mailbox and return a copy of the specified in-memory email, or None.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def get_stored_email(self, mailbox_id, dedupe_key):
         self.assert_mailbox(mailbox_id)
         value = self._emails.get(dedupe_key)
         return copy.deepcopy(value) if value is not None else None
 
-    # 功能：拒绝访问夹具之外的邮箱。
-    # 输入：`mailbox_id` 为测试邮箱标识。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：仅允许 mb1，其他标识抛 ValueError。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Reject access to mailboxes outside the fixture.
+    # Inputs: `mailbox_id`: test mailbox identifier.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Allow only mb1; other identifiers raise ValueError.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     @staticmethod
     def assert_mailbox(mailbox_id):
         if mailbox_id != "mb1":
             raise ValueError("unexpected mailbox")
 
 
-# 功能：模拟指定单封邮件提交失败的后端。
-# 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Simulate a backend that rejects submission of a specified email.
+# Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 class _PartialSubmitBackend(_IncrementalBackend):
-    # 功能：记录失败 ID 和提交批次大小。
-    # 输入：`failed_message_id` 为模拟失败的邮件 ID。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：初始化父类，按此测试后端定义建立状态字典或失败邮件 ID 和提交大小列表。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Record the failing ID and submission batch sizes.
+    # Inputs: `failed_message_id`: email ID whose failure is simulated.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Initialize the parent and establish state dictionaries or failing email IDs and submission-size lists for this test backend.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def __init__(self, failed_message_id):
         super().__init__()
         self.failed_message_id = failed_message_id
         self.submitted_batch_sizes = []
 
-    # 功能：记录调用大小并拒绝指定邮件。
-    # 输入：`submissions` 为邮件提交数组。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：记录或观察当前场景的提交；成功委托内存后端，指定失败场景抛出异常。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Record call sizes and reject the specified email.
+    # Inputs: `submissions`: array of email submissions.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Record or observe submissions for this scenario; delegate success to the in-memory backend and raise in the specified failure case.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def submit_emails(self, submissions):
         self.submitted_batch_sizes.append(len(submissions))
         if submissions[0]["gmail_message_id"] == self.failed_message_id:
@@ -180,11 +180,11 @@ class _PartialSubmitBackend(_IncrementalBackend):
         return super().submit_emails(submissions)
 
 
-# 功能：构造来源引用明确的合成 L3 输出。
-# 输入：`analysis_input` 为L2 输入。
-# 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-# 逻辑：使用首封邮件来源、CRM 人数、工单和订单生成固定七维字典。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Build synthetic L3 output with explicit source references.
+# Inputs: `analysis_input`: L2 input.
+# Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+# Logic: Use the first email source, CRM headcount, tickets, and orders to produce a fixed seven-dimension dictionary.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 def _payload(analysis_input):
     source = analysis_input["member_dedupe_keys"][0]
     business = analysis_input["business_context"]
@@ -206,11 +206,11 @@ def _payload(analysis_input):
         size_band = "gte_500"
     signal = "repeat_purchase" if orders else "inquiry_intent"
 
-    # 功能：构造单个分析维度的事实与推断。
-    # 输入：`text` 为维度文字。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：复用外层来源与 text，返回固定事实和推断字典。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Build facts and inferences for one analysis dimension.
+    # Inputs: `text`: dimension text.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Reuse the enclosing source and text to return fixed fact and inference dictionaries.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def dimension(text):
         return {
             "facts": [{"text": text, "source_refs": [source]}],
@@ -274,20 +274,20 @@ def _payload(analysis_input):
     }
 
 
-# 功能：用固定合成 JSON 模拟分析提供方。
-# 输入：`analysis_input` 为L2 输入。
-# 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-# 逻辑：返回固定载荷的 JSON 文本。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Simulate an analysis provider with fixed synthetic JSON.
+# Inputs: `analysis_input`: L2 input.
+# Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+# Logic: Return JSON text for the fixed payload.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 def _provider(analysis_input):
     return json.dumps(_payload(analysis_input), ensure_ascii=False)
 
 
-# 功能：构造已完成的标准邮件提交。
-# 输入：无外部参数，读取测试内存夹具和固定时钟。
-# 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-# 逻辑：复制内存邮件并设置测试邮箱、去重键及 extract-v7 意向。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Build a completed standard email submission.
+# Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+# Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+# Logic: Copy the in-memory email and set the test mailbox, deduplication key, and extract-v7 intent.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 def _completed_submission():
     backend = FakeBackend()
     source = backend.get_company_context("source-company")["emails"][0]
@@ -302,15 +302,15 @@ def _completed_submission():
     return source
 
 
-# 功能：验证 L2 上下文、L3 校验和 L4 评分。
-# 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Verify L2 context, L3 validation, and L4 scoring.
+# Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 class AnalysisAndScoreTests(unittest.TestCase):
-    # 功能：建立固定邮件和分析输入。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-    # 逻辑：用 mvp 种子和 NOW 创建后端及 L2 输入，保存到实例。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Set up fixed emails and analysis input.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+    # Logic: Create the backend and L2 input from the MVP seed and NOW, then save them on the instance.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def setUp(self):
         self.backend = FakeBackend(seed="mvp")
         built = build_analysis_input(
@@ -321,11 +321,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         )
         self.input = built.to_dict()
 
-    # 功能：Verify l2 contains company and business context。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l2 contains company and business context.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l2_contains_company_and_business_context(self):
         self.assertIn("company", self.input)
         self.assertIn("business_context", self.input)
@@ -333,11 +333,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertTrue(self.input["business_context"]["quotes"])
         self.assertTrue(self.input["business_context"]["orders"])
 
-    # 功能：验证当前 L3 版本、三个画像和四个分析维度。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify the current L3 version, three profiles, and four analysis dimensions.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_generates_three_profile_and_four_analysis_dimensions(self):
         result = generate_analysis(
             self.input,
@@ -353,11 +353,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         })
         self.assertEqual(result["list_view"]["signal"], "repeat_purchase")
 
-    # 功能：Verify l3 provider sends compact skill input。
-    # 输入：`generate` 为测试装饰器注入的模拟依赖。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 provider sends compact skill input.
+    # Inputs: `generate`: mocked dependency injected by the test decorator.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
     def test_l3_provider_sends_compact_skill_input(self, generate):
         bailian_analysis_provider(self.input)
@@ -378,11 +378,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(generate.call_args.kwargs["max_tokens"], 4000)
         self.assertEqual(ANALYSIS_PROMPT_VERSION, "analysis-v5")
 
-    # 功能：验证 L3 模型只接收公司补充资料中的业务事实和可引用标识。
-    # 输入：在固定 L2 上加入包含后端校验元数据的 matched 补充对象。
-    # 输出：模型输入保留事实、来源 ID 和虚构标记，但不包含 owner、指纹、批次及版本。
-    # 逻辑：调用默认 provider 的提示构建边界并解析发送的 ANALYSIS_INPUT。
-    # 约束：完整补充对象仍留在原 L2 中，本测试不连接外部模型。
+    # Function: Verify that the L3 model receives only business facts and citable identifiers from supplementary company data.
+    # Inputs: `generate` is the mocked model dependency; add matched supplementary data containing backend validation metadata to fixed L2 input.
+    # Outputs: Model input retains facts, source IDs, and fictional markers, excluding owner, fingerprints, batches, and versions.
+    # Logic: Invoke the default provider's prompt construction boundary and parse the transmitted ANALYSIS_INPUT.
+    # Constraints: The complete supplementary object remains in the original L2 input; no external model is contacted.
     @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
     def test_l3_provider_compacts_company_enrichment_metadata(self, generate):
         enriched = copy.deepcopy(self.input)
@@ -425,11 +425,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
             {"id": 8, "username": "fixture-owner"},
         )
 
-    # 功能：验证不可用补充资料不会把内部完整性信息发送给模型。
-    # 输入：在固定 L2 上加入 unavailable 补充对象及空事实。
-    # 输出：模型输入仅保留状态和公开失败原因。
-    # 逻辑：调用默认 provider 并检查精简后的 ANALYSIS_INPUT。
-    # 约束：不把 unavailable 状态解释成客户事实。
+    # Function: Verify that unavailable supplementary data does not expose internal integrity information to the model.
+    # Inputs: `generate` is the mocked model dependency; add unavailable supplementary data with empty facts to fixed L2 input.
+    # Outputs: Model input retains only status and the public failure reason.
+    # Logic: Invoke the default provider and inspect the reduced ANALYSIS_INPUT.
+    # Constraints: Do not interpret unavailable status as a customer fact.
     @patch("agent.workflows.customer_analysis.generate_json", return_value="{}")
     def test_l3_provider_compacts_unavailable_enrichment(self, generate):
         enriched = copy.deepcopy(self.input)
@@ -451,11 +451,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
             {"status": "unavailable", "reason": "integrity_error"},
         )
 
-    # 功能：Verify l3 accepts single json code fence without model retry。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 accepts single json code fence without model retry.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_accepts_single_json_code_fence_without_model_retry(self):
         payload = _payload(self.input)
         result = generate_analysis(
@@ -470,11 +470,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
 
-    # 功能：Verify l3 derives size source from backend context。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 derives size source from backend context.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_derives_size_source_from_backend_context(self):
         known = _payload(self.input)
         known["list_view"]["size_source"] = "模型猜测来源"
@@ -499,11 +499,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["list_view"]["size_source"], "unknown")
 
-    # 功能：Verify l3 normalizes and validates conflict fields before submission。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 normalizes and validates conflict fields before submission.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_normalizes_and_validates_conflict_fields_before_submission(self):
         source_refs = [self.input["member_dedupe_keys"][0], self.input["company_id"]]
         aliased = _payload(self.input)
@@ -543,11 +543,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("invalid enum value", result["error"]["message"])
 
-    # 功能：Verify l3 rejects unknown source and percentage。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 rejects unknown source and percentage.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_rejects_unknown_source_and_percentage(self):
         bad_source = _payload(self.input)
         bad_source["detail_view"]["profile"]["intent"]["facts"][0]["source_refs"] = ["missing"]
@@ -603,11 +603,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("fields must", result["error"]["message"])
 
-    # 功能：Verify l3 allows business percentage and normalizes typed source ref。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l3 allows business percentage and normalizes typed source ref.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l3_allows_business_percentage_and_normalizes_typed_source_ref(self):
         payload = _payload(self.input)
         payload["list_view"]["headline_summary"] = (
@@ -630,11 +630,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
             [self.input["company_id"]],
         )
 
-    # 功能：Verify default l3 provider retries one validation failure。
-    # 输入：`generate` 为测试装饰器注入的模拟依赖。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify default l3 provider retries one validation failure.
+    # Inputs: `generate`: mocked dependency injected by the test decorator.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     @patch("agent.workflows.customer_analysis.generate_json")
     def test_default_l3_provider_retries_one_validation_failure(self, generate):
         invalid = _payload(self.input)
@@ -658,11 +658,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(generate.call_count, 2)
         self.assertIn("The previous analysis failed", generate.call_args_list[1].args[1])
 
-    # 功能：Verify no purchase basis only accepts unknown signal。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify no purchase basis only accepts unknown signal.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_no_purchase_basis_only_accepts_unknown_signal(self):
         no_basis_input = copy.deepcopy(self.input)
         no_basis_input["business_context"]["orders"] = []
@@ -707,11 +707,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("requires a purchasing fact", result["error"]["message"])
 
-    # 功能：Verify signal gates use quote order and new lead context。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify signal gates use quote order and new lead context.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_signal_gates_use_quote_order_and_new_lead_context(self):
         no_orders_backend = FakeBackend(scenario="boundary-no-orders", seed="mvp")
         built = build_analysis_input(
@@ -758,11 +758,11 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("actual outbound quote", result["error"]["message"])
 
-    # 功能：Verify l4 requires formal priority context without legacy fallback。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l4 requires formal priority context without legacy fallback.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l4_requires_formal_priority_context_without_legacy_fallback(self):
         analysis = generate_analysis(
             self.input,
@@ -780,21 +780,21 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertIsNone(score["score"])
         self.assertEqual(score["score_reasons"][0]["feature"], "insufficient_data")
 
-    # 功能：Verify company analysis uses priority l4 when context is available。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify company analysis uses priority l4 when context is available.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_company_analysis_uses_priority_l4_when_context_is_available(self):
-        # 功能：WithPriorityContext。
-        # 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: WithPriorityContext.
+        # Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         class WithPriorityContext(FakeBackend):
-            # 功能：get company context。
-            # 输入：`company_id` 为公司标识。
-            # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-            # 逻辑：在父类数据中注入固定 L4 意向、customer、deal 和 seller。
-            # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+            # Function: get company context.
+            # Inputs: `company_id`: company identifier.
+            # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+            # Logic: Inject fixed L4 intent, customer, deal, and seller data into the parent data.
+            # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
             def get_company_context(self, company_id):
                 context = super().get_company_context(company_id)
                 inbound = next(item for item in context["emails"]
@@ -830,19 +830,19 @@ class AnalysisAndScoreTests(unittest.TestCase):
         saved_score = next(iter(backend._scores.values()))
         self.assertEqual(saved_score["score_details"], result["score_details"])
 
-    # 功能：Verify analysis cache avoids second model call。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify analysis cache avoids second model call.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_analysis_cache_avoids_second_model_call(self):
         calls = []
 
-        # 功能：provider。
-        # 输入：`document` 为L2 字典。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：记录调用版本并返回固定 JSON 文本。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: provider.
+        # Inputs: `document`: L2 dictionary.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Record the requested version and return fixed JSON text.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def provider(document):
             calls.append(document["input_version"])
             return _provider(document)
@@ -865,15 +865,15 @@ class AnalysisAndScoreTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
-# 功能：验证同步去重、并发提交和公司编排。
-# 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-# 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+# Function: Verify synchronization deduplication, concurrent submission, and company orchestration.
+# Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+# Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
 class SyncAndOrchestrationTests(unittest.TestCase):
-    # 功能：Verify access token builds gmail service。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify access token builds gmail service.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_access_token_builds_gmail_service(self):
         sentinel = object()
         with patch("agent.tools.gmail.build", return_value=sentinel) as build:
@@ -881,11 +881,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         credentials = build.call_args.kwargs["credentials"]
         self.assertEqual(credentials.token, "token-value")
 
-    # 功能：验证有界网页同步先回报邮箱结果，再执行公司分析。
-    # 输入：无外部参数；后端领取返回显式冻结的 7 天、20 封测试范围。
-    # 输出：事件顺序和完成状态断言。
-    # 逻辑：只模拟 Gmail 与公司任务边界，执行实际领取和回报编排。
-    # 约束：范围为测试夹具，不是产品默认值；不连接真实邮箱。
+    # Function: Verify that bounded web synchronization reports mailbox results before running company analysis.
+    # Inputs: No external parameters; backend claims return an explicitly frozen test scope of 7 days and 20 emails.
+    # Outputs: Assertions on event order and completion status.
+    # Logic: Mock only Gmail and company job boundaries while executing actual claim and report orchestration.
+    # Constraints: The scope is a test fixture, not a product default; no real mailbox is contacted.
     def test_authorized_sync_reports_mailbox_before_company_analysis(self):
         events = []
         backend = Mock()
@@ -902,11 +902,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             "mailbox_reported"
         )
 
-        # 功能：记录公司任务开始事件并返回空队列。
-        # 输入：`_kwargs` 为本模拟中未使用的调用参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：记录外层任务开始事件后返回空数组。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Record the start of company job processing and return an empty queue.
+        # Inputs: `_kwargs`: call parameters unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Record the enclosing job's start event and return an empty array.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process_jobs(**_kwargs):
             events.append("company_jobs_started")
             return []
@@ -935,11 +935,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(events, ["mailbox_reported", "company_jobs_started"])
         self.assertEqual(reports[0]["status"], "completed")
 
-    # 功能：Verify sync deduplicates second scan。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify sync deduplicates second scan.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_sync_deduplicates_second_scan(self):
         backend = FakeBackend()
         submission = _completed_submission()
@@ -959,11 +959,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(first["created_count"], 1)
         self.assertEqual(second["duplicate_count"], 1)
 
-    # 功能：Verify l1 processes multiple new emails concurrently。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l1 processes multiple new emails concurrently.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l1_processes_multiple_new_emails_concurrently(self):
         backend = FakeBackend()
         authorization = {
@@ -977,11 +977,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         maximum_active = 0
         lock = Lock()
 
-        # 功能：模拟本场景的单封处理、同步屏障或异常。
-        # 输入：`email` 为待处理邮件；`_mailbox_address` 为本模拟中未使用的邮箱参数；`_provider` 为本模拟中未使用的模型参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：按照本测试场景构造邮件提交，并使用外层锁、事件或明确异常模拟并发和失败。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+        # Inputs: `email`: email to process; `_mailbox_address`: mailbox parameter unused by this mock; `_provider`: model parameter unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Build an email submission for this scenario, using enclosing locks, events, or explicit exceptions to simulate concurrency and failure.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process(email, _mailbox_address, _provider):
             nonlocal active, maximum_active
             with lock:
@@ -1016,11 +1016,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(result["created_count"], 4)
         self.assertEqual(maximum_active, 4)
 
-    # 功能：Verify l1 progress callbacks are serialized on sync thread。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify l1 progress callbacks are serialized on sync thread.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_l1_progress_callbacks_are_serialized_on_sync_thread(self):
         backend = FakeBackend()
         authorization = {
@@ -1035,11 +1035,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             {"gmail_message_id": f"message-{index}"} for index in range(1, 5)
         ]
 
-        # 功能：模拟本场景的单封处理、同步屏障或异常。
-        # 输入：`email` 为待处理邮件；`_mailbox_address` 为本模拟中未使用的邮箱参数；`_provider` 为本模拟中未使用的模型参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：按照本测试场景构造邮件提交，并使用外层锁、事件或明确异常模拟并发和失败。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+        # Inputs: `email`: email to process; `_mailbox_address`: mailbox parameter unused by this mock; `_provider`: model parameter unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Build an email submission for this scenario, using enclosing locks, events, or explicit exceptions to simulate concurrency and failure.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process(email, _mailbox_address, _provider):
             submission = _completed_submission()
             message_id = email["gmail_message_id"]
@@ -1075,23 +1075,23 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertTrue(callback_threads)
         self.assertEqual(set(callback_threads), {caller_thread})
 
-    # 功能：Verify completed l1 email is submitted before slower email finishes。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify completed l1 email is submitted before slower email finishes.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_completed_l1_email_is_submitted_before_slower_email_finishes(self):
         submitted_fast = Event()
 
-        # 功能：观察首封提交是否早于较慢邮件完成。
-        # 逻辑：组合内存后端与模拟的外部依赖，提供本测试需要的可控状态。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Observe whether the first email is submitted before a slower email completes.
+        # Logic: Combine an in-memory backend with mocked external dependencies to provide controlled state for this test.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         class StreamingBackend(_IncrementalBackend):
-            # 功能：记录提交时机并委托内存后端入库。
-            # 输入：`submissions` 为邮件提交数组。
-            # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-            # 逻辑：记录或观察当前场景的提交；成功委托内存后端，指定失败场景抛出异常。
-            # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+            # Function: Record submission timing and delegate persistence to the in-memory backend.
+            # Inputs: `submissions`: array of email submissions.
+            # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+            # Logic: Record or observe submissions for this scenario; delegate success to the in-memory backend and raise in the specified failure case.
+            # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
             def submit_emails(self, submissions):
                 result = super().submit_emails(submissions)
                 if submissions[0]["gmail_message_id"] == "message-fast":
@@ -1110,11 +1110,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             {"gmail_message_id": "message-fast"},
         ]
 
-        # 功能：模拟本场景的单封处理、同步屏障或异常。
-        # 输入：`email` 为待处理邮件；`_mailbox_address` 为本模拟中未使用的邮箱参数；`_provider` 为本模拟中未使用的模型参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：按照本测试场景构造邮件提交，并使用外层锁、事件或明确异常模拟并发和失败。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+        # Inputs: `email`: email to process; `_mailbox_address`: mailbox parameter unused by this mock; `_provider`: model parameter unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Build an email submission for this scenario, using enclosing locks, events, or explicit exceptions to simulate concurrency and failure.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process(email, _mailbox_address, _provider):
             message_id = email["gmail_message_id"]
             if message_id == "message-slow" and not submitted_fast.wait(timeout=1):
@@ -1141,11 +1141,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(result["created_count"], 2)
         self.assertEqual(result["failed_email_count"], 0)
 
-    # 功能：Verify one l1 exception does not block other emails。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify one l1 exception does not block other emails.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_one_l1_exception_does_not_block_other_emails(self):
         backend = _IncrementalBackend()
         authorization = {
@@ -1159,11 +1159,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             {"gmail_message_id": "message-2"},
         ]
 
-        # 功能：模拟本场景的单封处理、同步屏障或异常。
-        # 输入：`email` 为待处理邮件；`_mailbox_address` 为本模拟中未使用的邮箱参数；`_provider` 为本模拟中未使用的模型参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：按照本测试场景构造邮件提交，并使用外层锁、事件或明确异常模拟并发和失败。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+        # Inputs: `email`: email to process; `_mailbox_address`: mailbox parameter unused by this mock; `_provider`: model parameter unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Build an email submission for this scenario, using enclosing locks, events, or explicit exceptions to simulate concurrency and failure.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process(email, _mailbox_address, _provider):
             if email["gmail_message_id"] == "message-2":
                 raise RuntimeError("broken email")
@@ -1187,11 +1187,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             backend.sync_state["scope"]["failed_message_ids"], ["message-2"]
         )
 
-    # 功能：Verify one backend rejection does not roll back other emails。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify one backend rejection does not roll back other emails.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_one_backend_rejection_does_not_roll_back_other_emails(self):
         backend = _PartialSubmitBackend("message-2")
         authorization = {
@@ -1205,11 +1205,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             {"gmail_message_id": "message-2"},
         ]
 
-        # 功能：模拟本场景的单封处理、同步屏障或异常。
-        # 输入：`email` 为待处理邮件；`_mailbox_address` 为本模拟中未使用的邮箱参数；`_provider` 为本模拟中未使用的模型参数。
-        # 输出：按下述逻辑返回测试对象、结果或 None；模拟异常用于验证失败分支。
-        # 逻辑：按照本测试场景构造邮件提交，并使用外层锁、事件或明确异常模拟并发和失败。
-        # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+        # Function: Simulate single-email processing, synchronization barriers, or exceptions for this scenario.
+        # Inputs: `email`: email to process; `_mailbox_address`: mailbox parameter unused by this mock; `_provider`: model parameter unused by this mock.
+        # Outputs: Return test objects, results, or None as described below; simulated exceptions verify failure paths.
+        # Logic: Build an email submission for this scenario, using enclosing locks, events, or explicit exceptions to simulate concurrency and failure.
+        # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
         def process(email, _mailbox_address, _provider):
             submission = _completed_submission()
             message_id = email["gmail_message_id"]
@@ -1239,11 +1239,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertIn("sales@example.com:message-1", backend._emails)
         self.assertNotIn("sales@example.com:message-2", backend._emails)
 
-    # 功能：Verify incremental cursor avoids second l1 call when history is empty。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify incremental cursor avoids second l1 call when history is empty.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_incremental_cursor_avoids_second_l1_call_when_history_is_empty(self):
         backend = _IncrementalBackend()
         submission = _completed_submission()
@@ -1276,11 +1276,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         history.assert_called_once_with(service, "100")
         selected.assert_called_once_with(service, [])
 
-    # 功能：Verify initial scan skips existing completed extraction before l1。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify initial scan skips existing completed extraction before l1.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_initial_scan_skips_existing_completed_extraction_before_l1(self):
         backend = _IncrementalBackend()
         backend.submit_emails([_completed_submission()])
@@ -1311,11 +1311,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertTrue(result["cursor_saved"])
         process.assert_not_called()
 
-    # 功能：Verify incremental cursor retries failed l1 message。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify incremental cursor retries failed l1 message.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_incremental_cursor_retries_failed_l1_message(self):
         backend = _IncrementalBackend()
         completed = _completed_submission()
@@ -1348,11 +1348,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(process.call_count, 2)
         selected.assert_called_once_with(service, ["message-1"])
 
-    # 功能：Verify existing failed extraction is preserved when retry still fails。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify existing failed extraction is preserved when retry still fails.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_existing_failed_extraction_is_preserved_when_retry_still_fails(self):
         backend = _IncrementalBackend()
         existing_failed = _completed_submission()
@@ -1394,11 +1394,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             backend.sync_state["scope"]["failed_message_ids"], ["message-1"]
         )
 
-    # 功能：Verify incremental cursor preserves overflow for the next sync。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify incremental cursor preserves overflow for the next sync.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_incremental_cursor_preserves_overflow_for_the_next_sync(self):
         backend = _IncrementalBackend()
         backend.sync_state.update(cursor="100", status="ok")
@@ -1450,11 +1450,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
             [call(service, ["message-1", "message-2"]), call(service, ["message-3"])],
         )
 
-    # 功能：Verify expired history cursor falls back to recent scan。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify expired history cursor falls back to recent scan.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_expired_history_cursor_falls_back_to_recent_scan(self):
         backend = _IncrementalBackend()
         backend.sync_state.update(cursor="expired", status="ok")
@@ -1490,11 +1490,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(backend.sync_state["cursor"], "200")
         recent.assert_called_once_with(service, limit=20)
 
-    # 功能：Verify failed submission can be replaced and nonbusiness has no job。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify failed submission can be replaced and nonbusiness has no job.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_failed_submission_can_be_replaced_and_nonbusiness_has_no_job(self):
         backend = FakeBackend()
         completed = _completed_submission()
@@ -1516,11 +1516,11 @@ class SyncAndOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0]["trigger"], "email_ingested")
 
-    # 功能：Verify one job runs l2 l3 l4 and reports。
-    # 输入：无外部参数，读取测试内存夹具和固定时钟。
-    # 输出：无返回值；断言不满足时测试失败。
-    # 逻辑：对本测试固定样例执行真实本地工作流，以可控的模拟依赖检查输出、异常和调用次数。
-    # 约束：仅使用测试夹具与模拟依赖，不连接真实数据库、邮箱或模型；不代表外部服务已验证。
+    # Function: Verify one job runs l2 l3 l4 and reports.
+    # Inputs: No external parameters; read in-memory test fixtures and the fixed clock.
+    # Outputs: No return value; failed assertions fail the test.
+    # Logic: Run the actual local workflow on fixed samples, using controlled mocks to check outputs, exceptions, and call counts.
+    # Constraints: Use only fixtures and mocked dependencies, without real databases, mailboxes, or models; this does not verify external services.
     def test_one_job_runs_l2_l3_l4_and_reports(self):
         backend = FakeBackend()
         backend.submit_emails([_completed_submission()])

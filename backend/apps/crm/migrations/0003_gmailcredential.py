@@ -1,22 +1,22 @@
-"""职责：创建员工 Gmail 授权凭证表。
-实现：增加与 Mailbox 一对一的 JSON 凭证及授权和更新时间。
-关联：gmail_oauth 服务写入本表，删除 Mailbox 时级联删除凭证。
-目录：
-- Migration：声明 0003 数据库迁移。
-变量索引：
-- Migration.dependencies：依赖可空邮件联系人的 0002 迁移。
-- Migration.operations：创建 GmailCredential 表。
+"""Responsibility: Create the employee Gmail authorization-credential table.
+Implementation: Add JSON credentials and authorization and update timestamps in a one-to-one relationship with Mailbox.
+Relationships: gmail_oauth writes this table, and deleting a Mailbox cascades to its credential.
+Directory:
+- Migration: Declares database migration 0003.
+Variable index:
+- Migration.dependencies: Dependency on migration 0002, which makes the email contact nullable.
+- Migration.operations: Creates the GmailCredential table.
 """
 
 from django.db import migrations, models
 import django.db.models.deletion
 
 
-# 功能：声明 GmailCredential 表结构迁移。
-# 输入：Django migration executor 提供历史 apps 和 schema editor。
-# 输出：创建一张与 Mailbox 一对一的授权表。
-# 逻辑：在 0002 后执行 CreateModel。
-# 约束：只描述结构，不包含真实 Google 凭证数据。
+# Function: Declare the GmailCredential table-schema migration.
+# Inputs: The Django migration executor provides historical apps and a schema editor.
+# Outputs: Creates an authorization table with a one-to-one relationship to Mailbox.
+# Logic: Executes CreateModel after migration 0002.
+# Constraints: Describes schema only and contains no real Google credential data.
 class Migration(migrations.Migration):
     dependencies = [("crm", "0002_email_contact_nullable")]
 

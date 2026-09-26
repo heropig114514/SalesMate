@@ -1,4 +1,42 @@
-"""DjangoBackendClient 的离线传输映射测试。"""
+"""Responsibility: Offline transport mapping tests for DjangoBackendClient.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- _Response: Group offline assertions and fixture behavior for _Response.
+- _Response.__init__: Initialize isolated fixture state and configured simulated responses.
+- _Response.json: Return or deliberately reject the configured mocked JSON response.
+- _Session: Group offline assertions and fixture behavior for _Session.
+- _Session.__init__: Initialize isolated fixture state and configured simulated responses.
+- _Session.request: Record a mocked HTTP request and return its configured response.
+- DjangoBackendClientTests: Group offline assertions and fixture behavior for DjangoBackendClientTests.
+- DjangoBackendClientTests.client: Build a backend client with mocked HTTP transport.
+- DjangoBackendClientTests.test_request_bound_chat_read_uses_agent_identity_and_checks_evidence: Verify request bound chat read uses agent identity and checks evidence.
+- DjangoBackendClientTests.test_chat_tool_catalog_is_bound_to_request_and_agent_identity: Verify chat tool catalog is bound to request and agent identity.
+- DjangoBackendClientTests.test_chat_tool_error_preserves_backend_scope: Verify chat tool error preserves backend scope.
+- DjangoBackendClientTests.test_chat_request_status_uses_agent_identity: Verify chat request status uses agent identity.
+- DjangoBackendClientTests.test_chat_read_rejects_wrong_request_identity: Verify chat read rejects wrong request identity.
+- DjangoBackendClientTests.test_submit_adds_transport_fields_and_aggregates_response: Verify submit adds transport fields and aggregates response.
+- DjangoBackendClientTests.test_stored_email_lookup_maps_existing_record_and_not_found: Verify stored email lookup maps existing record and not found.
+- DjangoBackendClientTests.test_grouping_context_and_job_extensions_are_hidden_from_workflow: Verify grouping context and job extensions are hidden from workflow.
+- DjangoBackendClientTests.test_cache_miss_and_complete_cache_are_mapped: Verify cache miss and complete cache are mapped.
+- DjangoBackendClientTests.test_employee_mailbox_sync_claim_and_report_are_mapped: Verify employee mailbox sync claim and report are mapped.
+- DjangoBackendClientTests.test_sync_state_uses_etag_for_incremental_cursor_save: Verify sync state uses etag for incremental cursor save.
+- DjangoBackendClientTests.test_metadata_only_cache_hit_and_http_error_fail_explicitly: Verify metadata only cache hit and http error fail explicitly.
+- DjangoBackendClientTests.test_chat_claim_maps_zero_and_single_work_with_authenticated_transport: Verify chat claim maps zero and single work with authenticated transport.
+- DjangoBackendClientTests.test_chat_context_maps_scopes_and_independent_retrieval_statuses: Verify chat context maps scopes and independent retrieval statuses.
+- DjangoBackendClientTests.test_chat_report_maps_completed_failed_and_duplicate_results: Verify chat report maps completed failed and duplicate results.
+- DjangoBackendClientTests.test_chat_scope_and_report_input_validation_happens_before_transport: Verify chat scope and report input validation happens before transport.
+- DjangoBackendClientTests.test_chat_claim_rejects_malformed_response_objects: Verify chat claim rejects malformed response objects.
+- DjangoBackendClientTests.test_chat_context_rejects_mismatches_and_malformed_status_objects: Verify chat context rejects mismatches and malformed status objects.
+- DjangoBackendClientTests.test_chat_report_rejects_mismatched_and_malformed_response_objects: Verify chat report rejects mismatched and malformed response objects.
+- DjangoBackendClientTests.test_chat_non_json_and_http_failures_are_safe: Verify chat non json and http failures are safe.
+- DjangoBackendClientTests.test_chat_non_json_and_http_failures_are_safe._NonJsonResponse: Group offline assertions and fixture behavior for _NonJsonResponse.
+- DjangoBackendClientTests.test_chat_non_json_and_http_failures_are_safe._NonJsonResponse.json: Return or deliberately reject the configured mocked JSON response.
+
+Variable index:
+- None
+"""
 
 import unittest
 

@@ -1,11 +1,11 @@
-"""职责：增加正式 L4 所需的销售方画像和商机产品字段。
-实现：创建按 owner 唯一的配置表，为现有商机添加可空产品字段，不补造历史业务数据。
-关联：sales.models.SellerProfile 和 Opportunity.product_names 的数据库定义。
-目录：
-- Migration：正式评分输入的增量迁移。
-变量索引：
-- Migration.dependencies：账号表与前一 sales 迁移。
-- Migration.operations：新增表和产品字段的可逆操作。
+"""Responsibility: Add seller profiles and opportunity product fields required for formal L4.
+Implementation: Create an owner-unique configuration table and nullable product fields on existing opportunities without inventing historical business data.
+Relationships: Database definitions for sales.models.SellerProfile and Opportunity.product_names.
+Directory:
+- Migration: Incremental migration for formal scoring inputs.
+Variable index:
+- Migration.dependencies: Account table and preceding sales migration.
+- Migration.operations: Reversible operations adding the table and product field.
 """
 
 import django.db.models.deletion
@@ -13,9 +13,9 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：正式评分输入的增量迁移。
-# 逻辑：由 Django 创建画像表和可空 JSON 产品字段，原有商机以 null 保持产品未知。
-# 约束：不写默认行业、均值或虚构订单；回滚会移除新增配置及产品字段。
+# Function: Incremental migration for formal scoring inputs.
+# Logic: Django creates the profile table and nullable JSON product field; existing opportunities retain unknown products as null.
+# Constraints: Do not write default industries, averages, or fictional orders; reversal removes the added configuration and product field.
 class Migration(migrations.Migration):
 
     dependencies = [

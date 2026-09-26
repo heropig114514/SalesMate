@@ -1,25 +1,25 @@
-# SalesMate 测试工具
+# SalesMate Test Tools
 
-下载包同时提供 Gmail 和 QQ 测试邮件注入器。两者用于验证「收件箱同步 → 邮件抽取 → 客户分析」，不会向外部地址发信。
+The download package provides Gmail and QQ test-mail injectors. Both verify inbox synchronization, mail extraction, and customer analysis without sending mail to external addresses.
 
-| 邮箱 | 脚本 | 使用说明 |
+| Mailbox | Script | Usage |
 |---|---|---|
-| Gmail | `gmail_test_injector.py` | 本文后续章节；需要独立 Google Desktop OAuth |
-| QQ / foxmail | `qq_test_injector.py` | [QQ 测试工具说明](QQ_README.md)；只需 Python 标准库和 QQ 客户端授权码 |
+| Gmail | `gmail_test_injector.py` | Later sections of this document; requires separate Google Desktop OAuth |
+| QQ / foxmail | `qq_test_injector.py` | [QQ test-tool guide](QQ_README.md); requires only Python's standard library and a QQ client authorization code |
 
-本目录提供 Gmail 测试邮件注入器，供开发和测试人员反复验证 SalesMate 全流程。注入器可以脱离 SalesMate 主项目独立安装和运行，只依赖本目录的 `requirements.txt`。它通过 Gmail API 将合成邮件直接插入测试人员自己的 Gmail 收件箱，随后可以在 SalesMate 网页中执行正常的 Gmail 同步，让邮件依次经过 L1 事实抽取、后端公司归组以及 L2–L4 客户分析。
+This directory provides the Gmail test-mail injector for developers and testers to repeatedly verify the complete SalesMate flow. It can be installed and run independently from the main project using only this directory's requirements.txt. It uses the Gmail API to insert synthetic mail directly into the tester's own Gmail inbox. Ordinary Gmail synchronization in SalesMate then runs L1 fact extraction, backend company grouping, and L2–L4 customer analysis.
 
-工具不会修改 SalesMate 后端，也不会把邮件发送到外部地址。它使用 Gmail `messages.insert`，因此只验证 Gmail 读取和 SalesMate 处理链路，不验证 SMTP 投递、SPF、DKIM 或垃圾邮件分类。
+The tool does not modify the SalesMate backend or send mail externally. Gmail messages.insert verifies Gmail reading and SalesMate processing only, not SMTP delivery, SPF, DKIM, or spam classification.
 
-每次 `test_tools` 或该流水线配置更新并推送到 `main` 后，GitHub Actions 会自动验证并生成包含两种工具的 ZIP。相关 PR 和手动执行也会触发检查。在 GitHub 仓库的 **Actions → Package test tools → 最新成功运行 → Artifacts** 中下载 `salesmate-test-tools`，解压后即可按照本文操作。Artifact 保留 30 天，也可以从该工作流页面手动重新打包。
+Updates to test_tools or its workflow pushed to main trigger GitHub Actions validation and a ZIP containing both injectors. Relevant pull requests and manual runs also trigger checks. Download salesmate-test-tools from **Actions → Package test tools → latest successful run → Artifacts**, extract it, and follow this guide. Artifacts are retained for 30 days and can be rebuilt manually from the workflow page.
 
-流水线运行 QQ 离线单元测试及 Gmail/QQ 的 `--dry-run`，并在实际分发目录复验。它不使用邮箱凭证，不写入邮箱、不测试 SMTP 投递；下载包只包含脚本、模板、依赖清单和说明，不含个人凭证或 `*.local.json`。
+The workflow runs QQ offline unit tests and Gmail/QQ --dry-run, then revalidates the actual distribution directory. It uses no mailbox credentials, writes no mailbox data, and does not test SMTP delivery. Packages contain only scripts, templates, dependency manifests, and documentation, never personal credentials or *.local.json.
 
-## 1. 独立安装 Gmail 注入器
+## 1. Install the Gmail injector independently
 
-安装 Python 3.10 或更高版本。只下载或解压 `test_tools` 文件夹即可，不需要下载 `agent`、`backend` 或安装主项目依赖。
+Install Python 3.10 or newer. Downloading or extracting only test_tools is sufficient; agent, backend, and main-project dependencies are unnecessary.
 
-在 PowerShell 中进入下载后的 `test_tools` 目录，为工具创建独立虚拟环境：
+In PowerShell, enter the downloaded directory and create an isolated environment:
 
 ```powershell
 Set-Location .\test_tools
@@ -29,15 +29,15 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-后续章节中的 Gmail 注入命令都默认在 `test_tools` 目录中执行。再次打开终端时，只需要进入该目录并运行 `.\.venv\Scripts\Activate.ps1`。
+All Gmail commands below run from test_tools. After reopening a terminal, enter that directory and run `.\.venv\Scripts\Activate.ps1`.
 
-## 2. 创建测试工具专用 Google OAuth 客户端
+## 2. Create a dedicated Google OAuth client
 
-1. 打开 Google Cloud Console，进入当前项目的 **APIs & Services → Credentials**。
-2. 确认项目已经启用 Gmail API。
-3. 创建 OAuth Client ID，Application type 必须选择 **Desktop app**。
-4. 下载 JSON，将文件重命名为 `gmail_inject_credentials.json`。
-5. 把文件放到下载后的工具目录：
+1. Open Google Cloud Console and enter **APIs & Services → Credentials** for the current project.
+2. Confirm Gmail API is enabled.
+3. Create an OAuth Client ID with application type **Desktop app**.
+4. Download the JSON and rename it gmail_inject_credentials.json.
+5. Place it in the downloaded tools directory:
 
 ```text
 test_tools/
@@ -49,23 +49,23 @@ test_tools/
 └── gmail_inject_credentials.json
 ```
 
-不要使用网页 Gmail 授权所用的 **Web application** OAuth Client。Web Client 只接受登记过的 Django 回调地址，而该工具会启动一个随机 localhost 端口，因此会产生 `redirect_uri_mismatch`。
+Do not use the Web application OAuth client for browser Gmail authorization. A Web client accepts only registered Django callback addresses, while this tool starts a random localhost port and would produce redirect_uri_mismatch.
 
-如果 OAuth consent screen 处于测试状态，还需要把准备授权的 Gmail 地址加入 **Test users**，否则可能出现 `403 access_denied`。
+If the consent screen is in testing status, add the Gmail account under Test users to avoid 403 access_denied.
 
-`gmail_inject_credentials.json` 包含客户端密钥，已经被 Git 忽略，不要提交或发到聊天、Issue、提交记录中。每名测试人员应使用自己的凭据文件。
+gmail_inject_credentials.json contains a client secret and is Git-ignored. Do not commit it or send it through chat, issues, or commit history. Each tester should use a separate credential file.
 
-## 3. 编写测试邮件 JSON
+## 3. Write test-mail JSON
 
-复制模板后修改，不建议直接改模板文件：
+Copy and modify the template rather than editing it directly:
 
 ```powershell
 Copy-Item .\gmail_test_messages.template.json .\gmail_test_messages.local.json
 ```
 
-`*.local.json` 已被 `test_tools/.gitignore` 忽略，适合保存每名测试人员自己的邮箱和测试内容。需要作为团队公共案例时，可以另外创建不带 `.local` 的 JSON，并确认其中没有真实客户数据或凭据后提交。
+*.local.json is ignored by test_tools/.gitignore and can contain each tester's mailbox and test content. For shared team cases, create another JSON without .local and commit only after confirming it has no real customer data or credentials.
 
-JSON 格式如下：
+JSON format:
 
 ```json
 {
@@ -80,27 +80,25 @@ JSON 格式如下：
 }
 ```
 
-字段要求：
-
-| 字段 | 要求 |
+| Field | Requirement |
 |---|---|
-| `mailbox_address` | 接收测试邮件并在 SalesMate 网页授权的完整 Gmail 地址 |
-| `messages` | 至少包含一封邮件的数组 |
-| `messages[].from` | 纯邮箱或 `名称 <邮箱>` 格式；同一企业域名会用于测试公司归组 |
-| `messages[].subject` | 非空字符串，不能包含换行 |
-| `messages[].body` | 非空邮件正文，也是 L1 事实抽取的主要输入 |
+| mailbox_address | Full receiving Gmail address, also authorized in SalesMate |
+| messages | Array containing at least one message |
+| messages[].from | Plain email or Name <email>; same company domains test grouping |
+| messages[].subject | Nonempty string without line breaks |
+| messages[].body | Nonempty body, the primary L1 fact-extraction input |
 
-收件邮箱统一由顶层 `mailbox_address` 指定，每封邮件不能单独设置 `to`。这样可以避免同一批测试数据误插入不同账号。
+The recipient is always top-level mailbox_address. Individual messages cannot set to, preventing a batch from being inserted into different accounts.
 
-## 4. 预览测试邮件
+## 4. Preview test mail
 
-在 `test_tools` 目录执行：
+From test_tools:
 
 ```powershell
 python .\gmail_test_injector.py --dry-run
 ```
 
-上面的命令默认读取同目录的 `gmail_test_messages.template.json`。预览自定义文件：
+By default this reads same-directory gmail_test_messages.template.json. To preview custom data:
 
 ```powershell
 python .\gmail_test_injector.py `
@@ -108,55 +106,53 @@ python .\gmail_test_injector.py `
   --dry-run
 ```
 
-`--dry-run` 会先校验整个 JSON，再输出收件箱、发件人和主题；它不访问 Gmail，也不会打开授权页面。
+--dry-run validates the complete JSON and prints the inbox, sender, and subject without accessing Gmail or opening authorization.
 
-## 5. 插入测试邮件
+## 5. Insert test mail
 
 ```powershell
 python .\gmail_test_injector.py
 ```
 
-插入自定义 JSON：
+For custom JSON:
 
 ```powershell
 python .\gmail_test_injector.py `
   --messages-file .\gmail_test_messages.local.json
 ```
 
-首次执行时浏览器会要求登录 Google 并授权 `gmail.insert` 和 `gmail.readonly`。授权成功后，工具会在同一目录生成 `gmail_inject_token.json`，以后运行会自动复用该 token。
+The first run opens Google sign-in and requests gmail.insert and gmail.readonly. After authorization, gmail_inject_token.json is created in the same directory and reused later.
 
-JSON 中的 `mailbox_address` 必须与浏览器实际授权的 Gmail 账号相同。工具会在写入前读取 Gmail profile 进行核对，避免把测试邮件插入错误账号。
+JSON mailbox_address must match the account actually authorized in the browser. The tool reads the Gmail profile before writing to prevent insertion into the wrong account.
 
-成功结果包含：
+Successful output includes:
 
-- 本次运行的 `run_id`。
-- 六封邮件的 Gmail message ID。
-- 可用于 Gmail 搜索和清理的 `gmail_search`。
+- run_id for this execution.
+- Gmail message IDs for six messages.
+- gmail_search for searching and cleanup.
 
-六封样例覆盖同域名多联系人归入同一公司、不同企业域名、公共 Gmail 联系人和 no-reply 非业务邮件。
+The six samples cover grouping multiple same-domain contacts into one company, different company domains, public Gmail contacts, and no-reply non-business mail.
 
-## 6. 运行 SalesMate 全流程
+## 6. Run the complete SalesMate flow
 
-注入器执行完成后，测试邮件已经存在于指定 Gmail 收件箱中。只测试邮件注入工具时，到这里即可结束。
+After injection, test mail exists in the specified Gmail inbox. Stop here if testing only injection. For the complete flow, use the full SalesMate repository root:
 
-需要继续验证 SalesMate 全流程时，在完整 SalesMate 项目的仓库根目录启动 Django 和网页：
-
-1. 启动 Django 和网页：
+1. Start Django and the web UI:
 
    ```powershell
    python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --port 8000 --reload
    ```
 
-2. 打开 `http://127.0.0.1:8000/`。
-3. 确认网页左侧连接的是刚才注入邮件的同一个 Gmail 账号。
-4. 点击“同步 Gmail”。
-5. 等待同步和公司分析完成，检查公司列表、邮件原文、事实、画像、分析和跟进分数。
+2. Open http://127.0.0.1:8000/.
+3. Confirm the left-side connection uses the receiving Gmail account.
+4. Select Gmail synchronization.
+5. Wait for synchronization and analysis, then inspect companies, original mail, facts, profiles, analysis, and follow-up scores.
 
-测试邮件仍通过正式 Gmail 只读同步进入系统，因此会执行正常的去重和 Gmail History 增量读取逻辑。
+Mail enters through the production Gmail read-only synchronization path, executing normal deduplication and Gmail History incremental reads.
 
-## 7. 重新授权或更换账号
+## 7. Reauthorize or change accounts
 
-删除本地 token 后再次执行插入命令：
+Delete the local token and rerun insertion:
 
 ```powershell
 Remove-Item -LiteralPath .\gmail_inject_token.json
@@ -164,25 +160,25 @@ python .\gmail_test_injector.py `
   --messages-file .\another_account_messages.local.json
 ```
 
-如果修改过授权 scope，也需要删除旧 token 后重新授权。
+Also delete the old token and reauthorize after changing scopes.
 
-## 8. 删除 Gmail 中的测试邮件
+## 8. Delete test mail from Gmail
 
-复制成功输出中的 `gmail_search`，在 Gmail 搜索框中搜索本次测试邮件，确认结果后批量删除。主题格式为：
+Copy gmail_search from successful output, search in Gmail, verify results, and delete in bulk. Subject format:
 
 ```text
-[SalesMate测试:<run_id>] 邮件主题
+[SalesMate测试:<run_id>] Mail subject
 ```
 
-删除 Gmail 中的邮件不会自动删除已经同步到 SalesMate 数据库的记录。
+Deleting Gmail mail does not automatically remove records already synchronized into SalesMate.
 
-## 9. 常见错误
+## 9. Common errors
 
-| 错误 | 原因 | 处理方式 |
+| Error | Cause | Resolution |
 |---|---|---|
-| `redirect_uri_mismatch` | 使用了 Web application Client | 创建 Desktop app Client，并替换 `test_tools/gmail_inject_credentials.json` |
-| `403 access_denied` | 当前账号不在 OAuth 测试用户中 | 在 OAuth consent screen 中加入 Test user |
-| 授权账号不一致 | token 所属账号和 JSON 的 `mailbox_address` 不同 | 删除 `gmail_inject_token.json` 后重新授权，或修正 JSON |
-| JSON 校验失败 | 缺少字段、字段类型错误或邮件数组为空 | 对照 `gmail_test_messages.template.json` 修改自定义文件 |
-| token scope 不足 | 旧 token 没有 `gmail.insert` 权限 | 删除 token 后重新授权 |
-| 找不到凭据文件 | 文件名或放置目录不正确 | 确认文件位于 `test_tools/gmail_inject_credentials.json` |
+| redirect_uri_mismatch | Web application client used | Create a Desktop app client and replace test_tools/gmail_inject_credentials.json |
+| 403 access_denied | Current account is not an OAuth test user | Add it under Test users in the consent screen |
+| Authorized account mismatch | Token account differs from JSON mailbox_address | Delete gmail_inject_token.json and reauthorize, or correct JSON |
+| JSON validation failure | Missing/wrong-type field or empty mail array | Correct custom JSON against gmail_test_messages.template.json |
+| Insufficient token scope | Old token lacks gmail.insert | Delete the token and reauthorize |
+| Credential file not found | Incorrect name/location | Confirm test_tools/gmail_inject_credentials.json exists |

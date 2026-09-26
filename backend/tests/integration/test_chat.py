@@ -1,47 +1,47 @@
-"""职责：验证聊天任务事务、证据、隔离和真实 HTTP Agent 适配。
-实现：使用隔离 PostgreSQL 与真实 Django API，覆盖结构校验与来源元数据保存；模型和 Worker 环境使用确定性模拟。
-关联：apps.chat、既有 sales 消息及 agent.workflows.chat；不调用真实邮箱或百炼。
-目录：
-- fixture：建立两员工、自有客户及独立工作空间会话。
-- result_for：构造合法 Agent 回报。
-- ChatTests：接口及状态不变量测试。
-- ChatTests.setUp：创建隔离夹具与客户端。
-- ChatTests.submit：经浏览器 API 提问。
-- ChatTests.test_submit_idempotency_and_active_guard：提交幂等及活动约束。
-- ChatTests.test_message_and_request_rollback：创建请求失败整体回滚。
-- ChatTests.test_claim_history_boundary：领取历史截止和一次性领取。
-- ChatTests.test_agent_auth_and_employee_isolation：服务与用户权限隔离。
-- ChatTests.test_shared_company_does_not_grant_mail_access：共享业务不升级邮件权限。
-- ChatTests.test_context_frozen_budget_and_isolation：知识上下文冻结、容量和公司隔离。
-- ChatTests.test_report_idempotency_and_citations：引用快照及终态去重。
-- ChatTests.test_invalid_report_rolls_back：Schema 反例不产生消息。
-- ChatTests.test_report_accepts_metadata_without_reading_other_snapshots：来源不在快照仍可保存，但不能读取其他请求正文。
-- ChatTests.test_report_accepts_arbitrary_error_text：合法错误结构不受固定文案限制。
-- ChatTests.test_failure_retry_and_late_report：显式新尝试与迟到结果拒绝。
-- ChatTests.test_interrupted_request_recovery：人工恢复确认及旧结果隔离。
-- ChatTests.test_no_context_required_for_zero_citation_answer：零引用澄清可完成。
-- ChatTests.test_archived_conversation_is_not_claimed：归档任务失败并释放队列。
-- ChatTests.test_browser_cannot_forge_assistant：原消息写入口仍禁止助手伪造。
-- ChatTests.test_browser_csrf_and_bad_input：会话写入保留 CSRF 和严格字段。
-- ChatTests.test_knowledge_import_versions：知识版本不可覆盖与原子回滚。
-- ChatTests.test_workspace_does_not_preselect_company：初始上下文不隐式选取客户资料。
-- ChatTests.test_answer_transaction_rollback：引用保存失败回滚助手消息。
-- ChatTests.test_worker_report_failure_stops：回报失败停止消费者且不重试。
-- ChatTests.test_processing_access_revoked：领取后撤销权限不能读证据或保存结果。
-- ChatTests.test_bad_pagination：非法分页返回 400。
-- ChatConcurrencyTests：真实数据库并发不变量。
-- ChatConcurrencyTests.test_concurrent_claim：两消费者不能领取同一请求。
-- ChatConcurrencyTests.test_concurrent_claim.consume：独立连接领取函数。
-- ChatConcurrencyTests.test_concurrent_submit：并发提交返回同一原始请求。
-- ChatConcurrencyTests.test_concurrent_submit.send：独立连接提交函数。
-- ChatConcurrencyTests.test_concurrent_report：重复并发回报只有一条助手消息。
-- ChatConcurrencyTests.test_concurrent_report.send：独立连接回报函数。
-- ChatHTTPTests：跨真实 HTTP 的 Agent 完整流程。
-- ChatHTTPTests.test_agent_real_http_round_trip：真实传输、工具循环、持久化与引用回读。
-- ChatHTTPTests.test_agent_real_http_round_trip.decide：在模型边界根据真实工具证据作出决策。
-变量索引：
-- BROWSER：聊天浏览器接口前缀。
-- AGENT：固定 Agent 聊天接口前缀。
+"""Responsibility: Validates chat-task transactions, evidence, isolation, and the real HTTP Agent integration.
+Implementation: Uses isolated PostgreSQL and the real Django API to cover schema validation and source-metadata persistence; model and Worker environments use deterministic mocks.
+Relationships: `apps.chat`, existing sales messages, and `agent.workflows.chat`; does not call a real mailbox or Bailian.
+Directory:
+- fixture: Creates two employees, an owned customer, and an independent workspace conversation.
+- result_for: Builds a valid Agent report.
+- ChatTests: Tests API and state invariants.
+- ChatTests.setUp: Creates isolated fixtures and clients.
+- ChatTests.submit: Asks a question through the browser API.
+- ChatTests.test_submit_idempotency_and_active_guard: Covers idempotent submission and active-task constraints.
+- ChatTests.test_message_and_request_rollback: Ensures a failed request creation rolls back as a whole.
+- ChatTests.test_claim_history_boundary: Covers historical cutoff during claiming and one-time claiming.
+- ChatTests.test_agent_auth_and_employee_isolation: Covers service and user permission isolation.
+- ChatTests.test_shared_company_does_not_grant_mail_access: Ensures business sharing does not grant email permissions.
+- ChatTests.test_context_frozen_budget_and_isolation: Covers frozen knowledge context, capacity, and company isolation.
+- ChatTests.test_report_idempotency_and_citations: Covers citation snapshots and terminal-state deduplication.
+- ChatTests.test_invalid_report_rolls_back: Ensures schema counterexamples create no messages.
+- ChatTests.test_report_accepts_metadata_without_reading_other_snapshots: A source absent from the snapshot may still be saved, but another request's body cannot be read.
+- ChatTests.test_report_accepts_arbitrary_error_text: Allows valid error structures without constraining wording to fixed text.
+- ChatTests.test_failure_retry_and_late_report: Covers explicit new attempts and rejection of late results.
+- ChatTests.test_interrupted_request_recovery: Covers manual recovery confirmation and isolation from old results.
+- ChatTests.test_no_context_required_for_zero_citation_answer: Allows zero-citation clarifications to complete.
+- ChatTests.test_archived_conversation_is_not_claimed: Fails archived tasks and releases the queue.
+- ChatTests.test_browser_cannot_forge_assistant: Ensures the original message write endpoint still forbids assistant impersonation.
+- ChatTests.test_browser_csrf_and_bad_input: Ensures conversation writes retain CSRF protection and strict fields.
+- ChatTests.test_knowledge_import_versions: Covers non-overridable knowledge versions and atomic rollback.
+- ChatTests.test_workspace_does_not_preselect_company: Ensures initial context does not implicitly select customer material.
+- ChatTests.test_answer_transaction_rollback: Ensures citation-save failure rolls back the assistant message.
+- ChatTests.test_worker_report_failure_stops: Stops the consumer after report failure and does not retry.
+- ChatTests.test_processing_access_revoked: After permission revocation following a claim, evidence cannot be read and results cannot be saved.
+- ChatTests.test_bad_pagination: Returns 400 for invalid pagination.
+- ChatConcurrencyTests: Covers real-database concurrency invariants.
+- ChatConcurrencyTests.test_concurrent_claim: Ensures two consumers cannot claim the same request.
+- ChatConcurrencyTests.test_concurrent_claim.consume: Claim helper using an independent connection.
+- ChatConcurrencyTests.test_concurrent_submit: Ensures concurrent submissions return the same original request.
+- ChatConcurrencyTests.test_concurrent_submit.send: Submission helper using an independent connection.
+- ChatConcurrencyTests.test_concurrent_report: Ensures duplicate concurrent reports create only one assistant message.
+- ChatConcurrencyTests.test_concurrent_report.send: Report helper using an independent connection.
+- ChatHTTPTests: Exercises the complete Agent flow across real HTTP.
+- ChatHTTPTests.test_agent_real_http_round_trip: Covers real transport, the tool loop, persistence, and citation readback.
+- ChatHTTPTests.test_agent_real_http_round_trip.decide: Makes a decision at the model boundary from evidence returned by real tools.
+Variable index:
+- BROWSER: Browser chat API prefix.
+- AGENT: Fixed Agent chat API prefix.
 """
 
 import hashlib
@@ -87,11 +87,11 @@ BROWSER = "/api/v1/sales/chat/"
 AGENT = "/api/v1/agent/chat/"
 
 
-# 功能：建立独立聊天测试实体。
-# 输入：无外部参数，使用当前测试数据库。
-# 输出：员工、另一员工、公司及会话。
-# 逻辑：只使用合成账号和邮件；工作空间会话不绑定公司，凭证为测试固定值。
-# 约束：不读取运行环境凭证，不触发邮箱或模型调用。
+# Function: Creates independent chat-test entities.
+# Inputs: No external parameters; uses the current test database.
+# Outputs: Employee, other employee, company, and conversation.
+# Logic: Uses only synthetic accounts and mail; the workspace conversation is not bound to a company, and credentials are fixed test values.
+# Constraints: Does not read runtime credentials or trigger mailbox or model calls.
 def fixture():
     owner = get_user_model().objects.create_user(username="chat-owner")
     other = get_user_model().objects.create_user(username="chat-other")
@@ -117,11 +117,11 @@ def fixture():
     return owner, other, company, conversation
 
 
-# 功能：构造合法最终结果。
-# 输入：`request` 回答任务，`citation` 可选严格引用三元组。
-# 输出：chat-v2 completed 回报。
-# 逻辑：带引用时返回受证据支持的确定语句，否则返回资料不足。
-# 约束：仅测试夹具，不代表真实模型能力。
+# Function: Builds a valid final result.
+# Inputs: `request` answers the task; `citation` is an optional strict citation triple.
+# Outputs: A completed chat-v2 report.
+# Logic: Returns an evidence-supported definitive statement when citations exist; otherwise returns insufficient-information guidance.
+# Constraints: Uses test fixtures only and does not represent real model capability.
 def result_for(request, citation=None):
     return {
         "request_id": str(request.pk),
@@ -135,15 +135,15 @@ def result_for(request, citation=None):
     }
 
 
-# 功能：覆盖聊天后端状态与权限。
-# 逻辑：真实 ORM/HTTP 配合模拟失败验证事务边界。
-# 约束：TestCase 每例回滚，外部服务不参与。
+# Function: Covers chat backend state and permissions.
+# Logic: Uses real ORM/HTTP with mocked failures to verify transaction boundaries.
+# Constraints: `TestCase` rolls back each case; external services do not participate.
 class ChatTests(TestCase):
-    # 功能：准备员工和两种认证客户端。
-    # 输入：无外部参数，读取测试框架数据库。
-    # 输出：实例夹具。
-    # 逻辑：浏览器 force_authenticate，Agent 使用真实服务凭证认证。
-    # 约束：不绕过 AgentAuthentication。
+    # Function: Prepares an employee and two authentication clients.
+    # Inputs: No external parameters; reads the test-framework database.
+    # Outputs: Instance fixtures.
+    # Logic: The browser uses `force_authenticate`; the Agent authenticates with real service credentials.
+    # Constraints: Does not bypass `AgentAuthentication`.
     def setUp(self):
         self.owner, self.other, self.company, self.conversation = fixture()
         self.browser = APIClient()
@@ -151,11 +151,11 @@ class ChatTests(TestCase):
         self.agent = APIClient()
         self.agent.credentials(HTTP_AUTHORIZATION="Agent chat-test-token")
 
-    # 功能：经公开聊天写入入口提交问题。
-    # 输入：`key` 可选幂等 UUID，`content` 问题正文。
-    # 输出：成功 HTTP 响应。
-    # 逻辑：对状态断言后返回，供边界测试复用。
-    # 约束：不直接创建 AnswerRequest。
+    # Function: Submits a question through the public chat write endpoint.
+    # Inputs: `key` is an optional idempotency UUID; `content` is the question body.
+    # Outputs: Successful HTTP response.
+    # Logic: Returns after state assertions so boundary tests can reuse it.
+    # Constraints: Does not create `AnswerRequest` directly.
     def submit(self, key=None, content="客户需要什么？"):
         response = self.browser.post(
             BROWSER + "messages/",
@@ -169,11 +169,11 @@ class ChatTests(TestCase):
         self.assertIn(response.status_code, (200, 201), response.data)
         return response
 
-    # 功能：验证重复提交不会重复收费或生成任务。
-    # 输入：无外部参数，使用同会话同幂等键。
-    # 输出：断言同请求、冲突及数据库计数。
-    # 逻辑：同内容重传成功，异内容和第二个活动问题均冲突。
-    # 约束：验证后端幂等，不模拟浏览器双击行为。
+    # Function: Verifies that duplicate submissions neither charge twice nor create duplicate tasks.
+    # Inputs: No external parameters; uses the same conversation and idempotency key.
+    # Outputs: Asserts request identity, conflicts, and database counts.
+    # Logic: Retransmission with the same content succeeds; different content and a second active question conflict.
+    # Constraints: Verifies backend idempotency and does not simulate browser double-clicking.
     def test_submit_idempotency_and_active_guard(self):
         key = uuid.uuid4()
         first = self.submit(key)
@@ -193,11 +193,11 @@ class ChatTests(TestCase):
         self.assertEqual(Message.objects.count(), 1)
         self.assertEqual(AnswerRequest.objects.count(), 1)
 
-    # 功能：验证消息和任务的原子创建。
-    # 输入：无外部参数，模拟任务创建数据库写入异常。
-    # 输出：消息与请求计数均为零。
-    # 逻辑：内部异常向上冒泡，事务回滚刚写入的用户消息。
-    # 约束：仅模拟指定写入边界，不替换数据库事务。
+    # Function: Verifies atomic creation of messages and tasks.
+    # Inputs: No external parameters; simulates a database write failure while creating the task.
+    # Outputs: Both message and request counts are zero.
+    # Logic: The internal exception propagates, and the transaction rolls back the newly written user message.
+    # Constraints: Mocks only the specified write boundary and does not replace database transactions.
     def test_message_and_request_rollback(self):
         with patch(
             "apps.chat.services.AnswerRequest.objects.create",
@@ -215,11 +215,11 @@ class ChatTests(TestCase):
         self.assertFalse(Message.objects.exists())
         self.assertFalse(AnswerRequest.objects.exists())
 
-    # 功能：验证领取时不会把未来问题混入历史。
-    # 输入：无外部参数，建立过去、当前和之后的消息。
-    # 输出：严格请求可被 Agent 解析，历史仅包含过去消息。
-    # 逻辑：五字段工作空间请求由真实新解析器验证，第二次领取为空且历史冻结。
-    # 约束：并发领取另用 TransactionTestCase 验证。
+    # Function: Verifies that claiming does not include future questions in history.
+    # Inputs: No external parameters; creates past, current, and later messages.
+    # Outputs: The strict request can be parsed by the Agent, and history contains only past messages.
+    # Logic: The five-field workspace request is validated by the real new parser; the second claim is empty and history remains frozen.
+    # Constraints: Concurrent claiming is separately verified with `TransactionTestCase`.
     def test_claim_history_boundary(self):
         Message.objects.create(
             owner=self.owner,
@@ -257,11 +257,11 @@ class ChatTests(TestCase):
             ]
         )
 
-    # 功能：验证所有接口重新核验员工身份。
-    # 输入：无外部参数，另一员工使用真实独立 token。
-    # 输出：越权查询、上下文和回报为 404，错误认证为 401。
-    # 逻辑：服务端不信任任意 request_id 或浏览器会话替代服务凭证。
-    # 约束：不暴露任务是否属于其他员工。
+    # Function: Verifies that every endpoint rechecks employee identity.
+    # Inputs: No external parameters; another employee uses a real independent token.
+    # Outputs: Unauthorized query, context, and reports return 404; invalid authentication returns 401.
+    # Logic: The server does not trust arbitrary `request_id` values or browser sessions as substitutes for service credentials.
+    # Constraints: Does not reveal whether a task belongs to another employee.
     def test_agent_auth_and_employee_isolation(self):
         request_id = self.submit().data["request_id"]
         AgentCredential.objects.create(
@@ -301,11 +301,11 @@ class ChatTests(TestCase):
             401,
         )
 
-    # 功能：验证业务共享不能读取他人邮箱衍生上下文。
-    # 输入：无外部参数，建立团队和客户共享授权。
-    # 输出：共享员工创建聊天任务被拒绝。
-    # 逻辑：即使会话属于共享员工，客户完整聊天仍要求员工自有公司。
-    # 约束：不改变原业务共享规则。
+    # Function: Verifies that business sharing cannot read another person's email-derived context.
+    # Inputs: No external parameters; creates team and customer-sharing authorization.
+    # Outputs: A shared employee is rejected when creating a chat task.
+    # Logic: Even if the conversation belongs to the shared employee, complete customer chat still requires a company owned by that employee.
+    # Constraints: Does not change existing business-sharing rules.
     def test_shared_company_does_not_grant_mail_access(self):
         team = Team.objects.create(owner=self.owner, name="团队")
         Membership.objects.create(
@@ -329,11 +329,11 @@ class ChatTests(TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    # 功能：验证工作空间知识快照、预算与公司隔离。
-    # 输入：无外部参数，创建本人知识和公司邮件。
-    # 输出：初始上下文不含客户邮件，后续知识变更不改变已有快照。
-    # 逻辑：真实 API 领取后冻结本人知识，并检查未启用外部上下文的响应。
-    # 约束：客户查询通过 ToolRead 单独测试，不调用模型。
+    # Function: Verifies workspace knowledge snapshots, budgets, and company isolation.
+    # Inputs: No external parameters; creates own knowledge and company mail.
+    # Outputs: Initial context excludes customer mail, and later knowledge changes do not alter the existing snapshot.
+    # Logic: Freezes own knowledge after a real API claim and checks the response without external context enabled.
+    # Constraints: Customer queries are tested separately through `ToolRead`; no model is called.
     def test_context_frozen_budget_and_isolation(self):
         KnowledgeEntry.objects.create(
             owner=self.owner,
@@ -375,11 +375,11 @@ class ChatTests(TestCase):
         )
         self.assertEqual(response.status_code, 409)
 
-    # 功能：验证完成结果精确幂等及引用正文来源。
-    # 输入：无外部参数，使用真实冻结知识引用。
-    # 输出：唯一助手消息、唯一引用和冲突保护。
-    # 逻辑：相同知识引用回报重复保存成功，不同正文拒绝；浏览器可读证据。
-    # 约束：Agent 不能自报引用正文。
+    # Function: Verifies exact idempotency of completed results and citation-body provenance.
+    # Inputs: No external parameters; uses real frozen knowledge citations.
+    # Outputs: Ensures one assistant message, one citation, and conflict protection.
+    # Logic: Repeated reports with the same knowledge citation save idempotently; different bodies are rejected, and the browser can read the evidence.
+    # Constraints: The Agent cannot self-report citation bodies.
     def test_report_idempotency_and_citations(self):
         self.submit()
         services.claim(self.owner)
@@ -416,11 +416,11 @@ class ChatTests(TestCase):
         self.assertEqual(state.data["status"], "completed")
         self.assertEqual(state.data["citations"][0]["position"], 1)
 
-    # 功能：验证非法回报不会产生部分成功记录。
-    # 输入：无外部参数，构造缺版本、非法字段、引用类型或长度错误和失败正文。
-    # 输出：全部 400 且请求仍 processing。
-    # 逻辑：对各反例经真实 HTTP 验证。
-    # 约束：只验证 Schema 反例，不把内容限制混入结构测试。
+    # Function: Verifies that invalid reports create no partial success records.
+    # Inputs: No external parameters; constructs missing-version, invalid-field, citation-type-or-length errors, and a failed body.
+    # Outputs: All return 400 and the request remains `processing`.
+    # Logic: Verifies each counterexample through the real HTTP interface.
+    # Constraints: Verifies schema counterexamples only and does not mix content restrictions into structural tests.
     def test_invalid_report_rolls_back(self):
         self.submit()
         services.claim(self.owner)
@@ -469,11 +469,11 @@ class ChatTests(TestCase):
         request.refresh_from_db()
         self.assertEqual(request.status, "processing")
 
-    # 功能：验证内容校验放宽后仍不会跨请求或员工读取证据正文。
-    # 输入：无外部参数；本请求、同员工另一请求和其他员工请求各有独立快照。
-    # 输出：重复及未登记来源按原顺序保存，仅本请求匹配来源附有正文。
-    # 逻辑：使用新版本和不匹配的正文编号经真实认证接口回报，再核对浏览器投影与幂等。
-    # 约束：快照为显式测试数据，不代表资料真实性或模型引用质量已验证。
+    # Function: Verifies that relaxed content validation still cannot read evidence bodies across requests or employees.
+    # Inputs: No external parameters; this request, another request by the same employee, and another employee's request each have independent snapshots.
+    # Outputs: Duplicate and unregistered sources are saved in original order; only sources matching this request receive bodies.
+    # Logic: Reports through the real authenticated API using a new version and mismatched body identifiers, then verifies browser projection and idempotency.
+    # Constraints: Snapshots are explicit test data and do not establish material truthfulness or citation quality from the model.
     def test_report_accepts_metadata_without_reading_other_snapshots(self):
         self.submit()
         services.claim(self.owner)
@@ -539,11 +539,11 @@ class ChatTests(TestCase):
         self.assertEqual(request.result, payload)
         self.assertEqual(request.chat_prompt_version, "workspace-chat-v1")
 
-    # 功能：验证错误码和文案只检查结构，合法新错误可持久化。
-    # 输入：无外部参数；已领取请求及测试专用错误对象。
-    # 输出：失败回报成功且错误按原值回读，不创建助手消息。
-    # 逻辑：经 Agent 认证接口提交未知错误码与自定义文案，再核对请求状态。
-    # 约束：错误文案由生产方负责脱敏，测试不发送真实服务异常。
+    # Function: Verifies that error codes and wording are checked structurally only, and valid new errors can persist.
+    # Inputs: No external parameters; a claimed request and a test-only error object.
+    # Outputs: A failure report succeeds and reads the error back unchanged without creating an assistant message.
+    # Logic: Submits an unknown error code and custom wording through the Agent-authenticated endpoint, then checks request state.
+    # Constraints: The producer is responsible for redacting error wording; tests do not send real service exceptions.
     def test_report_accepts_arbitrary_error_text(self):
         self.submit()
         services.claim(self.owner)
@@ -561,11 +561,11 @@ class ChatTests(TestCase):
         self.assertEqual(request.status, "failed")
         self.assertIsNone(request.assistant_message_id)
 
-    # 功能：验证失败尝试保留且重试有新身份。
-    # 输入：无外部参数，标准模型失败回报。
-    # 输出：重复失败幂等，显式重试唯一，旧完成回报冲突。
-    # 逻辑：同用户消息可关联多个请求但不能覆盖原失败记录。
-    # 约束：不启动模型或隐式回队。
+    # Function: Verifies failed attempts are retained and retries receive a new identity.
+    # Inputs: No external parameters; a standard model-failure report.
+    # Outputs: Repeated failures are idempotent, explicit retry is unique, and an old completion report conflicts.
+    # Logic: The same user message may be associated with multiple requests but cannot overwrite the original failed record.
+    # Constraints: Does not start a model or implicitly requeue work.
     def test_failure_retry_and_late_report(self):
         self.submit()
         services.claim(self.owner)
@@ -599,11 +599,11 @@ class ChatTests(TestCase):
             409,
         )
 
-    # 功能：验证中断恢复不会让旧结果覆盖新尝试。
-    # 输入：无外部参数，领取后模拟操作者确认中断。
-    # 输出：无确认拒绝，有确认终止，旧回报冲突。
-    # 逻辑：命令不采用自动超时或复活请求。
-    # 约束：只验证命令契约，不模拟系统进程终止。
+    # Function: Verifies that interruption recovery cannot let an old result overwrite a new attempt.
+    # Inputs: No external parameters; simulates an operator-confirmed interruption after claiming.
+    # Outputs: Without confirmation the operation is rejected; with confirmation it terminates, and old reports conflict.
+    # Logic: The command does not use automatic timeouts or revive requests.
+    # Constraints: Verifies the command contract only and does not simulate operating-system process termination.
     def test_interrupted_request_recovery(self):
         self.submit()
         services.claim(self.owner)
@@ -628,11 +628,11 @@ class ChatTests(TestCase):
             409,
         )
 
-    # 功能：验证无副作用拒绝或澄清不需要证据读取。
-    # 输入：无外部参数，合法零引用回答。
-    # 输出：成功唯一助手消息，快照保持空。
-    # 逻辑：回报服务只对白名单引用要求上下文。
-    # 约束：不强制每条自然语言回答都含引用。
+    # Function: Verifies that side-effect-free rejection or clarification does not require evidence reads.
+    # Inputs: No external parameters; a valid zero-citation answer.
+    # Outputs: Creates one successful assistant message and leaves the snapshot empty.
+    # Logic: The report service requires context only for allowlisted citations.
+    # Constraints: Does not require every natural-language answer to contain citations.
     def test_no_context_required_for_zero_citation_answer(self):
         self.submit()
         services.claim(self.owner)
@@ -641,11 +641,11 @@ class ChatTests(TestCase):
         request.refresh_from_db()
         self.assertIsNone(request.context_snapshot)
 
-    # 功能：验证领取前权限失效的请求不被消费。
-    # 输入：无外部参数，提交后归档会话。
-    # 输出：无任务返回且原 pending 明确失败。
-    # 逻辑：归档不是永久堵塞队列或越权访问的理由。
-    # 约束：不取消已发送外部操作，本模块只有只读回答。
+    # Function: Verifies that a request whose permission expires before claiming is not consumed.
+    # Inputs: No external parameters; archives the conversation after submission.
+    # Outputs: Returns no task and explicitly fails the original pending request.
+    # Logic: Archival is not a reason to permanently block the queue or permit unauthorized access.
+    # Constraints: Does not cancel sent external operations; this module contains read-only answers only.
     def test_archived_conversation_is_not_claimed(self):
         self.submit()
         self.conversation.archived = True
@@ -653,11 +653,11 @@ class ChatTests(TestCase):
         self.assertIsNone(services.claim(self.owner))
         self.assertEqual(AnswerRequest.objects.get().error["code"], "access_revoked")
 
-    # 功能：验证接入不会放开浏览器助手角色。
-    # 输入：无外部参数，调用既有通用消息接口伪造 assistant。
-    # 输出：400 且无消息创建。
-    # 逻辑：受保护聊天回报与普通消息写入保持独立。
-    # 约束：不更改原 sales serializer 的只读字段规则。
+    # Function: Verifies that the integration does not loosen the browser assistant-role restriction.
+    # Inputs: No external parameters; calls the existing generic message endpoint to forge an assistant.
+    # Outputs: Returns 400 and creates no message.
+    # Logic: Protected chat reports remain separate from ordinary message writes.
+    # Constraints: Does not change read-only field rules in the original sales serializer.
     def test_browser_cannot_forge_assistant(self):
         response = self.browser.post(
             "/api/v1/sales/records/messages/",
@@ -671,11 +671,11 @@ class ChatTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    # 功能：验证浏览器写入认证和输入约束。
-    # 输入：无外部参数，真实会话登录但省略 CSRF。
-    # 输出：403；额外 owner 和非字符串问题为 400。
-    # 逻辑：使用 enforce_csrf_checks，不以 force_authenticate 代替 CSRF 测试。
-    # 约束：不修改默认安全配置。
+    # Function: Verifies browser-write authentication and input constraints.
+    # Inputs: No external parameters; uses a real conversation login but omits CSRF.
+    # Outputs: Returns 403; additional `owner` and non-string questions return 400.
+    # Logic: Uses `enforce_csrf_checks` and does not substitute `force_authenticate` for CSRF testing.
+    # Constraints: Does not modify default security configuration.
     def test_browser_csrf_and_bad_input(self):
         client = APIClient(enforce_csrf_checks=True)
         client.force_login(self.owner)
@@ -700,11 +700,11 @@ class ChatTests(TestCase):
             400,
         )
 
-    # 功能：验证知识新版本显式替换与不可覆盖。
-    # 输入：无外部参数，临时 UTF-8 JSON 文件。
-    # 输出：同版本异内容失败，新版本停用旧版本。
-    # 逻辑：使用真实管理命令和数据库事务。
-    # 约束：测试资料标记为合成，不导入生产知识。
+    # Function: Verifies explicit replacement and non-overridability of new knowledge versions.
+    # Inputs: No external parameters; a temporary UTF-8 JSON file.
+    # Outputs: Same-version different content fails; a new version deactivates the old version.
+    # Logic: Uses the real management command and database transaction.
+    # Constraints: Test materials are marked synthetic and do not import production knowledge.
     def test_knowledge_import_versions(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "knowledge.json"
@@ -748,11 +748,11 @@ class ChatTests(TestCase):
                 ["2"],
             )
 
-    # 功能：验证工作空间初始上下文不隐式选中任何客户。
-    # 输入：无外部参数，员工已有客户、邮件及业务投影。
-    # 输出：customer_context 和 retrieval_gaps 均为空。
-    # 逻辑：即使只有一个客户，后端也只返回知识，资料由 Agent 工具查询。
-    # 约束：不更改客户业务数据或模型生成参数。
+    # Function: Verifies that workspace initial context does not implicitly select any customer.
+    # Inputs: No external parameters; the employee already has customers, mail, and business projections.
+    # Outputs: Both `customer_context` and `retrieval_gaps` are empty.
+    # Logic: Even with only one customer, the backend returns knowledge only; customer material is queried through Agent tools.
+    # Constraints: Does not change customer business data or model-generation parameters.
     def test_workspace_does_not_preselect_company(self):
         self.company.tickets = [{"ticket_id": "ticket-one", "status": "open"}]
         self.company.save(update_fields=["tickets"])
@@ -764,11 +764,11 @@ class ChatTests(TestCase):
         self.assertEqual(context["retrieval_gaps"], [])
         self.assertNotIn("客户需要设备", json.dumps(context, ensure_ascii=False))
 
-    # 功能：验证助手消息、引用与终态同事务。
-    # 输入：无外部参数，模拟引用写入异常。
-    # 输出：没有助手消息，请求仍 processing。
-    # 逻辑：使用本人知识引用；异常冒泡且数据库回滚先创建的消息。
-    # 约束：模拟仅限写入失败，不替换事务机制。
+    # Function: Verifies assistant messages, citations, and terminal state are in one transaction.
+    # Inputs: No external parameters; simulates a citation write failure.
+    # Outputs: No assistant message is created, and the request remains `processing`.
+    # Logic: Uses an own-knowledge citation; the exception propagates and the database rolls back the previously created message.
+    # Constraints: The mock is limited to write failure and does not replace the transaction mechanism.
     def test_answer_transaction_rollback(self):
         self.submit()
         services.claim(self.owner)
@@ -795,18 +795,18 @@ class ChatTests(TestCase):
         request.refresh_from_db()
         self.assertEqual(request.status, "processing")
 
-    # 功能：验证未知回报结果停止消费且不重派。
-    # 输入：无外部参数，模拟 process_chat_once 返回 report_failed。
-    # 输出：CommandError 且只执行一次工作流。
-    # 逻辑：共享调度选择员工后，常驻模式遇到回报不确定也立即停止，需要人工查询请求真实状态。
-    # 约束：模拟 Agent 执行边界，不声明真实进程或网络故障已复现。
+    # Function: Verifies that an unknown report result stops consumption and is not redispatched.
+    # Inputs: No external parameters; simulates process_chat_once returning report_failed.
+    # Outputs: Raises `CommandError` and executes the workflow only once.
+    # Logic: After shared scheduling selects an employee, persistent mode also stops immediately when report status is uncertain; an operator must inspect the request's real state.
+    # Constraints: Mocks the Agent execution boundary and does not claim that real process or network failures were reproduced.
     def test_worker_report_failure_stops(self):
         failure = {
             "request_id": str(uuid.uuid4()),
             "status": "failed",
             "error": {"code": "report_failed"},
         }
-        # 不让 Worker 的连接清理关闭 TestCase 外层事务；生产 finally 行为不变。
+        # Does not let Worker connection cleanup close the outer transaction of `TestCase`; production `finally` behavior remains unchanged.
         with (
             patch(
                 "apps.chat.management.commands.chat_worker.next_owner",
@@ -823,11 +823,11 @@ class ChatTests(TestCase):
                 call_command("chat_worker")
             process.assert_called_once()
 
-    # 功能：验证领取后的权限撤销。
-    # 输入：无外部参数，领取后归档会话。
-    # 输出：context/report 均 404，不写助手消息。
-    # 逻辑：每次服务调用重新核验绑定和可访问状态。
-    # 约束：任务留待明确人工终止，不能绕过权限保存。
+    # Function: Verifies permission revocation after claiming.
+    # Inputs: No external parameters; archives the conversation after claiming.
+    # Outputs: Both context and report return 404, and no assistant message is written.
+    # Logic: Every service call rechecks binding and accessibility.
+    # Constraints: The task remains for explicit manual termination and cannot save results by bypassing permission checks.
     def test_processing_access_revoked(self):
         self.submit()
         services.claim(self.owner)
@@ -850,11 +850,11 @@ class ChatTests(TestCase):
         )
         self.assertFalse(Message.objects.filter(role="assistant").exists())
 
-    # 功能：验证分页错误不会变为服务端异常。
-    # 输入：无外部参数，合法会话及非法 page。
-    # 输出：400。
-    # 逻辑：视图把数字解析异常映射为协议错误。
-    # 约束：不改变共用分页默认值。
+    # Function: Verifies pagination errors do not become server exceptions.
+    # Inputs: No external parameters; a valid conversation and an invalid page.
+    # Outputs: 400.
+    # Logic: The view maps numeric-parsing exceptions to protocol errors.
+    # Constraints: Does not change shared pagination defaults.
     def test_bad_pagination(self):
         response = self.browser.get(
             BROWSER + f"requests/?conversation={self.conversation.pk}&page=not-a-number"
@@ -862,15 +862,15 @@ class ChatTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
 
-# 功能：验证独立 PostgreSQL 连接上的并发行为。
-# 逻辑：用同步屏障同时触发两个事务，查询真实持久结果。
-# 约束：必须在支持行锁的 PostgreSQL 测试库运行，不以模拟锁代替。
+# Function: Verifies concurrent behavior using independent PostgreSQL connections.
+# Logic: Uses a synchronization barrier to trigger two transactions simultaneously and queries the real persisted result.
+# Constraints: Must run on a PostgreSQL test database supporting row locks; does not substitute mocked locks.
 class ChatConcurrencyTests(TransactionTestCase):
-    # 功能：验证多消费者领取唯一性。
-    # 输入：无外部参数，两个独立连接。
-    # 输出：恰好一个请求、一个空结果。
-    # 逻辑：并发事务竞争员工锁，后取得锁者看到已处理状态。
-    # 约束：线程结束关闭连接，避免泄露测试资源。
+    # Function: Verifies uniqueness of claims by multiple consumers.
+    # Inputs: No external parameters; two independent connections.
+    # Outputs: Exactly one request and one empty result.
+    # Logic: Concurrent transactions contend for the employee lock; the later lock holder observes the already-processed state.
+    # Constraints: Closes connections when threads finish to avoid leaking test resources.
     def test_concurrent_claim(self):
         owner, _, _, conversation = fixture()
         services.submit(
@@ -883,11 +883,11 @@ class ChatConcurrencyTests(TransactionTestCase):
         )
         barrier = Barrier(2)
 
-        # 功能：在独立连接领取任务。
-        # 输入：`index` 并发占位编号。
-        # 输出：领取结果。
-        # 逻辑：屏障同步后调用真实事务。
-        # 约束：finally 关闭本线程连接。
+        # Function: Claims a task in an independent connection.
+        # Inputs: `index` is the concurrent slot number.
+        # Outputs: Claim result.
+        # Logic: Calls the real transactional service after barrier synchronization.
+        # Constraints: Closes this thread's connection in `finally`.
         def consume(index):
             try:
                 barrier.wait(timeout=10)
@@ -899,11 +899,11 @@ class ChatConcurrencyTests(TransactionTestCase):
             results = list(pool.map(consume, range(2)))
         self.assertEqual(sum(row is not None for row in results), 1)
 
-    # 功能：验证并发重传只有一个消息和请求。
-    # 输入：无外部参数，两个连接提交相同幂等键。
-    # 输出：相同 request_id 与唯一计数。
-    # 逻辑：用户行锁保护消息检查与创建。
-    # 约束：不通过修改数据库隔离级别实现测试通过。
+    # Function: Verifies concurrent retransmission creates only one message and request.
+    # Inputs: No external parameters; two connections submit the same idempotency key.
+    # Outputs: The same `request_id` and unique counts.
+    # Logic: User row locks protect message checks and creation.
+    # Constraints: Does not make the test pass by changing database isolation level.
     def test_concurrent_submit(self):
         owner, _, _, conversation = fixture()
         data = {
@@ -913,11 +913,11 @@ class ChatConcurrencyTests(TransactionTestCase):
         }
         barrier = Barrier(2)
 
-        # 功能：独立事务提交同一问题。
-        # 输入：`index` 并发占位编号。
-        # 输出：创建或复用请求 ID。
-        # 逻辑：屏障后调用真实提交服务。
-        # 约束：退出时关闭连接。
+        # Function: Submits the same question in independent transactions.
+        # Inputs: `index` is the concurrent slot number.
+        # Outputs: Creates or reuses a request ID.
+        # Logic: Calls the real submission service after the barrier.
+        # Constraints: Closes the connection on exit.
         def send(index):
             try:
                 barrier.wait(timeout=10)
@@ -931,11 +931,11 @@ class ChatConcurrencyTests(TransactionTestCase):
         self.assertEqual(Message.objects.count(), 1)
         self.assertEqual(AnswerRequest.objects.count(), 1)
 
-    # 功能：验证并发最终回报不会创建两个助手消息。
-    # 输入：无外部参数，两个独立连接发送完全相同结果。
-    # 输出：一条助手消息，首次和重复响应各一个。
-    # 逻辑：结果检查及写入由员工锁串行化。
-    # 约束：不模拟数据库锁或隔离级别。
+    # Function: Verifies concurrent final reports do not create two assistant messages.
+    # Inputs: No external parameters; two independent connections send exactly the same result.
+    # Outputs: One assistant message, with one response each for the initial and repeated report.
+    # Logic: Result validation and writes are serialized by the employee lock.
+    # Constraints: Does not mock database locks or isolation levels.
     def test_concurrent_report(self):
         owner, _, _, conversation = fixture()
         request, _ = services.submit(
@@ -950,11 +950,11 @@ class ChatConcurrencyTests(TransactionTestCase):
         barrier = Barrier(2)
         payload = result_for(request)
 
-        # 功能：独立连接提交相同终态。
-        # 输入：`index` 并发占位编号。
-        # 输出：真实保存响应。
-        # 逻辑：同步开始后竞争同一员工锁。
-        # 约束：finally 清理本线程数据库连接。
+        # Function: Submits the same terminal state in an independent connection.
+        # Inputs: `index` is the concurrent slot number.
+        # Outputs: Persists the real response.
+        # Logic: Competes for the same employee lock after synchronized start.
+        # Constraints: Cleans up this thread's database connection in `finally`.
         def send(index):
             try:
                 barrier.wait(timeout=10)
@@ -968,15 +968,15 @@ class ChatConcurrencyTests(TransactionTestCase):
         self.assertEqual(Message.objects.filter(role="assistant").count(), 1)
 
 
-# 功能：验证真实后端 HTTP 与 Agent 原实现兼容。
-# 逻辑：Django 临时服务器、requests 客户端和 PostgreSQL 都真实运行。
-# 约束：模型输出模拟，不证明百炼可用或模型回答质量。
+# Function: Verifies compatibility between real backend HTTP and the original Agent implementation.
+# Logic: A temporary Django server, `requests` client, and PostgreSQL all run for real.
+# Constraints: Model output is mocked and does not establish Bailian availability or model-answer quality.
 class ChatHTTPTests(LiveServerTestCase):
-    # 功能：验证领取、上下文、回答和浏览器回读闭环。
-    # 输入：无外部参数，临时服务及固定合成证据。
-    # 输出：完成状态、真实助手消息及引用；重复回报幂等。
-    # 逻辑：原客户端经 HTTP 领取、查询目录、搜索客户及保存回答；模型先返回 tool 再返回 answer。
-    # 约束：不连接外部邮件、知识或模型服务。
+    # Function: Verifies the closed loop of claiming, context, answering, and browser readback.
+    # Inputs: No external parameters; a temporary service and fixed synthetic evidence.
+    # Outputs: Completed state, a real assistant message, and citations; repeated reports are idempotent.
+    # Logic: The original client claims through HTTP, queries the directory, searches customers, and saves the answer; the model first returns a tool call and then an answer.
+    # Constraints: Does not connect to external mail, knowledge, or model services.
     @override_settings(
         ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"],
         LOCAL_DEBUG_AUTO_LOGIN=False,
@@ -995,11 +995,11 @@ class ChatHTTPTests(LiveServerTestCase):
             self.live_server_url + "/api/v1/agent/", "chat-test-token"
         )
 
-        # 功能：根据真实后端工具返回的证据生成合成模型决策。
-        # 输入：`messages` 为工作空间提示，`max_tokens` 为既定模型预算。
-        # 输出：首次搜索工具决策，收到证据后输出带 action 的最终回答。
-        # 逻辑：引用来自当前提示的授权来源，绝不伪造 source_id。
-        # 约束：仅替换模型边界；目录、只读查询和保存全部经过真实 HTTP。
+        # Function: Generates a synthetic model decision from evidence returned by real backend tools.
+        # Inputs: `messages` is the workspace prompt and `max_tokens` is the established model budget.
+        # Outputs: First emits a search-tool decision, then outputs a final answer with `action` after receiving evidence.
+        # Logic: Citations come from authorized sources in the current prompt and never fabricate `source_id`.
+        # Constraints: Replaces only the model boundary; directory access, read-only queries, and saving all go through real HTTP.
         def decide(messages, *, max_tokens):
             payload = json.loads(messages[-1]["content"])
             if not payload["tool_results"]:

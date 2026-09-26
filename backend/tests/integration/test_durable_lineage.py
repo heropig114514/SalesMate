@@ -1,31 +1,31 @@
-"""职责：验证原文持久恢复、增量处理和血缘自动纠错。
-实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；使用隔离 PostgreSQL、真实业务事务与模拟 Gmail/LLM，检查持久状态和模型调用次数。
-关联：durable_sync、lineage、classification、results；不连接真实邮箱或模型。
-目录：
-- DurableLineageTests：跨连接持久化及来源回归测试。
-- DurableLineageTests.setUp：建立员工、邮箱和模拟 HTTP 写入端。
-- DurableLineageTests.payload：构造有原文证据的邮件。
-- DurableLineageTests.submit：将模拟 HTTP 提交送入真实业务事务。
-- DurableLineageTests.start：创建并领取独立批次。
-- DurableLineageTests.store：保存一封测试业务邮件。
-- DurableLineageTests.fail_after_raw：在模型边界核验原文已提交后模拟失败。
-- DurableLineageTests.test_no_purchase_stage_requires_review：覆盖有实质更新但无采购阶段的邮件。
-- DurableLineageTests.test_new_purchase_stage_is_saved_as_business：新版采购阶段邮件可保存为业务邮件。
-- DurableLineageTests.test_new_mail_without_purchase_stage_waits_for_review：新版无采购阶段的来信进入复核，阶段与证据不一致时拒绝。
-- DurableLineageTests.test_old_l1_submission_is_rejected：旧抽取版本和意图值不能进入新邮件接口。
-- DurableLineageTests.test_repair_preserves_source_and_unblocks_analysis：人工补抽取保留历史并解除画像阻塞。
-- DurableLineageTests.test_stale_repair_is_rejected：模型返回期间人工决定改变时拒绝旧结果。
-- DurableLineageTests.test_failed_repair_requires_explicit_retry：失败持久可见且明确重试。
-- DurableLineageTests.test_lineage_recomputes_remaining_and_preserves_unrelated：删除来源后重算且不影响其他公司。
-- DurableLineageTests.test_restore_same_input_keeps_revision_history：恢复相同输入时保留独立快照。
-- DurableLineageTests.test_raw_survives_failure_and_incremental_reuses_results：原文在模型前落库，失败重试和后续同步复用缓存。
-- DurableLineageTests.test_bounded_pages_retry_same_window_without_duplicate_reads：有界分页失败后重试原窗口，去重后不读正文。
-- DurableLineageTests.test_checkpoint_rolls_back_discovery_on_database_error：登记失败时消息及逐封进度原子回滚。
-- DurableLineageTests.test_old_cursor_protocol_fails_loudly：旧协议游标异常不伪装成功。
-- DurableLineageTests.test_completed_l1_retries_submission_without_model：提交失败后只重交持久 L1 输出。
-- DurableLineageTests.test_worker_dispatches_repair_without_sync_and_once_exits：无同步批次仍消费修复，失败后单轮正常退出。
-变量索引：
-- 无
+"""Responsibility: Verifies durable source recovery, incremental processing, and automatic lineage correction.
+Implementation: The Gmail test batch explicitly selects at most 20 messages, rather than using a runtime default; uses isolated PostgreSQL, real business transactions, and mocked Gmail/LLM to check persisted state and model call counts.
+Relationships: `durable_sync`, `lineage`, `classification`, and `results`; does not connect to a real mailbox or model.
+Directory:
+- DurableLineageTests: Cross-connection persistence and source-regression tests.
+- DurableLineageTests.setUp: Creates an employee, mailbox, and mocked HTTP write adapter.
+- DurableLineageTests.payload: Builds an email with source-text evidence.
+- DurableLineageTests.submit: Sends mocked HTTP submissions into real business transactions.
+- DurableLineageTests.start: Creates and claims an independent batch.
+- DurableLineageTests.store: Saves a test business email.
+- DurableLineageTests.fail_after_raw: After verifying that source text was submitted before the model boundary, simulates failure.
+- DurableLineageTests.test_no_purchase_stage_requires_review: Covers emails with material updates but no buying stage.
+- DurableLineageTests.test_new_purchase_stage_is_saved_as_business: A new-version buying-stage email can be saved as a business email.
+- DurableLineageTests.test_new_mail_without_purchase_stage_waits_for_review: A new-version email without a buying stage enters review; it is rejected when stage and evidence are inconsistent.
+- DurableLineageTests.test_old_l1_submission_is_rejected: Old extraction versions and intent values cannot enter the new email interface.
+- DurableLineageTests.test_repair_preserves_source_and_unblocks_analysis: Manual re-extraction preserves history and unblocks profiling.
+- DurableLineageTests.test_stale_repair_is_rejected: Rejects an old result when a manual decision changes while the model is returning.
+- DurableLineageTests.test_failed_repair_requires_explicit_retry: Makes failure persistence visible and retries explicit.
+- DurableLineageTests.test_lineage_recomputes_remaining_and_preserves_unrelated: Recomputes after source removal without affecting other companies.
+- DurableLineageTests.test_restore_same_input_keeps_revision_history: Restoring identical input preserves an independent snapshot.
+- DurableLineageTests.test_raw_survives_failure_and_incremental_reuses_results: Persists source text before the model; failed retries and later synchronization reuse the cache.
+- DurableLineageTests.test_bounded_pages_retry_same_window_without_duplicate_reads: After bounded-pagination failure, retries the original window and does not read bodies after deduplication.
+- DurableLineageTests.test_checkpoint_rolls_back_discovery_on_database_error: Rolls back messages and per-message progress atomically when registration fails.
+- DurableLineageTests.test_old_cursor_protocol_fails_loudly: Does not disguise old-protocol cursor errors as success.
+- DurableLineageTests.test_completed_l1_retries_submission_without_model: After submission failure, resubmits only persisted L1 output.
+- DurableLineageTests.test_worker_dispatches_repair_without_sync_and_once_exits: Consumes repairs even without a sync batch; exits normally after one round on failure.
+Variable index:
+- None
 """
 from copy import deepcopy
 from unittest.mock import Mock, patch
@@ -50,15 +50,15 @@ from apps.crm.processing import claim_run, finish_run, request_run, retry_run
 from apps.crm.results import cached_analysis
 
 
-# 功能：验证跨阶段数据库恢复与来源变更不变量。
-# 逻辑：TransactionTestCase 允许真实线程连接观察已提交原文；Gmail/模型边界全部模拟。
-# 约束：模拟通过不证明真实服务质量；不修改本机业务数据。
+# Function: Verifies cross-stage database recovery and source-change invariants.
+# Logic: `TransactionTestCase` lets real thread connections observe committed source text; Gmail and model boundaries are fully mocked.
+# Constraints: Mock success does not prove real-service quality and does not modify local business data.
 class DurableLineageTests(TransactionTestCase):
-    # 功能：创建隔离身份及写入适配器。
-    # 输入：无外部参数，由测试框架调用。
-    # 输出：owner、mailbox、backend 实例状态。
-    # 逻辑：HTTP mock 委托真实 ingestion，不绕过业务验证。
-    # 约束：凭证为合成占位，不可用于网络授权。
+    # Function: Creates isolated identities and a write adapter.
+    # Inputs: No external parameters; invoked by the test framework.
+    # Outputs: `owner`, `mailbox`, and `backend` instance state.
+    # Logic: The HTTP mock delegates to real ingestion and does not bypass business validation.
+    # Constraints: Credentials are synthetic placeholders and cannot authorize network access.
     def setUp(self):
         self.owner = get_user_model().objects.create_user(username="durable-owner")
         self.mailbox = Mailbox.objects.create(owner=self.owner, address="sales@durable.example")
@@ -66,47 +66,47 @@ class DurableLineageTests(TransactionTestCase):
         self.backend = Mock()
         self.backend.submit_emails.side_effect = self.submit
 
-    # 功能：生成可核验事实及邮件原文。
-    # 输入：`key` 为消息 ID，`sender` 为合成发件地址。
-    # 输出：标准提交字典。
-    # 逻辑：测试固定标签正文，事实证据来自该正文。
-    # 约束：不使用规则作为运行时模型失败回退。
+    # Function: Generates verifiable facts and email source text.
+    # Inputs: `key` is the message ID; `sender` is a synthetic sender address.
+    # Outputs: Standard submission dictionary.
+    # Logic: A test-fixed tagged body; factual evidence comes from that body.
+    # Constraints: Does not use rules as a runtime fallback for model failure.
     def payload(self, key, sender="buyer@customer.example"):
         return rules.extract_email(self.mailbox, sender, "询价", "需求：设备\n数量：2 台", key)
 
-    # 功能：模拟 Agent HTTP 写入传输。
-    # 输入：`submissions` 为真实 L1 生成的数组。
-    # 输出：真实保存结果的统计。
-    # 逻辑：补上适配器负责的邮箱身份与 gmail_real 来源，再调用原事务服务。
-    # 约束：只绑定测试员工，原文和事实仍经过 serializer 校验。
+    # Function: Mocks Agent HTTP write transport.
+    # Inputs: `submissions` is the array produced by real L1 processing.
+    # Outputs: Statistics from real persisted results.
+    # Logic: Adds the mailbox identity and `gmail_real` source managed by the adapter, then calls the original transactional service.
+    # Constraints: Binds only the test employee; source text and facts still pass serializer validation.
     def submit(self, submissions):
         result = ingestion.submit_emails(self.owner, [{**item, "mailbox_id": str(self.mailbox.pk), "source": "gmail_real"} for item in submissions])
         return {"created_count": sum(item["status"] == "created" for item in result), "updated_count": sum(item["status"] == "updated" for item in result), "duplicate_count": sum(item["status"] == "duplicate" for item in result), "affected_company_ids": [item["company_id"] for item in result]}
 
-    # 功能：创建已领取批次。
-    # 输入：无外部参数，读取当前测试员工和邮箱。
-    # 输出：带租约的运行批次。
-    # 逻辑：通过真实排队和领取服务。 夹具显式选择最多 20 封，再通过真实排队与领取服务取得批次。
-    # 约束：前一批次必须已结束。
+    # Function: Creates a claimed batch.
+    # Inputs: No external parameters; reads the current test employee and mailbox.
+    # Outputs: A running batch with a lease.
+    # Logic: Uses real enqueue and claim services. The fixture explicitly selects at most 20 messages, then obtains the batch through real enqueue and claim services.
+    # Constraints: The previous batch must have ended.
     def start(self):
         request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         return claim_run(self.owner)
 
-    # 功能：保存一封有明确业务事实的测试邮件。
-    # 输入：`key` 为消息标识，`sender` 为公司分组依据。
-    # 输出：Email 实例。
-    # 逻辑：调用真实入库和分类逻辑。
-    # 约束：不生成模型画像。
+    # Function: Saves a test email with explicit business facts.
+    # Inputs: `key` is the message identifier; `sender` determines company grouping.
+    # Outputs: An `Email` instance.
+    # Logic: Calls real ingestion and classification logic.
+    # Constraints: Does not generate a model profile.
     def store(self, key, sender="buyer@customer.example"):
         data = self.payload(key, sender)
         ingestion.submit_emails(self.owner, [data])
         return Email.objects.get(pk=data["dedupe_key"])
 
-    # 功能：验证进入模型前原文可由独立线程连接读取。
-    # 输入：`subject`、`body` 为模型实际输入。
-    # 输出：抛出模拟模型异常。
-    # 逻辑：先断言持久正文与输入一致且业务邮件尚未落库，关闭模拟提供者在线程内打开的数据库连接再失败。
-    # 约束：仅供 mock provider；真实提供者不访问 Django，不调用真实模型。
+    # Function: Verifies that source text can be read through an independent thread connection before entering the model.
+    # Inputs: `subject` and `body` are actual model inputs.
+    # Outputs: Raises a simulated model exception.
+    # Logic: First asserts that persisted body and input match and no business email exists, closes the database connection opened by the mock provider inside the thread, then fails.
+    # Constraints: For the mock provider only; the real provider does not access Django or call a real model.
     def fail_after_raw(self, subject, body):
         try:
             raw = StoredMessage.objects.get().raw
@@ -116,11 +116,11 @@ class DurableLineageTests(TransactionTestCase):
             connections.close_all()
         raise RuntimeError("mock model failure after durable raw")
 
-    # 功能：验证无采购阶段的来信进入复核。
-    # 输入：无外部参数，构造有事实更新但无采购阶段的来信。
-    # 输出：needs_review 且无画像任务。
-    # 逻辑：有无实质更新不影响无阶段来信的人工复核。
-    # 约束：不调用模型或外部邮箱。
+    # Function: Verifies that email without a buying stage enters review.
+    # Inputs: No external parameters; builds an email with factual updates but no buying stage.
+    # Outputs: `needs_review` with no profiling task.
+    # Logic: Whether material updates exist does not affect manual review for stage-less email.
+    # Constraints: Does not call a model or external mailbox.
     def test_no_purchase_stage_requires_review(self):
         data = self.payload("no-purchase-stage")
         data["facts"]["intent_hint"] = None
@@ -130,11 +130,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertEqual(email.business_classification, "needs_review")
         self.assertFalse(email.company.jobs.exists())
 
-    # 功能：验证新版采购阶段可通过真实入库校验。
-    # 输入：带可定位数量证据的 extract-v7 合成邮件。
-    # 输出：邮件归为业务且抽取版本保持 v7。
-    # 逻辑：经 submit_emails 保存后读取分类与 Extraction。
-    # 约束：不调用模型或外部邮箱。
+    # Function: Verifies that a new buying stage passes real ingestion validation.
+    # Inputs: An `extract-v7` synthetic email with locatable quantity evidence.
+    # Outputs: The email is classified as business and extraction version remains `v7`.
+    # Logic: Saves through `submit_emails`, then reads classification and `Extraction`.
+    # Constraints: Does not call a model or external mailbox.
     def test_new_purchase_stage_is_saved_as_business(self):
         data = self.payload("purchase-stage")
         data["extract_prompt_version"] = "extract-v7"
@@ -145,11 +145,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertEqual(email.business_classification, "business")
         self.assertEqual(email.extractions.get().prompt_version, "extract-v7")
 
-    # 功能：验证无阶段来信的复核与阶段证据约束。
-    # 输入：intent_hint 为 null 的 v7 邮件及缺少证据的 v7 阶段邮件。
-    # 输出：前者进入待复核且不入分析队列，后者被拒绝。
-    # 逻辑：调用真实邮件写入服务并读取分类和任务状态。
-    # 约束：不把 null 直接认定为非业务，也不调用模型。
+    # Function: Verifies review for stage-less email and the stage-evidence constraint.
+    # Inputs: A v7 email with intent_hint null and a v7 stage email lacking evidence.
+    # Outputs: The former enters review and no analysis queue; the latter is rejected.
+    # Logic: Calls the real email-write service and reads classification and task state.
+    # Constraints: Does not treat null directly as non-business and does not call a model.
     def test_new_mail_without_purchase_stage_waits_for_review(self):
         data = self.payload("no-stage")
         data["extract_prompt_version"] = "extract-v7"
@@ -167,11 +167,11 @@ class DurableLineageTests(TransactionTestCase):
         with self.assertRaises(ValidationError):
             ingestion.submit_emails(self.owner, [invalid])
 
-    # 功能：验证新邮件接口拒绝旧版 L1 格式。
-    # 输入：旧抽取版本及旧版意图枚举的合成邮件。
-    # 输出：两种输入都被拒绝且不入库。
-    # 逻辑：调用真实入库校验，不触发模型或外部邮箱。
-    # 约束：历史迁移文件保持不变。
+    # Function: Verifies that the new email interface rejects old L1 formats.
+    # Inputs: Synthetic email with an old extraction version and old intent enumeration.
+    # Outputs: Both inputs are rejected and not persisted.
+    # Logic: Calls real ingestion validation without triggering a model or external mailbox.
+    # Constraints: Historical migration files remain unchanged.
     def test_old_l1_submission_is_rejected(self):
         old_version = self.payload("old-version")
         old_version["extract_prompt_version"] = "extract-v6"
@@ -184,11 +184,11 @@ class DurableLineageTests(TransactionTestCase):
             ingestion.submit_emails(self.owner, [old_intent])
         self.assertFalse(Email.objects.exists())
 
-    # 功能：验证误判修复先补 L1 再执行画像。
-    # 输入：无外部参数；规则跳过的合成邮件与模拟 L1 事实。
-    # 输出：旧抽取保留、新事实可被真实 Agent L2 消费、公司任务解除阻塞。
-    # 逻辑：原文和提示词版本不修改，修复使用独立代次，并通过 Agent 的真实 L2 入口校验。
-    # 约束：不把模拟 LLM 返回解释为真实模型已验证。
+    # Function: Verifies that misclassification repair redoes L1 before profiling.
+    # Inputs: No external parameters; a rule-skipped synthetic email and mocked L1 facts.
+    # Outputs: Preserves the old extraction, lets real Agent L2 consume new facts, and unblocks the company task.
+    # Logic: Does not modify source text or prompt version; repair uses an independent generation and is validated through the Agent's real L2 entry point.
+    # Constraints: Does not interpret mocked LLM output as proof that a real model was verified.
     def test_repair_preserves_source_and_unblocks_analysis(self):
         data = self.payload("skipped")
         facts = deepcopy(data["facts"])
@@ -217,11 +217,11 @@ class DurableLineageTests(TransactionTestCase):
         model.assert_called_once_with(data["subject"], data["body_text"], direction="inbound")
         self.assertEqual(len(jobs.claim(self.owner, 1, 120)), 1)
 
-    # 功能：拒绝人工决定改变后的旧补抽取结果。
-    # 输入：无外部参数；已领取的任务在返回前被确认非业务。
-    # 输出：旧结果冲突且不增加抽取记录。
-    # 逻辑：检查 repair 状态、人工版本及来源。
-    # 约束：模拟时间交错，不依赖线程调度速度。
+    # Function: Rejects an old re-extraction result after a manual decision changes.
+    # Inputs: No external parameters; a claimed task is confirmed non-business before it returns.
+    # Outputs: The old result conflicts and does not add an extraction record.
+    # Logic: Checks repair state, manual version, and source.
+    # Constraints: Simulates timing interleaving and does not depend on thread scheduling speed.
     def test_stale_repair_is_rejected(self):
         data = self.payload("stale")
         facts = data["facts"]
@@ -236,11 +236,11 @@ class DurableLineageTests(TransactionTestCase):
             complete_repair(repair, facts)
         self.assertEqual(email.extractions.count(), 1)
 
-    # 功能：验证补抽取失败不会无声重试。
-    # 输入：无外部参数；模拟一次模型异常。
-    # 输出：失败可见，重复 Worker 不调用模型，再次确认业务后才新建任务。
-    # 逻辑：失败任务保留，明确重试创建后继。
-    # 约束：不改变原人工版本或事实。
+    # Function: Verifies that re-extraction failure is not silently retried.
+    # Inputs: No external parameters; simulates one model exception.
+    # Outputs: Failure is visible, a duplicate Worker does not call the model, and a new task is created only after business status is reconfirmed.
+    # Logic: The failed task is retained; an explicit retry creates a successor.
+    # Constraints: Does not change the original manual version or facts.
     def test_failed_repair_requires_explicit_retry(self):
         data = self.payload("retry-repair")
         data.update(extract_status="failed", facts=None, extract_error="事实抽取失败。")
@@ -256,11 +256,11 @@ class DurableLineageTests(TransactionTestCase):
         review_email(self.owner, email.pk, "confirmed_business", email.review_revision)
         self.assertEqual(email.repairs.filter(status="pending").count(), 1)
 
-    # 功能：验证血缘失效只影响依赖公司并自动重算。
-    # 输入：无外部参数；两封同公司邮件和另一公司结果。
-    # 输出：受影响画像与分数不可用，重算只含剩余来源，其他公司结果仍有效。
-    # 逻辑：用确定性规则执行真实结果持久化，不模拟血缘关系。
-    # 约束：历史快照与来源边必须保留。
+    # Function: Verifies lineage invalidation affects only dependent companies and recomputes automatically.
+    # Inputs: No external parameters; two emails for one company and a result for another company.
+    # Outputs: Affected profile and score become unavailable, recomputation includes only remaining sources, and the other company's result remains valid.
+    # Logic: Uses deterministic rules for real result persistence and does not mock lineage relationships.
+    # Constraints: Historical snapshots and source edges must remain.
     def test_lineage_recomputes_remaining_and_preserves_unrelated(self):
         removed = self.store("remove")
         remaining = self.store("remain")
@@ -279,11 +279,11 @@ class DurableLineageTests(TransactionTestCase):
         current, _ = selectors.latest_result(removed.company)
         self.assertEqual(current.snapshot.payload["member_dedupe_keys"], [remaining.pk])
 
-    # 功能：验证撤销后恢复同一事实可重新分析。
-    # 输入：无外部参数；业务→非业务→业务的完整循环。
-    # 输出：相同 input_version 的两个 revision 均保留，新快照有效。
-    # 逻辑：回归旧 company/input 唯一约束导致的永久冲突。
-    # 约束：原抽取已完成，不调用 LLM 补抽取。
+    # Function: Verifies that restoring the same fact after revocation permits analysis again.
+    # Inputs: No external parameters; a complete business-to-non-business-to-business cycle.
+    # Outputs: Both revisions with the same `input_version` are retained and the new snapshot is valid.
+    # Logic: Regresses the permanent conflict caused by the old company/input uniqueness constraint.
+    # Constraints: The original extraction has completed; does not call LLM re-extraction.
     def test_restore_same_input_keeps_revision_history(self):
         email = self.store("restore")
         rules.run_company(self.owner, email.company_id)
@@ -297,11 +297,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertNotEqual(original.snapshot.pk, current.snapshot.pk)
         self.assertFalse(ExtractionRepair.objects.exists())
 
-    # 功能：验证原文先于 L1 保存，重试无需重读 Gmail。
-    # 输入：无外部参数；一次模型失败、一次明确重试及一次空增量。
-    # 输出：原文保留、首次失败、重试只调用模型、后续模型和正文调用均为零。
-    # 逻辑：使用真实 L1 校验及提交，检查失败后数据库内容与边界调用次数。
-    # 约束：Gmail 和百炼全部 mock，范围内重复 ID 不产生正文读取。
+    # Function: Verifies that source text is saved before L1 and retry does not reread Gmail.
+    # Inputs: No external parameters; one model failure, one explicit retry, and one empty incremental run.
+    # Outputs: Source text remains, the first attempt fails, retry calls only the model, and later model and body calls are both zero.
+    # Logic: Uses real L1 validation and submission, checking database contents after failure and boundary call counts.
+    # Constraints: Gmail and Bailian are fully mocked; duplicate IDs within the range do not trigger body reads.
     def test_raw_survives_failure_and_incremental_reuses_results(self):
         raw = self.payload("raw-first")
         raw["facts"]["intent_hint"] = "L1 Exploring"
@@ -328,11 +328,11 @@ class DurableLineageTests(TransactionTestCase):
         model.assert_not_called()
         self.assertEqual(result["duplicate_count"], 1)
 
-    # 功能：验证有界分页失败可在原窗口重试，已存邮件不会重复读取。
-    # 输入：无外部参数；显式选择 21 封，已存 21 封，第二页首次请求失败。
-    # 输出：原冻结范围保留、重复 21 封全部跳过、没有正文读取或额外登记。
-    # 逻辑：模拟 Gmail SDK 分页边界，执行真实范围选择、去重和数据库批次服务。
-    # 约束：每页仍最多 20 封，不访问真实 Gmail。
+    # Function: Verifies that bounded pagination failure can retry the original window without rereading persisted email.
+    # Inputs: No external parameters; explicitly selects 21 messages, persists all 21, and fails the first request for page two.
+    # Outputs: Preserves the original frozen range, skips all 21 duplicates, and performs no body reads or extra registration.
+    # Logic: Mocks Gmail SDK pagination boundaries while running real range selection, deduplication, and database batch services.
+    # Constraints: Each page remains limited to 20 messages and does not access real Gmail.
     def test_bounded_pages_retry_same_window_without_duplicate_reads(self):
         for index in range(21):
             self.store(f"history-{index}")
@@ -359,11 +359,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertFalse(StoredMessage.objects.exists())
         self.assertEqual(service.users.return_value.messages.return_value.list.call_args.kwargs["maxResults"], 1)
 
-    # 功能：验证数据库故障时消息与逐封任务原子回滚。
-    # 输入：无外部参数；在登记后模拟 Mailbox.save 抛出异常。
-    # 输出：新消息与进度任务均未提交。
-    # 逻辑：真实事务内注入最后一步数据库失败。
-    # 约束：只模拟保存边界，不改变事务实现。
+    # Function: Verifies atomic rollback of messages and per-message tasks on database failure.
+    # Inputs: No external parameters; simulates `Mailbox.save` raising after registration.
+    # Outputs: Neither the new message nor the progress task is committed.
+    # Logic: Injects a final database failure inside a real transaction.
+    # Constraints: Mocks only the save boundary and does not alter transaction implementation.
     def test_checkpoint_rolls_back_discovery_on_database_error(self):
         run = self.start()
         with patch.object(Mailbox, "save", side_effect=RuntimeError("mock database failure")):
@@ -372,11 +372,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertFalse(StoredMessage.objects.exists())
         self.assertFalse(run.email_jobs.exists())
 
-    # 功能：验证旧 CLI 的游标读写异常向上报告。
-    # 输入：无外部参数；模拟已支持协议的读写错误。
-    # 输出：明确异常，不回退为首次同步或返回写入成功。
-    # 逻辑：直接验证 Agent 边界，不访问真实服务。
-    # 约束：未支持协议的历史兼容情况不在此测试中。
+    # Function: Verifies that old CLI cursor read/write exceptions are reported upward.
+    # Inputs: No external parameters; simulates read/write errors for a supported protocol.
+    # Outputs: Raises an explicit exception and does not fall back to first synchronization or report write success.
+    # Logic: Verifies the Agent boundary directly without accessing real services.
+    # Constraints: Unsupported-protocol historical compatibility is outside this test.
     def test_old_cursor_protocol_fails_loudly(self):
         backend = Mock()
         backend.get_sync_state.side_effect = RuntimeError("mock")
@@ -386,11 +386,11 @@ class DurableLineageTests(TransactionTestCase):
         with self.assertRaises(RuntimeError):
             _save_sync_state(backend, str(self.mailbox.pk), {"version": 1}, "100", [], [])
 
-    # 功能：验证模型已完成而 HTTP 写入失败时不重复调用模型。
-    # 输入：无外部参数；一次成功 L1、一次 HTTP 异常和明确重试。
-    # 输出：缓存保留完整事实，重试无 Gmail 读取或 LLM 调用且业务邮件保存成功。
-    # 逻辑：第一次失败发生在持久 L1 之后、业务入库之前。 范围选择模拟返回指定单封 ID，重试仍复用原文与已完成 L1。
-    # 约束：模拟 HTTP 中断，不宣称真实外部服务恢复已验证。
+    # Function: Verifies that a model is not called again when it completed but HTTP persistence failed.
+    # Inputs: No external parameters; one successful L1 result, one HTTP exception, and an explicit retry.
+    # Outputs: Cache retains complete facts; retry performs no Gmail read or LLM call and successfully saves the business email.
+    # Logic: The first failure occurs after durable L1 and before business ingestion. Range selection returns the specified single ID, and retry reuses source text and completed L1.
+    # Constraints: Mocks HTTP interruption and does not claim real external-service recovery was verified.
     def test_completed_l1_retries_submission_without_model(self):
         raw = self.payload("submission-retry")
         raw["facts"]["intent_hint"] = "L1 Exploring"
@@ -412,11 +412,11 @@ class DurableLineageTests(TransactionTestCase):
         self.assertEqual(StoredMessage.objects.get().status, "completed")
         self.assertEqual(Email.objects.count(), 1)
 
-    # 功能：验证独立 Worker 调度人工修复而不要求点击同步。
-    # 输入：无外部参数；仅有补抽取与被其阻塞的画像任务。
-    # 输出：模型被调用一次、失败持久化，--once 不被阻塞画像无限挂起。
-    # 逻辑：调用真实共享 management command，从数据库发现员工，仅替换模型边界。
-    # 约束：测试明确开启 agent 模式但不允许真实 Gmail/LLM 调用。
+    # Function: Verifies that an independent Worker schedules manual repair without requiring a sync click.
+    # Inputs: No external parameters; only re-extraction and the profiling task blocked by it exist.
+    # Outputs: The model is called once, failure persists, and `--once` is not indefinitely blocked by profiling.
+    # Logic: Calls the real shared management command, discovers employees from the database, and replaces only the model boundary.
+    # Constraints: The test explicitly enables Agent mode while disallowing real Gmail/LLM calls.
     @override_settings(ANALYSIS_PROVIDER="agent")
     def test_worker_dispatches_repair_without_sync_and_once_exits(self):
         data = self.payload("worker-repair")

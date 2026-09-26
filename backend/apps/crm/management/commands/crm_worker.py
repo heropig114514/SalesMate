@@ -1,13 +1,13 @@
-"""职责：以共享进程消费所有有效员工的邮箱同步和公司画像任务。
-实现：同步与画像分别轮转员工，保留全局并发；SIGTERM 后停止领取并排空在途单元。
-关联：dispatch 发现员工并管理身份，worker 执行业务，common.execution 显式选择本地线程或 Celery，common.shutdown 处理停止；不消费外部销售动作。
-目录：
-- Command：配置并运行持久队列消费者。
-- Command.add_arguments：声明单轮、轮询和画像并发参数。
-- Command.handle：轮询并协调邮箱及画像工作单元。
-变量索引：
-- logger：进程生命周期日志。
-- Command.help：管理命令说明。
+"""Responsibility: Consume mailbox synchronization and company-profile jobs for every active employee in a shared process.
+Implementation: Rotate employees independently for synchronization and profiling while retaining global concurrency; stop claiming work after SIGTERM and drain in-flight units.
+Relationships: dispatch discovers employees and manages identity, worker executes business work, common.execution explicitly selects local threads or Celery, and common.shutdown handles stopping. External sales actions are not consumed.
+Directory:
+- Command: Configure and run durable queue consumers.
+- Command.add_arguments: Declare single-pass, polling, and profile-concurrency parameters.
+- Command.handle: Poll and coordinate mailbox and profile work units.
+Variable index:
+- logger: Process lifecycle logger.
+- Command.help: Management-command description.
 """
 from common.execution import work_executor
 import logging
@@ -24,34 +24,34 @@ from apps.crm.worker import run_analysis, run_sync
 logger = logging.getLogger("salesmate.crm_worker")
 
 
-# 功能：独立消费所有有效员工的邮箱和画像数据库任务。
-# 逻辑：每通道保存上次员工游标，按轮转调度，画像互斥由后端领取服务保证。
-# 约束：仅 agent 模式运行；不创建 OS 服务，失败任务需明确重试。
+# Function: Independently consume mailbox and profile database jobs for all active employees.
+# Logic: Retain each channel's most recent employee cursor and schedule round-robin; backend claim services ensure profile mutual exclusion.
+# Constraints: Runs only in agent mode; does not create an OS service, and failed jobs require explicit retry.
 class Command(BaseCommand):
-    help = "运行所有员工共享的 Gmail/QQ 与画像 Worker；请先启动 HTTP 后端。"
+    help = "Run the shared Gmail/QQ and profile worker for all employees; start the HTTP backend first."
 
-    # 功能：声明 Worker 调度参数。
-    # 输入：`parser` 为 Django 参数解析器。
-    # 输出：无；增加 once/poll/analysis-workers。
-    # 逻辑：默认 2 路画像、1 秒轮询，L1 继续采用 Agent 既定 4 路。
-    # 约束：不修改模型、评分、Gmail 扫描上限或任务租约。
+    # Function: Declare worker scheduling parameters.
+    # Inputs: `parser` is the Django argument parser.
+    # Outputs: None; adds once, poll, and analysis-workers.
+    # Logic: Defaults to two profile workers and one-second polling; L1 continues with the Agent's established four lanes.
+    # Constraints: Does not alter models, scoring, Gmail scan limits, or job leases.
     def add_arguments(self, parser):
         parser.add_argument("--once", action="store_true")
         parser.add_argument("--poll", type=float, default=1)
         parser.add_argument("--analysis-workers", type=int, default=2)
 
-    # 功能：调度独立同步和分析通道。
-    # 输入：`args` 为位置参数，`options` 含 once/poll/analysis_workers。
-    # 输出：无；单轮排空当前可领取工作后退出。
-    # 逻辑：pending 保存 Future 到通道及员工的映射，last_owner 分别记录公平轮转游标；
-    # 每次填充空闲通道时从持久队列重新选员工；work_executor 显式选择线程或 Celery，
-    # 消息提交失败向上传播，SIGTERM 后等待 pending 的结果。
-    # 约束：停止时依然报告任务异常，等待期间需要 Web 可用；不改变并发、租约或业务重试语义。
+    # Function: Schedule independent synchronization and analysis channels.
+    # Inputs: `args` are positional arguments; `options` contains once, poll, and analysis_workers.
+    # Outputs: None; a single pass exits after draining currently claimable work.
+    # Logic: pending maps Futures to channels and employees, while last_owner keeps separate fair round-robin cursors.
+    # It reselects an employee from the durable queue whenever filling a free channel; work_executor explicitly selects threads or Celery,
+    # propagates message-submission failures, and waits for pending results after SIGTERM.
+    # Constraints: Reports job exceptions even while stopping, requires Web availability while waiting, and does not change concurrency, leases, or business retry semantics.
     def handle(self, *args, **options):
         if settings.ANALYSIS_PROVIDER != "agent":
-            raise CommandError("crm_worker 仅用于 ANALYSIS_PROVIDER=agent；规则模式保持显式页面演示。")
+            raise CommandError("crm_worker is only for ANALYSIS_PROVIDER=agent; rules mode remains an explicit page demonstration.")
         if not 0 < options["poll"] <= 60 or not 1 <= options["analysis_workers"] <= 4:
-            raise CommandError("poll 必须在 (0,60]，analysis-workers 必须在 1–4。")
+            raise CommandError("poll must be in (0,60], and analysis-workers must be in 1–4.")
         load_environment()
         logger.info("crm_worker_started scope=all_active_owners analysis_workers=%s", options["analysis_workers"])
         pending = {}

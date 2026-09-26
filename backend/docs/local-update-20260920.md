@@ -1,40 +1,40 @@
-# 2026-09-20 本地同步检查
+# Local synchronization check, 2026-09-20
 
-同步范围：`4429871` → `253d144`，7 个提交；快进 main 后恢复原本未提交的前端改版和实验脚本。同步前备份保留在命名为 `before-origin-main-update-20260920-local-frontend-and-experiment` 的 Git stash 中。
+Synchronization scope: `4429871` → `253d144`, 7 commits. After fast-forwarding main, the existing uncommitted frontend redesign and experiment scripts were restored. The pre-sync backup remains in the Git stash named `before-origin-main-update-20260920-local-frontend-and-experiment`.
 
-## 远端行为变化
+## Remote behavior changes
 
-- 聊天规范化模型引用、删除未使用引用、改善失败日志；前端引用依据采用两层折叠，客户画像引用提供客户页链接。
-- 数字与所引证据不一致现在记录诊断日志，不再直接拒绝整条回答；来源授权与结构校验仍保留。这改变了回答验收口径。
-- L1 从 extract-v6 切换为 extract-v7：采购阶段为 L1 Exploring 至 L6 Purchase Ready，无法判断时为 null。
-- L4 不再单独调用模型抽取信号，而从 L1 采购阶段生成规则输入；业务资料不全时按已有维度折算暂定分，完整资料的主维度权重仍为 35/35/30。
-- CI 缩减了 QQ 检查，同时跳过了聊天及邮件处理浏览器检查。
+- Chat normalizes model citations, removes unused references, and improves failure logs. Frontend citation evidence uses two nested disclosure levels; customer-profile citations link to customer pages.
+- Mismatches between numbers and cited evidence now produce diagnostic logs instead of rejecting the entire answer. Source authorization and structural validation remain enforced. This changes answer acceptance criteria.
+- L1 switched from extract-v6 to extract-v7: procurement stages range from L1 Exploring to L6 Purchase Ready, with null when undetermined.
+- L4 no longer calls a separate model to extract signals; it derives rule inputs from L1 procurement stages. Incomplete business profiles yield provisional scores rescaled over available dimensions; complete profiles retain main-dimension weights of 35/35/30.
+- CI reduced QQ checks and skipped chat and email-processing browser checks.
 
-## 本次适配
+## Adaptations in this update
 
-- 解决 app.css 的合并冲突：保留本地深色主题，并为新增聊天引用卡片使用共享颜色变量。
-- 更新静态入口与聊天模块版本，避免继续使用旧缓存。
-- 修复 browser_chat.cjs 对 details 的多元素匹配，分别验证外层、内层默认折叠、展开原文及安全转义。
-- 聊天与邮件处理浏览器检查通过后恢复到 CI；QQ 专用浏览器检查仍按远端配置禁用。
-- 本地 Web 与聊天 Worker 重启以加载同步后的 Python 实现；模型配置保持 qwen3.7-plus。
+- Resolved app.css merge conflicts by retaining the local dark theme and using shared color variables for new chat citation cards.
+- Updated static entry-point and chat-module versions to avoid stale caches.
+- Fixed multiple-element matching of details in browser_chat.cjs, separately verifying default outer/inner collapse, source expansion, and safe escaping.
+- Restored chat and email-processing browser checks to CI after they passed; QQ-specific browser checks remain disabled according to remote configuration.
+- Restarted local Web and chat Worker processes to load synchronized Python code; model configuration remains qwen3.7-plus.
 
-## 后续后端实现
+## Subsequent backend implementation
 
-已新增显式历史事实升级入口并兼容暂定分空解释，详见 [后端 v7 适配说明](backend-v7-adaptation.md)。以下为同步时发现的问题；真实旧事实升级、实验脚本变更及 Agent 时间信号仍未执行。
+An explicit historical-fact upgrade endpoint and compatibility for empty provisional-score explanations have been added; see [Backend v7 adaptation](backend-v7-adaptation.md). The following issues were identified during synchronization; real historical-fact upgrades, experiment-script changes, and Agent temporal signals were not executed.
 
-## 同步时发现的适配问题
+## Adaptation issues identified during synchronization
 
-1. **实验脚本**仍生成 extract-v6，当前接口只接受 v7；需要明确批准升级实验事实口径和生成器版本。不能将旧事实仅改名为 v7 后重放，或用相同幂等标识冒充新批次。
-2. **历史事实**：只读检查发现本地 demo 的当前抽取中有 80 封 extract-v6 和 7 封更早的规则格式。对含 v6 的真实本地客户构建 L2 返回 invalid_backend_data（不支持的 L1 结构）。本次更新没有数据库迁移，也没有自动重抽取；历史邮件仍持久保存，但不能据此认为新分析兼容旧事实。应单独选择基于持久正文重抽取、保存新版本并重算，或制定显式兼容规则；本次未执行此类实验数据改写。
-3. **紧急度信号**：新 L2 只生成采购阶段 signals，而 L4 紧急度仍识别 DEADLINE/UPCOMING_MEETING/PROMISED_ACTION/OVERDUE_ACTION。按当前代码的数据流，普通新流程不会产生这些时间信号，紧急度会使用基础档位。需要另行确定时间信号来源，不能以本次测试通过解释为紧急程度识别完整。
-4. **评分版本**仍为 score-v2，算法行为已变化；跨版本实验比较应同时记录 Git 提交 SHA，不宜只按 score_version 分组。
+1. **Experiment scripts** still generate extract-v6, while current APIs accept only v7. Upgrading experiment fact criteria and generator versions requires explicit approval. Do not merely rename old facts as v7 and replay them or reuse idempotency identifiers to impersonate a new batch.
+2. **Historical facts:** read-only inspection found 80 extract-v6 emails and 7 earlier rule-format emails in the local demo's current extractions. Building L2 for real local companies containing v6 returns invalid_backend_data (unsupported L1 structure). This update includes no database migrations or automatic re-extraction. Historical emails remain persisted, but this does not establish compatibility of new analysis with old facts. Separately choose re-extraction from persisted bodies with new versions and recalculation, or explicit compatibility rules; no such experiment-data rewrites were performed here.
+3. **Urgency signals:** new L2 produces procurement-stage signals only, while L4 urgency still recognizes DEADLINE/UPCOMING_MEETING/PROMISED_ACTION/OVERDUE_ACTION. Under the current data flow, ordinary new processing does not produce these temporal signals, so urgency uses its base tier. The temporal-signal source requires a separate decision; passing these tests does not establish complete urgency detection.
+4. **Scoring version** remains score-v2 despite algorithm behavior changes. Cross-version experiments should also record Git commit SHAs rather than grouping solely by score_version.
 
-## 已完成验证
+## Completed validation
 
-- 210 项 Agent 定向单元测试通过（聊天、L1、L2、L4、管线和后端客户端）。
-- 54 项后端集成测试通过（持久化血缘、旧事实、邮件处理和聊天）；使用隔离 test_salesmate 数据库，模型与邮箱由测试替身提供。
-- 聊天、邮件处理、工作区、全球消息四组模拟 API 浏览器检查通过。
-- 本地 migrate --check 通过，本次远端更新没有新增迁移或依赖清单变更。
-- Python 文档检查覆盖 164 文件，变更检查 0 错误、0 待审核；JS/CSS/HTML/YAML 的说明与本次适配已人工核对。
-- 实际本地首页、跟进页、聊天页加载正常；客户列表、销售概览和新聊天静态资源均返回 HTTP 200，未观察到页面脚本错误。Django check 与 makemigrations --check --dry-run 通过。
-- 本次没有提交或部署；尚未验证真实邮箱收发、历史事实升级后再分析及新评分质量。
+- 210 targeted Agent unit tests passed (chat, L1, L2, L4, pipeline, and backend client).
+- 54 backend integration tests passed (durable lineage, legacy facts, email processing, and chat), using isolated test_salesmate with model and mailbox test doubles.
+- Four browser-check groups with simulated APIs passed: chat, email processing, workspace, and world news.
+- Local migrate --check passed; the remote update added neither migrations nor dependency-manifest changes.
+- Python documentation checks covered 164 files; change checks reported 0 errors and 0 items requiring review. JS/CSS/HTML/YAML documentation and this adaptation were manually reviewed.
+- Actual local home, follow-up, and chat pages loaded normally. Customer lists, sales overview, and new chat static assets returned HTTP 200 with no observed page-script errors. Django check and makemigrations --check --dry-run passed.
+- No commit or deployment was made in this update; real mailbox sending/receiving, analysis after historical-fact upgrades, and new scoring quality remain unverified.

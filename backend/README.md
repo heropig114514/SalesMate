@@ -1,109 +1,114 @@
-# SalesMate 软件与 Agent 联调
+# SalesMate software and Agent integration
 
-正式公司优先级 `score-v2` 已提供后端评分上下文、销售方资料维护、解释保存和版本触发；数据口径及接口见 [L4 后端适配](docs/l4-priority.md)。资料齐全时 Agent 会随分数提交 `score_details`；网页展示完整解释仍需前端接入。
+The current graph uses PostgreSQL business projection, source lineage, and Qwen semantic input. See [Agent graph handoff](docs/semantic-agent-handoff.md) for HTTP/MCP integration. Legacy research interfaces and recommended models are retired; see [model retirement and recovery](docs/model-retirement.md) for retained models and recovery entry points.
 
-面向用户协作的 123 个后端工具已提供 HTTP、CLI 和 stdio MCP 适配；目录、权限、确认协议及开发侧接入见 [Agent 业务工具](docs/agent-business-tools.md)。当前聊天 Agent 尚未自动使用这些工具。
 
-页面现已统一为销售工作空间：共享导航、首页待办、客户跨页上下文和业务表单预填。入口与验证记录见 [统一工作空间](docs/unified-workspace.md)。
 
-客户详情和手动分析已接入持续只读更新，逐步显示已保存的邮件、画像与评分；阅读位置和未保存内容保留，失败时明确暂停。行为和验收见 [结果逐步展示](docs/live-results.md)。
 
-本说明位于软件目录 `backend/`。除另有说明外，命令均从 **SalesMate 仓库根目录** 执行；Django 软件、页面、契约和工具归 backend/，Agent 实现归 agent/，独立测试数据工具归 test_tools/，根目录同时保留共享配置与依赖入口。返回[仓库概览](../README.md)。
+Official company priority `score-v2` now includes backend scoring context, seller-data maintenance, explanation persistence, and version triggers. See [L4 backend integration](docs/l4-priority.md) for data definitions and endpoints. The agent submits `score_details` with scores when data is complete; full web explanation display still needs frontend integration.
 
-SalesMate 是一个面向 B2B 销售人员的 Agent MVP。系统从 Gmail 读取往来邮件，提取客户意向和可定位证据，按公司归组，生成客户画像、销售分析与跟进优先级，并把结果展示在浏览器工作台中。
+User-collaboration backend tools provide HTTP, CLI, and stdio MCP adapters, with current counts and authorization scope returned by the dynamic catalog. See [Agent business tools](docs/agent-business-tools.md) for catalogs, permissions, confirmation, and developer integration. The current chat agent does not automatically use these tools.
 
-更新日期：2026-09-19
-当前状态：既有 L1–L4 链路已完成整合；正式 score-v2 的后端上下文、保存及查询接口已适配，资料齐全时 Agent 自动提交解释，前端完整解释展示待接入。真实 Gmail 和阿里百炼需要开发者自己的授权与 API Key。
+Pages now form a unified sales workspace with shared navigation, home tasks, cross-page customer context, and business-form prefilling. See [unified workspace](docs/unified-workspace.md) for entry points and validation records.
 
-## 1. 当前 MVP 范围
+Customer details and manual analysis now receive continuous read-only updates, progressively displaying saved emails, profiles, and scores while preserving reading position and unsaved content; failures explicitly pause updates. See [progressive results](docs/live-results.md) for behavior and acceptance.
 
-已经实现：
+This document lives in `backend/`. Unless stated otherwise, run commands from the **SalesMate repository root**. Django software, pages, contracts, and tools belong to backend/, Agent implementation to agent/, and independent test-data tools to test_tools/; shared configuration and dependency entry points remain at the root. Return to the [repository overview](../README.md).
 
-- Gmail 只读 OAuth 和最近邮件同步。
-- L1 单封邮件事实抽取，模型使用阿里百炼 OpenAI 兼容接口。
-- 邮件去重、失败抽取更新、公司和联系人归组。
-- 业务邮件变化触发一次性分析任务。
-- L2 公司级事实归并及客户、工单、报价、订单上下文组装。
-- L3 客户画像、客户分析、销售信号和评分特征生成。
-- L4 可复现的 0–100 跟进优先级计算。
-- Django 持久化、Agent 服务认证、分析缓存和任务状态。
-- 参考 MVP 文档实现的员工 Gmail 收件箱、Google 授权管理和客户详情页面。
-- 使用必填 `DATABASE_URL` 显式选择数据库；完整业务使用 PostgreSQL，SQLite 可显式用于[本地预览](docs/local-development.md#sqlite-本地预览)，仍有 JSON 查询、向量与并发限制。
+SalesMate is an Agent MVP for B2B salespeople. It reads Gmail conversations, extracts customer intent with locatable evidence, groups by company, generates customer profiles, sales analysis, and follow-up priority, and displays results in a browser workspace.
 
-销售扩展已提供客户/联系人/归组、产品、工单、商机、报价和订单明细、跟进、团队授权、审计、私有附件、会话草稿，以及独立销售 Worker。Gmail 发信和 Google 日历的适配器与明确确认流程已实现，真实执行需要新写权限授权和加密密钥。当前已增加有来源依据的只读聊天和显式导入的内部知识；不包含 WhatsApp、会议纪要、外部知识检索或行业新闻。页面中的分数表示处理优先级，不表示成交概率。
+Updated: 2026-09-19
+Status: The existing L1-L4 pipeline is integrated. Backend context, persistence, and query endpoints support official score-v2, and the agent submits explanations automatically when data is complete; full frontend explanation display remains pending. Real Gmail and Alibaba Bailian require the developer's authorization and API key.
 
-客户详情页“AI 助手”提供私有会话、历史消息和显式草稿保存；各工作空间页面提供右下角悬浮入口，展开为底部横向聊天条、收起保留草稿，1000px 及以下采用受限高度、带收起按钮的底部面板。保存后可以跨刷新恢复；未保存文本只保存在本页。“发送问题”在后端原子保存问题和任务，由独立 `chat_worker` 调用 Agent 并保存回答与引用；“保存草稿”不调用模型。失败明确显示，重新回答创建新请求。运行前应用 `chat.0001_initial`，另开终端执行 `python backend/manage.py chat_worker`；完整契约、知识导入、权限及恢复边界见 [聊天适配](docs/chat-integration.md)。工具计划从顶部“业务管理”进入，先准备并审阅完整内容，再单独确认。`frontend/assets/assistant.js` 管理会话，`assistant-widget.js` 挂载共享浮窗，`business.js` 管理销售工作区，现有“更新分析”仍独立。
+## 1. Current MVP scope
 
-业务管理：`http://127.0.0.1:8000/business/`。模型、状态、API、外部授权和 Worker 部署步骤见 [销售扩展说明](docs/backend-expansion.md)。
+Implemented:
 
-工作台的收件箱归属于当前登录员工。后端先按员工隔离邮箱和邮件，再在该员工的数据范围内按客户公司归组；它不是把全公司所有员工邮件混在一起的共享收件箱。
+- Read-only Gmail OAuth and recent-email synchronization.
+- L1 single-email fact extraction through Alibaba Bailian's OpenAI-compatible API.
+- Email deduplication, failed-extraction replacement, and company/contact grouping.
+- One-shot analysis jobs triggered by business-email changes.
+- L2 company fact merging and customer/ticket/quotation/order context assembly.
+- L3 customer profiles, analysis, sales signals, and scoring features.
+- Reproducible L4 follow-up priority from 0 to 100.
+- Django persistence, Agent service authentication, analysis caching, and job state.
+- Employee Gmail inbox, Google authorization management, and customer detail pages following the MVP specification.
+- Required `DATABASE_URL` selects the database explicitly. Full business operation uses PostgreSQL; SQLite is an explicit [local preview](docs/local-development.md#sqlite-local-preview) option with JSON-query, vector, and concurrency limitations.
 
-## 2. 系统架构
+Sales extensions include customers/contacts/grouping, products, tickets, opportunities, quotation/order lines, follow-ups, team authorization, auditing, private attachments, conversation drafts, and an independent sales worker. Gmail sending and Google Calendar adapters have explicit confirmation flows; real execution requires new write-scope authorization and an encryption key. Sourced read-only chat and explicitly imported internal knowledge are available, while WhatsApp, meeting notes, external knowledge retrieval, and industry news are excluded from this scope. Page scores represent processing priority, not deal probability.
+
+The customer detail AI assistant provides private conversations, message history, and explicit draft saving. Workspace pages offer a bottom-right launcher that expands into a bottom horizontal chat bar and preserves drafts when collapsed; at widths up to 1000px it becomes a height-limited bottom panel with a collapse button. Saved drafts survive refreshes; unsaved text exists only on the page. Sending a question atomically saves the question and job, then independent `chat_worker` calls the agent and persists answers/citations; saving a draft makes no model call. Failures are explicit and answering again creates a new request. Apply `chat.0001_initial` and run `python backend/manage.py chat_worker` in another terminal. See [chat integration](docs/chat-integration.md) for contracts, knowledge import, permissions, and recovery. Tool plans are available from Business Management: prepare and review complete content before separate confirmation. `frontend/assets/assistant.js` manages conversations, `assistant-widget.js` mounts the shared widget, and `business.js` manages the sales workspace; existing analysis updates remain independent.
+
+Business Management: `http://127.0.0.1:8000/business/`. See [sales extension documentation](docs/backend-expansion.md) for models, states, APIs, external authorization, and worker deployment.
+
+The workspace inbox belongs to the current employee. The backend isolates mailboxes/emails by employee before grouping customer companies within that employee's data; it is not a shared inbox combining all employees' mail.
+
+## 2. System architecture
 
 ```mermaid
 flowchart TB
-    USER[当前销售员工] --> WEB[员工 Gmail 收件箱]
+    USER[Current sales employee] --> WEB[Employee Gmail inbox]
     WEB <-->|Session JSON API| DJANGO[Django + DRF]
-    WEB -->|发起 Google OAuth| DJANGO
-    DJANGO <-->|授权码与只读凭证| GMAIL[Gmail]
-    DJANGO -->|员工专属同步请求、凭证与冻结范围| SYNC[一次性 Agent Gmail Sync]
-    GMAIL -->|新增 message ID 与只读邮件| SYNC
-    SYNC --> PARSE[邮件解析]
-    PARSE --> L1[L1 单封事实抽取<br/>最多四路并发]
-    L1 <-->|JSON Object| BAILIAN[阿里百炼]
-    L1 -->|任一完成即逐封提交 EmailSubmission| DJANGO
+    WEB -->|Start Google OAuth| DJANGO
+    DJANGO <-->|Authorization code and read-only credentials| GMAIL[Gmail]
+    DJANGO -->|Employee synchronization request, credentials, and frozen scope| SYNC[One-shot Agent Gmail Sync]
+    GMAIL -->|New message IDs and read-only emails| SYNC
+    SYNC --> PARSE[Email parsing]
+    PARSE --> L1[L1 single-email extraction<br/>At most four concurrent calls]
+    L1 <-->|JSON Object| BAILIAN[Alibaba Bailian]
+    L1 -->|Submit each EmailSubmission immediately on completion| DJANGO
 
-    DJANGO -->|Job + CompanyContext| ORCH[Agent 一次性任务编排]
-    ORCH --> L2[L2 公司事实归并]
-    L2 --> L3[L3 客户画像与分析]
+    DJANGO -->|Job + CompanyContext| ORCH[One-shot Agent job orchestration]
+    ORCH --> L2[L2 company fact merging]
+    L2 --> L3[L3 customer profiles and analysis]
     L3 <-->|JSON Object| BAILIAN
-    L3 --> L4[L4 跟进优先级]
+    L3 --> L4[L4 follow-up priority]
     L2 -->|AnalysisInput| DJANGO
     L3 -->|Analysis| DJANGO
     L4 -->|Score| DJANGO
-    DJANGO -->|公司列表与详情| WEB
+    DJANGO -->|Company list and details| WEB
 ```
 
-模块职责：
+Module responsibilities:
 
-| 模块 | 技术 | 职责 |
+| Module | Technology | Responsibility |
 |---|---|---|
-| `backend/frontend/` | 原生 HTML、CSS、JavaScript | 当前员工 Gmail 授权、同步状态、公司列表、邮件原文、画像、分析、业务记录和跟进分数 |
-| `backend/` | Django、DRF | 员工会话、Google OAuth、邮箱凭证、邮件、公司、联系人、业务上下文、任务和分析结果持久化 |
-| `agent/` | Python、Gmail API、百炼 | 领取员工邮箱同步请求、Gmail 读取、L1–L4、后端 HTTP 客户端和一次性编排 |
-| `test_tools/` | Python、Gmail API | 供开发和测试人员向自己的 Gmail 注入全流程合成邮件 |
-| `backend/contracts/` | OpenAPI YAML | 当前 HTTP 接口结构 |
-| `backend/tools/` | Python/Node 脚本 | 文档一致性和可选浏览器检查 |
+| `backend/frontend/` | Native HTML, CSS, JavaScript | Current employee Gmail authorization, synchronization state, company lists, original emails, profiles, analysis, business records, and follow-up scores |
+| `backend/` | Django, DRF | Employee sessions, Google OAuth, credentials, emails, companies, contacts, business context, jobs, and analysis persistence |
+| `agent/` | Python, Gmail API, Bailian | Employee mailbox synchronization claims, Gmail reads, L1-L4, backend HTTP client, and one-shot orchestration |
+| `test_tools/` | Python, Gmail API | Independent injection of end-to-end synthetic emails into developers'/testers' own Gmail |
+| `backend/contracts/` | OpenAPI YAML | Current HTTP interface structure |
+| `backend/tools/` | Python/Node scripts | Documentation consistency and optional browser checks |
 
-Agent 不直接访问数据库，后端不执行真实模型推理。两者只通过 `/api/v1/agent/` 下的 JSON API 通信。浏览器只接收授权跳转地址和邮箱同步状态，不接触 Gmail token、百炼 Key 或 Agent 服务令牌。当前本地 MVP 由 Django 保存 Google 授权信息，Agent 通过服务认证接口在同步时领取。
+The agent does not access the database directly and the backend does not perform real model inference. They communicate through JSON APIs under `/api/v1/agent/`. Browsers receive authorization redirects and mailbox synchronization state, never Gmail tokens, Bailian keys, or Agent service tokens. In the local MVP, Django stores Google authorization and the agent claims it through authenticated service endpoints during synchronization.
 
-## 3. 完整业务流程与交换数据
+## 3. End-to-end flow and exchanged data
 
-| 阶段 | 输入 | 输出 | 保存位置 |
+| Stage | Input | Output | Storage |
 |---|---|---|---|
-| 员工 Gmail 授权 | 当前员工 Session、Google OAuth code | 邮箱地址、授权状态、`sync_requested` | Django `GmailCredential` 与 `Mailbox.sync_state` |
-| 同步任务领取 | Agent 服务凭证、领取数量 | `mailbox_id`、邮箱地址、Google 授权信息、读取上限 | 状态变为 `sync_running` |
-| Gmail 读取 | 已领取的员工授权、冻结天数/封数范围 | 范围内最新邮件，正文读取前排除已同步 ID | Worker 原文/L1 持久缓存；范围由 MailboxSyncRun 保存 |
-| 邮件解析 | raw MIME、message/thread ID | 发件人、收件人、主题、正文、时间、方向 | Agent 内存 |
-| L1 抽取 | 当前邮件主题和正文 | `EmailSubmission` | 最多四路并发；任一完成后立即逐封保存到 Django `Email` 与 `Extraction` |
-| 后端归组 | 联系人邮箱和自报公司 | `company_id`、联系人、成员邮件键 | Django `Company` 与 `Contact` |
-| 任务入队 | 业务邮件且 `has_substantive_update=true` | `email_ingested` Job | Django `Job` |
-| L2 归并 | Grouping、邮件、客户、工单、报价、订单 | `AnalysisInput` | Django `AnalysisInput` |
-| L3 分析 | 完整 `AnalysisInput` | `Analysis` | Django `Analysis` |
-| L4 评分 | 公司邮件信号及后端 `priority_context` | `Score`，可附 `score_details` | Django `Score.payload` 与 `Score.value` |
-| 页面读取 | 当前员工 Session、公司列表或公司 ID | 该员工的邮箱状态、公司列表、详情、邮件、画像、分数、任务状态 | 浏览器展示 |
+| Employee Gmail authorization | Current employee session, Google OAuth code | Mailbox address, authorization state, `sync_requested` | Django `GmailCredential` and `Mailbox.sync_state` |
+| Synchronization claim | Agent service credential, claim limit | `mailbox_id`, address, Google authorization, read limit | State becomes `sync_running` |
+| Gmail reads | Claimed employee authorization and frozen day/count scope | Newest scoped emails, excluding synchronized IDs before body reads | Durable worker raw/L1 cache; scope stored in MailboxSyncRun |
+| Email parsing | Raw MIME, message/thread IDs | Sender, recipients, subject, body, time, direction | Agent memory |
+| L1 extraction | Current email subject and body | `EmailSubmission` | At most four concurrent calls; persist each result immediately to Django `Email` and `Extraction` |
+| Backend grouping | Contact email and self-reported company | `company_id`, contacts, member email keys | Django `Company` and `Contact` |
+| Job enqueueing | Business email with `has_substantive_update=true` | `email_ingested` job | Django `Job` |
+| L2 merging | Grouping, emails, customer, tickets, quotations, orders | `AnalysisInput` | Django `AnalysisInput` |
+| L3 analysis | Complete `AnalysisInput` | `Analysis` | Django `Analysis` |
+| L4 scoring | Company email signals and backend `priority_context` | `Score`, optionally `score_details` | Django `Score.payload` and `Score.value` |
+| Page reads | Current employee session, company list or ID | That employee's mailbox state, companies, details, emails, profiles, scores, and job state | Browser display |
 
-重复同步规则：
+Repeated synchronization rules:
 
-- `dedupe_key` 为 `mailbox_address:gmail_message_id`。
-- 相同邮件和相同抽取结果返回 `duplicate`。
-- 原抽取为 `failed`，下次同步成功时返回 `updated` 并更新事实。
-- 非业务和待复核邮件仍保存，但不创建自动分析任务；仅含这些邮件的公司从默认列表及统计中排除。
-- 没有实质变化的业务邮件仍保存，但不自动重跑公司分析。
-- 一封邮件的抽取或提交错误不会回滚其他邮件；失败 message ID 保留到下一轮重试。
-- 企业邮箱按域名归组，常见公共邮箱按完整联系人邮箱独立归组。
+- `dedupe_key` is `mailbox_address:gmail_message_id`.
+- The same email with the same extraction returns `duplicate`.
+- A previously failed extraction returns `updated` and replaces facts when a later synchronization succeeds.
+- Non-business and review-pending emails are saved without automatic analysis jobs; companies containing only such emails are excluded from default lists/statistics.
+- Business emails without substantive changes are saved without rerunning company analysis automatically.
+- One extraction/submission failure does not roll back other emails; failed IDs remain for subsequent retries.
+- Corporate mail groups by domain; common public mail groups by complete contact address.
 
-## 4. Agent 数据结构
+## 4. Agent data structures
 
 ### 4.1 L1：EmailSubmission
 
@@ -131,18 +136,18 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 }
 ```
 
-`facts` 包含控制字段：
+`facts` includes control fields:
 
 - `has_substantive_update`
 - `message_summary`
 - `intent_hint`
 - `intent_evidences`
 
-`extract-v7` 的 `intent_hint` 是单封客户邮件可证实的最高采购阶段：`L1 Exploring`、`L2 Interested`、`L3 Qualified`、`L4 Evaluating`、`L5 Negotiating`、`L6 Purchase Ready`；没有可证实阶段时为 `null`。有阶段必须提供 `intent_evidences`，无阶段时该数组为空。邮件提交接口只接受 `extract-v7`；部署前清理旧邮件与持久同步游标后重新同步。
+In `extract-v7`, `intent_hint` is the highest verifiable purchasing stage in one customer email: `L1 Exploring`, `L2 Interested`, `L3 Qualified`, `L4 Evaluating`, `L5 Negotiating`, or `L6 Purchase Ready`, otherwise `null`. A stage requires `intent_evidences`; without one the array is empty. Submission accepts only `extract-v7`; clear legacy emails and durable cursors before deployment and resynchronize afterward.
 
-其余 13 个事实字段为 `contact_name`、`contact_title`、`company_self_reported`、`business_background`、`employee_scale_hint`、`product_need`、`quantity`、`budget`、`delivery_time`、`decision_process`、`concerns`、`quote_reference`、`order_reference`。
+The other 13 fact fields are `contact_name`, `contact_title`, `company_self_reported`, `business_background`, `employee_scale_hint`, `product_need`, `quantity`, `budget`, `delivery_time`, `decision_process`, `concerns`, `quote_reference`, and `order_reference`.
 
-每个事实字段都是多值数组，每个值可以对应多条原文证据：
+Each fact field is a multi-value array, with multiple original evidence snippets per value:
 
 ```json
 [
@@ -153,15 +158,15 @@ Agent 不直接访问数据库，后端不执行真实模型推理。两者只�
 ]
 ```
 
-未知事实使用空数组。所有 evidence 必须能在当前邮件主题或有效正文中逐字定位。
+Unknown facts use empty arrays. Every evidence snippet must be locatable verbatim in the current email subject or eligible body.
 
 ### 4.2 L2：AnalysisInput
 
-L2 不调用模型。它保留全部事实历史并补充来源邮件和事实时间，同时携带后端业务上下文。
+L2 makes no model calls. It preserves all fact history, adds source emails/timestamps, and carries backend business context.
 
 ```json
 {
-  "company_id": "后端公司 UUID",
+  "company_id": "backend-company-uuid",
   "input_version": "sha256:...",
   "merge_version": "merge-v2",
   "external_snapshot_version": "ext-0",
@@ -186,93 +191,93 @@ L2 不调用模型。它保留全部事实历史并补充来源邮件和事实�
 }
 ```
 
-`metrics` 包含收发数量、有效入站数、首次联系时间、最近收发时间、最近同线程响应间隔、是否存在历史订单和 CRM 状态。`input_version` 用于分析缓存；邮件抽取状态、归并版本或后端业务快照变化时版本随之变化。
+`metrics` includes incoming/outgoing counts, substantive inbound count, first-contact time, latest incoming/outgoing times, latest same-thread response interval, historical-order presence, and CRM state. `input_version` supports analysis caching and changes with extraction state, merge version, or backend business snapshots.
 
 ### 4.3 L3：Analysis
 
-一次百炼调用同时生成：
+One Bailian call produces:
 
-- 页面 A：公司主信号、逐工单信号、行业、规模、摘要和三个评分特征。
-- 页面 B：行业情况、公司经营、客户意向、时间轴、商机、风险和引导建议。
-- 事实变化与来源冲突、缺失项和上下文完整度。
+- Page A: Main company signal, per-ticket signals, industry, size, summary, and three scoring features.
+- Page B: Industry context, company operations, intent, timeline, opportunity, risk, and guidance.
+- Fact changes, source conflicts, missing fields, and context completeness.
 
-主信号枚举：`repeat_purchase`、`quoted_not_closed`、`inquiry_intent`、`new_lead_no_profile`、`unknown`。
+Main signal enum: `repeat_purchase`, `quoted_not_closed`, `inquiry_intent`, `new_lead_no_profile`, `unknown`.
 
-三个评分特征为 `demand_clarity`、`urgency`、`decision_visibility`，值只能是 0–3 或 JSON `null`。七个详情维度都使用以下结构：
+The three scoring features are `demand_clarity`, `urgency`, and `decision_visibility`, restricted to 0-3 or JSON `null`. All seven detail dimensions use this structure:
 
 ```json
 {
-  "facts": [{"text": "客户要求正式报价", "source_refs": ["邮件 dedupe_key"]}],
-  "inferences": [{"text": "...", "basis": "...", "confidence": "high", "source_refs": ["来源 ID"]}],
+  "facts": [{"text": "客户要求正式报价", "source_refs": ["email-dedupe-key"]}],
+  "inferences": [{"text": "...", "basis": "...", "confidence": "high", "source_refs": ["source-id"]}],
   "missing_fields": []
 }
 ```
 
-允许引用邮件 `dedupe_key`、`company_id`、`customer_id`、联系人邮箱、`ticket_id`、`quote_id` 和 `order_id`。模型输出不是合法 JSON、枚举非法、来源不存在、缺少推断依据或出现成交百分比时，L3 返回失败且后端不保存分析和评分。
+Allowed references include email `dedupe_key`, `company_id`, `customer_id`, contact email, `ticket_id`, `quote_id`, and `order_id`. Invalid JSON/enums, nonexistent sources, missing inference rationale, or deal percentages fail L3 and prevent backend analysis/score persistence.
 
 ### 4.4 L4：Score
 
-| 特征 | 权重 |
+| Feature | Weight |
 |---|---:|
 | urgency | 0.35 |
 | buying_intent | 0.35 |
 | opportunity_value | 0.30 |
 
-正式版本为 `score-v2`，由 Agent 规则计算；商机价值由金额档位 60% 和客户匹配 40% 组成。后端检查三项整数贡献之和等于分数，资料不足时仅接受 `score=null` 和 `insufficient_data`，不再因旧 L3 特征为空拒绝正式分数。`ANALYSIS_PROVIDER=agent` 的页面投影只展示正式版本，历史数据保留但旧算法分数不参与正式排序。规则演示模式仍显式使用独立 `rules-score-v1`。
+The official `score-v2` is computed by Agent rules; opportunity value comprises 60% amount band and 40% customer fit. The backend checks that integer contributions sum to the score and accepts only `score=null` with `insufficient_data` when evidence is insufficient; empty legacy L3 features no longer reject official scores. With `ANALYSIS_PROVIDER=agent`, page projections show only the official version; historical data remains, but legacy scores do not participate in formal ranking. Rule-demo mode explicitly uses separate `rules-score-v1`.
 
-## 5. 目录结构
+## 5. Directory layout
 
 ```text
 SalesMate/
-├── README.md                     # 仓库概览
-├── .env.example                  # 双方共享配置模板
-├── requirements.txt              # 后端和 Agent 的统一安装入口
-├── test_tools/                   # 独立全流程测试数据工具和使用说明
-├── backend/                      # 软件应用
-│   ├── README.md                 # 本文：软件开发及联调
-│   ├── apps/、config/、common/    # Django API、模型和基础模块
-│   ├── frontend/                 # HTML 与静态资源
-│   ├── contracts/                # OpenAPI 和响应示例
-│   ├── docs/                     # 软件文档与接入说明
-│   ├── tools/                    # 注释和浏览器检查
-│   ├── tests/、requirements/      # 软件测试和依赖
+├── README.md                     # Repository overview
+├── .env.example                  # Shared configuration template
+├── requirements.txt              # Unified backend/Agent installation entry point
+├── test_tools/                   # Independent end-to-end test-data tools and instructions
+├── backend/                      # Software application
+│   ├── README.md                 # This software development/integration guide
+│   ├── apps/, config/, common/    # Django APIs, models, and shared modules
+│   ├── frontend/                 # HTML and static assets
+│   ├── contracts/                # OpenAPI and response examples
+│   ├── docs/                     # Software documentation and integration guides
+│   ├── tools/                    # Comment and browser checks
+│   ├── tests/, requirements/      # Software tests and dependencies
 │   └── manage.py
 └── agent/
     ├── README.md、main.py、config.py
-    ├── clients/                  # Django HTTP 客户端
-    ├── tools/、llm/               # Gmail 读取与百炼调用
-    ├── workflows/                # L1–L4 与编排
+    ├── clients/                  # Django HTTP client
+    ├── tools/, llm/               # Gmail reads and Bailian calls
+    ├── workflows/                # L1-L4 and orchestration
     └── tests/
 ```
 
-Agent 内没有单独的 `schemas`、`prompts` 或模拟后端运行层。模型能力放在 `agent/skills/*/SKILL.md`，workflow 加载 Skill 后组织输入、调用模型并校验输出；`agent/tests/fake_backend.py` 只服务于离线测试。
+The agent has no separate `schemas`, `prompts`, or runtime fake-backend layer. Model capabilities live in `agent/skills/*/SKILL.md`; workflows load skills, assemble input, invoke models, and validate output. `agent/tests/fake_backend.py` serves only offline tests.
 
-## 6. 统一环境配置
+## 6. Shared environment configuration
 
-项目只读取根目录 `.env`。`agent/.env` 和 `backend/.env` 已取消。
+The project reads only the root `.env`; `agent/.env` and `backend/.env` are retired.
 
-首次配置：
+Initial configuration:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-编辑 `.env`：
+Edit `.env`:
 
 ```dotenv
-DJANGO_SECRET_KEY=本地随机字符串
+DJANGO_SECRET_KEY=local-random-secret
 DJANGO_TIME_ZONE=UTC
 ANALYSIS_PROVIDER=rules
 LOCAL_DEBUG_AUTO_LOGIN=True
 LOCAL_DEBUG_USER=demo
 
-GOOGLE_OAUTH_CLIENT_ID=你的Web客户端ID
-GOOGLE_OAUTH_CLIENT_SECRET=你的Web客户端密钥
+GOOGLE_OAUTH_CLIENT_ID=your-web-client-id
+GOOGLE_OAUTH_CLIENT_SECRET=your-web-client-secret
 GOOGLE_OAUTH_REDIRECT_URI=http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/
 
-DASHSCOPE_API_KEY=你的百炼Key
+DASHSCOPE_API_KEY=your-bailian-key
 BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-BAILIAN_MODEL=你的模型名称
+BAILIAN_MODEL=your-model-name
 BAILIAN_ENABLE_THINKING=false
 
 SALESMATE_BACKEND_AGENT_URL=http://127.0.0.1:8000/api/v1/agent/
@@ -282,19 +287,19 @@ SALESMATE_JOB_LEASE_SECONDS=120
 SALESMATE_BACKEND_TIMEOUT=30
 ```
 
-`DATABASE_URL` 必填；缺失或无效配置会直接失败。本机使用原 PostgreSQL，配置示例：
+`DATABASE_URL` is required; missing or invalid configuration fails directly. This machine uses the existing PostgreSQL database, for example:
 
 ```dotenv
 DATABASE_URL=postgresql://salesmate:password@127.0.0.1:5432/salesmate?connect_timeout=3
 ```
 
-`.env`、Agent 与 `test_tools/` 下的 OAuth 凭据和 token、`backend/.local-access.json` 以及数据库文件均被 Git 忽略。
+Git ignores `.env`, OAuth credentials/tokens under Agent and `test_tools/`, `backend/.local-access.json`, and database files.
 
-## 7. 首次安装和初始化
+## 7. Initial installation and setup
 
-Windows/macOS 一键入口见[仓库 README](../README.md#本地一键启动)：Windows 使用 `start-local.ps1`，macOS 使用 `bash start-local.sh`；自动准备虚拟环境和依赖，检查并迁移本地数据库，启动 Web/Worker 并打开前端。首次使用仍需安装 Python、配置根 `.env`；完整业务需 PostgreSQL/pgvector，本地轻量预览可选择 [SQLite 并从网页注册](docs/local-development.md#sqlite-本地预览)，无需安装数据库服务或预建账号。脚本不会覆盖已有配置或替换数据库。下列命令用于 Windows 手动初始化，macOS 的环境路径和步骤见[本地开发说明](docs/local-development.md#一键启动macos)。
+See the [repository README](../README.md#one-command-local-startup) for one-command startup: `start-local.ps1` on Windows and `bash start-local.sh` on macOS prepare the virtual environment/dependencies, check/migrate the local database, start web/workers, and open the frontend. First install Python and configure root `.env`. Full operation requires PostgreSQL/pgvector; lightweight [SQLite preview with web registration](docs/local-development.md#sqlite-local-preview) needs no database service or precreated account. Scripts neither overwrite configuration nor replace databases. The following commands describe manual Windows setup; see [local development](docs/local-development.md#one-command-startup-macos) for macOS paths and steps.
 
-以下命令从项目根目录执行：
+Run these commands from the project root:
 
 ```powershell
 py -m venv .venv
@@ -306,156 +311,156 @@ python backend/manage.py migrate
 python backend/manage.py provision_local --username demo --mailbox-address your-account@gmail.com
 ```
 
-`provision_local` 会创建普通用户、业务邮箱和 Agent 服务凭证，把服务令牌、邮箱 UUID 和用户名写入根 `.env`，并把登录密码等本地凭证写入被忽略的 `backend/.local-access.json`。命令只用于第一次初始化，拒绝覆盖已有用户和凭证文件。
+`provision_local` creates a regular user, business mailbox, and Agent service credential, writes the token/mailbox UUID/username into root `.env`, and stores local credentials including the password in ignored `backend/.local-access.json`. It is only for initial setup and rejects existing users or credential files.
 
-在 PyCharm 中打开整个 `SalesMate` 根目录，然后进入 **Settings → Project → Python Interpreter**，选择 `SalesMate\.venv\Scripts\python.exe`。所有 Run Configuration 的 Working directory 都设为项目根目录。这样 `agent.*`、Django 设置和根 `.env` 会按相同路径解析。
+Open the entire `SalesMate` root in PyCharm, then select `SalesMate\.venv\Scripts\python.exe` under **Settings → Project → Python Interpreter**. Set every Run Configuration's working directory to the repository root so `agent.*`, Django settings, and root `.env` resolve consistently.
 
-如果当前工作区已经存在根 `.env`、已配置数据库和 `backend/.local-access.json`，不要再次执行 `Copy-Item` 或 `provision_local`。激活已有解释器后只需运行：
+If root `.env`, a configured database, and `backend/.local-access.json` already exist, do not rerun `Copy-Item` or `provision_local`. Activate the existing interpreter and run only:
 
 ```powershell
 python backend/manage.py migrate
 python backend/manage.py check
 ```
 
-员工网页 Gmail 授权使用 Google Cloud 的 **Web application** OAuth Client。首次准备：
+Employee web Gmail authorization uses a Google Cloud **Web application** OAuth client. Initial preparation:
 
-1. 在 Google Cloud Console 启用 Gmail API。
-2. 配置 OAuth consent screen；测试阶段把每个要授权的员工 Gmail 地址加入 Test users，否则 Google 会返回 `403 access_denied`。
-3. 创建 **Web application** 类型的 OAuth Client。
-4. 在 Authorized redirect URIs 中精确添加 `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/`。
-5. 在根 `.env` 填写 `GOOGLE_OAUTH_CLIENT_ID`、`GOOGLE_OAUTH_CLIENT_SECRET` 和相同的 `GOOGLE_OAUTH_REDIRECT_URI`。
-6. 真实联调使用 `ANALYSIS_PROVIDER=agent`，HTTP 后端启动后在独立终端运行 `python backend/manage.py crm_worker`。Web 只提交持久任务。
-7. 在根 `.env` 填写 `DASHSCOPE_API_KEY` 和百炼模型名 `BAILIAN_MODEL`。
+1. Enable Gmail API in Google Cloud Console.
+2. Configure the OAuth consent screen and add each employee Gmail account to Test users during testing; otherwise Google returns `403 access_denied`.
+3. Create a **Web application** OAuth client.
+4. Add exactly `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/` to Authorized redirect URIs.
+5. Set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and the matching `GOOGLE_OAUTH_REDIRECT_URI` in root `.env`.
+6. Use `ANALYSIS_PROVIDER=agent` for live integration and run `python backend/manage.py crm_worker` in a separate terminal after starting the HTTP backend. Web requests only enqueue durable jobs.
+7. Set `DASHSCOPE_API_KEY` and Bailian model name `BAILIAN_MODEL` in root `.env`.
 
-员工网页授权不读取 Agent 目录中的凭据文件，也不需要手工配置 `SALESMATE_MAILBOX_ID`。网页 OAuth 使用根 `.env` 中的 Web application Client；`--sync-authorized-mailboxes-once` 保留为自动运行关闭时的调试入口。与 `agent/`、`backend/` 同级的 `test_tools/` 提供独立测试邮件注入器，使用自己的 `gmail_inject_credentials.json` 和 `gmail_inject_token.json`，具体见 [测试工具说明](../test_tools/README.md)。
+Employee web authorization reads no credential file from the Agent directory and requires no manual `SALESMATE_MAILBOX_ID`. Web OAuth uses the root `.env` Web application client; `--sync-authorized-mailboxes-once` remains a debugging entry point with automatic execution disabled. Independent `test_tools/`, alongside `agent/` and `backend/`, supplies an email injector with its own `gmail_inject_credentials.json` and `gmail_inject_token.json`; see [test tools](../test_tools/README.md).
 
-## 8. 启动与真实完整测试
+## 8. Startup and complete live testing
 
-### 第一步：启动 Django 和前端
+### Step 1: Start Django and the frontend
 
-使用一键入口时，无需重复执行本节的手动 Web 和 Worker 启动命令。状态查询、停止、日志位置与新电脑前提见[本地开发与联调](docs/local-development.md#一键启动windows)。
+When using one-command startup, do not repeat manual web/worker commands here. See [local development and integration](docs/local-development.md#one-command-startup-windows) for status, shutdown, log paths, and prerequisites on a new machine.
 
-打开第一个 PyCharm Terminal，在项目根目录执行：
+Open the first PyCharm terminal and run from the repository root:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --port 8000 --reload
 ```
 
-看到 `Uvicorn running on http://127.0.0.1:8000` 后打开：
+After `Uvicorn running on http://127.0.0.1:8000` appears, open:
 
-- 工作台：http://127.0.0.1:8000/
-- API 文档：http://127.0.0.1:8000/api/docs/
-- 存活检查：http://127.0.0.1:8000/api/v1/health/live/
-- 数据库检查：http://127.0.0.1:8000/api/v1/health/ready/
+- Workspace: http://127.0.0.1:8000/
+- API documentation: http://127.0.0.1:8000/api/docs/
+- Liveness: http://127.0.0.1:8000/api/v1/health/live/
+- Database readiness: http://127.0.0.1:8000/api/v1/health/ready/
 
-`LOCAL_DEBUG_AUTO_LOGIN=True` 时会自动使用 `.env` 中的本地用户进入工作台。设为 `False` 并重启即可测试登录页。
+`LOCAL_DEBUG_AUTO_LOGIN=True` opens the workspace as the configured local user in `.env`. Set it to `False` and restart to test login.
 
-这一步已经同时启动前端和后端。不要双击打开 `backend/frontend/index.html`；页面依赖同源 Session、CSRF 和 `/api/v1/`，必须从 `http://127.0.0.1:8000/` 打开。四个地址都能访问，且 ready 返回 `{"status":"ok","database":"ok"}` 后再继续。
+This starts both frontend and backend. Do not open `backend/frontend/index.html` directly: pages require same-origin sessions, CSRF, and `/api/v1/`, so use `http://127.0.0.1:8000/`. Continue only when all four URLs are accessible and readiness returns `{"status":"ok","database":"ok"}`.
 
-### 第二步：让员工在网页授权 Gmail
+### Step 2: Authorize employee Gmail in the web UI
 
-1. 在工作台左侧点击 Gmail，或点击页面右上角“连接 Gmail”。
-2. 在弹窗点击“使用 Google 账号授权”。
-3. 选择当前员工自己的 Google 账号并同意只读权限。
-4. Google 返回工作台后，先选择“最近 N 天”或“最近 N 封”（至少一项，两项取交集），默认最多 50 封，只填天数也适用；超过 50 封会警告长时间占用进程风险，明确批准后才持久排队；取消不会同步。下一步启动独立 Worker 后执行同步和分析。
-5. 页面持续读取批次进度，并逐步刷新客户列表。后续同步或刷新仍须选择范围；Gmail 先取最新 N 封再跳过已同步邮件，不用更早邮件补足，不自动全量补采；失败仅明确重试。
+1. Click Gmail in the workspace sidebar or the Connect Gmail action at the top right.
+2. Choose Google account authorization in the dialog.
+3. Select the current employee's Google account and grant read-only access.
+4. After returning to the workspace, select recent days or recent message count; at least one is required and both form an intersection. The default maximum is 50, including day-only requests. Requests above 50 warn of prolonged process use and are durably queued only after explicit approval; canceling starts no synchronization. Start the independent worker in the next step to process synchronization/analysis.
+5. The page reads batch progress continuously and refreshes companies progressively. Later synchronization/refresh still requires scope selection; Gmail selects the newest N messages before skipping synchronized IDs, without filling from older emails or automatic full backfill. Failures require explicit retries.
 
-不同 SalesMate 登录用户拥有独立的邮箱连接、客户公司和邮件范围。即使两名员工联系相同客户域名，他们也不会在当前 MVP 中互相看到对方邮件。
+Each SalesMate login has independent mailbox connections, companies, and email scope. Two employees contacting the same customer domain still cannot see each other's emails in this MVP.
 
-### 第三步：启动独立 Worker
+### Step 3: Start the independent worker
 
-在仓库根目录的第二个终端运行，使用已安装项目依赖的 Python 环境：
+Run in a second repository-root terminal using Python with project dependencies installed:
 
 ```powershell
 python backend/manage.py crm_worker --analysis-workers 2 --poll 1
 ```
 
-授权回调或“同步 Gmail”只创建数据库批次，Web 不启动 Agent。Worker 为当前服务凭证所属员工执行以下流程，公司画像通道与邮箱同步并行：
+Authorization callbacks and Gmail synchronization actions create database batches only; web execution does not start the agent. The worker processes the employee owning the current service credential, with company profiling running alongside mailbox synchronization:
 
 ```text
-首次读取最近收件和发件，后续按 Gmail History 游标读取新增邮件
-→ 最多四路并发执行单封 L1 百炼抽取
-→ 任一 L1 完成即逐封提交 Django
-→ 领取本次产生的任务
-→ L2 归并
-→ L3 百炼分析
-→ L4 评分
-→ 保存并回报任务
+Read recent incoming/outgoing mail initially, then new emails through the Gmail History cursor
+→ Run single-email L1 Bailian extraction with at most four concurrent calls
+→ Submit each completed L1 result to Django immediately
+→ Claim jobs produced by this pass
+→ Merge L2
+→ Run L3 Bailian analysis
+→ Compute L4 scores
+→ Persist results and report jobs
 ```
 
-页面分别显示邮件完成、失败和公司画像计数；邮件处理完成不代表画像已完成。失败批次显示安全错误和重试按钮，可在 Worker 终端按批次 ID 排查后明确重试。迁移、历史分类及详细恢复边界见 [邮件处理适配](docs/processing-integration.md)。
+The page displays completed emails, failures, and company profiles separately; completed email processing does not imply completed profiles. Failed batches show safe errors and a retry action. Inspect the batch ID in worker logs before explicitly retrying. See [processing integration](docs/processing-integration.md) for migrations, historical classification, and recovery boundaries.
 
-如需逐步调试，先停止独立 Worker，再使用保留的 CLI 入口；同一邮箱不要同时运行两种消费者：
+For stepwise debugging, stop the independent worker before using the retained CLI entry point; never run both consumers on one mailbox:
 
 ```powershell
 python -m agent.main --sync-authorized-mailboxes-once
 ```
 
-重点核对这些字段：
+Check these fields:
 
-- `created_count`：第一次保存的邮件数量。
-- `updated_count`：之前抽取失败、这次成功更新的邮件数量。
-- `duplicate_count`：后端已有且内容相同的邮件数量。
-- `failed_extraction_count`：本次 L1 未能形成可信 facts 的邮件数量。
-- `failed_submission_count`：本次逐封提交后端失败的邮件数量。
-- `failed_email_count` 和 `email_errors`：本次需要重试的 message ID 数量及逐封错误阶段。
-- `job_reports[].status`：应为 `completed`；没有新的实质业务邮件时数组可以为空。
+- `created_count`: Emails saved for the first time.
+- `updated_count`: Previously failed extractions successfully replaced in this pass.
+- `duplicate_count`: Existing emails with identical content.
+- `failed_extraction_count`: Emails for which this pass's L1 could not produce trusted facts.
+- `failed_submission_count`: Individual backend submission failures in this pass.
+- `failed_email_count` and `email_errors`: Number of retry message IDs and individual failure stages.
+- `job_reports[].status`: Expected to be `completed`; the array may be empty without new substantive business emails.
 
-### 第四步：在前端核对结果
+### Step 4: Verify frontend results
 
-同步完成后工作台会自动刷新，也可以点击“同步并刷新”：
+The workspace refreshes after synchronization; the synchronization-and-refresh action is also available:
 
-1. 当前员工的 Gmail 收件箱应出现归组后的公司。
-2. 列表显示摘要、销售信号、行业、规模、分数和 Agent 来源。
-3. 打开公司详情，在左侧核对邮件主题和正文。
-4. 点击画像或分析旁的“依据”，应定位到来源邮件；业务记录来源会显示对应 ID。
-5. 中间区域显示三维画像和四维分析。
-6. 右侧显示跟进优先级、贡献原因、缺失信息、联系人和业务记录数量。
-7. 信息不足时显示“资料不足，未评分”，不能显示虚构的 0 分。
+1. Grouped companies should appear in the current employee's Gmail inbox.
+2. Lists show summaries, sales signals, industry, size, score, and Agent origin.
+3. Open company details and verify email subjects/bodies on the left.
+4. Evidence controls beside profiles/analysis should locate source emails; business-record sources display their IDs.
+5. The middle region shows three profile and four analysis dimensions.
+6. The right region shows follow-up priority, contribution reasons, missing information, contacts, and business-record counts.
+7. Insufficient information must display an unscored state, never an invented zero score.
 
-### 第五步：验证去重和动态更新
+### Step 5: Verify deduplication and updates
 
-在 Gmail 管理弹窗再次点击“同步 Gmail”，或点击收件箱的“同步并刷新”。不改变邮箱内容时，已保存邮件应进入 `duplicate_count`，公司邮件数不应重复增加。
+Synchronize again through the Gmail management dialog or inbox synchronization-and-refresh action. With unchanged mailbox content, saved emails should contribute to `duplicate_count` without increasing company email counts.
 
-随后向该员工 Gmail 账号发送一封带明确需求、数量、预算或会议意图的新邮件，再点击“同步并刷新”。完成后应看到邮件数、摘要、画像、分析和任务状态更新。
+Then send the employee a new email with explicit requirements, quantity, budget, or meeting intent and synchronize again. Email counts, summary, profiles, analysis, and job state should update after processing.
 
-页面点击“更新分析”会创建后端任务并自动启动 Agent；处理完成后点击详情页“刷新状态”查看结果。
+The analysis-update action creates a backend job and starts the agent automatically; after processing, use the detail page's status-refresh action to inspect results.
 
-### 常见问题定位
+### Troubleshooting
 
-| 现象 | 先检查什么 | 处理方式 |
+| Symptom | First check | Resolution |
 |---|---|---|
-| Google 显示 `403 access_denied` | OAuth consent screen 的发布状态和 Test users | 测试状态下把当前员工 Gmail 加入 Test users，然后从页面重新授权 |
-| 页面授权后提示失败 | OAuth Client 类型与 Redirect URI | 使用 Web application，并确保 Google Cloud 和根 `.env` 都是 `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/` |
-| 页面一直显示“等待 Agent 同步” | 独立 Worker 未运行或配置无效 | 启动 `crm_worker`，检查 Agent token、HTTP 地址与百炼配置，查看 Worker 的错误类型和批次进度 |
-| CLI 返回 `configuration_failed` | 根 `.env` 的服务令牌、邮箱 UUID | 先运行 `provision_local`；确认没有继续维护 `agent/.env` 或 `backend/.env` |
-| CLI 返回后端 401 | Agent token 与数据库记录不匹配 | 不要手工复制旧 token；重新初始化一套本地数据库和凭证，或核对当前根 `.env` |
-| CLI 返回后端 404 | `SALESMATE_MAILBOX_ID` 不属于当前 token 用户 | 使用同一次 `provision_local` 生成的 token 与 mailbox ID |
-| `job_reports` 为空 | 邮件是重复、非业务或无实质更新 | 查看 created/duplicate 和 L1 的 `has_substantive_update`，也可在页面点击“更新分析”后运行 `--process-jobs-once` |
-| L3 失败 | 百炼返回非 JSON、枚举错误或 `source_refs` 越界 | 查看终端详细错误；修正 Prompt/模型后再次创建分析任务并运行一次 Job |
-| 页面没有新结果 | Worker 未启动、后台仍在处理或执行失败 | 查看批次状态与 Worker 日志；旧 CLI 仅单独调试，不与 Worker 混用同一邮箱 |
-| ready 返回 503 | 默认数据库连接失败 | SQLite 模式检查 `backend/` 是否可写；PostgreSQL 模式检查 `DATABASE_URL` |
+| Google returns `403 access_denied` | OAuth consent-screen publication state and Test users | Add the employee Gmail to Test users during testing and authorize again from the page |
+| Authorization fails after returning to the page | OAuth client type and redirect URI | Use Web application and ensure Google Cloud/root `.env` both specify `http://127.0.0.1:8000/api/v1/mailboxes/gmail-callback/` |
+| Page waits indefinitely for Agent synchronization | Missing worker or invalid configuration | Start `crm_worker`; inspect Agent token, HTTP URL, Bailian settings, worker error types, and batch progress |
+| CLI returns `configuration_failed` | Root `.env` service token and mailbox UUID | Run `provision_local` first; ensure obsolete `agent/.env`/`backend/.env` files are not being maintained |
+| CLI receives backend 401 | Token differs from the database record | Do not copy stale tokens; initialize a fresh local database/credential set or verify current root `.env` |
+| CLI receives backend 404 | `SALESMATE_MAILBOX_ID` belongs to another token user | Use the token and mailbox ID from the same `provision_local` run |
+| Empty `job_reports` | Duplicate, non-business, or nonsubstantive email | Check created/duplicate counts and `has_substantive_update`; alternatively request an analysis update and run `--process-jobs-once` |
+| L3 failure | Non-JSON Bailian output, invalid enums, or out-of-scope `source_refs` | Inspect detailed terminal errors; correct prompt/model, create a new analysis job, and process it once |
+| No new page results | Worker absent, still processing, or failed | Check batch state and worker logs; reserve legacy CLI for isolated debugging, never the same mailbox as the worker |
+| Readiness returns 503 | Database connection failure | For SQLite, check `backend/` is writable; for PostgreSQL, check `DATABASE_URL` |
 
-### 第六步：单独调试各阶段
+### Step 6: Debug stages independently
 
 ```powershell
-# 只从后端读取公司上下文并构建 L2
+# Read backend company context and build only L2
 python -m agent.main --analysis-company-id COMPANY_UUID
 
-# 只处理已有任务的 L2–L4
+# Process only L2-L4 for existing jobs
 python -m agent.main --process-jobs-once --job-limit 10
 ```
 
-## 9. 自动检查
+## 9. Automated checks
 
-在项目根目录执行：
+Run from the repository root:
 
 ```powershell
-# Agent 离线测试：120 项
+# Agent offline tests: documented baseline of 120 tests
 python -m unittest discover -s agent/tests -p "test_*.py"
 
-# Django 业务回归测试
+# Django business regression tests
 python backend/manage.py test tests
 
 python backend/manage.py check
@@ -464,73 +469,75 @@ python backend/manage.py spectacular --file backend/contracts/openapi.yaml --val
 python backend/tools/check_docs.py
 ```
 
-若安装了 Node.js，可额外检查：
+With Node.js installed, also run:
 
 ```powershell
 node --check backend/frontend/assets/api.js
 node --check backend/frontend/assets/app.js
 ```
 
-自动测试不访问真实 Gmail 或百炼。真实权限、余额、网络和模型输出质量必须使用第 8 节的人工流程验证。
+Automated tests do not access real Gmail or Bailian. Verify actual permissions, credit balance, network access, and model quality through the manual flow in Section 8.
 
-## 10. 离线前端演示
+## 10. Offline frontend demo
 
-没有 Gmail 或百炼配置时，把 `.env` 暂时改成：
+Without Gmail or Bailian configuration, temporarily set `.env` to:
 
 ```dotenv
 ANALYSIS_PROVIDER=rules
 ```
 
-重启后端后，工作台会显示“导入演示样例”和“模拟新邮件”。规则模式只用于界面与数据库联调，输出会标记为规则占位。测试真实 Agent 前改回 `ANALYSIS_PROVIDER=agent` 并重启。
+After restarting, the workspace offers demo-sample import and simulated new email. Rule mode is only for UI/database integration and marks output as placeholders. Restore `ANALYSIS_PROVIDER=agent` and restart before testing the real agent.
 
-## 11. 开发约定
+## 11. Development conventions
 
-- Agent workflow 使用普通字典和少量就地 dataclass，不增加独立 schemas 或 prompts 目录；模型指令及其版本保存在项目 Skill 中。
-- 后端负责持久化和页面查询，Agent 负责邮件理解与 L1–L4 业务计算。
-- 前端只通过 Django 读取结果，不保存服务密钥。
-- 修改 `backend/`（包括 tools/） 下 Python 文件时，同步维护文件顶部职责、目录、变量索引和关键函数注释。
-- 完成后运行 `python backend/tools/check_docs.py`。
+- Agent workflows use plain dictionaries and a few local dataclasses, without separate schemas/prompts directories; model instructions and versions live in project skills.
+- The backend owns persistence/page queries; the agent owns email understanding and L1-L4 business computation.
+- The frontend reads results through Django and stores no service secrets.
+- When changing Python under `backend/`, including tools/, update file responsibilities, declaration directories, variable indexes, and key function comments together.
+- Run `python backend/tools/check_docs.py` before completion.
 
-更细的 Agent 提示词和校验规则见 [agent/README.md](../agent/README.md)。当前 HTTP 定义见 [contracts/openapi.yaml](contracts/openapi.yaml)。
+See [agent/README.md](../agent/README.md) for prompts and validation rules, and [contracts/openapi.yaml](contracts/openapi.yaml) for current HTTP definitions.
 
-## 12. 已知限制
+## 12. Known limitations
 
-- 首次扫描最多最近 20 封；后续使用 History 游标，单轮上限仍为 20，剩余 ID 持久保留。
-- L1 最多四路并发并按完成顺序逐封保存，但 Gmail raw 正文仍按顺序读取。
-- 共享 `crm_worker` 轮转所有有效员工的数据库任务，按单元隔离 HTTP 身份；Web 重启不删除队列。执行中断通过批次错误或租约过期展示，失败由员工明确重试。
-- 公司画像默认两路，单公司任务互斥。人工确认跳过邮件后的 L1 重做版本和分类口径待双方补齐，见 [邮件处理适配](docs/processing-integration.md)。
-- 原 Gmail 只读同步仍使用原 GmailCredential JSON；本轮新发信/日历 Connection 使用独立 Fernet 密钥加密，浏览器既不接收明文也不接收密文。现有只读凭证迁移与生产密钥服务不在本轮变更内。
-- 公共邮箱按原清单自动归组；已支持显式公司合并、选择邮件搬移及人工域名/联系人映射，不猜测集团关系。
-- 工单、商机、产品、报价及明细、订单及明细、跟进均有关系记录和管理页入口；库存为人工记录，不自动扣减，不推断税费或收入确认。
-- L3 不使用外部新闻或知识库。
-- L4 权重尚未使用真实销售结果校准。
-- 数据库由 DATABASE_URL 显式选择；本机已验证 PostgreSQL，SQLite 不会作为故障回退。
+- Initial scans cover at most the latest 20 emails; subsequent History-cursor passes retain the per-pass limit of 20 and persist remaining IDs.
+- L1 runs at most four concurrent calls and saves results in completion order, while Gmail raw bodies are still read sequentially.
+- Shared `crm_worker` rotates database jobs across active employees with isolated HTTP identities per unit; web restarts preserve queues. Interruptions appear as batch errors or expired leases and require explicit employee retries.
+- Company profiling defaults to two concurrent jobs with per-company exclusion. L1 redo versions/classification after manually confirmed skipped emails still need coordinated completion; see [processing integration](docs/processing-integration.md).
+- Existing Gmail read-only synchronization retains GmailCredential JSON. New sending/calendar Connection credentials use an independent Fernet key; browsers receive neither plaintext nor ciphertext. Migrating existing read-only credentials and production key management are outside this change.
+- Public email uses the original domain list for automatic grouping. Explicit company merges, selected-email moves, and manual domain/contact mappings are supported without guessing corporate-group relationships.
+- Tickets, opportunities, products, quotations/lines, orders/lines, and follow-ups have relational records and management entry points. Inventory is manual, without automatic deductions or inferred taxes/revenue recognition.
+- L3 does not use external news or knowledge bases.
+- L4 weights are not calibrated with real sales outcomes.
+- DATABASE_URL explicitly selects the database. PostgreSQL has been validated locally; SQLite is never a failure fallback.
 
-## Coding Agent 必须遵循的开发原则
-
-
-所有 Coding Agent 在新增、修改、重构或删除本软件目录内代码（包括前端、测试与工具）时，必须遵循以下要求：
-
-1. **学术风格的实现注释**：在函数、方法及关键代码块处提供准确、严谨、可核验的注释，说明功能、输入与输出、实现逻辑、设计依据和适用约束；涉及状态转换、边界条件、异常或副作用时，应说明其处理方式。注释应解释实现原因与逻辑关系，避免仅复述代码，也不得编造学术引用或未经验证的结论。
-2. **文件顶部的功能说明与目录**：每个代码文件顶部必须说明文件职责、主要实现逻辑及与相关模块的关系，并列出文件中实际实现的函数、类与关键方法，以及关键变量、常量和配置项的名称与用途，供 Coding Agent 和开发者快速定位。目录应与当前实现一致，不保留已删除或重命名的条目。
-3. **代码与注释同步原子修改**：代码实现、对应注释和文件顶部目录必须作为同一逻辑变更单元同步更新、检查和交付；如提交代码，必须纳入同一次提交。修改函数签名、行为、数据流、关键变量或模块职责时，必须同时修订受影响的说明；删除或替换实现时，必须同步清理失效注释及目录引用。不得先交付代码，再以“后续补充”为由延迟更新注释。
-4. **完成前检查一致性**：交付前逐项核对变更涉及的注释和目录，确认其准确反映实际行为，并在软件根目录（`SalesMate/backend/`）运行 `python tools/check_docs.py` 检查声明注释、目录及模块变量索引。修改检查器时还须运行 `python tools/test_check_docs.py`。自动检查不能替代对功能说明、实现逻辑、关键状态与代码一致性的人工核对，也不能证明 Git 提交原子性。
-
-检查工具已提供：在软件根目录运行上述命令。默认扫描本目录下全部 `.py` 文件，包括 `tools/`，包含测试、迁移和包初始化文件。检查失败返回非零退出码，并报告文件、行号与具体问题。统一注释格式、索引范围、检查能力及人工核对要求见[代码注释与一致性检查规范](docs/coding-agent-guidelines.md)。
-
-后续修改还可执行 `python tools/check_doc_changes.py`，比较 HEAD 与工作区的实现及说明；提交前使用 `--staged` 检查实际暂存内容。结构错误阻断，说明未同步的实现变化列为待复核；可用 `--fail-on-review` 显式启用严格复核。对应回归测试为 `python tools/test_check_doc_changes.py`。仓库已提供 pre-commit 配置及 GitHub Actions 工作流；本地安装、远程必需检查设置与能力边界见上述规范，添加配置不等于所有克隆已安装或分支保护已启用。
-
-## 合并旧版本工作区
-
-从旧版本升级时先拉取代码、安装根 requirements.txt，再运行 `python backend/manage.py migrate`。若原配置位于 backend/.env，须将其迁到根 .env，把原 PostgreSQL 连接等价写入 DATABASE_URL（包括原连接超时）；保留原密钥、时区、运行模式和开发账号，不重复初始化数据库或用户。规则模式与免登录均可继续使用。
-
-0004 数据迁移以追加版本的方式转换旧规则事实，保留原邮件及抽取记录，并使旧分析过期；打开公司或明确请求分析后生成新结果。详见[数据模型](docs/data-model.md)。
+## Required coding-agent development principles
 
 
-## 持久同步与人工复核
+Every coding agent adding, modifying, refactoring, or deleting code in this software directory, including frontend, tests, and tools, must follow these requirements:
 
-已接入同步批次、逐封进度、独立 Worker、公司互斥、非业务默认隐藏和人工复核。启动、升级、API 与后续规则见 [邮件处理适配](docs/processing-integration.md)。历史分类先运行 `python backend/manage.py classify_emails` 预览，再用 `--apply` 应用；原始邮件不删除。
+1. **Rigorous implementation comments:** Document functions, methods, and key blocks accurately and verifiably, covering purpose, inputs/outputs, logic, design rationale, and constraints. Explain state transitions, boundaries, exceptions, and side effects where relevant. Explain reasons and relationships rather than merely restating code; invent neither academic references nor unverified conclusions.
+2. **File-level description and directory:** Begin every code file with its responsibility, main implementation logic, and module relationships. List functions, classes, and key methods actually implemented, plus important variables, constants, and configuration names/purposes for navigation. Keep the directory consistent with current code and remove deleted/renamed entries.
+3. **Atomic code/documentation changes:** Update, check, and deliver implementation, comments, and file directories as one logical unit; when committing, include them in the same commit. Revise affected documentation with changes to signatures, behavior, data flow, key variables, or module responsibility. Remove obsolete comments/index entries with deleted or replaced implementations; never defer documentation until after code delivery.
+4. **Consistency checks before delivery:** Review every affected comment/index against actual behavior and run `python tools/check_docs.py` from `SalesMate/backend/` to check declaration comments, directories, and module variable indexes. Changes to the checker also require `python tools/test_check_docs.py`. Automated checks do not replace semantic review of responsibilities, logic, state, and code consistency, or prove Git commit atomicity.
 
-## extract-v7 后端适配
+The checker is included: run the commands above from the software root. By default it scans every `.py` file here, including tools, tests, migrations, and package initializers. Failures return nonzero with file, line, and specific issue. See [comment and consistency guidelines](docs/coding-agent-guidelines.md) for format, index scope, checker capabilities, and manual review requirements.
 
-历史事实的预览/显式升级接口、持久修复状态、方向校验和 L4 暂定分保存契约见 [后端 v7 适配说明](docs/backend-v7-adaptation.md)。升级不会自动执行，也不会重新拉取邮箱。
+For subsequent changes, `python tools/check_doc_changes.py` compares HEAD with working-tree implementation/documentation; use `--staged` before committing to inspect actual staged content. Structural errors block progress, while implementation changes without corresponding documentation are flagged for review; `--fail-on-review` explicitly enables strict review. Regression tests are in `python tools/test_check_doc_changes.py`. The repository includes pre-commit configuration and GitHub Actions workflows; see the guidelines for local installation, required remote checks, and capability limits. Configuration alone does not mean every clone installed hooks or branch protection is enabled.
+
+## Updating a legacy workspace
+
+When upgrading, pull code, install root requirements.txt, and run `python backend/manage.py migrate`. Move legacy backend/.env configuration into root .env and express the original PostgreSQL connection equivalently in DATABASE_URL, including its connection timeout. Preserve keys, timezone, runtime mode, and development account without reinitializing databases/users. Rule mode and automatic login remain available.
+
+Data migration 0004 appends versions to convert legacy rule facts, retaining original emails/extractions and expiring old analysis. Opening a company or explicitly requesting analysis generates new results. See [data model](docs/data-model.md).
+
+
+## Durable synchronization and manual review
+
+Synchronization batches, per-email progress, independent workers, per-company exclusion, hidden non-business defaults, and manual review are integrated. See [processing integration](docs/processing-integration.md) for startup, upgrades, APIs, and follow-up rules. Preview historical classification with `python backend/manage.py classify_emails`, then apply with `--apply`; original emails are not deleted.
+
+## extract-v7 backend integration
+
+See [backend v7 integration](docs/backend-v7-adaptation.md) for historical-fact preview/explicit upgrade, durable repair state, direction validation, and provisional L4 score persistence. Upgrades never run automatically or refetch the mailbox.
+
+See [deployment documentation](docs/semantic-graph-deployment.md) for semantic graph HTTP, MCP, and server usage.

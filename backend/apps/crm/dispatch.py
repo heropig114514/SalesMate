@@ -1,11 +1,11 @@
-"""职责：共享 CRM 调度的员工选择与单次工作凭证生命周期。
-实现：按员工主键轮转待办，禁用时排除 QQ 同步；工作单元持有账号共享锁，外部调用后清理失效连接再回收临时凭证。
-关联：crm_worker 选择员工，worker 使用 scoped_backend；HTTP 仍由 AgentAuthentication 校验归属。
-目录：
-- next_owner：选择某通道下一位有可执行工作的有效员工。
-- scoped_backend：为一个工作单元创建并回收独立员工客户端。
-变量索引：
-- logger：调度凭证生命周期日志，不记录令牌或摘要。
+"""Responsibility: Select employees for shared CRM dispatch and manage one work unit's credential lifecycle.
+Implementation: Rotate pending work by employee primary key, exclude QQ synchronization when disabled, and hold an account-shared lock for a work unit while cleaning stale connections and revoking its temporary credential after external calls.
+Relationships: crm_worker selects employees, worker uses scoped_backend, and AgentAuthentication continues to validate ownership for HTTP.
+Directory:
+- next_owner: Select the next active employee with executable work for a channel.
+- scoped_backend: Create and reclaim an isolated employee client for one work unit.
+Variable index:
+- logger: Scheduling-credential lifecycle logger without tokens or digests.
 """
 from contextlib import contextmanager
 import hashlib
@@ -27,11 +27,11 @@ from .models import AgentCredential, ExtractionRepair, Job, MailboxSyncRun
 logger = logging.getLogger("salesmate.crm_dispatch")
 
 
-# 功能：从持久任务中轮转选择有工作且未停用的员工。
-# 输入：`kind` 为 sync/analysis；`after` 为本通道上次调度的员工主键，初始为 0。
-# 输出：员工对象或 None；未知通道抛 ValueError。
-# 逻辑：排除禁用 QQ 同步后按主键轮转；其他过期任务仍被调度，历史邮件修复仍可执行。
-# 约束：此处只发现待办，领取仍由原事务与租约保护；不增加并发或自动重试。
+# Function: Select active non-disabled employees with work by rotating persistent jobs.
+# Inputs: `kind` is sync or analysis; `after` is this channel's most recently scheduled employee primary key, initially 0.
+# Outputs: An employee object or None; unknown channels raise ValueError.
+# Logic: Rotate by primary key after excluding disabled QQ synchronization; other expired jobs remain schedulable and historical-email repairs can still run.
+# Constraints: Only discovers pending work; existing transactions and leases still protect claims, and it adds neither concurrency nor automatic retries.
 def next_owner(kind, after=0):
     now = timezone.now()
     owners = get_user_model().objects.filter(is_active=True).order_by("pk")
@@ -40,7 +40,7 @@ def next_owner(kind, after=0):
             Q(status="queued") | Q(status="running", lease_until__lte=now)
         )
         repairs = ExtractionRepair.objects.filter(email__mailbox__owner_id=OuterRef("pk")).filter(
-            # 修复读取已缓存原文，不连接 QQ，因此无需暂停。
+            # Repairs read cached source text and do not connect to QQ, so they need not pause.
             Q(status="pending") | Q(status="running", lease_until__lte=now)
         )
         if not settings.QQ_MAIL_ENABLED:
@@ -58,12 +58,12 @@ def next_owner(kind, after=0):
     return owners.filter(pk__gt=after).first() or owners.first()
 
 
-# 功能：为受信服务器工作单元提供单员工 HTTP 身份。
-# 输入：`owner` 为调度器从数据库选出的员工；`mailbox_id` 为同步批次的邮箱或 None。
-# 输出：上下文中产出独立客户端，正常/异常退出均关闭客户端并删除凭证；停用员工抛 DoesNotExist。
-# 逻辑：账号共享锁覆盖身份创建到回收；清理未完成时拒绝执行；外部调用后按 Django 连接生命周期清理再撤销凭证；随机令牌只保存 SHA-256，不修改全局环境。
-# 约束：只有服务器内部调用；HTTP 调用方不能申请任意员工身份。进程强杀可能留下不可恢复
-# 的摘要记录，但原始令牌仅存进程内存；不删除其他 Worker 或原有 CLI 的凭证。
+# Function: Provide a single-employee HTTP identity to a trusted server work unit.
+# Inputs: `owner` is the employee selected from the database by the scheduler; `mailbox_id` is the synchronization batch mailbox or None.
+# Outputs: Yields an isolated client in the context, closes the client and deletes its credential on normal or exceptional exit; disabled employees raise DoesNotExist.
+# Logic: The account-shared lock covers identity creation through reclamation; reject execution while cleanup is unfinished; clear connections under the Django lifecycle after external calls and then revoke the credential. The random token is stored only as SHA-256 and does not modify the global environment.
+# Constraints: Server-internal calls only; HTTP callers cannot request arbitrary employee identities. Forceful process termination may leave irrecoverable
+# digest records, but raw tokens exist only in process memory; does not delete credentials of other Workers or existing CLIs.
 @contextmanager
 def scoped_backend(owner, mailbox_id=None):
     with account_lock(owner.pk):

@@ -1,4 +1,38 @@
-"""L4：使用可复现的 Python 规则计算销售跟进优先级。"""
+"""Responsibility: L4: compute sales follow-up priority with reproducible Python rules.
+Implementation: Validate source-bound signals and compute deterministic urgency, intent, and opportunity contributions with existing Decimal weights and thresholds.
+Relationships: Consumes L2 priority context; orchestration persists scores and the UI displays returned explanations.
+
+Directory:
+- compute_score: Return company-level follow-up priority from 0 to 100 under official rules; return an empty score when evidence is insufficient.
+- compute_priority_result: Generate the backend Score and displayable explanation in the same L4 computation.
+- _compute_priority: Use L1 stages and existing business data to compute company scores with 35/35/30 weights.
+- _priority_details: Build supported score breakdown, evidence, and recommended action.
+- _next_action: Choose a displayable next action from urgency and intent.
+- rank_company_scores: Sort by company processing priority; unscored companies follow, with urgency and company ID breaking ties.
+- rank_company_scores.key: Order scored companies by score, urgency contribution, and company ID.
+- _priority_messages: Validate communications against the current company source set.
+- _priority_signals: Validate source evidence, signal types, values, and confidence.
+- _urgency_points: Select the strongest valid time signal in the seller timezone.
+- _time_urgency: Map an explicit timestamp or date to the established urgency bands.
+- _deal_points: Compare an active deal with the seller average in the same currency.
+- _fit_points: Compute customer fit from the existing weighted criteria.
+- _strings: Check for a nonempty list of nonblank strings.
+- _money: Parse supported nonnegative finite money values.
+- _currency: Validate and normalize a three-letter currency code.
+- _round: Round Decimal values half up to an integer.
+- _document: Copy a mapping or a supported to_dict representation.
+- _calendar_date: Parse an ISO calendar date without inventing a time.
+- _timestamp: Parse an explicitly timezone-aware timestamp.
+
+Variable index:
+- FIT_WEIGHTS: Established weights for customer-fit criteria.
+- INTENT_POINTS: Established purchasing-stage score mapping.
+- PRIORITY_WEIGHTS: Established urgency, intent, and opportunity weights.
+- SCORE_VERSION: Fixed scoring protocol version.
+- TIME_SIGNALS: Signal types carrying an explicit deadline or time.
+- __all__: Public exports of this module.
+- logger: Stage and failure diagnostics without credentials.
+"""
 
 from __future__ import annotations
 
@@ -53,7 +87,7 @@ def compute_score(
     clock: Callable[[], datetime],
     priority_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """按正式规则返回公司级 0–100 跟进优先级；依据不足时返回空分。"""
+    """Return company-level follow-up priority from 0 to 100 under official rules; return an empty score when evidence is insufficient."""
     return compute_priority_result(
         analysis, analysis_input, clock=clock, priority_context=priority_context,
     )["score"]
@@ -66,7 +100,7 @@ def compute_priority_result(
     clock: Callable[[], datetime],
     priority_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """同一次 L4 计算中生成后端 Score 和可展示的解释信息。"""
+    """Generate the backend Score and displayable explanation in the same L4 computation."""
     analysis_doc = _document(analysis)
     input_doc = _document(analysis_input)
     now = clock()
@@ -88,7 +122,7 @@ def _compute_priority(
     context: Mapping[str, Any],
     now: datetime,
 ) -> dict[str, Any]:
-    """使用 L1 阶段和现有业务资料，按 35/35/30 计算公司级分数。"""
+    """Use L1 stages and existing business data to compute company scores with 35/35/30 weights."""
     result = {
         "company_id": str(analysis_input.get("company_id", "")),
         "input_version": str(analysis_input.get("input_version", "")),
@@ -256,7 +290,7 @@ def _next_action(urgency_signal: Mapping[str, Any] | None, intent_signal: Mappin
 
 
 def rank_company_scores(scores: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """按公司处理优先级排序；未评分排后，同分比较紧急度和公司 ID。"""
+    """Sort by company processing priority; unscored companies follow, with urgency and company ID breaking ties."""
     def key(item: Mapping[str, Any]) -> tuple[Any, ...]:
         score = item.get("score")
         reasons = item.get("score_reasons") or []
@@ -386,7 +420,7 @@ def _time_urgency(signal: Mapping[str, Any], now: datetime) -> int | None:
     if days < 0:
         return 100
     if days == 0:
-        return 90  # 只有日期时不能假定剩余时间不超过四小时。
+        return 90  # A date alone does not imply that at most four hours remain.
     if days <= 2:
         return 80
     if days <= 7:

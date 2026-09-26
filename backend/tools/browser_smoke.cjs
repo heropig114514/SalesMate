@@ -1,11 +1,11 @@
 /**
- * 职责：在独立无头浏览器中验证本地前后端主流程与响应式布局。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：按会话配置直接进入工作台或读取私有账号登录，再导入、筛选、建档和模拟来信。
- * 关联：需要运行中的 Django、PostgreSQL，以及显式配置的 Playwright 模块和浏览器路径。
- * 目录：main（运行浏览器场景）。
- * 变量索引：ROOT 为软件根目录 backend；BASE_URL 为被测本地服务；OUTPUT 为软件目录内被 Git 排除的截图目录。
- * 约束：只对显式演示账号的合成数据写入，不连接 Gmail；输出不包含凭证。
+ * Responsibility: Verify local frontend/backend main flows and responsive layout in an isolated headless browser.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so existing Chinese assertions do not depend on host language.
+ * Implementation: Enter directly according to session configuration or log in using private local credentials, then import, filter, register customers, and simulate incoming mail.
+ * Relationships: Requires running Django/PostgreSQL and explicitly configured Playwright/browser paths.
+ * Directory: main runs browser scenarios.
+ * Variable index: ROOT is the backend software root; BASE_URL is the tested local service; OUTPUT is the Git-ignored screenshot directory.
+ * Constraints: Write only synthetic data for the explicit demo account; no Gmail connection or credential output.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,9 +15,9 @@ const ROOT = path.resolve(__dirname, '..');
 const BASE_URL = process.env.SALESMATE_TEST_URL || 'http://127.0.0.1:8000';
 const OUTPUT = path.join(ROOT, 'artifacts', 'browser');
 
-/** 功能：验证完整浏览器业务场景。输入：隐式环境变量、本地开发凭证及运行中的服务。
- * 输出：成功摘要与三张截图；失败抛出断言。逻辑：独立浏览器使用真实 Session 和 CSRF，本次邮件以时间标识避免匹配旧测试邮件。
- * 约束：不重试失败业务动作；finally 关闭浏览器；演示账号会保留新增合成邮件与建档结果。 */
+/** Function: Verify a complete browser business scenario. Inputs: Implicit environment, local development credentials, and running services.
+ * Outputs: Success summary and three screenshots; failures throw assertions. Logic: An isolated browser uses real Session/CSRF; time-tagged emails avoid matching earlier test mail.
+ * Constraints: Never retry failed business actions; close the browser in finally. New synthetic emails/customer registrations remain in the demo account. */
 async function main() {
   if (!process.env.SALESMATE_BROWSER_PATH) throw new Error('Set SALESMATE_BROWSER_PATH to the test browser executable.');
   fs.mkdirSync(OUTPUT, { recursive: true });

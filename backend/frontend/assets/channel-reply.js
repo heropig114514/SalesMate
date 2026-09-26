@@ -1,17 +1,17 @@
-/** 职责：在邮件会话底部提供本页回复草稿及显式助手润色入口。
- * 实现：按客户保存内存草稿；复制使用剪贴板；润色仅填入共享助手，用户仍需明确发送问题。
- * 关联：app.js 在邮件列表后挂载，切换账号清空 drafts；实际发信使用已有业务动作审阅流程。
- * 目录：mountReplyComposer、mountReplyComposer.text。
- * 变量索引：无模块状态；drafts 由调用方管理，companyId 为草稿隔离键；assistant 为当前页面唯一聊天实例。
+/** Responsibility: Provide a page-local reply draft below the mail conversation and an explicit assistant-polishing entry.
+ * Implementation: Keep per-customer drafts in memory; copy through the clipboard; polishing fills the shared assistant, with explicit question submission still required.
+ * Relationships: app.js mounts this after the mail list and clears drafts on account changes; actual sending uses the existing reviewed business-action flow.
+ * Directory: mountReplyComposer, mountReplyComposer.text.
+ * Variable index: No module state; the caller manages drafts; companyId isolates drafts; assistant is the page's single chat instance.
  */
 import { language } from './i18n.js?v=20260921-product';
 
-/** 功能：挂载当前客户的回复草稿。输入：root 容器、companyId 客户标识、drafts Map、assistant 实例。
- * 输出：无。逻辑：首次建表单、后续保留输入焦点；异步复制失败明确显示，润色等待读取完成后填入，路由切换舍弃过期填入；不会自动调用模型或发送邮件。
- * 约束：草稿仅在本页内存中，刷新后丢失；公司原文不自动加入助手，不覆盖现有聊天输入。 */
+/** Function: Mount a reply draft for the current customer. Inputs: root container, companyId, drafts Map, and assistant instance.
+ * Outputs: None. Logic: Build the form once and preserve input focus on updates; show asynchronous copy failures, wait for loading before inserting polishing input, and discard stale insertion after navigation. Never automatically call a model or send mail.
+ * Constraints: Drafts live only in page memory and disappear on reload; never automatically add company source content or overwrite existing chat input. */
 export function mountReplyComposer(root, companyId, drafts, assistant) {
   if (root.childElementCount) return;
-  /** 功能：选择静态界面文案。输入：zh/en。输出：当前语言文本。逻辑：共享偏好。约束：不翻译草稿。 */
+  /** Function: Select static interface text. Inputs: zh/en. Outputs: Current-language text. Logic: Use the shared preference. Constraints: Never translate drafts. */
   const text = (zh, en) => language === 'en' ? en : zh;
   root.innerHTML = `<label for="channel-reply">${text('回复草稿', 'Reply draft')}</label><textarea id="channel-reply" rows="5" maxlength="2000" placeholder="${text('写下回复，或交给 AI 助手润色…', 'Write a reply, or refine it with the AI assistant…')}"></textarea><div class="channel-reply-actions"><small id="channel-reply-count"></small><button type="button" data-reply-copy>${text('复制草稿', 'Copy draft')}</button><button type="button" data-reply-refine>${text('AI 润色', 'Refine with AI')}</button></div><p class="fine" role="status">${text('草稿仅保留在本页；发送邮件请使用下方“准备沟通动作”。', 'Draft stays on this page. To send an email, use Prepare communication below.')}</p>`;
   const input = root.querySelector('textarea'), count = root.querySelector('small'), status = root.querySelector('[role="status"]');

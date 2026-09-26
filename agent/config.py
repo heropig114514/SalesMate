@@ -1,4 +1,14 @@
-"""统一管理 Agent 路径，并从项目根目录读取共享环境配置。"""
+"""Responsibility: Manage agent paths centrally and read shared environment settings from the project root.
+Implementation: Resolve paths relative to this module and explicitly load the shared .env without overriding existing environment values.
+Relationships: Called by agent entry points before constructing provider or backend clients.
+
+Directory:
+- load_environment: Called by program entry points; importing other modules does not automatically read local secrets.
+
+Variable index:
+- AGENT_DIR: Resolved agent package directory.
+- PROJECT_DIR: Project root used to locate shared environment configuration.
+"""
 
 from pathlib import Path
 
@@ -9,5 +19,5 @@ PROJECT_DIR = AGENT_DIR.parent
 
 
 def load_environment() -> None:
-    """由程序入口调用；导入其他模块时不会自动读取本机密钥。"""
+    """Called by program entry points; importing other modules does not automatically read local secrets."""
     load_dotenv(PROJECT_DIR / ".env")

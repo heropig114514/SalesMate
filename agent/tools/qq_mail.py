@@ -1,22 +1,22 @@
-"""职责：通过固定 QQ IMAP TLS 服务只读发现和解析收发邮件。
-实现：验证授权码，EXAMINE 文件夹，以 UIDVALIDITY/UID 定位并用 BODY.PEEK[] 读取。
-关联：qq_sync 持久保存扫描位置；复用 email_parser 的 MIME 和正文边界规则。
-目录：
-- QQMailError：可直接展示且不含服务端原文的连接错误。
-- connect：建立已登录的 TLS 连接。
-- disconnect：释放连接并记录脱敏关闭错误。
-- folders：发现收件箱及唯一已发送文件夹。
-- select_folder：只读选择文件夹并读取 UIDVALIDITY。
-- message_id：构造协议兼容的 QQ 消息标识。
-- split_message_id：严格解析消息标识。
-- list_uids：按可选日期粗筛游标后的 UID。
-- message_dates：只读批量查询消息的内部日期。
-- read_email：按持久消息 ID 读取原文。
-变量索引：
-- IMAP_HOST：固定 QQ 主机，禁止客户端指定任意目标。
-- IMAP_PORT：TLS 端口 993。
-- TIMEOUT：单次网络等待上限 30 秒。
-- logger：连接生命周期脱敏日志。
+"""Responsibility: Discover and parse incoming/outgoing emails read-only through the fixed QQ IMAP TLS service.
+Implementation: Validate the authorization code, EXAMINE folders, locate messages by UIDVALIDITY/UID, and read with BODY.PEEK[].
+Relationships: qq_sync persists scan positions and reuses email_parser MIME and body boundaries.
+Directory:
+- QQMailError: Display-safe connection error without raw server text.
+- connect: Establish an authenticated TLS connection.
+- disconnect: Release the connection and log sanitized close errors.
+- folders: Discover the inbox and unique sent folder.
+- select_folder: Select a folder read-only and read UIDVALIDITY.
+- message_id: Build a protocol-compatible QQ message identifier.
+- split_message_id: Strictly parse a message identifier.
+- list_uids: Find UIDs after a cursor with optional coarse date filtering.
+- message_dates: Read message internal dates in batches without side effects.
+- read_email: Read raw content by persistent message ID.
+Variable index:
+- IMAP_HOST: Fixed QQ host; clients cannot specify arbitrary targets.
+- IMAP_PORT: TLS port 993.
+- TIMEOUT: Maximum network wait of 30 seconds per operation.
+- logger: Sanitized connection lifecycle logging.
 """
 import base64
 from datetime import datetime, timedelta, timezone
@@ -33,18 +33,18 @@ TIMEOUT = 30
 logger = logging.getLogger("salesmate.qq_imap")
 
 
-# 功能：描述安全的 QQ 连接失败。
-# 逻辑：只携带受控说明。
-# 约束：不包含授权码或 IMAP 原始异常。
+# Function: Describe a safe QQ connection failure.
+# Logic: Carry only controlled details.
+# Constraints: Exclude authorization codes and raw IMAP exceptions.
 class QQMailError(RuntimeError):
     pass
 
 
-# 功能：连接 QQ 并验证邮箱授权码。
-# 输入：`address` 为完整 QQ/foxmail 地址；`authorization_code` 为 16 位客户端授权码。
-# 输出：已登录 IMAP4_SSL；失败抛 QQMailError。
-# 逻辑：固定主机、证书验证和超时，登录失败关闭套接字。
-# 约束：不接受账号密码，不输出底层认证响应，不进行自动重试。
+# Function: Connect to QQ and validate the mailbox authorization code.
+# Inputs: `address`: complete QQ/foxmail address; `authorization_code`: 16-character client authorization code.
+# Outputs: Authenticated IMAP4_SSL; failure raises QQMailError.
+# Logic: Fix host, certificate validation, and timeout; close the socket on login failure.
+# Constraints: Reject account passwords; do not expose low-level authentication responses or retry automatically.
 def connect(address, authorization_code):
     if not re.fullmatch(r"[^\s@]+@(qq|foxmail)\.com", address, re.IGNORECASE):
         raise QQMailError("Enter a complete @qq.com or @foxmail.com email address.")
@@ -64,11 +64,11 @@ def connect(address, authorization_code):
         raise QQMailError("Cannot connect to QQ Mail. Check that IMAP is enabled, the authorization code is valid, and imap.qq.com:993 is reachable.") from None
 
 
-# 功能：释放只读 IMAP 连接。
-# 输入：`client` 为已创建连接。
-# 输出：无；关闭失败仅记安全日志。
-# 逻辑：LOGOUT 失败时关闭传输，避免泄露资源。
-# 约束：清理失败不改变已完成业务结果，也不掩盖正在传播的业务异常。
+# Function: Release a read-only IMAP connection.
+# Inputs: `client`: established connection.
+# Outputs: None; log only safe details on close failure.
+# Logic: Close transport after LOGOUT failure to avoid resource leaks.
+# Constraints: Cleanup failure does not change completed business results or hide a propagating business exception.
 def disconnect(client):
     try:
         client.logout()
@@ -80,11 +80,11 @@ def disconnect(client):
             logger.warning("qq_socket_close_failed error_type=%s", type(close_error).__name__)
 
 
-# 功能：发现本次只读同步的两个文件夹。
-# 输入：`client` 为已登录连接。
-# 输出：INBOX 和已发送文件夹的 IMAP wire 名称。
-# 逻辑：解析 LIST，优先使用服务器 Sent 特殊用途标记，否则匹配 QQ 已知的已发送名称。
-# 约束：未知格式或无法唯一定位已发送文件夹时明确失败，不缩小为仅收件箱。
+# Function: Discover the two folders for this read-only synchronization.
+# Inputs: `client`: authenticated connection.
+# Outputs: IMAP wire names for INBOX and the sent folder.
+# Logic: Parse LIST, preferring the server's Sent special-use flag; otherwise match known QQ sent-folder names.
+# Constraints: Fail explicitly on unknown formats or ambiguous/missing sent folders; do not narrow the scope to inbox only.
 def folders(client):
     status, rows = client.list()
     if status != "OK":
@@ -112,11 +112,11 @@ def folders(client):
     return ["INBOX", candidates[0]]
 
 
-# 功能：只读选中一个文件夹。
-# 输入：`client` 为连接；`folder` 为 LIST 返回的 wire 名称。
-# 输出：正整数 UIDVALIDITY。
-# 逻辑：EXAMINE 并检查稳定身份代次。
-# 约束：不修改已读标志；缺失代次不能继续同步。
+# Function: Select one folder read-only.
+# Inputs: `client`: connection; `folder`: wire name returned by LIST.
+# Outputs: Positive integer UIDVALIDITY.
+# Logic: EXAMINE and verify the stable identity generation.
+# Constraints: Do not modify read flags; synchronization cannot continue without a generation.
 def select_folder(client, folder):
     quoted = '"' + folder.replace('\\', '\\\\').replace('"', '\\"') + '"'
     status, _ = client.select(quoted, readonly=True)
@@ -126,11 +126,11 @@ def select_folder(client, folder):
     return int(values[0])
 
 
-# 功能：构造跨文件夹不冲突的消息 ID。
-# 输入：`folder` 为 wire 名称；`validity` 为代次；`uid` 为正整数消息 UID。
-# 输出：qq 前缀的 ASCII 字符串。
-# 逻辑：文件夹 Base64URL 编码后与代次和 UID 组合。
-# 约束：长度须符合现有 200 字符协议；不伪装为 Gmail 服务端 ID。
+# Function: Build a message ID without cross-folder collisions.
+# Inputs: `folder`: wire name; `validity`: generation; `uid`: positive integer message UID.
+# Outputs: ASCII string prefixed with qq.
+# Logic: Combine the Base64URL-encoded folder with generation and UID.
+# Constraints: Respect the existing 200-character protocol limit; do not impersonate Gmail server IDs.
 def message_id(folder, validity, uid):
     encoded = base64.urlsafe_b64encode(folder.encode("ascii")).decode("ascii").rstrip("=")
     value = f"qq:{encoded}:{validity}:{uid}"
@@ -139,11 +139,11 @@ def message_id(folder, validity, uid):
     return value
 
 
-# 功能：解析持久 QQ 消息标识。
-# 输入：`value` 为协议消息 ID。
-# 输出：文件夹、UIDVALIDITY、UID 三元组。
-# 逻辑：严格验证前缀、数字和规范编码，避免命令注入。
-# 约束：非法标识立即失败，不解释为其他邮箱提供方。
+# Function: Parse a persistent QQ message identifier.
+# Inputs: `value`: protocol message ID.
+# Outputs: Folder, UIDVALIDITY, and UID tuple.
+# Logic: Strictly validate prefix, numbers, and canonical encoding to prevent command injection.
+# Constraints: Reject invalid identifiers immediately rather than interpreting them as another mailbox provider.
 def split_message_id(value):
     match = re.fullmatch(r"qq:([A-Za-z0-9_-]+):([1-9][0-9]*):([1-9][0-9]*)", value)
     if not match:
@@ -158,11 +158,11 @@ def split_message_id(value):
     return folder, int(validity), int(uid)
 
 
-# 功能：发现当前文件夹的新消息 UID。
-# 输入：`client` 为已选中文件夹连接；`after` 为 UID 下界；`since` 为可选带时区时间下界。
-# 输出：升序且去重的新增 UID 列表。
-# 逻辑：UID SEARCH 可附带 SINCE；日期回退一天覆盖服务器时区边界，精确时间由调用方筛选。
-# 约束：空邮箱返回空列表；错误响应不能当作同步成功；不读取正文。
+# Function: Discover new message UIDs in the current folder.
+# Inputs: `client`: connection with a selected folder; `after`: UID lower bound; `since`: optional timezone-aware lower time bound.
+# Outputs: Sorted, deduplicated list of new UIDs.
+# Logic: UID SEARCH may include SINCE; move the date back one day for server timezone boundaries, leaving precise filtering to the caller.
+# Constraints: Return an empty list for an empty mailbox; do not treat error responses as successful synchronization; do not read bodies.
 def list_uids(client, after, since=None):
     criteria = ["UID", f"{after + 1}:*"]
     if since:
@@ -178,11 +178,11 @@ def list_uids(client, after, since=None):
     return sorted({int(item) for item in items if int(item) > after})
 
 
-# 功能：取得一页 UID 对应的内部日期而不读取正文。
-# 输入：`client` 为选中目标文件夹的连接；`uids` 为正整数 UID 数组。
-# 输出：UID 到带 UTC 时区 datetime 的映射。
-# 逻辑：UID FETCH 仅请求 UID 和 INTERNALDATE，严格核对响应集合及重复项。
-# 约束：邮件移动或删除造成缺项时明确失败；不修改已读标记，不调用模型。
+# Function: Read internal dates for one page of UIDs without reading bodies.
+# Inputs: `client`: connection with the target folder selected; `uids`: positive integer UID array.
+# Outputs: Mapping from UID to UTC-aware datetime.
+# Logic: UID FETCH requests only UID and INTERNALDATE; strictly verify the response set and duplicates.
+# Constraints: Fail explicitly on missing entries caused by moved or deleted emails; do not change read flags or invoke a model.
 def message_dates(client, uids):
     if not uids:
         return {}
@@ -208,11 +208,11 @@ def message_dates(client, uids):
     return dates
 
 
-# 功能：只读获取指定 QQ 邮件原文并标准化。
-# 输入：`client` 为已认证连接；`value` 为持久消息标识。
-# 输出：现有 L1 所需邮件字典，thread_id 为 None。
-# 逻辑：复查代次后 UID FETCH BODY.PEEK[]，使用 INTERNALDATE 保留接收时间，复用 MIME 解析器。
-# 约束：不存在、代次改变或响应不匹配均失败；不标记已读、不删除、不推测会话关系。
+# Function: Read and normalize raw content of a specified QQ email without side effects.
+# Inputs: `client`: authenticated connection; `value`: persistent message identifier.
+# Outputs: Email dictionary required by existing L1, with thread_id set to None.
+# Logic: Recheck generation, then UID FETCH BODY.PEEK[]; preserve reception time from INTERNALDATE and reuse the MIME parser.
+# Constraints: Fail on missing messages, generation changes, or mismatched responses; do not mark read, delete, or infer thread relationships.
 def read_email(client, value):
     folder, validity, uid = split_message_id(value)
     if select_folder(client, folder) != validity:

@@ -1,57 +1,57 @@
-# 销售聊天：后端适配与运行说明
+# Sales chat: backend adaptation and operations
 
-更新：2026-09-20。当前部署策略已取消 CI 及服务器重复质量门禁，测试仅作为独立诊断；下文历史发布记录中的门禁策略已被[当前部署说明](../deploy/lightsail/README.md)替代。此文档描述后端对当前工作空间 Agent 契约的适配。聊天回报现仅校验 Schema，另保留权限、请求状态和幂等校验。代码已提供会话提问、任务状态、Agent 领取/上下文/回报、证据快照、引用、消费者与网页展示，以及新增的请求绑定只读工具接口。新接口、工具错误、证据存储和发布步骤见[工作空间聊天对接契约](workspace-chat-tools.md)；代码交付不等于生产迁移、服务安装或真实模型验收已经完成。
+Updated 2026-09-20. The current deployment policy removes duplicate CI/server quality gates and retains tests as independent diagnostics; the historical release gates below have been superseded by the [current deployment instructions](../deploy/lightsail/README.md). This document describes backend adaptation to the current workspace Agent contract. Chat reports now validate only their schema, while retaining permission, request-state, and idempotency checks. The implementation provides questions, task status, Agent claim/context/report, evidence snapshots, citations, consumers, browser presentation, and request-bound read-only tools. See the [workspace chat integration contract](workspace-chat-tools.md) for new interfaces, tool errors, evidence storage, and release steps. Code delivery does not establish completion of production migrations, service installation, or real-model acceptance.
 
-## 1. 边界和复用
+## 1. Boundaries and reuse
 
-- 复用 `sales.Conversation`、`sales.Message`、消息 `client_key` 和员工绑定的 `AgentAuthentication`。不重建会话，不回填旧消息任务。
-- 新应用 `apps.chat` 维护 `AnswerRequest`、`Citation`、`KnowledgeEntry`；初始结构为 `chat.0001_initial`；通用聊天新增 `sales.0005_general_conversation` 与 `chat.0002_general_answer_request`，解除两处 company 非空约束，不修改 L1–L4 的协议、参数或数据。
-- 普通 `sales/records/messages/` 仍只保存用户消息；只有受保护的聊天回报服务能创建 assistant。草稿保存不会触发模型。
-- 新聊天只支持无预选公司的工作空间私有会话，旧客户会话保留历史读取。团队业务共享不授予邮件和画像访问权；现有业务共享及人工确认发信不变。
-- 外部知识关闭；后端支持请求绑定的 customers.search/customers.context 只读调用，模型工具编排由 Agent 接入。聊天不执行发信、日历、CRM/文件写操作，不引入向量库或分布式队列。
+- Reuse `sales.Conversation`, `sales.Message`, message `client_key`, and employee-bound `AgentAuthentication`. Do not recreate conversations or backfill tasks for old messages.
+- `apps.chat` maintains `AnswerRequest`, `Citation`, and `KnowledgeEntry`, initially in `chat.0001_initial`. General chat adds `sales.0005_general_conversation` and `chat.0002_general_answer_request`, relaxing two company non-null constraints without changing L1–L4 protocols, parameters, or data.
+- Ordinary `sales/records/messages/` still saves only user messages; only the protected chat-report service can create assistant messages. Saving a draft does not invoke a model.
+- New chats support private workspace conversations without a preselected company; historical customer conversations remain readable. Team business sharing does not grant mail or profile access. Existing sharing and human-confirmed sending remain unchanged.
+- External knowledge is disabled. The backend supports request-bound read-only customers.search/customers.context calls, with model tool orchestration implemented by the Agent. Chat does not send mail, access calendar actions, or write CRM/files, and introduces no vector database or distributed queue.
 
-新 Worker 启动时按员工锁结束旧公司绑定的 pending/processing，领取时也清理该员工遗留任务。已完成/失败历史、消息和证据保持不变，不重派、不将旧问题静默转换为工作空间问题。升级前停止旧 Worker；仓库部署脚本已先排空聊天再启动新 Worker。本次无新数据库迁移。
+On startup, the new Worker terminates old company-bound pending/processing tasks under employee locks; claiming also cleans up that employee's legacy tasks. Completed/failed history, messages, and evidence remain unchanged. Old questions are neither reassigned nor silently converted into workspace questions. Stop the old Worker before upgrading; repository deployment scripts drain chat before starting the new Worker. This upgrade adds no database migration.
 
-## 2. 数据与状态不变量
+## 2. Data and state invariants
 
-`AnswerRequest` 保存 owner、company、conversation、user_message、可空且唯一的 assistant_message、状态、时间、冻结历史、上下文快照、结果、提示词版本及 Agent 错误。`retry_of` 关联原失败请求，每个原请求最多一个后继。
+`AnswerRequest` stores owner, company, conversation, user_message, a nullable unique assistant_message, status, timestamps, frozen history, context snapshots, results, prompt version, and Agent errors. `retry_of` identifies the original failed request, with at most one successor per original request.
 
 ```text
 pending → processing → completed
                      → failed
-pending → failed（领取时确认权限已失效）
-pending/processing → failed（仅旧公司绑定任务，错误码 workspace_chat_required）
-failed --用户明确重试--> 新 request_id 的 pending
+pending → failed (permissions found invalid at claim time)
+pending/processing → failed (legacy company-bound tasks only; workspace_chat_required)
+failed --explicit user retry--> pending with a new request_id
 ```
 
-- 一个会话最多一个 pending/processing 请求，数据库条件唯一约束与事务锁共同保证。多个员工或会话可以各有待处理任务。
-- 按员工行锁串行化提交、领取、回报和恢复，保持现有业务锁顺序；模型调用不占数据库事务。
-- 原问题可对应多次明确尝试，每个请求最多一个助手消息。旧结果不能被新尝试覆盖。
-- 相同 client_key、相同正文重传返回原任务；异内容返回 409。显式重试另走 retry，不依赖重新提交。
-- 相同终态完整 JSON 结果重复回报返回 duplicate=true；不同结果 409。提示词版本、引用顺序、正文和错误均参与比较。
-- completed 可以没有引用；任何结构合法的回报均不要求预先读取上下文快照，后端不按正文含义判断是否必须引用。
-- failed 的 assistant_text 必须为空、citations 必须为空，不创建助手消息。
-- 管理员确认进程中断后可将 processing 终止为 failed；不自动超时、不把旧请求重置为 pending。迟到回报被拒绝。
-- 浏览器对旧问题重新回答时，若会话已有之后的用户问题，返回 409，要求在当前对话末尾重新提问，避免破坏历史顺序。
+- At most one pending/processing request exists per conversation, enforced by a conditional database uniqueness constraint and transaction locks. Different employees or conversations may each have pending work.
+- Employee row locks serialize submission, claim, reporting, and recovery while preserving the existing business lock order. Model calls do not hold database transactions.
+- An original question may have multiple explicit attempts, each with at most one assistant message. New attempts cannot overwrite old results.
+- Repeating the same client_key and body returns the original task; different contents return 409. Explicit retries use the retry endpoint rather than resubmission.
+- Repeating an identical complete terminal JSON result returns duplicate=true; a different result returns 409. Prompt version, citation order, body, and errors all participate in comparison.
+- A completed result may have no citations. Structurally valid reports do not require prior context-snapshot reads, and the backend does not infer citation requirements from answer semantics.
+- A failed result requires empty assistant_text and citations and creates no assistant message.
+- After confirming process interruption, an administrator can terminate processing as failed. There is no automatic timeout or resetting old requests to pending. Late reports are rejected.
+- Retrying an earlier question in the browser returns 409 if later user questions exist in the conversation. Ask again at the end to preserve historical order.
 
-## 3. 浏览器接口
+## 3. Browser interfaces
 
-工作台、业务管理和世界消息页面右下角提供“聊天助手”悬浮按钮，点击后在页面底部展开横向聊天条，使用面板收起按钮 / Esc 收起，无需跳转独立页面或选择客户。支持一般问答、写作、翻译及计划；历史与草稿只属于当前员工。展开浮窗只读取历史，显式提问、保存草稿或新建会话时才写入。手机端保持底部展开及受限高度，采用模态焦点，收起后恢复背景交互；同一页面收起/展开及工作台内导航保留未保存草稿，跨页面或刷新需先保存草稿。
+The workspace, business-management, and world-news pages provide a floating chat-assistant button at the lower right. It opens a horizontal bottom panel, closed with its collapse button or Esc, without navigating away or selecting a customer. General Q&A, writing, translation, and planning are supported; history and drafts belong only to the current employee. Opening the panel only reads history; explicit questions, draft saves, or conversation creation perform writes. Mobile uses a height-limited bottom panel with modal focus, restoring background interaction on collapse. Unsaved drafts survive collapse/reopening and navigation within the workspace, but must be saved before a page change or refresh.
 
-客户详情已移除专属 AI 助手按钮，统一使用工作空间悬浮入口。`/#assistant` 及历史 `/#assistant/<company_id>` 链接均打开工作空间，不读取链接里的公司或恢复旧公司任务。Agent 根据问题主动搜索和查询客户。
+Customer details no longer have a separate AI-assistant button. Both `/#assistant` and historical `/#assistant/<company_id>` links open the workspace without reading the linked company or restoring old company tasks. The Agent searches and queries customers according to the question.
 
-通过 `POST /api/v1/sales/records/conversations/` 创建通用会话时，company 可省略或为 null；非空公司不再允许创建新会话。列表新增 `conversation_scope=general|customer` 筛选，通用页使用 general；`?company=<uuid>` 仅用于查询既有客户会话历史。绑定创建后不可修改。MCP/CLI 的 `conversations.list` 也暴露此筛选。
+For general conversations created with `POST /api/v1/sales/records/conversations/`, company may be omitted or null; a non-null company is no longer accepted for new conversations. Lists expose `conversation_scope=general|customer`, with general used by the general-chat page. `?company=<uuid>` only reads historical customer conversations. The binding cannot change after creation. MCP/CLI `conversations.list` exposes the same filter.
 
-前缀 `/api/v1/sales/chat/`，使用既有 SessionAuthentication、CSRF 和统一错误响应。
+Routes use `/api/v1/sales/chat/`, existing SessionAuthentication, CSRF, and unified error responses.
 
-| 路径 | 方法 | 行为 |
+| Path | Method | Behavior |
 |---|---|---|
-| `messages/` | POST | 同一事务保存用户消息与 pending 请求 |
-| `requests/?conversation=<uuid>` | GET | 按 created_at/id 排序的请求分页，复用 page/page_size，默认 30、最大 100 |
-| `requests/<uuid>/` | GET | 单请求状态、时间、错误、助手消息 ID 及有序引用 |
-| `requests/<uuid>/retry/` | POST `{}` | 显式创建失败请求的新尝试，重复操作返回已存在后继 |
+| `messages/` | POST | Save the user message and pending request in one transaction |
+| `requests/?conversation=<uuid>` | GET | Paginate requests ordered by created_at/id using page/page_size, default 30, maximum 100 |
+| `requests/<uuid>/` | GET | Request state, timestamps, errors, assistant message ID, and ordered citations |
+| `requests/<uuid>/retry/` | POST `{}` | Explicitly create a new attempt for a failed request; repeated calls return the existing successor |
 
-提交问题的精确请求体：
+Exact question request body:
 
 ```json
 {
@@ -61,19 +61,19 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-不接收 employee_id/company_id/role。会话必须是无预选公司的工作空间；员工从登录身份取得。新建返回 201，同内容重传返回 200。
+employee_id/company_id/role are not accepted. The conversation must belong to the workspace with no preselected company; the employee comes from the authenticated identity. Creation returns 201; identical retransmission returns 200.
 
-状态响应包含 `request_id`、`conversation_id`、`user_message_id`、`assistant_message_id`、`status`、`error`、`created_at`、`processing_started_at`、`finished_at`、`chat_prompt_version`、`citations`。浏览器引用包含 position、三元组及后端保存的 content，供展开证据；这些额外字段不发送给 Agent。
+Status responses contain `request_id`, `conversation_id`, `user_message_id`, `assistant_message_id`, `status`, `error`, `created_at`, `processing_started_at`, `finished_at`, `chat_prompt_version`, and `citations`. Browser citations include position, the identity triple, and backend-stored content for evidence expansion; these additional fields are not sent to the Agent.
 
-消息正文继续从既有 `records/messages/?conversation=...` 读取。现有会话创建和草稿接口保持不变。
+Message bodies still come from `records/messages/?conversation=...`. Existing conversation-creation and draft interfaces remain unchanged.
 
-## 4. 固定 Agent 接口
+## 4. Fixed Agent interfaces
 
-前缀 `/api/v1/agent/`，全部使用 `Authorization: Agent <service-token>`。一个 token 只绑定一名员工。浏览器会话不能代替服务认证。
+All `/api/v1/agent/` routes require `Authorization: Agent <service-token>`. One token binds to one employee. Browser sessions cannot replace service authentication.
 
 ### claim
 
-`POST chat/requests/claim/`，请求 `{}`，无工作返回 `{"request": null}`。有工作返回：
+`POST chat/requests/claim/` accepts `{}` and returns `{"request": null}` when idle. Otherwise:
 
 ```json
 {
@@ -87,13 +87,13 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-领取响应固定为上述五字段，完全省略 company_id；新 Agent 解析器直接消费此结构。模型输出为 action=tool 或 action=answer，由 Agent 编排工具循环；最终 answers 回报仍是六字段结构。
+The claim response has exactly these five fields and entirely omits company_id. The new Agent parser consumes this structure directly. Model outputs use action=tool or action=answer, with the Agent orchestrating the tool loop; final answer reports retain six fields.
 
-历史只包含同员工同会话、原问题之前的最近 20 条非空 user/assistant 消息，恢复为时间正序；不含当前问题和后来问题。领取时冻结，不改动 Agent 的 6000 字符历史预算。
+History contains the latest 20 nonempty user/assistant messages from the same employee and conversation before the original question, restored to chronological order. It excludes the current and later questions. History freezes at claim time without changing the Agent's 6000-character history budget.
 
 ### context
 
-`POST chat/context/`，请求 `{"request_id":"<uuid>","scope":"internal"}`。
+`POST chat/context/` accepts `{"request_id":"<uuid>","scope":"internal"}`.
 
 ```json
 {
@@ -108,21 +108,21 @@ failed --用户明确重试--> 新 request_id 的 pending
 }
 ```
 
-Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`content` 四个字符串字段，前三项为引用身份。不得混入模型 ID、数据库时间、链接等额外字段；Agent 的解析器会拒绝未知字段。
+Each Context Item has exactly four string fields: `source_id`, `source_type`, `title_or_label`, and `content`. The first three form citation identity. Additional model IDs, database timestamps, links, or other fields are forbidden; the Agent parser rejects unknown fields.
 
-首次 internal 请求在事务内读取并保存快照；同请求后续读取返回同样内容。后端不接收任意 company 或 query 覆盖。
+The first internal request reads and saves a snapshot transactionally; later reads for the same request return identical contents. Arbitrary company or query overrides are not accepted.
 
-初始上下文只提供当前员工的内部知识，customer_context 为空；没有知识也可调用模型进行一般交流，知识读取失败仍明确失败。初始上下文不读取或搜索任何客户的邮件、交易或画像。
+Initial context contains only the current employee's internal knowledge and an empty customer_context. General conversation can invoke the model without knowledge; knowledge-read failures still fail explicitly. Initial context does not read or search any customer's mail, transactions, or profile.
 
-工作空间初始上下文仅返回至多 4 条本人知识，按问题词段匹配优先、再按版本时间排序。单条至多 2000 字符并明确标记节选，沿用既定预算。客户目录、邮件及画像由 Agent 按需调用请求绑定工具，返回的完整资料和来源单独存入 ToolRead。
+Workspace initial context returns at most four of the employee's knowledge entries, prioritizing question-term matches and then version timestamps. Each entry is limited to 2000 characters and explicitly marked as an excerpt, preserving the established budget. The Agent obtains customer directories, mail, and profiles through request-bound tools as needed; complete returned profiles and sources are stored separately in ToolRead.
 
-- 内部知识只使用维护者导入的真实资料，没有默认制度。当前没有独立远程知识源；数据库读取异常正常失败，不隐式变为空知识。
-- `external_available=false`；请求 external 返回 409，其他非法 scope 为 400。未来启用 external 需补充版本契约及测试，本次不预置备用实现。
-- 引用回报只检查三元组结构。匹配本请求的原上下文或成功 ToolRead 证据时复制正文；未匹配时只保存 Agent 声明的三元组，content 为空，不根据 source_id 查询其他请求或业务记录，不接受 Agent 自报正文。空正文表示后端没有附加可验证证据，不能当作已经验证的来源。工具记录独立保存，原 chat/context 响应不增加字段。
+- Internal knowledge uses only real material imported by maintainers, with no default policies. There is no independent remote knowledge source. Database errors fail normally instead of silently producing empty knowledge.
+- `external_available=false`; external scope returns 409 and other invalid scopes return 400. Future external support requires a versioned contract and tests; no fallback implementation is preinstalled.
+- Citation reports validate only the identity triple's structure. Matching original context or successful ToolRead evidence from this request contributes copied content; unmatched triples are stored as Agent assertions with empty content. The backend does not use source_id to query other requests/business records or accept Agent-supplied content. Empty content means no verifiable evidence was attached by the backend, not a verified source. Tool records remain separate, with no new chat/context response fields.
 
 ### report
 
-`POST chat/answers/`，成功示例：
+Successful `POST chat/answers/` example:
 
 ```json
 {
@@ -135,9 +135,9 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 }
 ```
 
-`chat_prompt_version` 是非空字符串，最长 100 字符；后端不设版本白名单，也不与 company 绑定。例如 workspace-chat-v1 可直接回报。版本接受不表示新工具编排已经实现，Agent 仍需自行完成工作流适配。后端不判定回答语义、正文引用编号、引用是否重复或是否属于本请求快照；引用准确性与事实支持由 Agent 负责。
+`chat_prompt_version` is a nonempty string of at most 100 characters. The backend has no version allowlist and does not bind versions to companies; workspace-chat-v1 is accepted directly. Version acceptance does not establish implementation of new tool orchestration; the Agent must adapt its workflow. The backend does not judge answer semantics, inline citation numbers, duplicate citations, or membership in the request snapshot. The Agent owns citation accuracy and factual support.
 
-失败示例：
+Failure example:
 
 ```json
 {
@@ -150,107 +150,107 @@ Context Item 严格只有 `source_id`、`source_type`、`title_or_label`、`cont
 }
 ```
 
-error 在 failed 时必须是恰含 code/message 的对象，两个值均为非空字符串；不再限制具体错误码和固定文案。Agent 负责输出可对用户展示且已脱敏的错误，后端原样保存。当前 Worker 的 report_failed 仍代表本地“未确认保存”，不会自动通过该失败请求再次回报。
+For failed reports, error must contain exactly code/message, both nonempty strings. Specific codes and fixed wording are no longer restricted. The Agent must provide redacted, user-displayable errors, which the backend stores unchanged. The current Worker's report_failed still means saving was not confirmed locally and does not automatically submit another report through that failed request.
 
-保存响应固定含 `request_id`、`saved=true`、布尔 `duplicate`、`assistant_message_id`；completed 必须有消息 ID，failed 为 null。每条引用恰含 source_id/source_type/title_or_label 三个非空字符串，source_type 最长 80 字符；引用数组按原顺序保存，不去重、不校验正文中的 `[1]` 等编号。顶层仍要求 request_id/chat_prompt_version/assistant_text/citations/status/error 六字段；request_id 为 UUID。completed 要求非空 assistant_text 和 error=null，failed 要求 assistant_text=""、citations=[] 及错误对象。未知字段、错误类型和非法状态继续返回 400。
+Save responses contain `request_id`, `saved=true`, boolean `duplicate`, and `assistant_message_id`; completed requires a message ID, while failed returns null. Each citation contains exactly three nonempty strings, source_id/source_type/title_or_label; source_type is limited to 80 characters. Citation order is preserved without deduplication or validation of inline markers such as `[1]`. The top level still requires exactly request_id/chat_prompt_version/assistant_text/citations/status/error, with a UUID request_id. completed requires nonempty assistant_text and error=null; failed requires assistant_text="", citations=[], and an error object. Unknown fields, wrong types, and invalid states still return 400.
 
-401 表示服务认证缺失/无效；越权与不存在统一 404；格式错误 400；状态、版本结果冲突 409。沿用既有 `error.code/error.detail` 和 HTTP request_id 包装，不另建错误体系。
+401 indicates missing/invalid service authentication; unauthorized and nonexistent resources both return 404; invalid formats return 400; state or version/result conflicts return 409. Existing `error.code/error.detail` and HTTP request_id envelopes are reused.
 
-## 5. 运行、恢复和知识维护
+## 5. Running, recovery, and knowledge maintenance
 
-在仓库根目录，使用项目 Python 环境及现有 `.env`：
+From the repository root, use the project Python environment and existing `.env`:
 
 ```powershell
 python backend/manage.py migrate
 python -m uvicorn --app-dir backend config.asgi:application --host 127.0.0.1 --port 8000
-# 另一个终端；共享进程轮转所有有效员工的 pending 请求
+# In another terminal; the shared process rotates pending requests across active employees.
 python backend/manage.py chat_worker
-# 只处理至多一个请求
+# Process at most one request.
 python backend/manage.py chat_worker --once
 ```
 
-共享 chat_worker 沿用 `SALESMATE_BACKEND_AGENT_URL` 及 Agent 模型配置，每个工作单元通过服务器内部 `scoped_backend` 生成临时员工令牌，退出即撤销；不再由环境中的固定 `SALESMATE_AGENT_SERVICE_TOKEN` 限定消费用户。独立 Agent CLI 仍使用其显式配置的固定身份。chat_worker 独立于 ANALYSIS_PROVIDER 和 crm_worker；不会改变 L1/L3 模型参数、邮箱读取范围或画像并发。聊天仍需要可用模型配置，不存在规则聊天降级。
+Shared chat_worker reuses `SALESMATE_BACKEND_AGENT_URL` and Agent model configuration. Each work unit obtains a temporary employee token through server-internal `scoped_backend`, revoked on exit. The environment's fixed `SALESMATE_AGENT_SERVICE_TOKEN` no longer determines whose work is consumed. The standalone Agent CLI still uses its explicitly configured fixed identity. chat_worker is independent of ANALYSIS_PROVIDER and crm_worker and changes neither L1/L3 model parameters, mailbox scope, nor profile concurrency. Chat still requires usable model configuration and has no rule-based fallback.
 
-常驻消费者按员工主键轮转待办，排除停用员工，仅发现 pending；每次以该员工的独立 HTTP 身份串行处理一条，空队列默认每 2 秒查询；`--poll` 可显式指定 (0,60] 秒。SIGTERM 等待在途任务完成后停止领取。普通已保存失败保留失败记录；领取异常或 report_failed 停止消费者并非零退出，不隐式重试。日志只记录任务标识、员工、状态、错误码和异常类型。
+The persistent consumer rotates pending work by employee primary key, excludes inactive employees, and discovers only pending tasks. It serially processes one task through that employee's own HTTP identity. Empty queues are polled every two seconds by default; `--poll` explicitly accepts (0,60] seconds. SIGTERM waits for in-flight work before stopping claims. Saved failures retain failed records; claim errors or report_failed stop the consumer with a nonzero exit and no implicit retry. Logs contain only task IDs, employees, states, error codes, and exception types.
 
-恢复步骤：先查询 request 状态，尤其回报响应丢失时，数据库可能已经 completed。确认原进程中断且请求仍 processing 后执行：
+For recovery, first inspect request state, especially after a lost report response: the database may already show completed. After confirming the original process stopped and the request remains processing, run:
 
 ```powershell
 python backend/manage.py chat_interrupt --owner <username> --request-id <uuid> --confirm-interrupted
 ```
 
-这将原请求标记为 worker_interrupted/failed。随后由用户点击“重新回答”，创建新 ID。没有自动超时阈值或隐式重新入队。
+This marks the original request worker_interrupted/failed. The user then explicitly retries, creating a new ID. There is no automatic timeout threshold or implicit requeue.
 
-内部知识文件为 UTF-8 JSON 数组，每条精确包含 source_key、version、title、content、active；四个文本非空，active 为布尔值。只能写入已确认的资料；不要把需求文档示例制度当作真实数据。
+Internal knowledge files are UTF-8 JSON arrays. Every entry has exactly source_key, version, title, content, and active; the four text values must be nonempty and active must be boolean. Import only confirmed material, not fictional example policies from requirements documents.
 
 ```powershell
 python backend/manage.py chat_knowledge --owner <username> --file <knowledge.json>
 ```
 
-同 key/version 不允许改标题或正文；修改内容须明确新 version。同 key 的新 active 版本会停用旧版本。用相同内容及 active=false 可显式停用。整批失败全部回滚，历史请求证据保持不变。
+The same key/version cannot change title or content; changed contents require an explicit new version. A new active version disables old versions of that key. Identical contents with active=false explicitly deactivate an entry. Batch failure rolls back everything, preserving historical request evidence.
 
-## 6. 网页行为
+## 6. Browser behavior
 
-“发送问题”创建回答任务，“保存草稿”保持原行为。活动请求禁止当前会话再次提问。页面每 2 秒观察一次状态，每轮最多 120 次，失败或达到上限后暂停并提供“继续查询”；恢复查询不会重新生成回答。
+Sending a question creates an answer task; saving a draft retains its existing behavior. An active request prevents another question in that conversation. The page checks status every two seconds, at most 120 times per observation round, then pauses on failure or the limit and offers continued checking. Resuming observation does not regenerate an answer.
 
-完成后自动读取助手消息和引用，证据可展开；未保存输入、焦点和历史区阅读位置保留。失败展示安全提示并提供明确重试。关闭侧栏或切换客户/会话取消观察资格和在途状态请求；旧响应不能覆盖新上下文。所有文本转义，来源内容不作为 HTML 或脚本执行。
+Completion automatically loads the assistant message and expandable citation evidence. Unsaved input, focus, and history reading position remain intact. Failures display safe messages and offer explicit retry. Closing the sidebar or switching customer/conversation cancels observation eligibility and in-flight status requests; stale responses cannot overwrite the new context. All text is escaped, and source contents never execute as HTML or scripts.
 
-## 7. Lightsail 部署
+## 7. Lightsail deployment
 
-新增 `backend/deploy/lightsail/salesmate-chat.service`，普通 salesmate 用户运行，使用共享的 `/opt/salesmate/shared/runtime.env`，不自动重启失败进程。蓝绿部署先排空聊天、CRM/销售调度器及 Celery 消费者，再备份和迁移；旧 Web 保持服务，候选 Web 健康且切流成功后再启动聊天，最后排空并退役旧 Web。聊天共享调度复用已有 scoped_backend 临时身份机制；每个 HTTP 客户端仍只绑定一名员工，原权限检查不变。
+`backend/deploy/lightsail/salesmate-chat.service` runs as the ordinary salesmate user with shared `/opt/salesmate/shared/runtime.env`, without automatically restarting failed processes. Blue/green deployment drains chat, CRM/sales schedulers, and Celery consumers before backup and migration. The old Web keeps serving; chat starts after candidate health checks and successful traffic switching, then the old Web drains and retires. Shared chat scheduling reuses scoped_backend temporary identities; each HTTP client still binds to one employee with unchanged permission checks.
 
-仓库 `deploy-from-git.sh` 已补充聊天服务预检、停止、启动和健康检查。服务器该脚本是 root 保护的独立副本，**不会因普通代码拉取自动升级**；首次上线需按既有运维方式先审阅安装聊天 service（暂不启动）、更新受保护部署脚本，再发布本次代码。脚本在停机前检查 service 已安装，不自动从普通代码替换 systemd 配置。仅合并代码不代表聊天消费者已经启动，应以部署结果和 systemd 实际状态为准。
+Repository `deploy-from-git.sh` includes chat-service preflight, stop, start, and health checks. The server script is a separate root-protected copy and **does not update through ordinary code pulls**. For initial rollout, review and install the chat service without starting it, update the protected deployment script through the established operations process, and then release the code. Before stopping services, the script verifies service installation; it does not automatically replace systemd configuration from ordinary source code. A merge alone does not establish that the chat consumer is running; verify deployment results and actual systemd state.
 
-首次发布前已确认目标生产数据库尚未应用聊天迁移，将 `chat.0001_initial` 的四项约束放入对应 `CreateModel.options.constraints`。迁移只创建三个新表，不修改既有业务表；活动会话唯一性、请求状态、引用位置及知识版本约束保持相同。在线迁移门禁不变，仍拒绝单独的 `AddConstraint`。发布时按既有流程先备份再迁移；此后不得改写已应用的迁移。
+Before the first release, the target production database was confirmed not to have applied chat migrations, allowing the four constraints in `chat.0001_initial` to reside in the corresponding `CreateModel.options.constraints`. The migration creates only three new tables without changing existing business tables. Active-conversation uniqueness, request states, citation positions, and knowledge-version constraints remain equivalent. The online migration gate still rejects standalone `AddConstraint`. Follow the existing backup-before-migrate process; never rewrite migrations after application.
 
-手工部署时完成迁移后，安装服务文件到 `/etc/systemd/system/`，执行 daemon-reload，再明确启用/启动 salesmate-chat；此前核对模型与后端地址配置及待处理队列。日志使用 `journalctl -u salesmate-chat`。单服务覆盖全部有效员工，无需为新注册员工配置永久服务令牌或独立进程。
+For manual deployment, migrate, install service files in `/etc/systemd/system/`, run daemon-reload, and explicitly enable/start salesmate-chat after checking model/backend configuration and the pending queue. Use `journalctl -u salesmate-chat` for logs. One service covers all active employees; new registrations need neither permanent service tokens nor separate processes.
 
-## 8. 验证与交付边界
+## 8. Validation and delivery boundaries
 
 ```powershell
 python backend/manage.py test tests --noinput
 python -m unittest discover -s agent/tests
 python backend/manage.py makemigrations --check --dry-run
 python backend/manage.py spectacular --file backend/contracts/openapi.yaml --validate
-# 配置现有 Playwright/浏览器环境后，另跑联合网页验收
+# After configuring the existing Playwright/browser environment, run the joint browser acceptance check.
 python backend/manage.py test tools.chat_browser_e2e --noinput
-# 从 backend/ 执行
+# Run from backend/.
 python tools/check_docs.py
 python tools/check_doc_changes.py
 ```
 
-浏览器沿用项目显式 Playwright/Chrome 配置，执行 `node backend/tools/browser_chat.cjs`；已加入部署 CI。后端测试覆盖真实 PostgreSQL 并发提交/领取/回报、事务回滚、隔离、权限撤销、画像版本、证据快照、引用、知识版本、失败新尝试和恢复。真实 Django 临时 HTTP 服务对接原 Agent 客户端及工作流，模型边界使用模拟输出。
+Browser checks use the project's explicit Playwright/Chrome configuration and `node backend/tools/browser_chat.cjs`, added to deployment CI. Backend tests cover real PostgreSQL concurrent submission/claim/report, rollback, isolation, permission revocation, profile versions, evidence snapshots, citations, knowledge versions, new attempts after failure, and recovery. A real temporary Django HTTP server integrates the original Agent client/workflow with mocked model outputs.
 
-浏览器交互测试使用真实页面/JS、模拟 API，覆盖提交、完成、引用转义、失败重试、编辑保留、查询失败、观察上限及切换关闭。另有 `tools.chat_browser_e2e` 使用真实浏览器、Session/CSRF、临时 Django HTTP 服务和隔离 PostgreSQL，网页创建任务后由原 Agent 工作流领取、读取证据、保存答案，网页自动显示正文与引用；仅替换应用启动脚本以单独挂载真实侧栏，所有业务 API 均真实执行，模型输出在 Python 调用边界模拟。两类浏览器检查均已加入 CI。
+Browser interaction tests use real pages/JS with mocked APIs, covering submission, completion, citation escaping, retry, preserved edits, query failures, observation limits, switching, and closure. `tools.chat_browser_e2e` additionally uses a real browser, Session/CSRF, temporary Django HTTP, and isolated PostgreSQL. After the browser creates a task, the original Agent workflow claims it, reads evidence, and saves an answer that appears automatically with citations. Only the application bootstrap is replaced to mount the real sidebar separately; all business APIs execute normally, and model outputs are mocked at the Python call boundary. Both browser check types were added to CI.
 
-这些检查不冒充真实百炼或已部署网页验收。生产迁移、服务安装、真实模型质量和完整外部授权仍需实际环境验证。
+These checks do not establish acceptance against real Bailian models or deployed pages. Production migrations, service installation, real-model quality, and complete external authorization require validation in their actual environments.
 
-实现、注释、目录和迁移在当前工作区同步维护；未提交 Git 前不声称已验证同一次提交的原子性。
+Implementation, comments, directories, and migrations are maintained together in the workspace. Git commit atomicity is not claimed before a commit exists.
 
-### 2026-09-18 本地验证记录
+### Local validation record: 2026-09-18
 
-- 独立 PostgreSQL 16 测试库：全后端 155 项通过，其中新增聊天 24 项；未连接业务数据库。
-- Agent 原离线套件 186 项、邮箱测试工具 9 项通过；Agent 可执行代码未修改。
-- 浏览器真实 HTTP 联合验收 1 项通过，模型输出模拟；聊天、工作空间、邮件处理、QQ 发信四个浏览器脚本通过。
-- 迁移一致性无未生成变更，OpenAPI 生成/校验及版本契约测试通过。
-- Python 文档结构覆盖 128 文件；差分检查 0 错误、0 待复核，另人工核对本次实现说明及目录；新增 Python 的 Ruff F 检查、变更 JS 语法、部署脚本 Bash 语法、依赖一致性及 Git 空白检查通过。
-- 测试临时 PostgreSQL 已停止。未应用生产迁移、未安装线上服务、未调用真实模型或发信，未提交或推送 Git。
+- Isolated PostgreSQL 16 test database: all 155 backend tests passed, including 24 new chat tests; no business database was connected.
+- The original 186-test offline Agent suite and nine mailbox-tool tests passed; Agent executable code was unchanged.
+- One real-HTTP browser integration check passed with mocked model output; all four chat, workspace, mail-processing, and QQ-send browser scripts passed.
+- Migration consistency found no missing generated changes; OpenAPI generation/validation and version-contract tests passed.
+- Python documentation structure covered 128 files; differential checks reported zero errors and zero review items, supplemented by manual implementation/directory review. Ruff F checks for new Python, changed-JS syntax, Bash deployment-script syntax, dependency consistency, and Git whitespace checks passed.
+- Temporary PostgreSQL was stopped. No production migration, online service installation, real-model call, email send, Git commit, or push was performed.
 
-### 2026-09-19 发布前复核
+### Pre-release review: 2026-09-19
 
-- 合并基础设施版本后，独立 PostgreSQL 16/pgvector 实例上的完整后端 171 项通过，包含聊天并发、权限及约束验证；未使用生产业务库运行测试。
-- Agent 186 项、邮箱工具 9 项通过；五组模拟 API 浏览器检查通过，包括新增聊天一级入口、世界地图、邮件处理和 QQ 发信。
-- 真实浏览器、HTTP、Session/CSRF、隔离 PostgreSQL 和原 Agent 工作流的联合验收 1 项通过，模型输出仍在调用边界模拟。
-- 新建数据库迁移、`makemigrations --check --dry-run` 和 OpenAPI 生成校验通过；针对目标生产库执行的只读在线迁移门禁与聊天令牌归属预检通过。
-- Python 文档结构与变更检查覆盖 141 个文件，0 错误、0 待复核；检查器测试 12 + 9 项通过。另人工复核前端、部署文件和第三方资源说明。
-- 以上记录为发布前验证，不等同真实模型质量或生产部署成功；最终以对应提交的 GitHub Actions 结果和服务器版本、健康检查为准。
+- After infrastructure changes were merged, all 171 backend tests passed on an isolated PostgreSQL 16/pgvector instance, including chat concurrency, permissions, and constraints; no production business database was used.
+- All 186 Agent tests, nine mailbox-tool tests, and five mocked-API browser check groups passed, including the new primary chat entry point, world map, mail processing, and QQ sending.
+- One joint acceptance check using a real browser, HTTP, Session/CSRF, isolated PostgreSQL, and the original Agent workflow passed; model outputs remained mocked at the call boundary.
+- Fresh-database migrations, `makemigrations --check --dry-run`, and OpenAPI generation/validation passed. Read-only online migration gates and chat-token ownership preflight checks against the target production database passed.
+- Python documentation structure/change checks covered 141 files, with zero errors and zero review items; checker tests passed 12 + 9 cases. Frontend, deployment files, and third-party resource notes also received manual review.
+- These are pre-release validation records, not proof of real-model quality or successful production deployment. The final authority is GitHub Actions for the corresponding commit, server version, and health checks.
 
-## 历史通用模式迁移说明
+## Historical general-mode migration notes
 
-以下两条为已存在的可空公司迁移，适用于尚未安装通用聊天的旧环境；当前工作空间升级不新增迁移。旧版本消费者不能与当前工作空间请求混用。回滚为非空字段前须先处理通用会话及回答记录，迁移不会自动删除历史。保守在线迁移门禁会要求对 AlterField 单独审核；本次未修改门禁策略。
+The following two existing nullable-company migrations apply to environments without general chat; the current workspace upgrade adds no migration. Old consumers cannot process current workspace requests. Before rolling back to non-null fields, handle general conversations and answers explicitly; migrations do not delete history automatically. The conservative online migration gate requires separate AlterField review and is unchanged here.
 
-这两条 AlterField 已按结构审阅：仅将 `sales_conversation.company_id` 与 `chat_answerrequest.company_id` 改为可空，保留列类型、外键、索引和 PROTECT 语义，不删除或改写历史记录。生产发布先在部署锁内备份数据库，使用待发布提交的迁移检查实际 SQL 与计划，再显式应用这两条迁移；保守自动迁移门禁保持不变。旧 Web 仍要求客户字段，因此过渡期间不会从旧界面创建通用任务。当前发布继续按既有蓝绿流程排空旧聊天 Worker、切换 Web 并启动新 Worker；新 Worker 会结束遗留的公司绑定活动任务。
+The two AlterField operations were structurally reviewed: only `sales_conversation.company_id` and `chat_answerrequest.company_id` become nullable. Column types, foreign keys, indexes, and PROTECT semantics remain intact, and history is neither deleted nor rewritten. Production deployment first backs up under the deployment lock, checks actual SQL and plans using the release commit, and explicitly applies both migrations. The conservative automatic gate remains unchanged. Old Web versions still require customers, so their UI cannot create general tasks during transition. The existing blue/green release process drains old chat Workers, switches Web, and starts new Workers; new Workers terminate legacy active company-bound tasks.
 
-## 多用户排队故障回归
+## Multi-user queue regression
 
-旧聊天服务只以环境固定凭证轮询一位员工，其他员工的请求会长期 pending，即使 systemd 显示 active。共享调度修复通过真实 HTTP 验证两位无服务凭证用户的 ping 均能落库回答、临时凭证撤销、跨用户读取拒绝；保留单任务串行、默认两秒轮询、失败不重试及 SIGTERM 完成在途回报后退出的语义。已有 pending 会自然被领取，不重建消息或重置 processing。
+The old chat service polled only one employee using a fixed environment credential, leaving other employees' requests pending even when systemd reported active. Real HTTP checks for the shared scheduler verified saved ping answers for two users without service credentials, temporary credential revocation, and rejection of cross-user reads. Single-task serial execution, default two-second polling, no failure retry, and SIGTERM completion of in-flight reporting are preserved. Existing pending work is claimed normally without recreating messages or resetting processing.

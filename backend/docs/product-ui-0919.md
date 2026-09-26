@@ -1,32 +1,32 @@
-# 0919 产品界面对照与验收
+# 0919 Product UI Comparison and Acceptance
 
-来源：[0919 修改](https://docs.google.com/document/d/1IdFW1A2IHP2ngN4vlYHXg2xN0QAdJthxCX-zwz8uOyQ/edit?tab=t.0)。2026-09-21 对照文档文字及全部 6 页截图；实现范围为前端，不调整评分、权限和发送确认接口。
+Source: [0919 changes](https://docs.google.com/document/d/1IdFW1A2IHP2ngN4vlYHXg2xN0QAdJthxCX-zwz8uOyQ/edit?tab=t.0). On 2026-09-21, implementation was compared against document text and all six screenshots. Scope is frontend only and does not adjust scoring, permission, or send-confirmation interfaces.
 
-| 需求 | 修改前状态 | 本次结果 |
+| Requirement | State before change | Result |
 | --- | --- | --- |
-| 删除“沟通与资料”“设置与协作”两个大菜单 | 已实现 | 保留精简侧栏 |
-| 聊天助手改为右下角入口、底部展开 | 已实现 | 保留同一会话及草稿；Channel 宽屏展开到右栏 |
-| 去掉 World news、通知导航入口 | 已实现 | 保留 Global Insights；不恢复旧入口 |
-| Channel 内移除重复客户导航 | 已实现 | 继续隐藏，保留业务页面必要客户上下文 |
-| Dashboard、Global Insights、Channels、Customers 及四类子菜单 | 已实现 | 保留原层级 |
-| Company Setting、Emails Connections 底部入口 | 部分实现 | 将旧 Emails Setting 统一更名 |
-| Evidence 悬浮查看发件人、时间及参考内容 | 未实现 | 悬停、键盘聚焦、触屏点击均可预览；显式按钮定位并高亮原邮件 |
-| Dashboard 去掉重复待办栏、顶部复核按钮、待确认动作卡、待建档客户卡和排序脚注 | 未实现 | 删除上述内容；保留首页复核卡、跟进及同步异常卡 |
-| Channels 去掉顶部账号/复核块、重复待办栏、工作空间角标与完成同步报告 | 未实现 | 删除冗余入口；已完成且无待处理/失败的批次从常规列表收起 |
-| Channel 内页精简、改成邮件会话和画像分析布局 | 部分实现 | 收发气泡分侧；中栏画像、分析、联系人及可展开优先级；右栏共享助手；手机单列 |
-| 回复输入与 AI 润色 | 未实现 | 按客户隔离的本页回复草稿、复制和显式填入助手；不自动发送问题或邮件 |
-| Customers 去掉重复待办栏、返回工作台、工作空间角标、未读提醒卡 | 未实现 | 删除；三张剩余统计卡自适应布局 |
+| Remove Communication and materials and Settings and collaboration top-level menus | Implemented | Retain compact sidebar. |
+| Move chat assistant to lower-right entry and bottom expansion | Implemented | Retain the same conversation and draft; Channel expands into a right panel on wide screens. |
+| Remove World news and notification navigation | Implemented | Retain Global Insights and do not restore old entries. |
+| Remove duplicate customer navigation inside Channel | Implemented | Keep hidden while retaining required customer context in business pages. |
+| Dashboard, Global Insights, Channels, Customers, and four submenus | Implemented | Retain original hierarchy. |
+| Company Setting and Emails Connections bottom entries | Partially implemented | Rename old Emails Setting consistently. |
+| Hover Evidence for sender, time, and reference material | Not implemented | Hover, keyboard focus, and touch click preview; an explicit control locates and highlights original mail. |
+| Remove duplicate Dashboard to-do bar, top review control, confirmation card, customer-creation card, and sorting footnote | Not implemented | Remove them; retain home review, follow-up, and synchronization-error cards. |
+| Remove Channel top account/review block, duplicate to-do bar, workspace badge, and completed-sync report | Not implemented | Remove redundant entries; completed batches without pending/failure items collapse from regular list. |
+| Simplify Channel detail to mail conversation and profile analysis layout | Partially implemented | Incoming/outgoing bubbles on separate sides; center profile, analysis, contacts, expandable priority; shared assistant right panel; mobile single column. |
+| Reply input and AI polishing | Not implemented | Per-customer in-page reply draft, copy, and explicit fill into assistant; no automatic question or mail send. |
+| Remove duplicate Customers to-do bar, return-to-workspace, workspace badge, and unread notice card | Not implemented | Remove them; three remaining statistic cards use responsive layout. |
 
-## 交互与数据边界
+## Interaction and Data Boundaries
 
-- 来源预览只读取当前客户详情中的授权邮件，以 `dedupe_key` 精确匹配 `source_refs`，展示发件人、发送时间（无发送时间时采用接收时间）、主题和逐字正文。当前契约没有引用字符偏移，因此明确显示“邮件原文”，不伪造精确摘录；缺失引用明确说明，不猜测发件人或内容。
-- 预览允许鼠标移入阅读/滚动、Esc 或关闭按钮退出；切换客户/账号清除旧预览。业务内容按文字转义，不执行邮件 HTML，不额外请求模型或外部服务。
-- 回复草稿仅保存在当前页面内存，按客户隔离，切换账号清空。AI 润色等待读取会话后追加到当前聊天输入，不覆盖已有输入，也不自动提问。实际发信继续进入已有“准备沟通动作 → 审阅确认”流程；本次没有新增直接发送按钮。
-- 同步运行中、邮件失败和画像失败依然显示；`#processing` 及邮箱设置的进度入口允许查看完成报告和明确重试。复核功能可从首页卡片或 Emails Connections 进入。
-- 优先级分数及原因仅移入可展开区；计算、排序、业务参数和 API 契约不变。
+- Source preview reads only authorized mail in current customer detail. It exactly matches source_refs by dedupe_key and shows sender, sent time (received time when absent), subject, and verbatim body. The current contract has no citation character offsets, so it explicitly states Mail original rather than fabricating an exact excerpt. Missing references are explicit and never guess sender or content.
+- Preview permits mouse-entry reading/scrolling and exits through Esc or close control. Switching customer/account clears old preview. Business content is text-escaped; mail HTML never executes and no extra model/external-service request is made.
+- Reply draft exists only in current page memory and is isolated per customer; account switch clears it. AI polishing appends to current chat input after reading conversation, never overwrites existing input or asks automatically. Actual sending retains Prepare communication action then Review confirmation; no direct-send control is added.
+- Running synchronization, mail failure, and profile failure remain visible. #processing and mailbox-settings progress entries allow completed-report view and explicit retry. Review is available from the home card or Emails Connections.
+- Priority score and reasons move only into an expandable area. Calculation, sorting, business parameters, and API contract remain unchanged.
 
-## 验证
+## Verification
 
-`node backend/tools/browser_product0919.cjs` 使用模拟 API 和真实浏览器，检查精简项目、收发方向、来源内容/转义、缺失来源、键盘/触屏、原文定位、只读润色、桌面三栏、手机溢出和英文。它不证明真实邮箱或模型服务已联调。
+node backend/tools/browser_product0919.cjs uses mocked APIs and a real browser to check simplified items, incoming/outgoing direction, source content/escaping, missing source, keyboard/touch behavior, original location, read-only polishing, desktop three columns, mobile overflow, and English. It does not demonstrate integration with real mailbox or model services.
 
-现有 workspace、processing、i18n 浏览器验收继续覆盖聊天会话、跨页导航、复核、同步范围与重试。Python 注释工具按项目约定运行；HTML/JS/CSS 的职责、目录、变量与实现一致性另外人工检查。
+Existing workspace, processing, and i18n browser acceptance continues to cover chat conversation, cross-page navigation, review, sync scope, and retry. Python documentation tools run under project convention. HTML/JS/CSS responsibility, directory, variables, and implementation consistency are reviewed manually.

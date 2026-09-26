@@ -1,8 +1,8 @@
-/** 职责：四步资料设置的公司步骤，按账号读取、编辑和保存。
- * 实现：共享导航和底部助手；显式保存附版本，失败保留输入；冲突要求用户重新读取。
- * 关联：侧栏优先级入口移除后更新导航缓存；共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；资料条目标识支持使用新资源版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；company-settings.html/css；accounts/company-profile API；api.js 处理 CSRF 与错误。
- * 目录：text、showStatus、renderForm、loadProfile、saveProfile、boot。
- * 变量索引：choices 为行业和规模选项；fields 为字段及中英文名称；revision 为当前已读取版本；busy 防止重叠操作；$ 查询 DOM。
+/** Responsibility: Read, edit, and save the company step of four-step onboarding per account.
+ * Implementation: Shared navigation/bottom assistant; explicit saves include a version, failures preserve input, and conflicts require reloading.
+ * Relationships: Navigation cache versions reflect removal of sidebar priority/experiment entries and opportunity-priority support. Profile item identifiers, chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. Uses company-settings.html/css, accounts/company-profile API, and api.js for CSRF/errors.
+ * Directory: text, showStatus, renderForm, loadProfile, saveProfile, boot.
+ * Variable index: choices holds industry/size options; fields holds fields and bilingual names; revision is the observed version; busy prevents overlapping operations; $ queries the DOM.
  */
 import { mountOnboarding } from './onboarding.js?v=20260921-support';
 import { language } from './i18n.js?v=20260921-product';
@@ -23,19 +23,19 @@ const fields = [
 ];
 let revision = null, busy = false;
 
-/** 功能：选择本页双语文案。输入：zh 中文、en 英文。输出：当前界面语言文本。
- * 逻辑：沿用共享语言偏好。约束：不翻译用户资料。 */
+/** Function: Select bilingual text for this page. Inputs: zh is Chinese and en is English. Outputs: Current-language text.
+ * Logic: Use the shared language preference. Constraints: Never translate user profiles. */
 function text(zh, en) { return language === 'en' ? en : zh; }
 
-/** 功能：显示可访问状态。输入：message 文案、error 错误标志。输出：无。
- * 逻辑：textContent 防止数据解释为 HTML。约束：错误保留表单内容。 */
+/** Function: Display accessible status. Inputs: message and error flag. Outputs: None.
+ * Logic: textContent prevents interpretation as HTML. Constraints: Errors preserve form content. */
 function showStatus(message, error = false) {
   $('company-status').textContent = message;
   $('company-status').classList.toggle('is-error', error);
 }
 
-/** 功能：呈现固定字段并填入资料。输入：profile 授权 API 结果。输出：无。
- * 逻辑：值转义，行业与收件箱对齐，规模使用明确选项；保留历史自定义值及后端长度与必填约束；读取成功后才允许保存。约束：不保存数据，不填业务默认值。 */
+/** Function: Render fixed fields and populate profile values. Inputs: profile is the authorized API result. Outputs: None.
+ * Logic: Escape values, align industries with the inbox, and use explicit size options. Preserve historical custom values and backend length/required constraints; enable saving only after a successful read. Constraints: No data writes or inferred business defaults. */
 function renderForm(profile) {
   $('company-fields').innerHTML = fields.map(([key, zh, en, type, limit]) => {
     const value = e(profile[key] || '');
@@ -51,8 +51,8 @@ function renderForm(profile) {
   revision = profile.revision;
 }
 
-/** 功能：读取服务器资料。输入：无，读取 busy 和表单修改状态。输出：异步完成。
- * 逻辑：重新读取前确认舍弃编辑；失败保留现有资料，首次失败禁用保存。约束：不自动重试、不覆盖未确认的草稿。 */
+/** Function: Read the server profile. Inputs: None; reads busy and form-dirty state. Outputs: Asynchronous completion.
+ * Logic: Confirm discarding edits before reloading; retain existing data on failure and disable saving after an initial read failure. Constraints: No automatic retries or unconfirmed draft replacement. */
 async function loadProfile() {
   if (busy) return;
   if ($('company-form').querySelector('[data-language-dirty="true"]') && !window.confirm(text('重新读取将丢弃未保存的修改，是否继续？', 'Reloading will discard unsaved changes. Continue?'))) return;
@@ -72,9 +72,9 @@ async function loadProfile() {
   }
 }
 
-/** 功能：保存用户明确编辑的资料。输入：event 为表单提交。输出：异步完成。
- * 逻辑：带已读版本 PATCH；成功更新版本并清除草稿标记、通知引导进入下一步；冲突保留输入并要求重新读取。
- * 约束：无自动覆盖、无重试；日志仅含状态码，不记录用户资料。 */
+/** Function: Save explicitly edited profile data. Inputs: event is the form submission. Outputs: Asynchronous completion.
+ * Logic: PATCH with the observed version; on success update revision, clear the draft marker, and notify onboarding to advance. Conflicts retain input and require reloading.
+ * Constraints: No automatic overwrites or retries; logs contain status codes only, never user profiles. */
 async function saveProfile(event) {
   event.preventDefault();
   if (busy || revision === null) return;
@@ -95,9 +95,9 @@ async function saveProfile(event) {
   }
 }
 
-/** 功能：认证并挂载独立设置页。输入：当前会话与页面 DOM。输出：异步完成。
- * 逻辑：未登录跳转登录页；已登录显示账号、共享导航、双语表单并读取资料，再挂载四步引导。
- * 约束：仅显式提交时写 API；会话错误显示诊断，不假定已登录。 */
+/** Function: Authenticate and mount the separate settings page. Inputs: Current session and page DOM. Outputs: Asynchronous completion.
+ * Logic: Redirect anonymous users to login; authenticated users see the account, shared navigation, and bilingual form. Read the profile before mounting four-step onboarding.
+ * Constraints: Write APIs only on explicit submission; display session diagnostics without assuming authentication. */
 async function boot() {
   $('company-description').textContent = text('管理本公司的基本资料。资料保存在当前账号的工作空间中。', 'Manage your company details, saved in your current account workspace.');
   $('company-save').textContent = text('保存修改', 'Save changes');

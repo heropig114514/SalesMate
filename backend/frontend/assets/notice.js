@@ -1,22 +1,22 @@
 /**
- * 职责：管理页面操作提示的显示、阅读暂停与关闭生命周期。
- * 实现：只显示最新提示，替换时取消旧计时器；悬停、焦点和后台页面暂停倒计时。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 调用 Notice.show，app.css 控制底部紧凑布局；不改变请求或业务失败状态。
- * 目录：Notice、Notice.constructor、Notice.show、Notice.dismiss、Notice.pause、Notice.resume。
- * 变量索引：DURATION 为成功/错误提示阅读时长；实例 box/message/close 保存 DOM，
- * timer/deadline/remaining 管理当前提示的剩余显示时间，单位为毫秒。
+ * Responsibility: Manage operation notifications, reading pauses, and dismissal lifetimes.
+ * Implementation: Show the latest notification only and cancel old timers on replacement; hover, focus, and background visibility pause the countdown.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; app.js calls Notice.show and app.css supplies compact bottom layout. Request/business failure states remain unchanged.
+ * Directory: Notice, Notice.constructor, Notice.show, Notice.dismiss, Notice.pause, Notice.resume.
+ * Variable index: DURATION sets success/error reading durations; box/message/close hold DOM nodes;
+ * timer/deadline/remaining manage remaining display time in milliseconds.
  */
 import { t } from './i18n.js?v=20260921-product';
 
 const DURATION = { success: 4000, error: 8000 };
 
-/** 功能：为单个页面提示容器管理显示周期。
- * 逻辑：事件监听只注册一次，复用文本节点与关闭按钮。约束：每个容器只创建一个实例。 */
+/** Function: Manage display lifetime for one page notification container.
+ * Logic: Register listeners once and reuse text nodes/the close button. Constraints: One instance per container. */
 export class Notice {
-  /** 功能：初始化可读、可关闭的提示。输入：box 为页面持久容器。输出：Notice 实例。
-   * 逻辑：纯文本呈现；按钮不提交表单，焦点/悬停/可见性事件管理计时。
-   * 约束：监听器与页面同寿命，不抢占键盘焦点，不插入服务端 HTML。 */
+  /** Function: Initialize readable, dismissible notifications. Inputs: box is a persistent page container. Outputs: A Notice instance.
+   * Logic: Render plain text; the button does not submit forms; focus/hover/visibility events manage timing.
+   * Constraints: Listeners live for the page lifetime; never steal keyboard focus or insert server HTML. */
   constructor(box) {
     this.box = box;
     this.timer = null;
@@ -38,9 +38,9 @@ export class Notice {
     document.addEventListener('visibilitychange', () => document.hidden ? this.pause() : this.resume());
   }
 
-  /** 功能：替换当前提示并开始独立倒计时。输入：message 为文本，error 表示失败。输出：无。
-   * 逻辑：先清理旧计时，再设置状态语义、文本和阅读时长。
-   * 约束：成功不打断辅助阅读，错误使用 alert；保留页面原有业务失败状态。 */
+  /** Function: Replace the current notification and start its countdown. Inputs: message text and error flag. Outputs: None.
+   * Logic: Clear old timing, then set status semantics, text, and reading duration.
+   * Constraints: Success does not interrupt assistive reading; errors use alert. Preserve the page's business failure state. */
   show(message, error = true) {
     this.dismiss();
     this.box.className = error ? 'notice error' : 'notice success';
@@ -51,16 +51,16 @@ export class Notice {
     this.resume();
   }
 
-  /** 功能：关闭当前提示并取消计时。输入：实例计时器。输出：无。
-   * 逻辑：隐藏容器，释放尚未触发的回调。约束：重复调用安全，不清理业务数据。 */
+  /** Function: Dismiss the current notification and cancel timing. Inputs: Instance timer. Outputs: None.
+   * Logic: Hide the container and release pending callbacks. Constraints: Repeated calls are safe and never clear business data. */
   dismiss() {
     clearTimeout(this.timer);
     this.timer = null;
     this.box.hidden = true;
   }
 
-  /** 功能：暂停阅读倒计时。输入：当前 deadline 与单调时钟。输出：无。
-   * 逻辑：仅在计时中保存剩余时间，避免多重暂停重复扣减。约束：不延长为新的完整周期。 */
+  /** Function: Pause the reading countdown. Inputs: Current deadline and monotonic clock. Outputs: None.
+   * Logic: Save remaining time only while timing, avoiding duplicate deductions on repeated pauses. Constraints: Never reset to a full new period. */
   pause() {
     if (this.timer === null) return;
     this.remaining = Math.max(0, this.deadline - performance.now());
@@ -68,9 +68,9 @@ export class Notice {
     this.timer = null;
   }
 
-  /** 功能：在用户未阅读且页面可见时恢复倒计时。输入：容器悬停/焦点、页面可见性。输出：无。
-   * 逻辑：从剩余时间开始，只允许一个计时器；失去焦点事件中的目标仍受焦点判定保护。
-   * 约束：隐藏或已有计时器时不重复安排回调。 */
+  /** Function: Resume timing when the page is visible and the user is not reading. Inputs: Container hover/focus and page visibility. Outputs: None.
+   * Logic: Resume remaining time with one timer; focus checks also protect the target during blur events.
+   * Constraints: Do not schedule duplicate callbacks while hidden or already timing. */
   resume() {
     if (this.box.hidden || this.timer !== null || document.hidden || this.box.matches(':hover, :focus-within')) return;
     this.deadline = performance.now() + this.remaining;

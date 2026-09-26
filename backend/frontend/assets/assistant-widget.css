@@ -1,8 +1,8 @@
-/* 职责：定义跨页面从底部展开与收起的横向聊天条。
- * 实现：右下角入口、底部宽条、紧凑工具栏和输入区；消息独立滚动，窄屏限制高度并采用模态焦点。
- * 关联：assistant-widget.js 挂载模板；assistant.js 同步显示与无障碍状态。
- * 目录：无函数或类；样式区域为入口、面板、会话、Markdown 正文、草稿、引用及移动布局。
- * 变量索引：无新增变量，消费 design-system.css 的颜色、边界与 --sidebar-width 变量。 */
+/* Responsibility: Define the cross-page horizontal chat bar that expands and collapses from the bottom.
+ * Implementation: Bottom-right entry, wide bottom panel, compact toolbar/input, independently scrolling messages, and height limits with modal focus on narrow screens.
+ * Relationships: assistant-widget.js mounts the template; assistant.js synchronizes visibility and accessibility state.
+ * Directory: No functions or classes; style sections cover entry, panel, conversations, Markdown content, drafts, citations, and mobile layout.
+ * Variable index: No new variables; consumes design-system.css colors, borders, and --sidebar-width. */
 .assistant-launcher { position: fixed; z-index: 1601; right: max(24px, env(safe-area-inset-right)); bottom: max(20px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 9px; border: 1px solid var(--accent); border-radius: 28px; padding: 12px 18px; background: var(--accent); color: var(--bg); box-shadow: 0 8px 30px var(--shadow-color); cursor: pointer; font: inherit; font-size: 14px; }
 .assistant-launcher > span:first-child { font-size: 24px; line-height: 1; }
 .assistant-launcher[aria-expanded="true"] { background: var(--surface); color: var(--accent); }
@@ -249,7 +249,7 @@
   line-height: 1.7;
 }
 
-/* 持久化助手：历史文本保持换行；会话选择保持紧凑，横向输入条在窄屏允许换行。 */
+/* Persisted assistant: Preserve historical text line breaks; keep conversation selection compact and let the horizontal input bar wrap on narrow screens. */
 .assistant-session-controls {
   display: flex;
   gap: 8px;
@@ -284,7 +284,7 @@
   margin: 8px 0 0;
 }
 
-/* Markdown 只作用于助手正文；宽代码与表格在内部滚动，用户输入和依据仍保留原始换行。 */
+/* Markdown applies only to assistant content; wide code and tables scroll internally, while user input and evidence retain original line breaks. */
 .assistant-message, #assistant-history { min-width: 0; }
 .assistant-markdown { margin-top: 8px; line-height: 1.7; overflow-wrap: anywhere; }
 .assistant-markdown :is(p, ul, ol, blockquote, pre, .assistant-markdown-table) { margin: 0 0 12px; }
@@ -321,7 +321,7 @@
   flex: 1;
 }
 
-/* 聊天依据：外层默认收起，内部原文独立滚动；使用共享主题变量保持深色对比度。 */
+/* Chat evidence: The outer section starts collapsed, source text scrolls independently, and shared theme variables maintain dark-theme contrast. */
 .assistant-sources {
   margin-top: 10px;
   font-size: 13px;

@@ -1,8 +1,8 @@
-/* 职责：定义轻量销售工作台的布局、状态与响应式样式。
-实现：邮箱设置独立呈现连接账号，邮件卡片、会话式详情（channel-detail.css 扩展）、登录及助手消费共享深色变量；工作空间悬浮聊天样式由 assistant-widget.css 管理，客户详情不设独立聊天入口；详情自动更新状态独立显示，主导航与跨页外壳由 workspace.css 统一。
-关联：index.html 与 app.js 使用相同语义类名；notice.js 管理底部提示计时，提示支持悬停阅读与手动关闭，避免遮挡顶部邮箱入口。
-目录：无函数或类声明；样式区域为基础、账号、邮箱设置、列表、详情、登录与对话框、响应式和智能筛选。
-变量索引：消费 design-system.css 的正文、边界、强调及语义色，无本地变量。 */
+/* Responsibility: Define layout, states, and responsive styles for the lightweight sales workspace.
+Implementation: Mail settings display connected accounts separately; mail cards, conversational details (extended by channel-detail.css), login, and the assistant consume shared dark-theme variables. assistant-widget.css controls floating workspace chat; customer details have no separate chat entry. Detail update status is displayed independently; workspace.css unifies navigation and the cross-page shell.
+Relationships: index.html and app.js share semantic class names; notice.js times bottom notifications, which pause on hover and allow manual dismissal without obscuring the top mailbox entry.
+Directory: No function or class declarations; style sections cover foundations, accounts, mail settings, lists, details, login/dialogs, responsive layout, and smart filtering.
+Variable index: Uses text, border, accent, and semantic colors from design-system.css; no local variables. */
 * {
   box-sizing: border-box;
 }
@@ -1538,7 +1538,7 @@ dialog .fine {
 
 }
 
-/* 客户详情操作允许换行；工作空间助手由共享悬浮入口提供。 */
+/* Customer-detail actions may wrap; the shared floating entry provides the workspace assistant. */
 .detail-title .actions {
   flex-wrap: wrap;
 }
@@ -1554,7 +1554,7 @@ dialog .fine {
   min-height: 24px;
 }
 
-/* 筛选组件：说明与表单共享同一表面；选项与筛选提交契约保持原样。 */
+/* Filter component: Help text and form share one surface; preserve option and submission contracts. */
 .filter-heading {
   display: flex;
   align-items: center;
@@ -1603,7 +1603,7 @@ dialog .fine {
 
 }
 
-/* 设置与授权分离：账号管理始终在正常页面内，窄屏操作按钮换行。 */
+/* Separate settings from authorization: Account management stays on a regular page; action buttons wrap on narrow screens. */
 .email-settings-page { max-width: 1250px; }
 .email-settings-page .page-heading { align-items: flex-start; flex-wrap: wrap; gap: 18px; }
 .email-settings-page .page-heading .muted { max-width: 650px; line-height: 1.7; }

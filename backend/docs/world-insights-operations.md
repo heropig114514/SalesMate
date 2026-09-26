@@ -1,56 +1,43 @@
-# 全球洞察采集服务运维
+# Global Insights Collector Operations
 
-后端存储和页面适配不自动启用采集。Agent 入口、来源、模型参数和定时配置保持原实现；后端无需新增采集 HTTP 接口。正式部署按以下顺序进行。
+Backend storage and page integration do not enable collection automatically. The Agent entry point, sources, model parameters, and schedule retain existing implementation; no new backend collection HTTP interface is needed. Deploy in this order.
 
-1. 发布后端与前端静态资源，并按既有发布流程备份和迁移数据库。`sales.0009_shared_insights` 若报告重复，先由维护者核对冲突组；迁移不擅自删改数据。
-2. 使用固定采集账号，在已登录 Session 和 CSRF 保护下调用 `POST /api/v1/agent-tools/credentials/` 创建最小权限凭证。沿用既有授权接口，不使用 Agent Worker 凭证或扩大权限的预设。
+1. Deploy backend and frontend static assets, back up and migrate the database through the existing release process. If sales.0009_shared_insights reports duplicates, a maintainer first examines conflict groups; migration never deletes or changes data on its own.
+2. With the fixed collector account, create a minimum-permission credential through POST /api/v1/agent-tools/credentials/ under signed-in Session and CSRF protection. Reuse the authorization interface; do not use an Agent Worker credential or a broader preset.
 
-```json
-{
-  "name": "world-insights-collector",
-  "expires_in_hours": 720,
-  "allowed_tools": [
-    "world_news.list", "world_news.create",
-    "world_events.list", "world_events.create"
-  ]
-}
-```
+    {"name":"world-insights-collector","expires_in_hours":720,"allowed_tools":["world_news.list","world_news.create","world_events.list","world_events.create"]}
 
-3. 将返回的一次性 token 安全写入服务器 `/opt/salesmate/shared/world-insights.env`，变量名为 `SALESMATE_TOOLS_URL`（HTTPS 服务根地址）和 `SALESMATE_TOOLS_TOKEN`，仅服务账号可读；不写 Git、日志或终端共享输出。模型仍使用现有百炼环境配置，依赖使用仓库现有 `agent/requirements.txt`（包含 pycountry）。本地测试接口和生产地址不能混用。
-4. 先执行 `python -m agent.world_insights --dry-run` 核对来源和日期。它会访问来源、地理编码与模型，但不写后端，不能代替真实入库验证。
-5. 在发布服务器由部署维护者安装已有 service/timer：
+3. Store the returned one-time token securely in /opt/salesmate/shared/world-insights.env on the server, as SALESMATE_TOOLS_URL (HTTPS service root) and SALESMATE_TOOLS_TOKEN, readable only by the service account. Never write it to Git, logs, or shared terminal output. The model retains existing Bailian environment configuration; dependencies use repository agent/requirements.txt, including pycountry. Do not mix local test endpoints with production.
+4. Run python -m agent.world_insights --dry-run first to inspect sources and dates. It accesses sources, geocoding, and model but does not write backend and cannot replace actual persistence verification.
+5. A deployment maintainer installs the existing service/timer on the release server:
 
-```bash
-sudo install -m 644 agent/deploy/salesmate-world-insights.service /etc/systemd/system/
-sudo install -m 644 agent/deploy/salesmate-world-insights.timer /etc/systemd/system/
-sudo install -d -o salesmate -g salesmate -m 700 /opt/salesmate/shared/world-insights
-sudo install -d -m 755 /etc/systemd/system/salesmate-world-insights.service.d
-sudo install -m 644 backend/deploy/lightsail/world-insights-cache.conf /etc/systemd/system/salesmate-world-insights.service.d/cache.conf
-sudo systemctl daemon-reload
-sudo systemctl start salesmate-world-insights.service
-sudo journalctl -u salesmate-world-insights.service -n 100 --no-pager
-# 核对真实入库与 item_errors 后启用后续定时执行。
-sudo systemctl enable --now salesmate-world-insights.timer
-```
+    sudo install -m 644 agent/deploy/salesmate-world-insights.service /etc/systemd/system/
+    sudo install -m 644 agent/deploy/salesmate-world-insights.timer /etc/systemd/system/
+    sudo install -d -o salesmate -g salesmate -m 700 /opt/salesmate/shared/world-insights
+    sudo install -d -m 755 /etc/systemd/system/salesmate-world-insights.service.d
+    sudo install -m 644 backend/deploy/lightsail/world-insights-cache.conf /etc/systemd/system/salesmate-world-insights.service.d/cache.conf
+    sudo systemctl daemon-reload
+    sudo systemctl start salesmate-world-insights.service
+    sudo journalctl -u salesmate-world-insights.service -n 100 --no-pager
+    # Enable recurring execution only after verifying persistence and item_errors.
+    sudo systemctl enable --now salesmate-world-insights.timer
 
-timer 沿用每天 UTC 03:00、15:00 和最多 20 分钟随机延迟。首次真实运行会创建共享记录，需要在已准备好正式发布的环境执行；本文不是执行记录。
+The timer retains daily UTC 03:00 and 15:00 runs with random delay up to 20 minutes. The first real run creates shared records and must occur in a prepared production-release environment; this document is not an execution record.
 
-现有 `/opt/salesmate/shared` 是 root 管理的 0750 目录，服务账号不能在父目录创建缓存或 `.tmp` 文件。必须安装上述缓存路径 drop-in；仅创建一个可写 JSON 文件不足以支持 Agent 的同目录临时写入和原子替换。只为独立子目录授予写权限，不将整个 shared 目录开放给服务账号；Agent 源文件保持不变。
+/opt/salesmate/shared is root-managed mode 0750. The service account cannot create cache or .tmp files in its parent. Install the cache-path drop-in above: a writable JSON file alone cannot support Agent same-directory temporary writes and atomic replacement. Grant write permission only to the isolated subdirectory, never the full shared directory; Agent source remains unchanged.
 
-## 轮换与验收
+## Rotation and Acceptance
 
-- 凭证最多有效 720 小时。到期前由维护者为同一个采集账号创建新凭证，更新受保护文件；下一次 oneshot 启动读取新值，验证成功后撤销旧凭证。不要通过改为永久令牌或开放实验模式绕开到期。
-- 用 A 作为采集账号、B 作为普通员工，在 `LAB_OPEN_ACCESS=false` 下核对新闻列表/详情、活动列表/地图及 Tool 读取。B 能读公共事实，不能修改 A 的记录，也不能看到 A 私有商机 ID、客户和金额。owner_only 模式同样共享公共事实。
-- 监控 `news/events/source_successes/source_errors/item_errors` 和实际入库量。当前 Agent 部分失败可能退出 0，仅看 systemd 成功状态不够；跨账号同源竞争返回 409，不伪装成功。不要将无新记录直接视为故障，来源可能没有满足日期/地点条件的数据。
-- 活动原文、现场情况和建议为全员共享内容；私人客户备注不应录入这些字段。当前没有另设全局资讯管理员，更新/归档仍限 owner（实验模式例外）。
-- 采集账号的个人数据重置仍遵循既有 owner 删除规则；不要重置这个账号来轮换凭证。共享读取并不把记录所有权转移为无主公共数据。
+- Credentials last at most 720 hours. Before expiry, a maintainer creates a new credential for the same collector account and updates the protected file. The next oneshot reads it; revoke the old credential only after successful verification. Do not bypass expiry through permanent tokens or open laboratory mode.
+- With collector A and ordinary employee B, verify news list/detail, event list/map, and Tool reads under LAB_OPEN_ACCESS=false. B reads public facts but cannot modify A records or view A private opportunity IDs, customers, or amounts. owner_only mode also shares public facts.
+- Monitor news/events/source_successes/source_errors/item_errors and persisted-record count. Partial Agent failure can exit 0, so systemd success alone is insufficient. Same-source competition across accounts returns 409 and is not success. No new records is not automatically failure because sources can lack qualifying date/location data.
+- Event originals, event conditions, and recommendations are shared for all employees; do not enter private customer notes. There is no separate global-news administrator; update/archive remains owner-only except laboratory mode.
+- Collector-account personal-data reset retains existing owner-deletion rules. Do not reset it to rotate credentials. Shared reading does not make records ownerless public data.
 
-## 本机 PostgreSQL
+## Local PostgreSQL
 
-此工作区现有 PostgreSQL 位于 WSL `Ubuntu-24.04`。可用项目一键启动入口：
+This workspace PostgreSQL is in WSL Ubuntu-24.04. Start with:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -WslDistro Ubuntu-24.04
-```
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local.ps1 -WslDistro Ubuntu-24.04
 
-该入口会启动 Web 和配置适用的 Worker，详见 [本地开发](local-development.md)。只为测试启动数据库时，可执行 `wsl -d Ubuntu-24.04 -u root -- service postgresql start`，并在测试期间保持一个 WSL 会话；不需要改数据库地址或切换 SQLite。
+It starts Web and applicable configured Workers; see [Local Development](local-development.md). To start only the database for testing, run wsl -d Ubuntu-24.04 -u root -- service postgresql start and retain a WSL session. Do not change database address or switch to SQLite.

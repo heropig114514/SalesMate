@@ -1,16 +1,16 @@
-"""职责：为本地验收导入有明确标记的虚构销售业务数据。
-实现：锁定指定员工，在单个事务内创建独立客户、工作空间会话及关联记录，以审计批次清单保证重复运行不覆盖数据。
-关联：复用 sales 的关系校验、金额序列化与审计；这是开发夹具，不调用业务任务调度或外部服务。
-目录：
-- seed_demo：原子创建或读取已有验收批次。
-- seed_demo.save：校验并登记一条销售夹具记录。
-- Command：提供仅 DEBUG 可用的管理命令。
-- Command.add_arguments：要求明确指定数据归属员工。
-- Command.handle：检查环境和账号并输出批次清单。
-变量索引：
-- BATCH：固定验收批次键，避免重复导入。
-- PREFIX：所有可命名示例的可见标记。
-- Command.help：管理命令帮助说明。
+"""Responsibility: Import explicitly labeled fictional sales data for local acceptance checks.
+Implementation: Lock the selected employee and create independent companies, workspace conversations, and related records in one transaction; an audit batch manifest prevents repeat runs from overwriting data.
+Relationships: Reuse sales relation validation, monetary serialization, and audits; these development fixtures invoke neither business scheduling nor external services.
+Directory:
+- seed_demo: Atomically create or read an existing acceptance batch.
+- seed_demo.save: Validate and register one sales fixture record.
+- Command: Provide a DEBUG-only management command.
+- Command.add_arguments: Require an explicit employee owner.
+- Command.handle: Check environment/account and output the batch manifest.
+Variable index:
+- BATCH: Fixed acceptance batch key preventing duplicate imports.
+- PREFIX: Visible marker for all nameable examples.
+- Command.help: Management-command help text.
 """
 
 import json
@@ -34,11 +34,11 @@ BATCH = "sales-demo-v1"
 PREFIX = "【验收示例】"
 
 
-# 功能：创建一批独立的虚构验收记录。
-# 输入：`actor` 为已启用的普通员工；读取当前日期作为相对跟进时间基准。
-# 输出：包含实体 ID 清单和数量的字典，重复运行返回首次清单。
-# 逻辑：员工行锁串行化批次检查，会话无预选公司，所有记录与完成标记在同一事务提交；错误整批回滚。
-# 约束：仅 DEBUG 环境；不修改原有客户，不发信、不创建会议、不入队模型分析；状态是夹具情景而非真实交易证据。
+# Function: Create an independent fictional acceptance batch.
+# Inputs: `actor`: active ordinary employee; read the current date as the baseline for relative follow-up dates.
+# Outputs: Dictionary of entity IDs and counts; repeated runs return the original manifest.
+# Logic: An employee row lock serializes batch checks; conversations have no preselected company. Commit every record and completion marker together, rolling back the whole batch on error.
+# Constraints: DEBUG only; preserve existing companies, send no emails, create no meetings, and enqueue no model analyses. States describe fixture scenarios, not real transaction evidence.
 @transaction.atomic
 def seed_demo(actor):
     if not settings.DEBUG:
@@ -54,11 +54,11 @@ def seed_demo(actor):
     manifest = {}
     now = timezone.now()
 
-    # 功能：保存一条经过约束校验的虚构记录。
-    # 输入：`model` 为销售模型，`fields` 为夹具字段；读取外层 actor 与 manifest。
-    # 输出：已保存实例；校验错误传播至批次事务。
-    # 逻辑：先执行跨实体校验及模型校验，再登记 ID 和显式 fixture_created 审计。
-    # 约束：仅供本批次调用，不替代生产写入服务；绕开任务调度是夹具导入的明确边界。
+    # Function: Save one constraint-validated fictional record.
+    # Inputs: `model`: sales model; `fields`: fixture fields; read enclosing actor and manifest.
+    # Outputs: Saved instance; validation errors propagate to the batch transaction.
+    # Logic: Validate cross-entity relationships and the model, then register the ID and explicit fixture_created audit.
+    # Constraints: Only for this batch, not a replacement for production write services; bypassing scheduling is an explicit fixture-import boundary.
     def save(model, **fields):
         record = model(owner=actor, **fields)
         validate_record(record, actor, set(fields), creating=True)
@@ -221,13 +221,13 @@ def seed_demo(actor):
             )
             save(models.QuoteLine, quote=quote, **fields)
             save(models.OrderLine, order=order, **fields)
-        # 夹具先建立可编辑明细，再设定情景状态；报价无发送时间或外部 ID，禁止伪造外发成功。
+        # Create editable fixture details before setting scenario states; quotes have no sent timestamp or external ID, preventing fabricated send success.
         quote.status = "approved" if index % 2 == 0 else "draft"
         quote.save(update_fields=["status", "updated_at"])
         order.status = order_status
         order.confirmed_at = now if order_status in ("confirmed", "fulfilled") else None
         order.save(update_fields=["status", "confirmed_at", "updated_at"])
-        # 仅更新刚创建的虚构公司的交易投影；不调用会触发 Agent 调度的 sync_company。
+        # Update transaction projections only for newly created fictional companies; do not call sync_company, which schedules Agent work.
         company.tickets = [
             {
                 "ticket_id": str(ticket.pk),
@@ -302,25 +302,25 @@ def seed_demo(actor):
     return report
 
 
-# 功能：导入指定员工的本地验收数据。
-# 逻辑：命令入口只接受明确账号，将原子事务结果以 JSON 输出供后续定位。
-# 约束：重复执行不恢复已编辑或归档的示例；不创建账号、不清理既有数据。
+# Function: Import local acceptance data for a selected employee.
+# Logic: Accept only an explicit account and output the atomic transaction result as JSON for subsequent inspection.
+# Constraints: Repeat execution does not restore edited or archived examples; no account creation or existing-data cleanup.
 class Command(BaseCommand):
     help = "导入带标记的本地销售验收数据，不发送邮件或触发分析。"
 
-    # 功能：声明归属账号参数。
-    # 输入：`parser` 为 Django 命令行解析器。
-    # 输出：无；注册必填 username 参数。
-    # 逻辑：要求显式指定已有员工，避免将数据写入任意首个账号。
-    # 约束：不读取或输出员工凭证。
+    # Function: Declare the owner-account argument.
+    # Inputs: `parser`: Django command-line parser.
+    # Outputs: None; register required username.
+    # Logic: Require an explicitly selected existing employee rather than writing to an arbitrary first account.
+    # Constraints: Do not read or output employee credentials.
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True)
 
-    # 功能：解析员工并导入验收批次。
-    # 输入：`args` 为框架位置参数，`options` 包含 username 及标准命令选项。
-    # 输出：向 stdout 输出批次、实体清单及数量；失败以异常结束。
-    # 逻辑：先查询指定账号，业务写入全部委托 seed_demo 原子事务。
-    # 约束：不捕获数据库或校验错误为成功，不改变配置或跳过检查。
+    # Function: Resolve the employee and import the acceptance batch.
+    # Inputs: `args`: framework positional arguments; `options`: username and standard command options.
+    # Outputs: Write batch, entity manifest, and counts to stdout; failures terminate with exceptions.
+    # Logic: Query the selected account first and delegate all business writes to the seed_demo atomic transaction.
+    # Constraints: Do not treat database/validation errors as success, change configuration, or skip checks.
     def handle(self, *args, **options):
         try:
             actor = get_user_model().objects.get(username=options["username"])

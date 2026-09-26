@@ -1,21 +1,21 @@
-"""职责：验证实验共享的跨账号读取、维护能力标记、精确批次边界、归属与 GET 接口边界。
-实现：隔离 PostgreSQL 内创建两组真实关联夹具和普通非夹具数据，使用实际 HTTP 视图。
-关联：sales.experiments、seed_kg_lab 与既有业务权限；不访问外部服务，不写真实数据库。
-目录：
-- ExperimentTests：实验共享集成测试。
-- ExperimentTests.setUp：建立临时文件、完整夹具及非归属读取者。
-- ExperimentTests.url：生成当前批次的表路径。
-- ExperimentTests.test_cross_account_all_tables_and_ownership：所有表可读且保留归属。
-- ExperimentTests.test_only_exact_batch_rows_are_shared：其他批次及伪造前缀不授予权限。
-- ExperimentTests.test_mutations_and_original_write_paths_denied：拒绝写入及动作执行。
-- ExperimentTests.test_anonymous_denied_and_page_available：匿名不能获取数据且站点有实验入口。
-- ExperimentTests.test_changed_or_missing_records_fail_closed：内容漂移及缺失明确失败。
-- ExperimentTests.test_filters_and_pagination：搜索、归属与页码边界。
-- ExperimentTests.test_export_keeps_lineage_without_credentials：导出完整关系并排除凭据。
-- ExperimentTests.test_documents_and_attachment_integrity：文档可下载且破坏附件被拒绝。
-- ExperimentTests.test_removed_manifest_revokes_access：清单撤销立即收回读取能力。
-变量索引：
-- 无
+"""Responsibility: Validate cross-account reads under laboratory sharing, maintenance capability flags, exact batch boundaries, ownership, and GET endpoint boundaries.
+Implementation: Create two groups of real related fixtures and ordinary non-fixture data in isolated PostgreSQL, using actual HTTP views.
+Relationships: sales.experiments, seed_kg_lab, and existing business permissions; does not access external services or write a real database.
+Directory:
+- ExperimentTests: Laboratory-sharing integration tests.
+- ExperimentTests.setUp: Create temporary files, complete fixtures, and a non-owner reader.
+- ExperimentTests.url: Generate table paths for the current batch.
+- ExperimentTests.test_cross_account_all_tables_and_ownership: All tables are readable and retain ownership.
+- ExperimentTests.test_only_exact_batch_rows_are_shared: Other batches and forged prefixes are not authorized.
+- ExperimentTests.test_mutations_and_original_write_paths_denied: Reject writes and action execution.
+- ExperimentTests.test_anonymous_denied_and_page_available: Anonymous users cannot retrieve data, while the site provides a laboratory entry point.
+- ExperimentTests.test_changed_or_missing_records_fail_closed: Content drift and missing content fail explicitly.
+- ExperimentTests.test_filters_and_pagination: Search, ownership, and page-number boundaries.
+- ExperimentTests.test_export_keeps_lineage_without_credentials: Export complete relationships while excluding credentials.
+- ExperimentTests.test_documents_and_attachment_integrity: Documents can be downloaded and corrupted attachments are rejected.
+- ExperimentTests.test_removed_manifest_revokes_access: Revoking the manifest immediately withdraws read capability.
+Variable index:
+- None
 """
 
 import json
@@ -34,15 +34,15 @@ from apps.sales.management.commands.seed_kg_lab import run_seed, verify_manifest
 from apps.sales.models import AuditEvent, Product
 
 
-# 功能：验证实验数据授权的正反例。
-# 逻辑：每项测试使用隔离事务及临时附件目录，普通读取者与导入者不同。
-# 约束：未模拟数据库授权或投影；所有样例为虚构，不执行 Worker。
+# Function: Validate positive and negative cases for laboratory-data authorization.
+# Logic: Each test uses an isolated transaction and temporary attachment directory; the ordinary reader differs from the importer.
+# Constraints: Does not mock database authorization or projections; all samples are fictional and no Worker runs.
 class ExperimentTests(TestCase):
-    # 功能：创建独立的实验上下文。
-    # 输入：无外部参数，读取测试数据库与临时目录。
-    # 输出：owner、reader、manifest、base、client 等实例状态。
-    # 逻辑：真实生成两组 44 表数据，并创建不在清单中的客户作为越权反例。
-    # 约束：测试结束由框架回滚数据并删除临时文件。
+    # Function: Create an independent laboratory context.
+    # Inputs: No external inputs; reads the test database and temporary directory.
+    # Outputs: Instance state includes owner, reader, manifest, base, client, and related values.
+    # Logic: Actually generate two sets of 44-table data and create an out-of-manifest company as an unauthorized counterexample.
+    # Constraints: The framework rolls back data and deletes temporary files after the test.
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory(prefix="kg-read-test-")
         self.addCleanup(self.folder.cleanup)
@@ -57,19 +57,19 @@ class ExperimentTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.reader)
 
-    # 功能：生成当前批次的表路径。
-    # 输入：`label` 模型名。
-    # 输出：相对 URL 字符串。
-    # 逻辑：只用于测试构造已知路径。
-    # 约束：不触发 HTTP 调用。
+    # Function: Generate table paths for the current batch.
+    # Inputs: `label` is the model name.
+    # Outputs: Relative URL string.
+    # Logic: Used only by tests to construct known paths.
+    # Constraints: Does not initiate HTTP calls.
     def url(self, label):
         return self.base + label + "/"
 
-    # 功能：验证全部 44 表跨账号可读且归属保持原值。
-    # 输入：setUp 创建的夹具与第二个普通账号。
-    # 输出：断言表数量、每表行数、归属及原记录指纹。
-    # 逻辑：逐表通过真实 API 读取，确认每条记录标记真实可写能力和虚构。
-    # 约束：不把普通权限测试等同于真实浏览器视觉验证。
+    # Function: Validate that all 44 tables are cross-account readable and ownership values remain unchanged.
+    # Inputs: Fixtures created by setUp and a second ordinary account.
+    # Outputs: Assert table count, row count per table, ownership, and original record fingerprints.
+    # Logic: Read every table through the actual API and confirm every record is marked writable in reality and fictional.
+    # Constraints: Does not equate ordinary permission testing with real browser visual verification.
     def test_cross_account_all_tables_and_ownership(self):
         summary = self.client.get("/api/v1/experiments/").data["batches"][0]
         self.assertEqual(len(summary["tables"]), 44)
@@ -83,11 +83,11 @@ class ExperimentTests(TestCase):
         self.assertEqual({row["owner"]["username"] for row in companies}, {self.owner.username})
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])
 
-    # 功能：验证清单外数据、其他批次及凭据表不被开放。
-    # 输入：名称伪装成批次的普通客户及未批准路径。
-    # 输出：精确清单外客户不出现，未知批次和模型返回 404。
-    # 逻辑：按主键查询伪装数据，覆盖字段名和名称前缀无法替代授权。
-    # 约束：不通过正则扩大读取范围。
+    # Function: Validate that out-of-manifest data, other batches, and credential tables are not exposed.
+    # Inputs: An ordinary company with a batch-like name and an unapproved path.
+    # Outputs: The exact out-of-manifest company does not appear; unknown batches and models return 404.
+    # Logic: Query forged data by primary key, covering the fact that field names and name prefixes cannot replace authorization.
+    # Constraints: Does not broaden read scope through regular expressions.
     def test_only_exact_batch_rows_are_shared(self):
         response = self.client.get(self.url("crm.Company"), {"pk": str(self.private.pk)})
         self.assertEqual(response.data["count"], 0)
@@ -96,11 +96,11 @@ class ExperimentTests(TestCase):
         self.assertEqual(self.client.get("/api/v1/experiments/KGSEED_20260921_02/crm.Company/").status_code, 404)
         self.assertEqual(self.client.get(f"/api/v1/companies/{self.private.pk}/").status_code, 404)
 
-    # 功能：验证实验接口与原有跨账号写入口均拒绝变更。
-    # 输入：其他账号读取到的夹具主键。
-    # 输出：写方法返回 405，原业务编辑和分析返回 404，夹具指纹不变。
-    # 逻辑：同时覆盖一般记录、订单动作和模型分析入口。
-    # 约束：不使用真实外部动作提供者。
+    # Function: Validate that both laboratory endpoints and existing cross-account write endpoints reject changes.
+    # Inputs: Fixture primary key visible to another account.
+    # Outputs: Write methods return 405; original business editing and analysis return 404; fixture fingerprints remain unchanged.
+    # Logic: Covers ordinary records, order actions, and model-analysis entries.
+    # Constraints: Does not use a real external action provider.
     def test_mutations_and_original_write_paths_denied(self):
         for method in ("post", "patch", "put", "delete"):
             response = getattr(self.client, method)(self.url("sales.Product"), {}, format="json")
@@ -111,25 +111,25 @@ class ExperimentTests(TestCase):
         self.assertEqual(self.client.post(f"/api/v1/companies/{company}/analyze/").status_code, 404)
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])
 
-    # 功能：验证匿名被拒绝且站点可提供实验页面。
-    # 输入：未认证 APIClient 与普通已认证账号。
-    # 输出：API 返回 403，HTML 页面包含只读列表及脚本入口。
-    # 逻辑：页面骨架可公开，但没有通过接口认证就无法读取正文。
-    # 约束：不将页面响应视为已完成浏览器脚本测试。
+    # Function: Validate anonymous rejection while the site can provide a laboratory page.
+    # Inputs: Unauthenticated APIClient and an ordinary authenticated account.
+    # Outputs: API returns 403; the HTML page contains a read-only list and script entry point.
+    # Logic: The page shell may be public, but content cannot be read without API authentication.
+    # Constraints: Does not treat the page response as completed browser-script testing.
     def test_anonymous_denied_and_page_available(self):
         anonymous = APIClient()
         self.assertEqual(anonymous.get("/api/v1/experiments/").status_code, 403)
         self.assertEqual(anonymous.get(self.base + "export/").status_code, 403)
-        # 测试临时 BASE_DIR 只影响夹具文件，模板加载器仍指向配置初始化时的真实模板目录。
+        # The temporary BASE_DIR in tests affects only fixture files; template loaders still use the real template directory initialized by configuration.
         page = self.client.get("/experiments/")
         self.assertContains(page, "experiment-rows")
         self.assertContains(page, "experiments.js")
 
-    # 功能：验证清单行修改或缺失时不再返回内容。
-    # 输入：在测试事务中修改一条产品，再删除无外部依赖的通知。
-    # 输出：两个表读取均返回 409，响应不含被替换正文。
-    # 逻辑：分别覆盖摘要变化与数量变化，不自动刷新指纹。
-    # 约束：测试修改由事务回滚，不更改原生成参数。
+    # Function: Validate that content is no longer returned when a manifest row changes or is missing.
+    # Inputs: Modify one product in the test transaction, then delete a notification that has no external dependency.
+    # Outputs: Both table reads return 409 and their responses omit the replaced body.
+    # Logic: Separately cover summary and quantity changes without automatically refreshing fingerprints.
+    # Constraints: Test modifications are rolled back by the transaction and do not alter original generation parameters.
     def test_changed_or_missing_records_fail_closed(self):
         product = Product.objects.filter(owner=self.owner).first()
         Product.objects.filter(pk=product.pk).update(name="new-private-content")
@@ -139,11 +139,11 @@ class ExperimentTests(TestCase):
         apps.get_model("sales.Notification").objects.filter(owner=self.owner).first().delete()
         self.assertEqual(self.client.get(self.url("sales.Notification")).status_code, 409)
 
-    # 功能：验证筛选和页码契约。
-    # 输入：归属用户名、文本及非法分页参数。
-    # 输出：正确筛选、稳定分页与受控 400。
-    # 逻辑：先在已授权行集上筛选再分页，不从全库搜索。
-    # 约束：仅校验请求参数，不修改模型参数或数据划分。
+    # Function: Validate filtering and page-number contracts.
+    # Inputs: Ownership username, text, and invalid pagination parameters.
+    # Outputs: Correct filtering, stable pagination, and controlled 400 response.
+    # Logic: Filter the authorized row set before pagination; do not search the entire database.
+    # Constraints: Validate request parameters only; do not modify model parameters or data splits.
     def test_filters_and_pagination(self):
         result = self.client.get(self.url("crm.Company"), {"owner": self.owner.username, "page_size": 1}).data
         self.assertEqual(result["count"], 2)
@@ -153,11 +153,11 @@ class ExperimentTests(TestCase):
         for params in ({"page": 0}, {"page_size": 201}, {"page": "bad"}):
             self.assertEqual(self.client.get(self.url("crm.Company"), params).status_code, 400)
 
-    # 功能：验证完整导出保留关系与模拟声明且排除登录凭据。
-    # 输入：当前批次完整导出请求。
-    # 输出：44 表、120 行、精确血缘目标以及下载头。
-    # 逻辑：检查来源边所指邮件与抽取主键均出现在导出中。
-    # 约束：向量和评分仍为夹具值，不声称是真实模型效果。
+    # Function: Validate that complete export retains relationships and synthetic declarations while excluding login credentials.
+    # Inputs: Complete-export request for the current batch.
+    # Outputs: 44 tables, 120 rows, exact lineage targets, and download headers.
+    # Logic: Check that the emails and extraction primary keys targeted by source edges both appear in the export.
+    # Constraints: Vectors and scores remain fixture values and do not claim real model performance.
     def test_export_keeps_lineage_without_credentials(self):
         response = self.client.get(self.base + "export/")
         self.assertEqual(response.status_code, 200)
@@ -175,11 +175,11 @@ class ExperimentTests(TestCase):
         self.assertTrue(data["synthetic"])
         self.assertEqual(data["scenario_links"], self.manifest["truth"])
 
-    # 功能：验证两类文件可读及附件内容核验。
-    # 输入：已批准的文档和附件主键；临时损坏一个夹具附件。
-    # 输出：正常下载含原内容，损坏文件 409，非清单主键 404。
-    # 逻辑：文件读取必须同时通过模型行指纹和文件摘要核验。
-    # 约束：只操作测试临时目录，绝不访问共享服务器文件。
+    # Function: Validate that two file types are readable and attachment content is verified.
+    # Inputs: Approved document and attachment primary keys; temporarily corrupt one fixture attachment.
+    # Outputs: A normal download contains original content, a corrupted file returns 409, and an out-of-manifest primary key returns 404.
+    # Logic: File reading must verify both the model-row fingerprint and file digest.
+    # Constraints: Operate only on the temporary test directory and never access shared server files.
     def test_documents_and_attachment_integrity(self):
         for label in ("accounts.SetupDocument", "sales.Attachment"):
             pk = next(row["pk"] for row in self.manifest["rows"] if row["model"] == label)
@@ -192,11 +192,11 @@ class ExperimentTests(TestCase):
         self.assertEqual(self.client.get(self.url("sales.Attachment") + pk + "/download/").status_code, 409)
         self.assertEqual(self.client.get(self.url("sales.Attachment") + "not-a-uuid/download/").status_code, 404)
 
-    # 功能：验证清单撤销后立即停止跨账号读取。
-    # 输入：先将清单标记为文件清理中，再删除当前批次的发布清单事件。
-    # 输出：清理中返回 409，清单删除后目录为空、原表路径返回 404。
-    # 逻辑：每次请求重新读取清单及清理状态，不使用可能过时的权限缓存。
-    # 约束：只在测试事务中删除清单，实际清理由原命令负责。
+    # Function: Validate that revoking a manifest immediately stops cross-account reads.
+    # Inputs: First mark the manifest as file-cleanup in progress, then delete the release-manifest event for the current batch.
+    # Outputs: Cleanup in progress returns 409; after manifest deletion the directory is empty and original table paths return 404.
+    # Logic: Each request rereads the manifest and cleanup state rather than using a possibly stale authorization cache.
+    # Constraints: Delete the manifest only in the test transaction; the real command performs actual cleanup.
     def test_removed_manifest_revokes_access(self):
         entry = AuditEvent.objects.get(event="kg_synthetic_batch_v1", object_id=APPROVED_BATCHES[0])
         entry.changes["cleanup_state"] = "files_pending"

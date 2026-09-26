@@ -1,8 +1,8 @@
-/* 职责：0919 产品要求的 Channel 会话布局与 Evidence 来源预览。
- * 实现：桌面邮件、客户画像和可展开助手三栏；收发气泡分侧，移动端单列，预览浮层限制在视口内。
- * 关联：app.js 生成详情与方向类，evidence-preview.js 控制预览；assistant-widget 保留唯一会话及窄屏模态行为。
- * 目录：无函数或类；区域为邮件、回复草稿、画像、助手位置、来源预览与响应式。
- * 变量索引：--channel-assistant-width 为桌面助手宽度，其他颜色及间距来自共享主题。 */
+/* Responsibility: Provide the 0919 Channel conversation layout and Evidence source previews.
+ * Implementation: Desktop columns for mail, customer profile, and expandable assistant; separate incoming/outgoing bubbles, single-column mobile layout, and viewport-bounded previews.
+ * Relationships: app.js generates details/direction classes; evidence-preview.js controls previews; assistant-widget retains the single conversation and narrow-screen modal behavior.
+ * Directory: No functions or classes; sections cover mail, reply drafts, profile, assistant placement, source previews, and responsive layout.
+ * Variable index: --channel-assistant-width defines desktop assistant width; other colors/spacing come from the shared theme. */
 .channel-detail { --channel-assistant-width: clamp(280px, 25vw, 400px); }
 .channel-detail .detail-page { padding: 18px 24px 32px; max-width: none; }
 .channel-detail .detail-title { gap: 12px; margin: 0 0 12px; }

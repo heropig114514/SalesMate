@@ -1,57 +1,57 @@
-"""职责：按请求编排客户与共享实验数据工具调用，核验模型回答引用。
-实现：实时工具目录、固定候选集合、原有读取与上下文预算共同约束模型调用。
-关联：DjangoBackendClient 提供请求绑定 HTTP；workspace-chat Skill 定义选择规则，后端持久化证据。
-目录：
-- ChatValidationError：表示工作空间契约校验失败。
-- _nonblank：读取非空文本。
-- _keys：核对封闭对象字段。
-- _recognizable_request_id：提取可识别的请求 ID。
-- _source：校验四字段来源。
-- parse_conversation_request：解析领取的工作空间请求。
-- parse_answer_context：解析冻结的请求上下文。
-- trim_recent_history：按字符预算保留近期历史。
-- trim_context_items：裁剪初始知识输入。
-- _decode_json_object：解析无重复键的 JSON 对象。
-- _decode_json_object.unique：拒绝重复 JSON 字段。
-- parse_model_candidate：验证回答引用并重排编号。
-- parse_model_candidate.replace_marker：替换正文引用编号。
-- stable_failure_result：建立稳定失败回报。
-- _diagnostic_excerpt：生成有限错误摘要。
-- _lexical_units：提取片段匹配单元。
-- _is_direct_tool_action：识别直接业务操作请求。
-- bailian_chat_provider：调用百炼生成一次 JSON 回答。
-- _workspace_failure：生成当前工作空间版本失败结果。
-- _workspace_arguments：验证固定读取及实验维护工具及模型参数。
-- _workspace_uuid：校验 UUID 字符串。
-- _workspace_catalog：解析请求实际发布的数据工具目录。
-- _workspace_schema_arguments：核对参数键与实时 Schema。
-- _workspace_decision：解析模型动作。
-- _workspace_tool_result：校验读取回执并生成提示摘要。
-- _workspace_append_evidence：追加不同身份的读取证据。
-- _workspace_excerpt：截取与问题相关的原文片段。
-- _workspace_prompt_evidence：选择预算内的来源。
-- answer_workspace_request：处理工作空间问题和读取及实验维护工具循环。
-- _chat_report_is_saved：核对响应丢失后的权威终态。
-- process_chat_once：领取并处理至多一个聊天请求。
-变量索引：
-- WORKSPACE_CHAT_PROMPT_VERSION：实际加载的提示词版本。
-- _CITATION_FIELDS：引用元数据契约。
-- _CITATION_MARKER：正文数字引用正则。
-- _CONTEXT_FIELDS：上下文响应字段契约。
-- _FAILURE_MESSAGES：稳定失败码和文案。
-- _HISTORY_CHARACTER_BUDGET：近期历史字符预算。
-- _NONSTANDARD_SOURCE_TAG：旧式非标准引用标签正则。
-- _REQUEST_FIELDS：领取请求五字段契约。
-- _SOURCE_FIELDS：来源四字段契约。
-- _WORKSPACE_CHAT_SKILL：工作空间提示及既定模型输出预算。
-- _WORKSPACE_DETAIL_EXCERPT_CHARACTERS：单条客户详情节选预算。
-- _WORKSPACE_MAX_EVIDENCE_ITEMS：模型展示来源最多 12 条。
-- _WORKSPACE_MAX_PROMPT_CHARACTERS：来源正文总字符预算。
-- _WORKSPACE_MAX_SEARCH_PAGE_SIZE：模型分页读取上限 20。
-- _WORKSPACE_MAX_TOOL_READS：每次回答最多六次读取。
-- _WORKSPACE_OTHER_EXCERPT_CHARACTERS：其他来源单条节选预算。
-- __all__：公开的工作空间解析与执行符号。
-- logger：工作流阶段及耗时日志。
+"""Responsibility: Orchestrate request-scoped customer and shared experiment tools, validating model answer citations.
+Implementation: Constrain model calls with live tool catalogs, a fixed candidate set, and existing read/context budgets.
+Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
+Directory:
+- ChatValidationError: Represent workspace contract validation failure.
+- _nonblank: Read nonempty text.
+- _keys: Validate fields of a closed object.
+- _recognizable_request_id: Extract a recognizable request ID.
+- _source: Validate a four-field source.
+- parse_conversation_request: Parse a claimed workspace request.
+- parse_answer_context: Parse frozen request context.
+- trim_recent_history: Retain recent history within a character budget.
+- trim_context_items: Trim initial knowledge input.
+- _decode_json_object: Parse a JSON object without duplicate keys.
+- _decode_json_object.unique: Reject duplicate JSON fields.
+- parse_model_candidate: Validate answer citations and renumber them.
+- parse_model_candidate.replace_marker: Replace citation numbers in the answer body.
+- stable_failure_result: Build a stable failure report.
+- _diagnostic_excerpt: Generate a bounded error summary.
+- _lexical_units: Extract snippet-matching units.
+- _is_direct_tool_action: Identify direct business-operation requests.
+- bailian_chat_provider: Invoke Bailian to generate one JSON answer.
+- _workspace_failure: Generate a failure result for the current workspace version.
+- _workspace_arguments: Validate fixed read/experiment maintenance tools and model arguments.
+- _workspace_uuid: Validate a UUID string.
+- _workspace_catalog: Parse the data tool catalog actually published for the request.
+- _workspace_schema_arguments: Validate argument keys against the live schema.
+- _workspace_decision: Parse a model action.
+- _workspace_tool_result: Validate a read receipt and generate a prompt summary.
+- _workspace_append_evidence: Append read evidence with distinct identities.
+- _workspace_excerpt: Extract original text relevant to the question.
+- _workspace_prompt_evidence: Select sources within budget.
+- answer_workspace_request: Process a workspace question and the read/experiment maintenance tool loop.
+- _chat_report_is_saved: Check the authoritative terminal state after a lost response.
+- process_chat_once: Claim and process at most one chat request.
+Variable index:
+- WORKSPACE_CHAT_PROMPT_VERSION: Prompt version actually loaded.
+- _CITATION_FIELDS: Citation metadata contract.
+- _CITATION_MARKER: Regular expression for numeric body citations.
+- _CONTEXT_FIELDS: Context response field contract.
+- _FAILURE_MESSAGES: Stable failure codes and messages.
+- _HISTORY_CHARACTER_BUDGET: Recent history character budget.
+- _NONSTANDARD_SOURCE_TAG: Regular expression for legacy nonstandard citation tags.
+- _REQUEST_FIELDS: Five-field claimed-request contract.
+- _SOURCE_FIELDS: Four-field source contract.
+- _WORKSPACE_CHAT_SKILL: Workspace prompt and established model output budget.
+- _WORKSPACE_DETAIL_EXCERPT_CHARACTERS: Excerpt budget for each customer detail.
+- _WORKSPACE_MAX_EVIDENCE_ITEMS: Maximum of 12 sources displayed to the model.
+- _WORKSPACE_MAX_PROMPT_CHARACTERS: Total source-body character budget.
+- _WORKSPACE_MAX_SEARCH_PAGE_SIZE: Model pagination read limit of 20.
+- _WORKSPACE_MAX_TOOL_READS: At most six reads per answer.
+- _WORKSPACE_OTHER_EXCERPT_CHARACTERS: Per-source excerpt budget for other sources.
+- __all__: Public workspace parsing and execution symbols.
+- logger: Workflow stage and timing logs.
 """
 
 from __future__ import annotations
@@ -102,40 +102,40 @@ _NONSTANDARD_SOURCE_TAG = re.compile(
 logger = logging.getLogger("salesmate.chat")
 
 
-# 功能：表示工作空间契约校验失败。
-# 逻辑：由调用方转成阶段失败，不隐藏解析错误。
-# 约束：只标记验证失败，不执行 I/O。
+# Function: Represent workspace contract validation failure.
+# Logic: Callers convert this to a stage failure without hiding parsing errors.
+# Constraints: Marks validation failure only; performs no I/O.
 class ChatValidationError(ValueError):
-    """请求、来源或模型输出不符合工作空间聊天契约。"""
+    """Request, source, or model output violates the workspace chat contract."""
 
 
-# 功能：读取非空文本。
-# 输入：`value` 待校验文本、`path` 错误消息中的字段路径。
-# 输出：校验字符串类型与去空白后非空，返回原字符串。
-# 逻辑：校验字符串类型与去空白后非空，返回原字符串。
-# 约束：非法值抛出 ChatValidationError。
+# Function: Read nonempty text.
+# Inputs: `value`: text to validate; `path`: field path in error messages.
+# Outputs: Validate string type and nonempty stripped content, returning the original string.
+# Logic: Validate string type and nonempty stripped content, returning the original string.
+# Constraints: Invalid values raise ChatValidationError.
 def _nonblank(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ChatValidationError(f"{path} must be a nonempty string.")
     return value.strip()
 
 
-# 功能：核对封闭对象字段。
-# 输入：`value` 待校验对象、`expected` 允许且必需的键集合、`path` 错误字段路径。
-# 输出：要求 Mapping 且键集合与 expected 完全一致，返回原对象。
-# 逻辑：要求 Mapping 且键集合与 expected 完全一致，返回原对象。
-# 约束：拒绝缺失及多余字段。
+# Function: Validate fields of a closed object.
+# Inputs: `value`: object to validate; `expected`: allowed and required keys; `path`: error field path.
+# Outputs: Require a Mapping whose keys exactly match expected; return the original object.
+# Logic: Require a Mapping whose keys exactly match expected; return the original object.
+# Constraints: Reject missing and extra fields.
 def _keys(value: object, expected: set[str], path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or set(value) != expected:
         raise ChatValidationError(f"{path} fields must match the contract exactly.")
     return value
 
 
-# 功能：提取可识别的请求 ID。
-# 输入：`value` 可能无效的领取请求对象。
-# 输出：对象含非空字符串时返回 ID，否则返回 None。
-# 逻辑：对象含非空字符串时返回 ID，否则返回 None。
-# 约束：只用于失败归属，不证明请求已获授权。
+# Function: Extract a recognizable request ID.
+# Inputs: `value`: potentially invalid claimed request object.
+# Outputs: Return its ID if it contains a nonempty string; otherwise return None.
+# Logic: Return its ID if it contains a nonempty string; otherwise return None.
+# Constraints: Used only for failure attribution, not proof of request authorization.
 def _recognizable_request_id(value: object) -> str | None:
     if not isinstance(value, Mapping):
         return None
@@ -143,11 +143,11 @@ def _recognizable_request_id(value: object) -> str | None:
     return request_id.strip() if isinstance(request_id, str) and request_id.strip() else None
 
 
-# 功能：校验四字段来源。
-# 输入：`value` 待校验来源对象、`path` 错误字段路径。
-# 输出：校验元数据非空及正文为字符串，返回来源字典。
-# 逻辑：校验元数据非空及正文为字符串，返回来源字典。
-# 约束：保留正文原值，不生成新证据。
+# Function: Validate a four-field source.
+# Inputs: `value`: source object to validate; `path`: error field path.
+# Outputs: Validate nonempty metadata and a string body, returning a source dictionary.
+# Logic: Validate nonempty metadata and a string body, returning a source dictionary.
+# Constraints: Preserve the original body without generating new evidence.
 def _source(value: object, path: str) -> dict[str, str]:
     item = _keys(value, _SOURCE_FIELDS, path)
     content = item["content"]
@@ -159,13 +159,13 @@ def _source(value: object, path: str) -> dict[str, str]:
     }
 
 
-# 功能：解析领取的工作空间请求。
-# 输入：`value` 后端领取接口返回的五字段对象。
-# 输出：核对五字段及历史角色，返回规范化请求字典。
-# 逻辑：核对五字段及历史角色，返回规范化请求字典。
-# 约束：拒绝预选公司及多余字段。
+# Function: Parse a claimed workspace request.
+# Inputs: `value`: five-field object returned by the backend claim endpoint.
+# Outputs: Validate the five fields and history roles, returning a normalized request dictionary.
+# Logic: Validate the five fields and history roles, returning a normalized request dictionary.
+# Constraints: Reject preselected companies and extra fields.
 def parse_conversation_request(value: object) -> dict[str, Any]:
-    """解析后端领取的工作空间请求。"""
+    """Parse a workspace request claimed from the backend."""
     request = _keys(value, _REQUEST_FIELDS, "request")
     history = request["recent_history"]
     if not isinstance(history, list):
@@ -188,16 +188,16 @@ def parse_conversation_request(value: object) -> dict[str, Any]:
     }
 
 
-# 功能：解析冻结的请求上下文。
-# 输入：`value` 后端冻结上下文；`expected_request_id`、`expected_scope` 默认 None 表示不额外核对对应预期值。
-# 输出：核对请求和范围、来源一致性与状态，返回上下文字典。
-# 逻辑：核对请求和范围、来源一致性与状态，返回上下文字典。
-# 约束：同一来源元数据不能对应不同正文。
+# Function: Parse frozen request context.
+# Inputs: `value`: backend-frozen context; `expected_request_id` and `expected_scope` default to None, disabling the corresponding extra expected-value check.
+# Outputs: Validate request, scope, source consistency, and status, returning a context dictionary.
+# Logic: Validate request, scope, source consistency, and status, returning a context dictionary.
+# Constraints: Identical source metadata cannot identify different bodies.
 def parse_answer_context(
     value: object, *, expected_request_id: str | None = None,
     expected_scope: str | None = None,
 ) -> dict[str, Any]:
-    """解析后端冻结的上下文；资料来源必须保持本次请求内唯一。"""
+    """Parse backend-frozen context; sources must remain unique within this request."""
     context = _keys(value, _CONTEXT_FIELDS, "answer_context")
     request_id = _nonblank(context["request_id"], "answer_context.request_id")
     if expected_request_id is not None and request_id != expected_request_id:
@@ -236,11 +236,11 @@ def parse_answer_context(
     }
 
 
-# 功能：按字符预算保留近期历史。
-# 输入：`value` 已经过角色与正文验证的近期消息数组。
-# 输出：从最早消息开始剔除，返回剩余消息列表。
-# 逻辑：从最早消息开始剔除，返回剩余消息列表。
-# 约束：不修改原列表或既定历史预算。
+# Function: Retain recent history within a character budget.
+# Inputs: `value`: recent-message array with roles and bodies already validated.
+# Outputs: Remove earliest messages first and return the remaining list.
+# Logic: Remove earliest messages first and return the remaining list.
+# Constraints: Do not change the original list or established history budget.
 def trim_recent_history(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         raise ChatValidationError("recent_history must be an array.")
@@ -250,13 +250,13 @@ def trim_recent_history(value: object) -> list[dict[str, str]]:
     return retained
 
 
-# 功能：裁剪初始知识输入。
-# 输入：`customer_context` 客户来源、`internal_knowledge` 内部知识、`external_knowledge` 外部知识数组。
-# 输出：按顺序选最多 12 条，超过 2000 字时加节选标记，返回三组来源。
-# 逻辑：按顺序选最多 12 条，超过 2000 字时加节选标记，返回三组来源。
-# 约束：不修改后端原始证据。
+# Function: Trim initial knowledge input.
+# Inputs: `customer_context`: customer sources; `internal_knowledge`: internal knowledge; `external_knowledge`: external knowledge arrays.
+# Outputs: Select at most 12 sources in order, add excerpt markers beyond 2000 characters, and return three source groups.
+# Logic: Select at most 12 sources in order, add excerpt markers beyond 2000 characters, and return three source groups.
+# Constraints: Do not mutate original backend evidence.
 def trim_context_items(customer_context: object, internal_knowledge: object, external_knowledge: object) -> dict[str, list[dict[str, str]]]:
-    """本流程只展示最多 12 条知识，单条至多 2000 字；不改后端原始证据。"""
+    """Display at most 12 knowledge sources, each up to 2000 characters, without changing original backend evidence."""
     result = {"customer_context": [], "internal_knowledge": [], "external_knowledge": []}
     for field, items in (
         ("customer_context", customer_context),
@@ -278,17 +278,17 @@ def trim_context_items(customer_context: object, internal_knowledge: object, ext
     return result
 
 
-# 功能：解析无重复键的 JSON 对象。
-# 输入：`value` 模型返回的 JSON 字符串。
-# 输出：通过对象钩子拒绝重复键，返回 dict。
-# 逻辑：通过对象钩子拒绝重复键，返回 dict。
-# 约束：非法 JSON 或非对象抛出 ChatValidationError。
+# Function: Parse a JSON object without duplicate keys.
+# Inputs: `value`: JSON string returned by the model.
+# Outputs: Reject duplicate keys through an object hook and return a dict.
+# Logic: Reject duplicate keys through an object hook and return a dict.
+# Constraints: Invalid JSON or non-object values raise ChatValidationError.
 def _decode_json_object(value: str) -> dict[str, Any]:
-    # 功能：拒绝重复 JSON 字段。
-    # 输入：`pairs` JSON 解码器提供的顺序键值对。
-    # 输出：遍历 pairs 建立字典，重复键即失败。
-    # 逻辑：遍历 pairs 建立字典，重复键即失败。
-    # 约束：用于 JSON 解码钩子，不合并重复字段。
+    # Function: Reject duplicate JSON fields.
+    # Inputs: `pairs`: ordered key-value pairs supplied by the JSON decoder.
+    # Outputs: Build a dictionary from pairs, failing immediately on duplicate keys.
+    # Logic: Build a dictionary from pairs, failing immediately on duplicate keys.
+    # Constraints: Used as a JSON decoding hook; never merge duplicate fields.
     def unique(pairs):
         result = {}
         for key, item in pairs:
@@ -305,15 +305,15 @@ def _decode_json_object(value: str) -> dict[str, Any]:
     return parsed
 
 
-# 功能：验证回答引用并重排编号。
-# 输入：`value` 含回答与引用的模型对象、`allowed_context_items` 本轮展示来源、`request_id` 可选请求标识。
-# 输出：对照允许来源三字段身份，按正文首次出现顺序压缩引用，返回回答对象。
-# 逻辑：对照允许来源三字段身份，按正文首次出现顺序压缩引用，返回回答对象。
-# 约束：不得引用未展示来源；request_id 保留为调用契约参数，当前不用于校验。
+# Function: Validate answer citations and renumber them.
+# Inputs: `value`: model object containing answer and citations; `allowed_context_items`: sources displayed this round; `request_id`: optional request identifier.
+# Outputs: Match allowed sources by their three-field identity, compact citations in order of first body appearance, and return the answer object.
+# Logic: Match allowed sources by their three-field identity, compact citations in order of first body appearance, and return the answer object.
+# Constraints: Do not cite undisplayed sources; request_id remains a call-contract parameter and is currently unused for validation.
 def parse_model_candidate(
     value: object, *, allowed_context_items: object, request_id: str | None = None
 ) -> dict[str, Any]:
-    """只允许本轮可见证据的引用，并重排已使用的编号。"""
+    """Allow citations only to evidence visible in this round and renumber used citations."""
     candidate = _keys(value, {"assistant_text", "citations"}, "model_candidate")
     text = _NONSTANDARD_SOURCE_TAG.sub("", _nonblank(candidate["assistant_text"], "assistant_text"))
     raw_citations = candidate["citations"]
@@ -343,11 +343,11 @@ def parse_model_candidate(
             compact.append(row)
     cursor = iter(markers)
 
-    # 功能：替换正文引用编号。
-    # 输入：`_` 正则匹配对象；隐式读取外围已验证的 markers 游标及引用映射。
-    # 输出：读取外围 cursor、citations 与 used，返回压缩后的编号字符串。
-    # 逻辑：读取外围 cursor、citations 与 used，返回压缩后的编号字符串。
-    # 约束：参数为正则匹配对象；序号来自已验证的 markers。
+    # Function: Replace citation numbers in the answer body.
+    # Inputs: `_`: regex match object; implicitly read the validated enclosing marker cursor and citation mapping.
+    # Outputs: Read enclosing cursor, citations, and used state to return a compacted number string.
+    # Logic: Read enclosing cursor, citations, and used state to return a compacted number string.
+    # Constraints: The parameter is a regex match; numbers come from validated markers.
     def replace_marker(_: re.Match[str]) -> str:
         row = citations[next(cursor) - 1]
         key = tuple(row[field] for field in ("source_id", "source_type", "title_or_label"))
@@ -357,11 +357,11 @@ def parse_model_candidate(
     return {"assistant_text": text, "citations": compact}
 
 
-# 功能：建立稳定失败回报。
-# 输入：`request_id` 可识别请求标识、`code` 固定失败消息表中的错误码。
-# 输出：验证请求 ID 和失败码，返回六字段 failed 对象。
-# 逻辑：验证请求 ID 和失败码，返回六字段 failed 对象。
-# 约束：只接受固定失败码，不保存后端状态。
+# Function: Build a stable failure report.
+# Inputs: `request_id`: recognizable request identifier; `code`: error code in the fixed failure-message table.
+# Outputs: Validate request ID and failure code, returning a six-field failed object.
+# Logic: Validate request ID and failure code, returning a six-field failed object.
+# Constraints: Accept only fixed failure codes; do not persist backend state.
 def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     request_id = _nonblank(request_id, "request_id")
     if code not in _FAILURE_MESSAGES:
@@ -374,22 +374,22 @@ def stable_failure_result(request_id: object, code: object) -> dict[str, Any]:
     }
 
 
-# 功能：生成有限错误摘要。
-# 输入：`value` 安全错误说明、`limit` 截断字符数，默认 160。
-# 输出：压缩空白并遮蔽邮箱后按 limit 截断，返回字符串。
-# 逻辑：压缩空白并遮蔽邮箱后按 limit 截断，返回字符串。
-# 约束：不是任意敏感信息过滤器，只供安全错误说明。
+# Function: Generate a bounded error summary.
+# Inputs: `value`: safe error details; `limit`: truncation length, default 160 characters.
+# Outputs: Collapse whitespace, mask email addresses, and truncate to limit, returning a string.
+# Logic: Collapse whitespace, mask email addresses, and truncate to limit, returning a string.
+# Constraints: Not a general sensitive-data filter; intended only for safe error details.
 def _diagnostic_excerpt(value: str, limit: int = 160) -> str:
     excerpt = re.sub(r"\s+", " ", value).strip()
     excerpt = re.sub(r"[\w.+-]+@[\w.-]+", "[email]", excerpt)
     return excerpt[:limit]
 
 
-# 功能：提取片段匹配单元。
-# 输入：`value` 当前用户问题或其他用于片段匹配的字符串。
-# 输出：提取英文词和中文二元组，返回集合。
-# 逻辑：提取英文词和中文二元组，返回集合。
-# 约束：仅用于节选定位，不是语义检索模型。
+# Function: Extract snippet-matching units.
+# Inputs: `value`: current user question or another string used for snippet matching.
+# Outputs: Extract English words and Chinese bigrams into a set.
+# Logic: Extract English words and Chinese bigrams into a set.
+# Constraints: Used only to locate excerpts, not as a semantic retrieval model.
 def _lexical_units(value: str) -> set[str]:
     units = set(re.findall(r"[a-z0-9][a-z0-9_-]+", value.lower()))
     for sequence in re.findall(r"[\u4e00-\u9fff]+", value):
@@ -397,11 +397,11 @@ def _lexical_units(value: str) -> set[str]:
     return units
 
 
-# 功能：识别直接业务操作请求。
-# 输入：`question` 当前用户问题。
-# 输出：解释类问法排除后进行既定正则匹配，返回布尔值。
-# 逻辑：解释类问法排除后进行既定正则匹配，返回布尔值。
-# 约束：此启发式不替代后端权限检查。
+# Function: Identify direct business-operation requests.
+# Inputs: `question`: current user question.
+# Outputs: Exclude explanatory questions, apply the established regex, and return a boolean.
+# Logic: Exclude explanatory questions, apply the established regex, and return a boolean.
+# Constraints: This heuristic does not replace backend permission checks.
 def _is_direct_tool_action(question: str) -> bool:
     compact = re.sub(r"\s+", "", question).lower()
     if re.search(r"(?:如何|怎么|怎样).{0,8}(?:发送|安排|创建|更新|删除)", compact):
@@ -423,32 +423,32 @@ def _is_direct_tool_action(question: str) -> bool:
                 or re.match(r"\A\s*" + action, english))
 
 
-# 功能：调用百炼生成一次 JSON 回答。
-# 输入：`messages` 模型消息数组、`max_tokens` 最大输出预算，默认由工作空间 Skill 提供。
-# 输出：委托 generate_chat_json，返回模型文本。
-# 逻辑：委托 generate_chat_json，返回模型文本。
-# 约束：max_tokens 默认来自 Skill；网络与模型错误向上传播。
+# Function: Invoke Bailian to generate one JSON answer.
+# Inputs: `messages`: model message array; `max_tokens`: maximum output budget, defaulting to the workspace skill setting.
+# Outputs: Delegate to generate_chat_json and return model text.
+# Logic: Delegate to generate_chat_json and return model text.
+# Constraints: max_tokens defaults to the skill value; network and model errors propagate.
 def bailian_chat_provider(messages: list[dict[str, str]], *, max_tokens: int = _WORKSPACE_CHAT_SKILL.max_tokens) -> str:
     from agent.llm.bailian import generate_chat_json
     return generate_chat_json(messages, max_tokens=max_tokens)
 
 
-# 功能：生成当前工作空间版本失败结果。
-# 输入：`request_id` 当前请求标识、`code` 固定失败码。
-# 输出：委托稳定失败构造并写入当前版本，返回字典。
-# 逻辑：委托稳定失败构造并写入当前版本，返回字典。
-# 约束：不改变错误码及其提示。
+# Function: Generate a failure result for the current workspace version.
+# Inputs: `request_id`: current request identifier; `code`: fixed failure code.
+# Outputs: Delegate to stable failure construction, attach the current version, and return a dictionary.
+# Logic: Delegate to stable failure construction, attach the current version, and return a dictionary.
+# Constraints: Do not change error codes or their messages.
 def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
     return {**stable_failure_result(request_id, code), "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION}
 
 
-# 功能：验证固定读取及实验维护工具及模型参数。
-# 输入：`name` 模型选择的工具名称、`value` 模型生成的参数对象。
-# 输出：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
-# 逻辑：客户参数严格核验；实验分页保留 20 条上限，返回名称与参数副本。
-# 约束：实验参数完整类型由实时后端 Schema 验证，不猜测模型或批次名。
+# Function: Validate fixed read/experiment maintenance tools and model arguments.
+# Inputs: `name`: model-selected tool name; `value`: model-generated argument object.
+# Outputs: Strictly validate customer arguments and preserve the 20-item experiment pagination limit; return the name and a copy of arguments.
+# Logic: Strictly validate customer arguments and preserve the 20-item experiment pagination limit; return the name and a copy of arguments.
+# Constraints: The live backend schema validates complete experiment argument types; do not guess model or batch names.
 def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, Any]]:
-    """校验客户参数与实验分页预算；实验字段类型继续由后端实时 Schema 验证。"""
+    """Validate customer arguments and experiment pagination budgets; the live backend schema still validates experiment field types."""
     if (
         not isinstance(name, str)
         or name not in WORKSPACE_TOOLS
@@ -491,11 +491,11 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
     return name, arguments
 
 
-# 功能：校验 UUID 字符串。
-# 输入：`value` 待验证的公司或工具读取 UUID 字符串。
-# 输出：解析 UUID，成功无返回值。
-# 逻辑：解析 UUID，成功无返回值。
-# 约束：不验证该 UUID 对应记录的访问权限。
+# Function: Validate a UUID string.
+# Inputs: `value`: company or tool-read UUID string to validate.
+# Outputs: Parse the UUID; no return value on success.
+# Logic: Parse the UUID; no return value on success.
+# Constraints: Do not validate access permissions for the record identified by this UUID.
 def _workspace_uuid(value: object) -> None:
     if not isinstance(value, str):
         raise ChatValidationError("Company ID must be a UUID.")
@@ -505,13 +505,13 @@ def _workspace_uuid(value: object) -> None:
         raise ChatValidationError("Company ID must be a UUID.") from None
 
 
-# 功能：解析请求实际发布的数据工具目录。
-# 输入：`raw` 后端目录响应、`request_id` 当前已领取的请求标识。
-# 输出：核对协议与请求，筛选固定候选并检查封闭 Schema，返回名称索引。
-# 逻辑：核对协议与请求，筛选固定候选并检查封闭 Schema，返回名称索引。
-# 约束：未发布工具不可执行，仅实验维护接受 write，其余要求 read。
+# Function: Parse the data tool catalog actually published for the request.
+# Inputs: `raw`: backend catalog response; `request_id`: currently claimed request identifier.
+# Outputs: Validate protocol and request, filter fixed candidates, and check closed schemas, returning an index by name.
+# Logic: Validate protocol and request, filter fixed candidates, and check closed schemas, returning an index by name.
+# Constraints: Unpublished tools cannot execute; only experiment maintenance permits write, while other tools require read.
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
-    """仅采用固定集合中由本次 processing 请求实际发布且执行模式匹配的工具。"""
+    """Use only fixed candidates actually published for this processing request with matching execution modes."""
     if not isinstance(raw, Mapping) or (
         raw.get("contract_version") != "chat-tools-v1"
         or raw.get("request_id") != request_id
@@ -544,23 +544,23 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
     return catalog
 
 
-# 功能：核对参数键与实时 Schema。
-# 输入：`arguments` 工具参数、`schema` 本次后端目录发布的封闭对象 Schema。
-# 输出：拒绝未声明字段及缺失必填项，成功无返回值。
-# 逻辑：拒绝未声明字段及缺失必填项，成功无返回值。
-# 约束：具体字段值仍由后端完整 Schema 校验。
+# Function: Validate argument keys against the live schema.
+# Inputs: `arguments`: tool arguments; `schema`: closed-object schema published in the current backend catalog.
+# Outputs: Reject undeclared fields and missing required fields; no return value on success.
+# Logic: Reject undeclared fields and missing required fields; no return value on success.
+# Constraints: The complete backend schema still validates individual field values.
 def _workspace_schema_arguments(arguments: Mapping[str, Any], schema: Mapping[str, Any]) -> None:
-    """模型参数先满足当前目录声明；具体业务约束仍由后端验证。"""
+    """Model arguments must first satisfy the current catalog; the backend still validates business constraints."""
     properties = schema["properties"]
     if set(arguments) - set(properties) or set(schema["required"]) - set(arguments):
         raise ChatValidationError("Tool arguments do not match the backend catalog schema.")
 
 
-# 功能：解析模型动作。
-# 输入：`raw` 模型 JSON 文本、`evidence` 当前展示的来源白名单、`request_id` 当前请求标识。
-# 输出：严格区分 tool 与 answer，返回动作和已验证载荷。
-# 逻辑：严格区分 tool 与 answer，返回动作和已验证载荷。
-# 约束：回答只能引用当前展示的 evidence；不接受其他动作。
+# Function: Parse a model action.
+# Inputs: `raw`: model JSON text; `evidence`: currently displayed source allowlist; `request_id`: current request identifier.
+# Outputs: Strictly distinguish tool and answer actions, returning the action and validated payload.
+# Logic: Strictly distinguish tool and answer actions, returning the action and validated payload.
+# Constraints: Answers may cite only currently displayed evidence; reject other actions.
 def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id: str):
     if not isinstance(raw, str):
         raise ChatValidationError("Model output must be JSON text.")
@@ -580,11 +580,11 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
     raise ChatValidationError("Model action must be an authorized tool query or final answer.")
 
 
-# 功能：校验读取回执并生成提示摘要。
-# 输入：`raw` 后端读取回执、`request_id` 当前请求标识、`name` 预期被执行的工具名。
-# 输出：核对请求工具和来源 UUID，按客户、实验目录、行或文件投影，返回摘要与完整证据。
-# 逻辑：核对请求工具和来源 UUID，按客户、实验目录、行或文件投影，返回摘要与完整证据。
-# 约束：摘要不展开附件正文；来源正文交给统一预算裁剪。
+# Function: Validate a read receipt and generate a prompt summary.
+# Inputs: `raw`: backend read receipt; `request_id`: current request identifier; `name`: expected executed tool name.
+# Outputs: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
+# Logic: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
+# Constraints: Summaries do not expand attachment bodies; apply shared budgets to source bodies.
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
         raise ChatValidationError("Tool response must be an object.")
@@ -653,11 +653,11 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
     return summary, evidence
 
 
-# 功能：追加不同身份的读取证据。
-# 输入：`allowed` 累积来源数组、`additions` 本次后端新登记的来源数组。
-# 输出：按来源三字段去重并原地扩展 allowed，无返回值。
-# 逻辑：按来源三字段去重并原地扩展 allowed，无返回值。
-# 约束：同一身份内容冲突立即失败，不覆盖历史来源。
+# Function: Append read evidence with distinct identities.
+# Inputs: `allowed`: accumulated source array; `additions`: sources newly registered by the backend.
+# Outputs: Deduplicate by three-field source identity and extend allowed in place; no return value.
+# Logic: Deduplicate by three-field source identity and extend allowed in place; no return value.
+# Constraints: Fail immediately on conflicting content for one identity; do not overwrite historical sources.
 def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[dict[str, str]]):
     identities = {
         (item["source_id"], item["source_type"], item["title_or_label"]): item["content"]
@@ -673,13 +673,13 @@ def _workspace_append_evidence(allowed: list[dict[str, str]], additions: list[di
         identities[key] = item["content"]
 
 
-# 功能：截取与问题相关的原文片段。
-# 输入：`content` 原始来源正文、`question` 当前问题、`limit` 此来源可用字符数。
-# 输出：保留头部并按词单元寻找原文，返回受 limit 限制且带节选标记的文本。
-# 逻辑：保留头部并按词单元寻找原文，返回受 limit 限制且带节选标记的文本。
-# 约束：不改写原文含义，不表示已经提供全文。
+# Function: Extract original text relevant to the question.
+# Inputs: `content`: original source body; `question`: current question; `limit`: available characters for this source.
+# Outputs: Preserve the beginning and locate original text by word units, returning excerpt-marked text within limit.
+# Logic: Preserve the beginning and locate original text by word units, returning excerpt-marked text within limit.
+# Constraints: Do not change the original meaning or imply that the full text was supplied.
 def _workspace_excerpt(content: str, question: str, limit: int) -> str:
-    """对模型展示明确标记的节选，优先保留与问题匹配的原文片段。"""
+    """Show explicitly marked excerpts to the model, prioritizing original passages matching the question."""
     if len(content) <= limit:
         return content
     marker = "\n[Excerpt; full source not provided]"
@@ -701,15 +701,15 @@ def _workspace_excerpt(content: str, question: str, limit: int) -> str:
     return "\n…\n".join(excerpts)[:budget] + marker
 
 
-# 功能：选择预算内的来源。
-# 输入：`evidence` 累积来源数组、`question` 当前问题；预算读取模块常量。
-# 输出：按既定优先级和数量字符预算裁剪，返回完整来源白名单与展示片段。
-# 逻辑：按既定优先级和数量字符预算裁剪，返回完整来源白名单与展示片段。
-# 约束：保留原有来源优先级和预算；新实验文件优先展示，分页与目录随后，行记录最后；未展示来源不可引用。
+# Function: Select sources within budget.
+# Inputs: `evidence`: accumulated source array; `question`: current question; budgets come from module constants.
+# Outputs: Trim by established priorities and count/character budgets, returning the complete source allowlist and displayed excerpts.
+# Logic: Trim by established priorities and count/character budgets, returning the complete source allowlist and displayed excerpts.
+# Constraints: Preserve source priorities and budgets: new experiment files first, pagination/catalog next, rows last; undisplayed sources cannot be cited.
 def _workspace_prompt_evidence(
     evidence: list[dict[str, str]], question: str
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """选择可放入模型输入的来源；引用白名单仍使用所选来源的完整正文。"""
+    """Select sources that fit model input; the citation allowlist retains the complete bodies of selected sources."""
     priorities = {
         "customer_context": 0,
         "customer_search_page": 1,
@@ -744,13 +744,13 @@ def _workspace_prompt_evidence(
     return visible, prompt
 
 
-# 功能：处理工作空间问题和读取及实验维护工具循环。
-# 输入：`request` 后端领取对象、`backend` 请求绑定客户端、`chat_provider` 单次模型调用函数。
-# 输出：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
-# 逻辑：加载上下文，按模型决策发现客户及实验工具，最多六次读取后返回回答或阶段失败。
-# 约束：backend 是真实边界，chat_provider 是模型边界；保存证据在后端执行，参数与预算保持不变。
+# Function: Process a workspace question and the read/experiment maintenance tool loop.
+# Inputs: `request`: backend claim object; `backend`: request-bound client; `chat_provider`: one-call model function.
+# Outputs: Load context, discover customer/experiment tools according to model decisions, and return an answer or stage failure after at most six reads.
+# Logic: Load context, discover customer/experiment tools according to model decisions, and return an answer or stage failure after at most six reads.
+# Constraints: backend is the real service boundary and chat_provider the model boundary; the backend persists evidence, with parameters and budgets unchanged.
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
-    """最多六次数据工具调用；每次由模型选择，最终回答仅引用后端登记的证据。"""
+    """At most six data tool calls, each selected by the model; the final answer cites only backend-registered evidence."""
     request_id = _recognizable_request_id(request)
     code = "invalid_request"
     try:
@@ -884,13 +884,13 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
         return _workspace_failure(request_id, code)
 
 
-# 功能：核对响应丢失后的权威终态。
-# 输入：`result` 本地回报载荷、`state` 后端权威状态响应。
-# 输出：比较请求版本状态及失败内容或引用身份，返回布尔值。
-# 逻辑：比较请求版本状态及失败内容或引用身份，返回布尔值。
-# 约束：只确认已保存结果，不重新回报或运行模型。
+# Function: Check the authoritative terminal state after a lost response.
+# Inputs: `result`: local report payload; `state`: authoritative backend state response.
+# Outputs: Compare request version/status and failure content or citation identity, returning a boolean.
+# Logic: Compare request version/status and failure content or citation identity, returning a boolean.
+# Constraints: Confirm only already-saved results; do not report again or rerun the model.
 def _chat_report_is_saved(result: Mapping[str, Any], state: object) -> bool:
-    """回报响应丢失时，仅在权威终态与本地结果相符才确认已保存。"""
+    """After a lost report response, confirm persistence only when the authoritative terminal state matches the local result."""
     if not isinstance(state, Mapping) or (
         state.get("request_id") != result["request_id"]
         or state.get("status") != result["status"]
@@ -908,17 +908,17 @@ def _chat_report_is_saved(result: Mapping[str, Any], state: object) -> bool:
     ] and len(stored) == len(result["citations"])
 
 
-# 功能：领取一次工作空间聊天请求并尝试一次回报。
-# 输入：`backend` 后端客户端、`chat_provider` 单次模型调用边界。
-# 输出：dict[str, Any] | None。
-# 逻辑：领取请求后只执行工作空间聊天；不根据客户绑定或配置切换旧流程。
-# 约束：请求必须没有预选公司；后端负责员工可见范围和权威结果保存。
+# Function: Claim one workspace chat request and attempt one report.
+# Inputs: `backend`: backend client; `chat_provider`: single model-call boundary.
+# Outputs: dict[str, Any] | None.
+# Logic: Run only workspace chat after claiming; do not switch to a legacy flow based on customer binding or configuration.
+# Constraints: Requests must have no preselected company; the backend controls employee visibility and authoritative result persistence.
 def process_chat_once(
     *,
     backend: Any,
     chat_provider: Any = bailian_chat_provider,
 ) -> dict[str, Any] | None:
-    """领取并处理至多一个聊天请求，然后恰好尝试一次结果回报。"""
+    """Claim and process at most one chat request, then attempt exactly one result report."""
     claimed_request = backend.claim_answer_request()
     if claimed_request is None:
         return None
@@ -962,7 +962,7 @@ def process_chat_once(
             error.code if isinstance(error, BackendRequestError) else None,
             backend_detail,
         )
-        # 回报失败只形成本地结果；不自动重试，也不伪装已保存。
+        # Report failure produces only a local result; do not retry automatically or pretend it was saved.
         return {
             **stable_failure_result(request_id, "report_failed"),
             "chat_prompt_version": result["chat_prompt_version"],

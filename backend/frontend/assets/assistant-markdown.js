@@ -1,17 +1,17 @@
 /**
- * 职责：将助手回答转换为受限、安全的 Markdown HTML。
- * 实现：复用 markdown-it 的 CommonMark、表格和删除线规则；禁用原始 HTML，限制链接协议，图片改为显式访问的链接。
- * 关联：assistant.js 仅对助手消息调用；assistant-widget.css 提供排版；markdown-it.vendor.js 为固定版本的官方浏览器发行包。
- * 目录：isSafeLink、renderLinkOpen、renderImageLink、renderTableOpen、renderTableClose、renderAssistantMarkdown。
- * 变量索引：markdown 为唯一解析器，固定 html=false、breaks=true、linkify=true、typographer=false；不改变回答文本或服务端存储。
+ * Responsibility: Convert assistant replies into restricted, safe Markdown HTML.
+ * Implementation: Use markdown-it CommonMark, table, and strikethrough rules; disable raw HTML, restrict link protocols, and convert images to links requiring explicit access.
+ * Relationships: assistant.js calls this only for assistant messages; assistant-widget.css supplies typography; markdown-it.vendor.js is the pinned official browser distribution.
+ * Directory: isSafeLink, renderLinkOpen, renderImageLink, renderTableOpen, renderTableClose, renderAssistantMarkdown.
+ * Variable index: markdown is the sole parser, with html=false, breaks=true, linkify=true, typographer=false; response text and server storage remain unchanged.
  */
 import MarkdownIt from './markdown-it.vendor.js?v=15.0.2';
 
 const markdown = new MarkdownIt({ html: false, breaks: true, linkify: true, typographer: false });
 
-/** 功能：检查 Markdown 链接协议。输入：url 为解析器规范化后的目标。输出：是否允许。
- * 逻辑：相对地址按 HTTPS 基准解析，只接受 HTTP、HTTPS、mailto；无效 URL 返回 false。
- * 约束：不发起请求，禁止 data、javascript、file 等协议；基准仅用于协议判断，不替换实际链接。 */
+/** Function: Check Markdown link protocols. Inputs: url is the parser-normalized target. Outputs: Whether it is allowed.
+ * Logic: Resolve relative addresses against an HTTPS base and accept only HTTP, HTTPS, and mailto; invalid URLs return false.
+ * Constraints: Make no requests; reject data, javascript, file, and other protocols. The base is used only for protocol checks and does not replace the actual link. */
 function isSafeLink(url) {
   try {
     return ['http:', 'https:', 'mailto:'].includes(new URL(url, 'https://markdown.invalid/').protocol);
@@ -20,18 +20,18 @@ function isSafeLink(url) {
   }
 }
 
-/** 功能：生成安全的链接起始标签。输入：tokens、index、options、env、renderer 为 markdown-it 渲染参数。
- * 输出：转义属性后的 HTML。逻辑：经协议校验的链接在新标签打开并隔离 opener/referrer。
- * 约束：不自行拼接不可信属性，不导航或触发外部调用。 */
+/** Function: Generate a safe opening link tag. Inputs: tokens, index, options, env, renderer are markdown-it rendering arguments.
+ * Outputs: HTML with escaped attributes. Logic: Open validated links in a new tab with opener/referrer isolation.
+ * Constraints: Never concatenate untrusted attributes manually, navigate, or trigger external calls. */
 function renderLinkOpen(tokens, index, options, env, renderer) {
   tokens[index].attrSet('target', '_blank');
   tokens[index].attrSet('rel', 'noopener noreferrer nofollow');
   return renderer.renderToken(tokens, index, options);
 }
 
-/** 功能：将图片表示为可访问的文本链接。输入：tokens、index、options、env、renderer 为渲染参数。
- * 输出：转义后的链接或替代文字。逻辑：保留图片描述和安全地址，由用户点击访问。
- * 约束：不自动加载模型提供的远程图片；再次检查目标协议，替代文字不执行 HTML。 */
+/** Function: Represent an image as an accessible text link. Inputs: tokens, index, options, env, renderer are rendering arguments.
+ * Outputs: An escaped link or alternative text. Logic: Retain the description and safe address for the user to open explicitly.
+ * Constraints: Never automatically load remote model-provided images; recheck the target protocol and do not execute alternative text as HTML. */
 function renderImageLink(tokens, index, options, env, renderer) {
   const token = tokens[index], source = token.attrGet('src') || '';
   const label = markdown.utils.escapeHtml(renderer.renderInlineAsText(token.children || [], options, env) || source);
@@ -40,14 +40,14 @@ function renderImageLink(tokens, index, options, env, renderer) {
     : label;
 }
 
-/** 功能：创建表格的独立滚动容器。输入：无。输出：静态起始标签。
- * 逻辑：保留原生 table 语义，容器可聚焦以便键盘横向滚动。约束：宽表格不撑开聊天面板。 */
+/** Function: Create a separate table scroll container. Inputs: None. Outputs: Static opening tags.
+ * Logic: Preserve native table semantics and make the container focusable for keyboard horizontal scrolling. Constraints: Wide tables must not stretch the chat panel. */
 function renderTableOpen() {
   return '<div class="assistant-markdown-table" tabindex="0"><table>\n';
 }
 
-/** 功能：闭合表格及滚动容器。输入：无。输出：静态结束标签。
- * 逻辑：与 renderTableOpen 成对。约束：只处理解析器产生的表格 token。 */
+/** Function: Close the table and scroll container. Inputs: None. Outputs: Static closing tags.
+ * Logic: Pair with renderTableOpen. Constraints: Handle only table tokens emitted by the parser. */
 function renderTableClose() {
   return '</table></div>\n';
 }
@@ -58,9 +58,9 @@ markdown.renderer.rules.image = renderImageLink;
 markdown.renderer.rules.table_open = renderTableOpen;
 markdown.renderer.rules.table_close = renderTableClose;
 
-/** 功能：渲染一条助手回答。输入：content 为 API 持久化的字符串。输出：可插入消息容器的 HTML。
- * 逻辑：标准 Markdown 解析统一处理转义、代码、列表、引用与表格；保留普通换行。
- * 约束：只用于展示，不修改原文、不执行代码；未闭合代码围栏按 CommonMark 显示为代码。 */
+/** Function: Render one assistant reply. Inputs: content is the API-persisted string. Outputs: HTML for the message container.
+ * Logic: Standard Markdown parsing handles escaping, code, lists, quotes, and tables while retaining ordinary line breaks.
+ * Constraints: Display only; do not modify source text or execute code. Unclosed code fences render as code under CommonMark. */
 export function renderAssistantMarkdown(content) {
   return markdown.render(content);
 }

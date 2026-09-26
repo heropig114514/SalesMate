@@ -1,17 +1,17 @@
-"""职责：生成公司、上下文与页面查询投影。
-实现：列表批量读取必要邮件字段和最新摘要，一次核验共享实验资料，保留全局筛选与评分排序；详情和分析上下文仍读取完整邮件，失效结果不展示。
-关联：API 在授权后调用；ingestion 和 results 使用同一快照表示；sales 设置人工主要联系人及客户归档。
-目录：
-- latest_extraction：选择邮件最近创建的抽取版本。
-- email_data：返回标准邮件与当前抽取合并的协议表示。
-- contact_rows：根据可见业务邮件构造联系人统计与主要联系人。
-- context_pair：构建一致的 Grouping 和 CompanyContext。
-- latest_result：选择最近存储的成功分析及其最新评分。
-- company_row：生成前端公司列表行。
-- list_projection：批量读取列表所需的邮件、联系人、设置、最新分析、评分与任务。
-- list_companies：生成页面 A 的筛选、排序、分页及全局统计。
-变量索引：
-- logger：记录列表投影规模与耗时，不记录邮件正文或客户资料。
+"""Responsibility: Generate company, context, and page query projections.
+Implementation: Lists bulk-read necessary email fields and latest summaries, verify shared experiment data once, and retain global filtering and score ordering. Detail and analysis context still read complete emails and invalid results are hidden.
+Relationships: API calls after authorization; ingestion and results use the same snapshot representation; sales configures human primary contacts and company archiving.
+Directory:
+- latest_extraction: Select most recently created extraction version for an email.
+- email_data: Return protocol representation merging normalized email with current extraction.
+- contact_rows: Build contact statistics and primary contact from visible business emails.
+- context_pair: Build consistent Grouping and CompanyContext.
+- latest_result: Select most recently stored successful analysis and its latest score.
+- company_row: Generate a frontend company-list row.
+- list_projection: Bulk read emails, contacts, settings, latest analysis, score, and jobs needed for lists.
+- list_companies: Generate Page A filtering, sorting, pagination, and global statistics.
+Variable index:
+- logger: Logs list-projection scale and duration without email bodies or customer data.
 """
 from datetime import datetime, time, timedelta
 import logging
@@ -27,20 +27,20 @@ from .enrichment import resolve, resolve_many, snapshot_current
 
 logger = logging.getLogger("salesmate.crm.selectors")
 
-# 功能：选择邮件最近创建的抽取版本。
-# 输入：`email` 为 Email 实例，可有预取的 extractions。
-# 输出：Extraction 实例。
-# 逻辑：按数据库单调 ID 选最新记录，不按提示词名称排序。
-# 约束：邮件入库事务保证至少有一份抽取。
+# Function: Select the most recently created extraction version for an email.
+# Inputs: `email` is an Email instance and may have prefetched extractions.
+# Outputs: Extraction instance.
+# Logic: Select greatest monotonic database ID rather than sorting prompt names.
+# Constraints: Email persistence transaction guarantees at least one extraction.
 def latest_extraction(email):
     return max(email.extractions.all(), key=lambda item: item.pk)
 
 
-# 功能：返回标准邮件与当前抽取合并的协议表示。
-# 输入：`email` 为持久化邮件。
-# 输出：含正文与 facts 的 EmailSubmission 字典。
-# 逻辑：本体保持不变，当前抽取覆盖抽取字段；mailbox_address 从邮箱关系补齐旧记录的传输字段。
-# 约束：必须先验证公司或邮箱访问权限。
+# Function: Return protocol representation merging normalized email with current extraction.
+# Inputs: `email` is a persisted email.
+# Outputs: EmailSubmission dictionary containing body and facts.
+# Logic: Keep source unchanged and let current extraction override extraction fields; mailbox_address completes a legacy transport field from the mailbox relation.
+# Constraints: Company or mailbox authorization must be validated first.
 def email_data(email):
     extraction = latest_extraction(email)
     return {**email.payload, "mailbox_address": email.mailbox.address, "extract_status": extraction.status,
@@ -48,11 +48,11 @@ def email_data(email):
             "extract_error": extraction.error, "facts": extraction.facts}
 
 
-# 功能：构建联系人展示与交互统计。
-# 输入：`company` 为已授权公司；`emails` 为按既定可见性筛选的业务邮件；`projection` 为本次列表预读数据或 None。
-# 输出：按交互数和邮箱排序、标记主要联系人的字典列表。
-# 逻辑：人工主要联系人必须仍在可见集合中，否则使用既有首联系人规则。
-# 约束：列表与完整上下文共用相同实现；不访问邮件正文或修改联系人。
+# Function: Build contact display and interaction statistics.
+# Inputs: `company` is authorized, `emails` are business messages filtered by established visibility, and `projection` is list pre-read data or None.
+# Outputs: Dictionary list ordered by interactions and email with a primary-contact flag.
+# Logic: A human-selected primary contact must remain visible; otherwise use the existing first-contact rule.
+# Constraints: Lists and complete context share this implementation; it does not access email bodies or modify contacts.
 def contact_rows(company, emails, projection=None):
     source_contacts = (projection["contacts"] if projection is not None else
                        company.contacts.filter(Q(messages__business_classification="business") | Q(messages__isnull=True)).distinct())
@@ -74,11 +74,11 @@ def contact_rows(company, emails, projection=None):
     return contacts
 
 
-# 功能：构建一致的 Grouping 和 CompanyContext。
-# 输入：`company` 为已授权公司；`include_priority` 默认 True，控制评分背景。
-# 输出：Grouping、CompanyContext 二元组。
-# 逻辑：完整读取可见业务邮件及抽取；联系人统计共用 contact_rows，分析背景仍按需查询。
-# 约束：本函数服务完整上下文，列表使用必要字段投影；不截断 Agent 输入或改变邮件顺序。
+# Function: Build consistent Grouping and CompanyContext.
+# Inputs: `company` is authorized; `include_priority` defaults to True and controls scoring context.
+# Outputs: Grouping and CompanyContext tuple.
+# Logic: Fully read visible business emails and extractions; contact statistics reuse contact_rows, while analysis context queries on demand.
+# Constraints: This function serves complete context while lists use necessary-field projections; it does not truncate Agent input or change email order.
 def context_pair(company, include_priority=True):
     emails = list(company.emails.filter(business_classification="business").select_related("mailbox").prefetch_related("extractions").order_by("sent_at", "dedupe_key"))
     contacts = contact_rows(company, emails)
@@ -97,11 +97,11 @@ def context_pair(company, include_priority=True):
     return grouping, context
 
 
-# 功能：选择最近存储的成功分析及其最新评分。
-# 输入：`company` 为已授权公司；`projection` 可传入本次列表的关联记录，默认 None 表示独立查询。
-# 输出：Analysis 或 None，Score 或 None。
-# 逻辑：批量路径复用本次核验的实验资料，独立路径即时核验；二者均验证血缘与可见邮件，agent 只取 score-v2。
-# 约束：不跨请求缓存；最新成功分析若不可见即返回空，不回退更旧分析。
+# Function: Select most recently stored successful analysis and its latest score.
+# Inputs: `company` is authorized; `projection` can supply related records from this list and defaults to None for independent query.
+# Outputs: Analysis or None and Score or None.
+# Logic: Bulk path reuses experiment data verified this time and independent path verifies immediately; both validate lineage and visible emails, while agent uses score-v2 only.
+# Constraints: Does not cache across requests; returns empty if the latest successful analysis is not visible and does not fall back to an older analysis.
 def latest_result(company, projection=None):
     analysis = (projection["analysis"] if projection is not None else
                 Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot").order_by("-id").first())
@@ -121,11 +121,11 @@ def latest_result(company, projection=None):
     return analysis, scores.order_by("-id").first() if scores is not None else None
 
 
-# 功能：生成前端公司列表行。
-# 输入：`company` 为已授权公司；`projection` 为可选的一次性关联记录，默认 None 时独立读取。
-# 输出：身份、摘要、邮件来源集合、信号、评分与处理状态组成的字典。
-# 逻辑：只构造展示所需联系人与邮件元数据，摘要取最新邮件的最新抽取；画像、分数与评分版本来自同一 Analysis。
-# 约束：不构造或缩减完整 Agent 上下文；规则输出展示 provider，旧分析展示 stale，未知分值保持 null。
+# Function: Generate a frontend company-list row.
+# Inputs: `company` is authorized; `projection` is optional one-time related data and defaults to None for independent read.
+# Outputs: Dictionary of identity, summary, email-source set, signal, score, and processing state.
+# Logic: Build only contacts and email metadata required for display, take summary from latest extraction of latest email, and source profile, score, and score version from the same Analysis.
+# Constraints: Does not build or reduce complete Agent context; rules output displays provider, old analysis displays stale, and unknown score remains null.
 def company_row(company, projection=None):
     email_models = (projection["emails"] if projection is not None else list(company.emails.filter(
         business_classification="business").order_by("sent_at", "dedupe_key")))
@@ -159,11 +159,11 @@ def company_row(company, projection=None):
             "job_error": job.report.get("error") if job and job.report else None}
 
 
-# 功能：批量读取列表所需关联记录，消除逐公司关系查询。
-# 输入：`companies` 为已授权、已排除归档及无业务邮件公司的已求值序列。
-# 输出：以 company.pk 为键的字典，含 emails、summary、contacts、settings、analysis、score、job、enrichment。
-# 逻辑：邮件仅读取列表所用字段，摘要仅查询每家公司最新邮件的最新抽取；分析和评分按最大 ID 选择，实验资料一次批量核验。
-# 约束：查询限定公司集合，不跨请求缓存、不改变分页和评分；原始摘要缺失保持空值，缺少抽取记录明确失败。
+# Function: Bulk read related records needed by lists to eliminate per-company relation queries.
+# Inputs: `companies` is an evaluated sequence of authorized companies excluding archived and no-business-email companies.
+# Outputs: Dictionary keyed by company.pk containing emails, summary, contacts, settings, analysis, score, job, and enrichment.
+# Logic: Emails read only list fields, summaries query only latest extraction of each company's latest email, analysis and score select by maximum ID, and experiment data verifies in one batch.
+# Constraints: Query remains limited to this company set, does not cache across requests or alter pagination or scoring; missing source summary stays empty and a missing extraction fails explicitly.
 def list_projection(companies):
     projections = {company.pk: {"emails": [], "contacts": [], "settings": None,
                                "analysis": None, "score": None, "job": None,
@@ -189,7 +189,7 @@ def list_projection(companies):
         projections[contact.company_id]["contacts"].append(contact)
     for selected in CompanySettings.objects.filter(company_id__in=ids, primary_contact__company_id=F("company_id")).select_related("primary_contact"):
         projections[selected.company_id]["settings"] = selected
-    # 一次扫描符合条件的分析并按公司聚合，避免相关子查询反复读取大型 JSON payload。
+    # Scan eligible analyses once and aggregate by company to avoid repeated correlated-subquery reads of large JSON payloads.
     analysis_ids = Analysis.objects.filter(snapshot__company_id__in=ids,
         snapshot__invalidation__isnull=True, payload__status="completed").order_by().values(
         "snapshot__company_id").annotate(list_analysis_id=Max("pk")).values("list_analysis_id")
@@ -216,11 +216,11 @@ def list_projection(companies):
     return projections
 
 
-# 功能：生成页面 A 的筛选、排序、分页及全局统计。
-# 输入：`companies` 为当前用户公司 QuerySet；`params` 为查询参数。
-# 输出：分页结果、总数、统计及当前时区。
-# 逻辑：批量读取授权集合后投影；全局统计在筛选前计算；排序按分数、紧急度、公司 ID，空分最后，最后分页。
-# 约束：保留全局排序和统计语义；内存规模仍随授权公司及邮件增长，日志仅包含规模和耗时。
+# Function: Generate Page A filtering, sorting, pagination, and global statistics.
+# Inputs: `companies` is the current user company QuerySet and `params` are query parameters.
+# Outputs: Paginated results, total count, statistics, and current time zone.
+# Logic: Project after bulk-reading authorized set; calculate global statistics before filtering; sort by score, urgency, and company ID with empty scores last, then paginate.
+# Constraints: Retains global sorting and statistic semantics; memory still grows with authorized companies and emails, and logs contain only scale and duration.
 def list_companies(companies, params):
     from rest_framework.exceptions import ValidationError
     started = perf_counter()

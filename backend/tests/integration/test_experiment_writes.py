@@ -1,21 +1,21 @@
-"""职责：验证跨账号实验维护的事务、权限、幂等与后续清理。
-实现：真实 PostgreSQL 夹具和 Session/Tool/Agent HTTP，所有写入限隔离数据库。
-关联：experiment_writes、experiments、agent_tools、chat.tool_reads 与 seed_kg_lab。
-目录：
-- ExperimentWriteTests：维护权限集成验证。
-- ExperimentWriteTests.setUp：创建两个账号及完整批次。
-- ExperimentWriteTests.call：经统一 HTTP 入口维护。
-- ExperimentWriteTests.row：读取精确共享行。
-- ExperimentWriteTests.test_crud_replay_conflict_cleanup：跨账号 CRUD、幂等、旧指纹与清理。
-- ExperimentWriteTests.test_boundaries_and_references：私有行、归属、跨批次关系与删除引用保护。
-- ExperimentWriteTests.test_update_all_allowed_models：逐模型验证合法维护与完整性。
-- ExperimentWriteTests.test_tool_scope_and_chat_mutation：冻结凭据及请求绑定 Agent 维护回执。
-- ExperimentWriteTests.test_cleanup_after_relation_edit：关联改到后建记录后仍可完整清理。
-- ExperimentWriteConcurrencyTests：独立数据库连接的并发写入验证。
-- ExperimentWriteConcurrencyTests.test_same_fingerprint_has_one_winner：同一旧指纹只允许一次成功。
-- ExperimentWriteConcurrencyTests.test_same_fingerprint_has_one_winner.write：独立连接执行竞争写入。
-变量索引：
-- 无
+"""Responsibility: Verifies transactions, permissions, idempotency, and subsequent cleanup for cross-account experiment maintenance.
+Implementation: Real PostgreSQL fixtures and Session/Tool/Agent HTTP; all writes are limited to the isolated database.
+Relationships: `experiment_writes`, `experiments`, `agent_tools`, `chat.tool_reads`, and `seed_kg_lab`.
+Directory:
+- ExperimentWriteTests: Maintenance permission integration verification.
+- ExperimentWriteTests.setUp: Creates two accounts and a complete batch.
+- ExperimentWriteTests.call: Maintains through the unified HTTP entry point.
+- ExperimentWriteTests.row: Reads an exact shared row.
+- ExperimentWriteTests.test_crud_replay_conflict_cleanup: Cross-account CRUD, idempotency, old fingerprints, and cleanup.
+- ExperimentWriteTests.test_boundaries_and_references: Private rows, ownership, cross-batch relations, and deletion-reference protection.
+- ExperimentWriteTests.test_update_all_allowed_models: Verifies valid maintenance and integrity for each model.
+- ExperimentWriteTests.test_tool_scope_and_chat_mutation: Frozen credentials and request-bound Agent maintenance receipts.
+- ExperimentWriteTests.test_cleanup_after_relation_edit: Remains cleanly removable after a relation is changed to a later-created record.
+- ExperimentWriteConcurrencyTests: Concurrent-write verification using independent database connections.
+- ExperimentWriteConcurrencyTests.test_same_fingerprint_has_one_winner: Only one operation with the same old fingerprint may succeed.
+- ExperimentWriteConcurrencyTests.test_same_fingerprint_has_one_winner.write: Uses independent connections for competing writes.
+Variable index:
+- None
 """
 
 import hashlib
@@ -41,23 +41,23 @@ from integrations.salesmate_tools.read_contract import EXPERIMENT_WRITE_TOOLS
 from tests.integration.test_experiments import ExperimentTests
 
 
-# 功能：验证所有登录账号的实验业务维护。
-# 逻辑：真实请求覆盖共享写入口和所有可写模型，不运行外部 Worker。
-# 约束：隔离数据库与临时附件；不证明线上外部模型规划质量。
+# Function: Verifies experiment-business maintenance by every logged-in account.
+# Logic: Real requests cover the shared write entry point and all writable models; no external Worker runs.
+# Constraints: Uses isolated database and temporary attachments; does not prove production external-model planning quality.
 class ExperimentWriteTests(TestCase):
-    # 功能：建立不同归属的真实关联测试数据。
-    # 输入：测试数据库和临时目录。
-    # 输出：owner、reader、manifest、private、base、client 实例状态。
-    # 逻辑：复用完整 44 表夹具，写账号与归属账号不同。
-    # 约束：每例事务回滚，附件由基准构建函数登记清理。
+    # Function: Creates real related test data with different ownership.
+    # Inputs: Test database and temporary directory.
+    # Outputs: `owner`, `reader`, `manifest`, `private`, `base`, and `client` instance state.
+    # Logic: Reuses complete 44-table fixtures; the writing account differs from the ownership account.
+    # Constraints: Each case rolls back its transaction; attachments are registered for cleanup by the baseline builder.
     def setUp(self):
         ExperimentTests.setUp(self)
 
-    # 功能：提交有幂等键的维护请求。
-    # 输入：`operation` 操作、`model` 模型、`status` 预期状态、`key` 可选幂等键、`args` 业务参数。
-    # 输出：原始响应字典。
-    # 逻辑：使用当前客户端认证，失败断言包含响应以便定位。
-    # 约束：不绕过 Schema 或处理器，不自动重试。
+    # Function: Submits a maintenance request with an idempotency key.
+    # Inputs: `operation` is the action, `model` the model, `status` the expected status, `key` the optional idempotency key, and `args` business parameters.
+    # Outputs: Raw response dictionary.
+    # Logic: Authenticates with the current client; failed assertions include the response for diagnosis.
+    # Constraints: Does not bypass schema or handlers and does not retry automatically.
     def call(self, operation, model, status=200, key=None, **args):
         response = self.client.post("/api/v1/agent-tools/call/", {"name": "experiments." + operation,
             "arguments": {"batch": APPROVED_BATCHES[0], "model": model, **args},
@@ -65,21 +65,21 @@ class ExperimentWriteTests(TestCase):
         self.assertEqual(response.status_code, status, response.data)
         return response.data
 
-    # 功能：读取目标表中的共享投影。
-    # 输入：`model` 模型、`pk` 可选精确主键。
-    # 输出：一条带指纹的行。
-    # 逻辑：调用实际实验读取接口。
-    # 约束：只适用于预先存在的记录。
+    # Function: Reads the shared projection in the target table.
+    # Inputs: `model` is the model and `pk` is an optional exact primary key.
+    # Outputs: One fingerprinted row.
+    # Logic: Calls the actual experiment-read endpoint.
+    # Constraints: Applies only to records that already exist.
     def row(self, model, pk=None):
         response = self.client.get(self.base + model + "/", {"pk": pk} if pk else {})
         self.assertEqual(response.status_code, 200, response.data)
         return response.data["results"][0]
 
-    # 功能：验证完整 CRUD、幂等与可清理性。
-    # 输入：新账号与另一个账号拥有的批次。
-    # 输出：数量恢复、审计三个操作、归属不变、旧指纹拒绝及清理预览通过。
-    # 逻辑：新增产品，重放相同幂等键，跨账号读取，修改后拒绝旧版本，再删除。
-    # 约束：不删除既有测试场景，只操作新产品。
+    # Function: Verifies complete CRUD, idempotency, and removability.
+    # Inputs: A new account and a batch owned by another account.
+    # Outputs: Counts are restored, three operations are audited, ownership remains unchanged, old fingerprints are rejected, and cleanup preview succeeds.
+    # Logic: Adds a product, replays the same idempotency key, reads across accounts, rejects the old version after modification, then deletes it.
+    # Constraints: Does not delete existing test scenarios; operates only on the new product.
     def test_crud_replay_conflict_cleanup(self):
         key = uuid.uuid4()
         data = {"sku": "KGSEED-new-product", "name": "共享新增", "currency": "USD", "unit_price": "3.50"}
@@ -101,11 +101,11 @@ class ExperimentWriteTests(TestCase):
         self.assertEqual(verify_manifest(manifest), manifest["table_counts"])
         self.assertEqual(run_delete(self.owner, APPROVED_BATCHES[0], False)["action"], "delete_preview")
 
-    # 功能：验证精确授权与引用保护。
-    # 输入：共享客户、私有客户及非业务安全模型。
-    # 输出：越界拒绝且清单内容未变化。
-    # 逻辑：拒绝私有主键、owner 修改、外键指向私有客户、身份模型和被引用客户删除。
-    # 约束：错误不泄露私有正文，不触发级联。
+    # Function: Verifies exact authorization and reference protection.
+    # Inputs: A shared customer, private customer, and non-business safety model.
+    # Outputs: Out-of-scope actions are rejected and manifest content is unchanged.
+    # Logic: Rejects private primary keys, owner changes, foreign keys to private customers, identity models, and deletion of referenced customers.
+    # Constraints: Errors do not disclose private bodies or trigger cascades.
     def test_boundaries_and_references(self):
         company = self.row("crm.Company")
         self.call("update", "crm.Company", 404, pk=str(self.private.pk), expected="0" * 64, data={"name": "越界"})
@@ -117,11 +117,11 @@ class ExperimentWriteTests(TestCase):
         self.client.force_authenticate(None)
         self.call("create", "sales.Product", 401, data={})
 
-    # 功能：逐一验证所有声明可修改模型实际可保存。
-    # 输入：每表首条完整虚构记录。
-    # 输出：28 模型均成功，指纹与清单一致且原归属保留。
-    # 逻辑：空字段更新验证原始模型约束及版本递增，不使用 mock。
-    # 约束：没有修改业务值；只在隔离库推进维护审计和模型版本。
+    # Function: Verifies every declared writable model can actually be saved.
+    # Inputs: The first complete fictional record for each table.
+    # Outputs: All 28 models succeed; fingerprints match the manifest and original ownership remains.
+    # Logic: Empty-field updates verify original model constraints and version increments without mocks.
+    # Constraints: Does not change business values; advances only maintenance audit and model version in the isolated database.
     def test_update_all_allowed_models(self):
         for model in sorted(WRITE_MODELS):
             with self.subTest(model=model):
@@ -131,11 +131,11 @@ class ExperimentWriteTests(TestCase):
         entry = load_batch(APPROVED_BATCHES[0])
         self.assertEqual(verify_manifest(entry.changes), entry.changes["table_counts"])
 
-    # 功能：验证 Tool scope 和内置 Agent 的真实维护链路。
-    # 输入：仅读令牌、后续显式写授权及处理中的聊天请求。
-    # 输出：旧授权拒绝，授权后成功；Agent 重放只修改一次并保存稳定回执。
-    # 逻辑：HTTP Tool 认证与 Agent 认证分别运行，只有模型决策不在本例范围内。
-    # 约束：不会将 Tool token 误用为 Agent token，不调用真实模型。
+    # Function: Verifies the real maintenance chain for Tool scope and built-in Agent.
+    # Inputs: A read-only token, subsequent explicit write authorization, and a chat request in progress.
+    # Outputs: Old authorization is rejected; it succeeds after authorization, and Agent replay modifies only once and saves a stable receipt.
+    # Logic: HTTP Tool authentication and Agent authentication run separately; model decisions are outside this case.
+    # Constraints: Does not mistake a Tool token for an Agent token and does not call a real model.
     def test_tool_scope_and_chat_mutation(self):
         credential = ToolCredential.objects.create(owner=self.reader, name="write-test",
             digest=hashlib.sha256(b"write-test-token").hexdigest(), allowed_tools=["experiments.rows"],
@@ -164,11 +164,11 @@ class ExperimentWriteTests(TestCase):
             self.assertEqual(response.data["evidence_items"][0]["source_type"], "experiment_mutation")
         self.assertEqual(len(load_batch(APPROVED_BATCHES[0]).changes["mutations"]), 2)
 
-    # 功能：验证编辑外键后的批次删除顺序。
-    # 输入：原报价明细及后创建的产品。
-    # 输出：批次完整删除、清单与附件清理，非批次客户保持存在。
-    # 逻辑：将早创建明细改为引用新产品，触发原逆创建顺序无法处理的依赖。
-    # 约束：只在隔离数据库执行真实删除，不修改生产清单。
+    # Function: Verifies batch-deletion order after editing a foreign key.
+    # Inputs: An original quote line and a later-created product.
+    # Outputs: The batch is completely deleted, manifest and attachments are cleaned up, and non-batch customers remain.
+    # Logic: Changes the earlier-created line to reference the new product, triggering a dependency that the original reverse-creation order cannot handle.
+    # Constraints: Performs real deletion only in the isolated database and does not modify the production manifest.
     def test_cleanup_after_relation_edit(self):
         product = self.call("create", "sales.Product", data={"sku": "cleanup-new", "name": "清理测试", "currency": "USD", "unit_price": "1.00"})["data"]["record"]
         line = self.row("sales.QuoteLine")
@@ -181,25 +181,25 @@ class ExperimentWriteTests(TestCase):
             self.assertFalse(apps.get_model(row["model"]).objects.filter(pk=row["pk"]).exists())
 
 
-# 功能：验证共享记录并发版本边界。
-# 逻辑：两个真实连接同时提交同一指纹，检查行锁和提交后清单重读。
-# 约束：不 mock 锁或数据库，不访问外部服务。
+# Function: Verifies concurrent-version boundaries for shared records.
+# Logic: Two real connections submit the same fingerprint simultaneously, checking row locks and manifest reread after commit.
+# Constraints: Does not mock locks or the database and does not access external services.
 class ExperimentWriteConcurrencyTests(TransactionTestCase):
-    # 功能：保证两个竞争更新不会覆盖彼此。
-    # 输入：完整测试批次、两个同时开始的维护请求。
-    # 输出：恰好一次成功、一次 409，审计仅追加一次且清单核验通过。
-    # 逻辑：Barrier 同步请求开始，服务的所有者及清单锁保证读取最新指纹。
-    # 约束：线程各用独立连接，等待最多十秒，失败不自动重试。
+    # Function: Ensures two competing updates cannot overwrite each other.
+    # Inputs: A complete test batch and two simultaneously started maintenance requests.
+    # Outputs: Exactly one succeeds and one returns 409; audit appends once and manifest verification succeeds.
+    # Logic: A barrier synchronizes request start; the service's owner and manifest locks ensure the latest fingerprint is read.
+    # Constraints: Each thread uses an independent connection, waits at most ten seconds, and does not retry failures automatically.
     def test_same_fingerprint_has_one_winner(self):
         ExperimentTests.setUp(self)
         row = table_rows(load_batch(APPROVED_BATCHES[0]), "crm.Company")[0]
         barrier = Barrier(2)
 
-        # 功能：提交一次并发更新。
-        # 输入：`name` 新客户名称；闭包读取批次、读取者、旧指纹及同步屏障。
-        # 输出：200 或 409 状态整数。
-        # 逻辑：独立连接中调用真实维护事务，finally 关闭连接。
-        # 约束：仅捕获预期版本冲突，未知异常向测试传播。
+        # Function: Submits one concurrent update.
+        # Inputs: `name` is the new customer name; the closure reads the batch, reader, old fingerprint, and synchronization barrier.
+        # Outputs: A 200 or 409 status integer.
+        # Logic: Calls the real maintenance transaction in an independent connection and closes it in `finally`.
+        # Constraints: Captures only expected version conflicts; unknown exceptions propagate to the test.
         def write(name):
             close_old_connections()
             try:

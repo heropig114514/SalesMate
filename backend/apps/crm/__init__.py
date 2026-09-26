@@ -1,8 +1,8 @@
-"""职责：声明邮件理解业务包。
-实现：不在导入时运行业务操作。
-关联：由 config.settings 注册。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the email-understanding business package.
+Implementation: Importing performs no business operation.
+Relationships: Registered by ``config.settings``.
+Directory:
+- None
+Variable index:
+- None
 """

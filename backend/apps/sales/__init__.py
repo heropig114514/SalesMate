@@ -1,8 +1,8 @@
-"""职责：声明销售业务应用包。
-实现：通过 Django 标准包发现加载，无导入副作用。
-关联：由 sales 应用注册及管理命令发现机制引用。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the sales-business application package.
+Implementation: Loaded through standard Django package discovery with no import side effects.
+Relationships: Used by sales application registration and management-command discovery.
+Directory:
+- None
+Variable index:
+- None
 """

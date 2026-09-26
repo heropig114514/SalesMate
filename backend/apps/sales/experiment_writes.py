@@ -1,17 +1,17 @@
-"""职责：为共享虚构业务数据提供有审计、可清理的新增、修改和删除。
-实现：实验模式省略客户端旧指纹及外部漂移检查，正式模式保持严格比较；固定模型及字段边界、清单行锁、指纹乐观锁、同批次外键和禁止隐式级联；清单与数据原子提交。
-关联：网页与 Tool/MCP 共用 mutate；experiments 发布能力；seed_kg_lab 使用同一清单锁清理。
-目录：
-- write_fields：枚举允许用户提交的业务字段。
-- capabilities：返回模型可写能力与字段约束。
-- validate_relations：限制外键到同批次并核对客户一致性。
-- delete_leaf：拒绝仍被任何记录引用的删除。
-- mutate：执行单条共享记录变更并追加清单审计。
-变量索引：
-- WRITE_MODELS：开放数据维护的模型，不含身份、授权、执行队列和审计证据。
-- PROTECTED：服务器维护的归属、版本、执行凭据和文件存储字段。
-- INERT_STATUSES：会被后台任务消费的两类模型仅允许终态，避免实验维护启动处理或提醒。
-- logger：记录变更定位信息，避免输出业务正文。
+"""Responsibility: Provide audited, removable creation, modification, and deletion of shared fictional business data.
+Implementation: Experiment mode omits stale client fingerprints and external drift checks; production compares strictly. Enforce model/field boundaries, manifest row locks, optimistic fingerprint locks, same-batch foreign keys, and no implicit cascading; commit data and manifest atomically.
+Relationships: The web UI and Tool/MCP share mutate; experiments publishes capabilities; seed_kg_lab cleans up under the same manifest lock.
+Directory:
+- write_fields: Enumerate business fields users may submit.
+- capabilities: Return writable model capabilities and field constraints.
+- validate_relations: Restrict foreign keys to the same batch and check company consistency.
+- delete_leaf: Reject deletion while any record still references the target.
+- mutate: Mutate one shared record and append a manifest audit entry.
+Variable index:
+- WRITE_MODELS: Models open to data maintenance, excluding identity, authorization, execution queues, and audit evidence.
+- PROTECTED: Server-managed ownership, version, execution credential, and file storage fields.
+- INERT_STATUSES: The two model types consumed by background tasks allow only terminal states, preventing experiment maintenance from starting processing or reminders.
+- logger: Log mutation identifiers without business content.
 """
 
 import copy
@@ -49,11 +49,11 @@ logger = logging.getLogger("salesmate.experiments.writes")
 INERT_STATUSES = {"crm.StoredMessage": ("completed", "failed"), "sales.FollowUp": ("completed", "cancelled")}
 
 
-# 功能：枚举安全业务字段。
-# 输入：`label` 模型全名。
-# 输出：attname 到 Django Field 的映射，未开放模型为空。
-# 逻辑：使用显式模型集合，再排除主键、归属、版本和自动时间。
-# 约束：不开放文件字节、身份、队列、授权或执行回执。
+# Function: Enumerate safe business fields.
+# Inputs: `label`: fully qualified model name.
+# Outputs: Mapping from attname to Django Field; empty for models not open to maintenance.
+# Logic: Use an explicit model set, excluding primary keys, ownership, versions, and automatic timestamps.
+# Constraints: Do not expose file bytes, identities, queues, authorization, or execution receipts for maintenance.
 def write_fields(label):
     if label not in WRITE_MODELS:
         return {}
@@ -64,11 +64,11 @@ def write_fields(label):
             and not getattr(field, "auto_now", False) and not getattr(field, "auto_now_add", False)}
 
 
-# 功能：向客户端发布可维护字段及必填约束。
-# 输入：`label` 模型全名。
-# 输出：create/update/delete 和字段元数据。
-# 逻辑：字段必填来自模型默认值、null 与 blank；单账号资料禁止创建以免覆盖真实资料。
-# 约束：删除能力仍须通过实时引用检查；字段校验由服务端执行。
+# Function: Publish maintainable fields and required-field constraints to clients.
+# Inputs: `label`: fully qualified model name.
+# Outputs: create/update/delete capabilities and field metadata.
+# Logic: Derive required fields from model defaults, null, and blank; prohibit creation of single-account profiles to avoid overwriting real profiles.
+# Constraints: Deletion still requires live reference checks; the server validates fields.
 def capabilities(label):
     writable = label in WRITE_MODELS
     return {"create": writable and label not in {"accounts.CompanyProfile", "accounts.SalesSetup", "sales.SellerProfile"},
@@ -80,11 +80,11 @@ def capabilities(label):
                        for name, field in write_fields(label).items()]}
 
 
-# 功能：验证新增及修改后的关系仍位于共享实验内。
-# 输入：`record` 待保存实例、`entry` 锁定清单。
-# 输出：无；不合法关系抛出 400。
-# 逻辑：用户归属不可提交，其余外键必须精确登记；正式模式核对关联指纹，同一行的客户关系必须一致。
-# 约束：不允许引用私有真实行，不依据名字前缀授权；历史不可编辑关系保持原值。
+# Function: Validate that relations after creation or update remain within the shared experiment.
+# Inputs: `record`: instance to save; `entry`: locked manifest.
+# Outputs: None; invalid relations raise a 400 error.
+# Logic: Ownership is not writable; every other foreign key must be explicitly registered. Production checks related fingerprints, and company relations within a row must agree.
+# Constraints: No references to private real rows or authorization by name prefix; retain existing noneditable relations.
 def validate_relations(record, entry):
     members = {(row["model"], row["pk"]): row["fingerprint"] for row in entry.changes["rows"]}
     companies = set()
@@ -105,11 +105,11 @@ def validate_relations(record, entry):
         raise ValidationError("关联记录属于不同客户，请修正客户、联系人或单据关系。")
 
 
-# 功能：删除没有任何反向引用的单条实验记录。
-# 输入：`record` 已锁定且指纹匹配的实例。
-# 输出：无；存在引用返回 409，成功删除数据库行。
-# 逻辑：检查包括 SET_NULL 在内的全部反向关系，不自动级联或修改其他记录。
-# 约束：调用方持有事务行锁；错误只公布关联模型，不泄露私有记录内容。
+# Function: Delete one experiment record with no reverse references.
+# Inputs: `record`: locked instance with a matching fingerprint.
+# Outputs: None; references produce 409, while success deletes the database row.
+# Logic: Inspect all reverse relations, including SET_NULL, without automatic cascading or modifying other records.
+# Constraints: The caller holds transaction row locks; errors disclose only the related model, never private record content.
 def delete_leaf(record):
     blockers = []
     for relation in record._meta.related_objects:
@@ -121,11 +121,11 @@ def delete_leaf(record):
     record.delete()
 
 
-# 功能：原子维护共享批次中的单条业务记录。
-# 输入：`actor` 已认证账号、`operation` 为 create/update/delete、`batch` 精确批次、`label` 模型、`data` 业务字段、`pk` 和 `expected` 为修改/删除的主键及旧指纹。
-# 输出：包含操作、主键、批次、操作者与最新记录的 JSON 对象。
-# 逻辑：按批次归属、清单、目标顺序锁定，核对清单完整性；实验模式不要求客户端 expected；正式模式检查旧指纹；保存后刷新清单与审计并保留原清单。
-# 约束：无自动重试；数据库冲突转 409；不执行邮件、分析或队列任务；历史 truth 保留并标注可能过期。
+# Function: Atomically maintain one business record in a shared batch.
+# Inputs: `actor`: authenticated account; `operation`: create/update/delete; `batch`: exact batch; `label`: model; `data`: business fields; `pk` and `expected`: primary key and old fingerprint for update/delete.
+# Outputs: A JSON object containing operation, primary key, batch, actor, and latest record.
+# Logic: Lock batch owner, manifest, then target; verify manifest integrity. Experiment mode does not require client expected; production checks the old fingerprint. Refresh manifest and audit after saving while retaining the original manifest.
+# Constraints: No automatic retries; database conflicts become 409. Do not execute email, analysis, or queue tasks; retain historical truth and flag possible staleness.
 def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
     if not enabled() and (not actor.is_authenticated or not actor.is_active):
         raise PermissionDenied("需要有效登录账号。")
@@ -141,7 +141,7 @@ def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
         with transaction.atomic():
             initial = load_batch(batch)
             get_user_model().objects.select_for_update().get(pk=initial.owner_id)
-            # 所有维护与批次清理均先锁同一清单；等待后重新读取状态而不沿用旧 JSON。
+            # Maintenance and batch cleanup first lock the same manifest; reread state after waiting instead of reusing stale JSON.
             AuditEvent.objects.select_for_update().get(pk=initial.pk)
             entry = load_batch(batch)
             manifest = entry.changes
@@ -180,7 +180,7 @@ def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
                 validate_relations(record, entry)
                 if operation == "update" and hasattr(record, "revision") and label != "crm.AnalysisInput":
                     record.revision += 1
-                # API 接受数据库允许的 NULL 和空 JSON 容器，不应用 ModelForm 的 blank 限制；其余类型、唯一性和约束均验证。
+                # The API accepts database-permitted NULL and empty JSON containers without ModelForm blank restrictions; validate other types, uniqueness, and constraints.
                 record.full_clean(exclude=[field.name for field in model._meta.fields
                     if (field.null and getattr(record, field.attname) is None)
                     or (field.get_internal_type() == "JSONField" and getattr(record, field.attname) in ({}, []))], validate_unique=True)

@@ -1,37 +1,37 @@
-"""职责：保存独立工具授权、幂等回执和待人工确认提案。
-实现：凭证仅存摘要；用户与幂等键唯一；提案冻结工具输入且有期限。
-关联：authentication 认证工具 token；services 在事务内维护回执和确认状态。
-目录：
-- ToolCredential：用户委托的工具权限。
-- ToolCall：一次逻辑写入回执。
-- ToolCall.Meta：员工内幂等键约束。
-- ToolProposal：需要真人确认的冻结变更。
-变量索引：
-- ToolCredential.id：授权标识。
-- ToolCredential.owner：授权用户。
-- ToolCredential.name：用户可读名称。
-- ToolCredential.digest：令牌 SHA-256 摘要。
-- ToolCredential.allowed_tools：明确工具名称白名单。
-- ToolCredential.expires_at：授权到期时间。
-- ToolCredential.revoked_at：撤销时间。
-- ToolCredential.created_at：创建时间。
-- ToolCall.id：回执标识。
-- ToolCall.owner：调用用户。
-- ToolCall.key：调用者生成的幂等 UUID。
-- ToolCall.tool：固定工具名称。
-- ToolCall.input_hash：输入内容摘要。
-- ToolCall.result：冻结执行或提案回执。
-- ToolCall.created_at：完成时间。
-- ToolCall.Meta.constraints：员工和 key 联合唯一。
-- ToolProposal.id：提案标识。
-- ToolProposal.owner：必须确认的用户。
-- ToolProposal.credential：发起授权；撤销或到期后不能批准。
-- ToolProposal.tool：拟执行工具。
-- ToolProposal.arguments：冻结输入，包含业务旧版本。
-- ToolProposal.status：pending/approved/cancelled。
-- ToolProposal.result：确认后的执行结果。
-- ToolProposal.expires_at：提案到期时间。
-- ToolProposal.created_at：提案创建时间。
+"""Responsibility: Persist independent tool authorizations, idempotent receipts, and proposals awaiting human confirmation.
+Implementation: Credentials retain only digests; user and idempotency key are unique; proposals freeze tool input and have an expiry.
+Relationships: ``authentication`` authenticates tool tokens; ``services`` maintains receipts and confirmation state in transactions.
+Directory:
+- ToolCredential: Tool permissions delegated by a user.
+- ToolCall: Receipt for one logical write.
+- ToolCall.Meta: Per-employee idempotency-key constraint.
+- ToolProposal: Frozen change requiring human confirmation.
+Variable index:
+- ToolCredential.id: Authorization identifier.
+- ToolCredential.owner: Authorized user.
+- ToolCredential.name: User-readable name.
+- ToolCredential.digest: SHA-256 digest of the token.
+- ToolCredential.allowed_tools: Explicit allowlist of tool names.
+- ToolCredential.expires_at: Authorization expiry time.
+- ToolCredential.revoked_at: Revocation time.
+- ToolCredential.created_at: Creation time.
+- ToolCall.id: Receipt identifier.
+- ToolCall.owner: Invoking user.
+- ToolCall.key: Caller-generated idempotency UUID.
+- ToolCall.tool: Fixed tool name.
+- ToolCall.input_hash: Digest of input content.
+- ToolCall.result: Frozen execution or proposal receipt.
+- ToolCall.created_at: Completion time.
+- ToolCall.Meta.constraints: Jointly unique on employee and key.
+- ToolProposal.id: Proposal identifier.
+- ToolProposal.owner: User required to confirm.
+- ToolProposal.credential: Originating authorization; cannot approve after revocation or expiry.
+- ToolProposal.tool: Proposed tool to execute.
+- ToolProposal.arguments: Frozen input including stale business versions.
+- ToolProposal.status: pending, approved, or cancelled.
+- ToolProposal.result: Execution result after confirmation.
+- ToolProposal.expires_at: Proposal expiry time.
+- ToolProposal.created_at: Proposal creation time.
 """
 
 import uuid
@@ -39,9 +39,9 @@ from django.conf import settings
 from django.db import models
 
 
-# 功能：隔离 Agent 任务凭证与业务操作授权。
-# 逻辑：每份授权限定用户、工具名单和有效期。
-# 约束：原始 token 只在创建响应返回一次，不存数据库。
+# Function: Isolate Agent-task credentials from business-operation authorization.
+# Logic: Each authorization restricts user, tool list, and validity period.
+# Constraints: Raw token is returned only once in the creation response and never stored in the database.
 class ToolCredential(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -53,9 +53,9 @@ class ToolCredential(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-# 功能：保存逻辑写入的可核对回执。
-# 逻辑：同用户相同幂等键只接受相同工具和输入。
-# 约束：回执是历史执行快照，不代表关联实体当前状态。
+# Function: Persist a verifiable receipt of a logical write.
+# Logic: The same user's same idempotency key accepts only the same tool and input.
+# Constraints: Receipt is a historical execution snapshot and does not represent current state of related entities.
 class ToolCall(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -65,9 +65,9 @@ class ToolCall(models.Model):
     result = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # 功能：保护员工内幂等身份。
-    # 逻辑：数据库保证最终唯一。
-    # 约束：服务另行比较输入摘要。
+    # Function: Protect per-employee idempotent identity.
+    # Logic: The database guarantees final uniqueness.
+    # Constraints: Service separately compares input digests.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -76,9 +76,9 @@ class ToolCall(models.Model):
         ]
 
 
-# 功能：保存需要真人确认的工具调用。
-# 逻辑：输入不可经确认请求修改，旧版本冲突时要求重新提出。
-# 约束：工具凭证不能批准，取消和到期不会执行业务。
+# Function: Persist a tool call requiring human confirmation.
+# Logic: Input cannot be changed through a confirmation request; a stale-version conflict requires a new proposal.
+# Constraints: Tool credentials cannot approve; cancellation and expiry do not execute business operations.
 class ToolProposal(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)

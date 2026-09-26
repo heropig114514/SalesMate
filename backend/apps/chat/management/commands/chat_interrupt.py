@@ -1,12 +1,12 @@
-"""职责：显式终止已确认中断的聊天请求。
-实现：指定员工与 request_id，强制要求确认进程中断。
-关联：chat.services.interrupt；后续重试由浏览器另行提交。
-目录：
-- Command：人工恢复入口。
-- Command.add_arguments：声明必需标识和确认。
-- Command.handle：核验并关闭请求。
-变量索引：
-- Command.help：操作用途。
+"""Responsibility: Explicitly stop a chat request confirmed as interrupted.
+Implementation: Target employee and request_id and require explicit confirmation that processing stopped.
+Relationships: ``chat.services.interrupt``; browser submits any later retry separately.
+Directory:
+- Command: Manual recovery entry point.
+- Command.add_arguments: Declare required identifiers and confirmation.
+- Command.handle: Validate and close the request.
+Variable index:
+- Command.help: Operation purpose.
 """
 
 from django.contrib.auth import get_user_model
@@ -15,27 +15,27 @@ from rest_framework.exceptions import APIException
 from apps.chat import contracts, services
 
 
-# 功能：关闭明确指定的中断请求。
-# 逻辑：不根据猜测的超时批量重置。
-# 约束：命令行操作者必须已核对执行进程。
+# Function: Close an explicitly identified interrupted request.
+# Logic: Does not batch-reset requests based on guessed timeout.
+# Constraints: Command-line operator must already have checked the execution process.
 class Command(BaseCommand):
     help = "确认进程中断后，将指定 processing 请求终止为 failed。"
 
-    # 功能：声明恢复参数。
-    # 输入：`parser` 参数解析器。
-    # 输出：无，注册 owner/request-id/confirm-interrupted。
-    # 逻辑：禁止省略身份或任务，确认是独立开关。
-    # 约束：不设置自动超时或批量恢复默认值。
+    # Function: Declare recovery arguments.
+    # Inputs: Argument parser ``parser``.
+    # Outputs: None; registers owner, request-id, and confirm-interrupted.
+    # Logic: Identity and request cannot be omitted; confirmation is an independent flag.
+    # Constraints: Sets no automatic timeout or batch-recovery default.
     def add_arguments(self, parser):
         parser.add_argument("--owner", required=True)
         parser.add_argument("--request-id", required=True)
         parser.add_argument("--confirm-interrupted", action="store_true")
 
-    # 功能：执行安全终止。
-    # 输入：`args` 位置参数，`options` 员工、任务与确认。
-    # 输出：安全任务标识或 CommandError。
-    # 逻辑：查找员工后调用单事务状态转换。
-    # 约束：终态、pending 或其他员工请求不会被修改。
+    # Function: Execute safe termination.
+    # Inputs: Positional ``args`` and ``options`` containing employee, request, and confirmation.
+    # Outputs: Safe request identifier or ``CommandError``.
+    # Logic: Find employee then call the single-transaction state transition.
+    # Constraints: Does not modify terminal, pending, or another employee's request.
     def handle(self, *args, **options):
         if not options["confirm_interrupted"]:
             raise CommandError("须确认原处理进程已中断，并传入 --confirm-interrupted。")

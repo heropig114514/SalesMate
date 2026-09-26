@@ -1,25 +1,25 @@
 /**
- * 职责：集中处理同源 API、会话 CSRF 和错误显示所需的结构。
- * 实现：fetch 禁止业务缓存，发送 JSON 或 multipart 与当前语言头，写请求附 CSRF 和账号数据版本；响应校验版本，支持幂等键及取消只读观察。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 调用此模块；后端使用 SessionAuthentication 与独立 Agent 路由。
- * 目录：csrfToken（读取 cookie）；errorMessage（提取错误文本）；request（执行请求）；escapeHtml（转义文本）。
- * 变量索引：无模块状态；BASE 为版本化业务 API 前缀。
+ * Responsibility: Centralize same-origin API calls, session CSRF handling, and error-display structures.
+ * Implementation: Disable application caching in fetch; send JSON or multipart data with the current language header, adding CSRF and account data versions to writes; validate response versions and support idempotency keys and cancellation of read-only observation.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; app.js calls this module; the backend uses SessionAuthentication and separate Agent routes.
+ * Directory: csrfToken (read the cookie), errorMessage (extract error text), request (make requests), escapeHtml (escape text).
+ * Variable index: No mutable module state; BASE is the versioned business API prefix.
  */
 import { t, language } from './i18n.js?v=20260921-product';
 import { accountVersion, observeAccountVersion } from './account-cache.js?v=20260921-product';
 
 const BASE = '/api/v1/';
 
-/** 功能：读取 Django CSRF cookie。输入：隐式 document.cookie。输出：令牌或空字符串。
- * 逻辑：解析精确 csrftoken 键。约束：不打印或持久化令牌。 */
+/** Function: Read the Django CSRF cookie. Inputs: Implicit document.cookie. Outputs: The token or an empty string.
+ * Logic: Parse the exact csrftoken key. Constraints: Never print or persist the token. */
 function csrfToken() {
   return document.cookie.split('; ').find(item => item.startsWith('csrftoken='))?.split('=').slice(1).join('=') || '';
 }
 
-/** 功能：将后端校验错误转换为可读提示。输入：detail 为字符串、数组或字段错误对象。输出：提示文本。
- * 逻辑：递归展开字段和数组中的消息并以分号连接；无消息时交由调用方显示 HTTP 状态。
- * 约束：仅处理已收到的错误响应，不修改错误状态、不执行 HTML。 */
+/** Function: Convert backend validation errors into readable messages. Inputs: detail is a string, array, or field-error object. Outputs: Message text.
+ * Logic: Recursively flatten field and array messages and join them with semicolons; let the caller display the HTTP status when no message exists.
+ * Constraints: Process received error responses only, without changing their status or executing HTML. */
 function errorMessage(detail) {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) return detail.map(errorMessage).filter(Boolean).join('；');
@@ -27,9 +27,9 @@ function errorMessage(detail) {
   return '';
 }
 
-/** 功能：调用业务 API。输入：path 相对路径，options 可包含 method、data（JSON 或 FormData）、version、signal、idempotencyKey。
- * 输出：成功 JSON 或 null；失败抛 Error。逻辑：附语言、账号数据版本和可选幂等键，禁用 HTTP 缓存并拒绝旧版本响应；保持 HTTP 失败语义，展开字段错误。
- * 约束：取消保留 AbortError 交给观察者处理；无重试、无降级，不将秘密放入 URL。 */
+/** Function: Call a business API. Inputs: Relative path and options including method, data (JSON or FormData), version, signal, and idempotencyKey.
+ * Outputs: Successful JSON or null; throw Error on failure. Logic: Attach language, account data version, and optional idempotency headers; disable HTTP caching, reject stale responses, retain HTTP failure semantics, and flatten field errors.
+ * Constraints: Propagate cancellation as AbortError for observers to handle; no retries or fallbacks, and no secrets in URLs. */
 export async function request(path, { method = 'GET', data, version, signal, idempotencyKey } = {}) {
   const headers = { 'Accept': 'application/json', 'Accept-Language': language };
   if (data !== undefined && !(data instanceof FormData)) headers['Content-Type'] = 'application/json';
@@ -60,8 +60,8 @@ export async function request(path, { method = 'GET', data, version, signal, ide
   return body;
 }
 
-/** 功能：为模板插值转义不可信文本。输入：value 任意原始字段。输出：HTML 安全文本。
- * 逻辑：转义五个 HTML 元字符。约束：仅用于文本或加引号属性，不用于执行代码或 URL 协议。 */
+/** Function: Escape untrusted text for template interpolation. Inputs: value is any raw field. Outputs: HTML-safe text.
+ * Logic: Escape the five HTML metacharacters. Constraints: Use only for text or quoted attributes, never executable code or URL schemes. */
 export function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }

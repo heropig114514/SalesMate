@@ -1,17 +1,17 @@
-"""职责：验证分析冲突原因和最新版本显式重建流程。
-实现：合成邮件、真实 PostgreSQL 事务及 DRF API；规则仅生成测试载荷，模型不调用。
-关联：results、jobs、analysis_errors 及现有详情投影；不增加 Agent 状态。
-目录：
-- AnalysisConflictTests：分析并发契约测试。
-- AnalysisConflictTests.setUp：生成已领取任务及输入。
-- AnalysisConflictTests.post_analysis：通过实际 Agent 路由提交。
-- AnalysisConflictTests.test_revision_conflict_and_explicit_successor：旧结果拒绝、错误可读及新任务去重。
-- AnalysisConflictTests.test_lease_reasons_remain_409：区分无效、过期与结束任务。
-- AnalysisConflictTests.test_immutable_payload_conflict：相同键不同载荷不能覆盖。
-- AnalysisConflictTests.test_missing_snapshot_is_not_model_error：缺少快照单独归因。
-- AnalysisConflictTests.test_analysis_v5_aliases_persist_as_full_sources：新 Agent 输出规范化后兼容真实后端。
-变量索引：
-- 无
+"""Responsibility: Verify analysis-conflict reasons and the explicit latest-version rebuild flow.
+Implementation: Use synthetic email, real PostgreSQL transactions, and the DRF API; rules generate test payloads only and no model is invoked.
+Relationships: Covers `results`, `jobs`, `analysis_errors`, and existing detail projections; does not add Agent state.
+Directory:
+- AnalysisConflictTests: Analysis-concurrency contract tests.
+- AnalysisConflictTests.setUp: Create a claimed job and input.
+- AnalysisConflictTests.post_analysis: Submit through the real Agent route.
+- AnalysisConflictTests.test_revision_conflict_and_explicit_successor: Reject old results, retain readable errors, and deduplicate new jobs.
+- AnalysisConflictTests.test_lease_reasons_remain_409: Distinguish invalid, expired, and finished jobs.
+- AnalysisConflictTests.test_immutable_payload_conflict: Prevent different payloads with the same key from overwriting.
+- AnalysisConflictTests.test_missing_snapshot_is_not_model_error: Attribute a missing snapshot separately.
+- AnalysisConflictTests.test_analysis_v5_aliases_persist_as_full_sources: Ensure normalized new Agent output is compatible with the real backend.
+Variable index:
+- None
 """
 from copy import deepcopy
 from datetime import timedelta
@@ -31,16 +31,16 @@ from agent.tests.test_mvp_pipeline import _payload
 from agent.workflows.customer_analysis import _source_aliases, generate_analysis
 
 
-# 功能：验证任务运行期间的版本冲突及安全重建。
-# 逻辑：正式权限与实际持久化，外部模型不参与。
-# 约束：成功样例为规则构造，不表示真实 L3 效果。
+# Function: Verify version conflicts and safe rebuild during job execution.
+# Logic: Use production authorization and actual persistence without an external model.
+# Constraints: Successful samples are rule-constructed and do not represent real L3 effectiveness.
 @override_settings(ANALYSIS_PROVIDER="agent", LAB_OPEN_ACCESS=False)
 class AnalysisConflictTests(TestCase):
-    # 功能：创建独立业务输入和有效租约。
-    # 输入：测试数据库及固定合成内容，无外部参数。
-    # 输出：用户、客户端、公司、任务、L2 与 L3 夹具。
-    # 逻辑：走真实入库、领取与快照服务。
-    # 约束：规则方法仅用于生成载荷，不启用生产规则降级。
+    # Function: Create independent business input and a valid lease.
+    # Inputs: Test database and fixed synthetic content, with no external parameters.
+    # Outputs: User, clients, company, job, and L2/L3 fixtures.
+    # Logic: Use real ingestion, claiming, and snapshot services.
+    # Constraints: Rule methods generate payloads only and do not enable production rule fallback.
     def setUp(self):
         self.owner = get_user_model().objects.create_user(username="conflict-owner")
         self.mailbox = Mailbox.objects.create(owner=self.owner, address="sales@conflict.example")
@@ -57,19 +57,19 @@ class AnalysisConflictTests(TestCase):
         results.save_input(self.owner, self.snapshot, self.company.revision, self.job["job_id"], self.job["lease_token"])
         self.analysis = rules.generate_analysis(self.snapshot, *selectors.context_pair(self.company))
 
-    # 功能：提交实际 L3 HTTP 请求。
-    # 输入：`payload` 为可选分析，`token` 为可选租约，默认读取当前夹具。
-    # 输出：DRF 响应。
-    # 逻辑：保留 If-Match 与任务头，不模拟异常处理器。
-    # 约束：只访问测试客户端，不发网络请求。
+    # Function: Submit a real L3 HTTP request.
+    # Inputs: `payload` is optional analysis and `token` is an optional lease; defaults use current fixtures.
+    # Outputs: A DRF response.
+    # Logic: Retain If-Match and job headers without mocking the exception handler.
+    # Constraints: Use only the test client and make no network request.
     def post_analysis(self, payload=None, token=None):
         return self.client.post("/api/v1/agent/analyses/", payload or self.analysis, format="json", HTTP_IF_MATCH=str(self.company.revision), HTTP_X_JOB_ID=self.job["job_id"], HTTP_X_LEASE_TOKEN=token or self.job["lease_token"])
 
-    # 功能：验证旧分析失败后只由显式请求建立最新任务。
-    # 输入：L3 开始后更新公司的合成并发事件。
-    # 输出：409 原因、新版本未覆盖、错误提示可读、新任务连续点击去重。
-    # 逻辑：保留旧任务报告和后继任务，重新领取后构建当前输入。
-    # 约束：不自动重试旧分析或改变任务状态枚举。
+    # Function: Verify that only an explicit request creates a latest job after old analysis fails.
+    # Inputs: A synthetic concurrent event updates the company after L3 begins.
+    # Outputs: A 409 reason, no overwriting of the new version, readable error text, and deduplicated repeated clicks for the new job.
+    # Logic: Retain the old-job report and successor job, then build current input after claiming again.
+    # Constraints: Do not automatically retry old analysis or change job-status enums.
     def test_revision_conflict_and_explicit_successor(self):
         Company.objects.filter(pk=self.company.pk).update(revision=self.company.revision + 1)
         response = self.post_analysis()
@@ -91,11 +91,11 @@ class AnalysisConflictTests(TestCase):
         results.save_analysis(self.owner, rules.generate_analysis(snapshot, *selectors.context_pair(self.company)), self.company.revision, next_job["job_id"], next_job["lease_token"])
         self.assertEqual(Analysis.objects.get().snapshot.revision, self.company.revision)
 
-    # 功能：区分错误凭证、过期凭证与结束任务。
-    # 输入：原租约及明确修改后的测试状态。
-    # 输出：各自固定错误码，HTTP 均为 409。
-    # 逻辑：逐项发实际 HTTP 请求，错误凭证不暴露任务状态。
-    # 约束：不续期、不重新领取、不保存分析。
+    # Function: Distinguish invalid credentials, expired credentials, and finished jobs.
+    # Inputs: The original lease and explicitly modified test states.
+    # Outputs: A fixed error code for each condition and HTTP 409 throughout.
+    # Logic: Send real HTTP requests one by one; an invalid credential does not expose job state.
+    # Constraints: Do not renew, claim again, or save analysis.
     def test_lease_reasons_remain_409(self):
         response = self.post_analysis(token=str(uuid.uuid4()))
         self.assertEqual((response.status_code, response.data["error"]["code"]), (409, "analysis_lease_invalid"))
@@ -107,11 +107,11 @@ class AnalysisConflictTests(TestCase):
         self.assertEqual((response.status_code, response.data["error"]["code"]), (409, "analysis_job_inactive"))
         self.assertFalse(Analysis.objects.exists())
 
-    # 功能：防止不同载荷覆盖已保存分析。
-    # 输入：同版本、同提示词的两个不同有效载荷。
-    # 输出：analysis_result_conflict，原载荷保留。
-    # 逻辑：改变生成时间以保持其他事实和契约不变。
-    # 约束：幂等相同载荷仍成功。
+    # Function: Prevent a different payload from overwriting saved analysis.
+    # Inputs: Two different valid payloads with the same version and prompt.
+    # Outputs: `analysis_result_conflict` and the original payload remains.
+    # Logic: Change generated time while retaining all other facts and contracts.
+    # Constraints: Idempotent identical payloads still succeed.
     def test_immutable_payload_conflict(self):
         self.assertEqual(self.post_analysis().status_code, 200)
         self.assertEqual(self.post_analysis().status_code, 200)
@@ -121,22 +121,22 @@ class AnalysisConflictTests(TestCase):
         self.assertEqual((response.status_code, response.data["error"]["code"]), (409, "analysis_result_conflict"))
         self.assertEqual(Analysis.objects.count(), 1)
 
-    # 功能：将缺失输入快照与模型字段校验区分。
-    # 输入：有效分析载荷及尚未保存的输入键。
-    # 输出：analysis_snapshot_changed，不保存结果。
-    # 逻辑：只改变输入键，保留其他字段有效。
-    # 约束：不替客户端创建快照或绕过校验。
+    # Function: Distinguish a missing input snapshot from model-field validation.
+    # Inputs: A valid analysis payload and an unsaved input key.
+    # Outputs: `analysis_snapshot_changed` and no saved result.
+    # Logic: Change only the input key while retaining validity of other fields.
+    # Constraints: Do not create a snapshot for the client or bypass validation.
     def test_missing_snapshot_is_not_model_error(self):
         changed = deepcopy(self.analysis)
         changed["input_version"] = "missing-input"
         response = self.post_analysis(changed)
         self.assertEqual((response.status_code, response.data["error"]["code"]), (409, "analysis_snapshot_changed"))
 
-    # 功能：验证拉取后的 analysis-v5 与后端保存契约实际兼容。
-    # 输入：真实 L2、含短来源编号及错误完整性字段的合成模型输出。
-    # 输出：Agent 规范化为完整来源和实际计数后，后端成功保存 v5 分析。
-    # 逻辑：只模拟模型生成文本；Agent 规范化、校验、DRF 验证与数据库写入均执行实际代码。
-    # 约束：不调用真实模型，不据此宣称历史客户分析已恢复。
+    # Function: Verify that fetched `analysis-v5` is actually compatible with the backend save contract.
+    # Inputs: Real L2 and synthetic model output containing short source identifiers and incorrect completeness fields.
+    # Outputs: After Agent normalization to full sources and actual counts, the backend saves v5 analysis successfully.
+    # Logic: Mock model text generation only; Agent normalization, validation, DRF validation, and database writes execute real code.
+    # Constraints: Do not call a real model or claim that historical customer analysis was restored.
     def test_analysis_v5_aliases_persist_as_full_sources(self):
         payload = _payload(self.snapshot)
         source = self.snapshot["member_dedupe_keys"][0]

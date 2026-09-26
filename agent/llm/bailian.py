@@ -1,4 +1,17 @@
-"""百炼客户端：读取连接配置，请求 JSON 模式，返回模型原始文本。"""
+"""Responsibility: Bailian client: read connection settings, request JSON mode, and return raw model text.
+Implementation: Validate credentials, message shape, and output budgets before one JSON-mode HTTP call; sanitize transport errors.
+Relationships: Used by L1, L3, and workspace chat providers; prompts remain owned by callers.
+
+Directory:
+- LLMError: Model configuration, network, or response format error.
+- _request_json: Send a validated JSON-object request through the shared Bailian transport.
+- generate_json: Send one model request; the caller's prompt specifies the JSON fields.
+- generate_chat_json: Send strictly validated chat messages in their original order and return raw model JSON text.
+
+Variable index:
+- _CHAT_MESSAGE_KEYS: Exact role/content keys required for chat messages.
+- _CHAT_ROLES: Allowed ordered-chat roles.
+"""
 
 import os
 from urllib.parse import urlsplit
@@ -7,7 +20,7 @@ import requests
 
 
 class LLMError(RuntimeError):
-    """模型配置、网络或响应格式错误。"""
+    """Model configuration, network, or response format error."""
 
 
 _CHAT_ROLES = frozenset({"system", "user", "assistant"})
@@ -53,7 +66,7 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
     except requests.RequestException:
         raise LLMError("Bailian connection failed or timed out. Check the network and endpoint.") from None
     if response.status_code != 200:
-        # 不打印请求头、Key 或未经检查的服务端响应正文。
+        # Do not print request headers, keys, or unchecked server response bodies.
         raise LLMError(
             f"Bailian returned HTTP {response.status_code}. Check region, API key, model access, quota, and JSON-mode support."
         )
@@ -68,7 +81,7 @@ def _request_json(messages: list[dict[str, str]], *, max_tokens: int) -> str:
 
 
 def generate_json(system_prompt: str, user_text: str, *, max_tokens: int = 2048) -> str:
-    """执行一次模型请求；具体 JSON 字段通过调用方的提示词规定。"""
+    """Send one model request; the caller's prompt specifies the JSON fields."""
     return _request_json(
         [
             {"role": "system", "content": system_prompt},
@@ -83,7 +96,7 @@ def generate_chat_json(
     *,
     max_tokens: int = 2000,
 ) -> str:
-    """按原顺序发送严格校验的聊天消息并返回模型原始 JSON 文本。"""
+    """Send strictly validated chat messages in their original order and return raw model JSON text."""
     if type(messages) is not list or not messages:
         raise LLMError("messages must be a nonempty list.")
 

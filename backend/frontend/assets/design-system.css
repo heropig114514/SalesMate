@@ -1,12 +1,12 @@
-/* 职责：集中定义产品 Nocturne 深色主题及跨页面基础控件（顶栏不再展示工作空间角标）。
- * 实现：参考 frontend_example 的蓝灰底、紫色强调、细边框；语义色区分失败、警告和成功。
- * 关联：所有 HTML 在页面布局样式之前加载；页面模块只消费变量，不再维护独立色板。
- * 目录：无函数或类；区域为设计变量、交互基线、顶栏组件、语言选择及响应式布局。
- * 变量索引：--bg 页面底色，--surface 卡片，--surface-raised 浮层，--surface-hover 悬停，
- * --ink 正文，--muted 辅文，--line/--line-strong 边界，--accent 主色，--accent-hover 悬停主色，
- * --soft 强调底色，--success/--warning/--danger 语义前景及对应 -soft 底色，--shadow 浮层阴影，--shadow-color 阴影色，
- * --header-height 顶栏与语言栏总高度，--language-height 语言栏高度，--sidebar-width 导航宽度，--map-land/--map-border 底图颜色；
- * --green 为现有交互类使用的强调色别名；--industry-* 为四种行业的可读标签色。 */
+/* Responsibility: Centralize the Nocturne dark theme and cross-page controls; the top bar no longer shows a workspace badge.
+ * Implementation: Follow frontend_example's blue-gray surfaces, purple accents, and fine borders; semantic colors distinguish failure, warning, and success.
+ * Relationships: Every HTML entry loads this before page layout styles; page modules consume shared variables rather than maintaining separate palettes.
+ * Directory: No functions or classes; sections cover design tokens, interaction foundations, top bar, language selection, and responsive layout.
+ * Variable index: --bg is the page background; --surface cards; --surface-raised overlays; --surface-hover hover surfaces;
+ * --ink body text; --muted secondary text; --line/--line-strong borders; --accent primary color; --accent-hover its hover color;
+ * --soft accent background; --success/--warning/--danger semantic foregrounds with corresponding -soft backgrounds; --shadow overlay shadow; --shadow-color shadow color;
+ * --header-height combined top/language bar height; --language-height language bar height; --sidebar-width navigation width; --map-land/--map-border base-map colors;
+ * --green aliases the accent color used by existing interaction classes; --industry-* provides readable labels for four industries. */
 :root {
   color-scheme: dark;
   --bg: #161826;
@@ -68,10 +68,10 @@ salesmate-header { display: block; height: calc(var(--header-height) - var(--lan
 }
 @media(prefers-reduced-motion:reduce) { *, *::before, *::after { scroll-behavior: auto!important; animation: none!important; transition: none!important; } }
 
-/* 语言选择在三个页面及登录前均可访问；占据文档流并固定在产品顶栏上方；总高度共享给侧栏和助手，避免覆盖工具按钮。 */
+/* Language selection is accessible on all three pages and before login. It occupies document flow above the fixed product header; shared total height keeps the sidebar and assistant clear of tool buttons. */
 .language-bar { position: sticky; top: 0; z-index: 1501; height: var(--language-height); display: flex; align-items: center; justify-content: flex-end; gap: .75rem; padding: .4rem 1.25rem; min-height: 44px; background: var(--bg); color: var(--muted); border-bottom: 1px solid var(--line); font-size: .8rem; }
 .language-bar select { width: auto; min-width: 140px; padding: .35rem .65rem; }
-/* 英文标题允许自然换行；保留原有密度，避免长状态挤出卡片。 */
+/* English headings may wrap naturally; preserve density without allowing long status labels to overflow cards. */
 html[lang=en] .product-tabs a { white-space: normal; text-align: center; }
 html[lang=en] .workspace-task span, html[lang=en] .stat-card { overflow-wrap: anywhere; }
 @media (max-width: 640px) { .language-bar { padding-inline: .75rem; } }

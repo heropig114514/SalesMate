@@ -1,11 +1,11 @@
-"""职责：将获准共享的合成批次发布为读取及业务维护工具。
-实现：读取复用网页与文件校验，新增、修改和删除复用带审计的清单维护服务。
-关联：registry 注册，dispatch 在认证和 Schema 校验后分派；MCP 动态发现同一目录。
-目录：
-- experiment_specs：声明实验读取及新增、修改、删除的封闭参数契约。
-- execute_experiment：执行固定操作并保留原数据归属及合成标记。
-变量索引：
-- logger：记录文件读取的账号、批次、模型和主键，不记录正文。
+"""Responsibility: Publish approved shared synthetic batches as read and business-maintenance tools.
+Implementation: Reads reuse webpage and file validation; create, update, and delete reuse the audited catalog-maintenance service.
+Relationships: Registered by ``registry`` and dispatched by ``dispatch`` after authentication and Schema validation; MCP dynamically discovers the same catalog.
+Directory:
+- experiment_specs: Declare closed parameter contracts for experiment reads and create, update, and delete operations.
+- execute_experiment: Execute a fixed operation while retaining original data ownership and synthetic marker.
+Variable index:
+- logger: Records account, batch, model, and primary key for file reads without content.
 """
 
 import logging
@@ -20,11 +20,11 @@ from .support import CHUNK_BYTES, read_content
 logger = logging.getLogger("salesmate.experiments.tools")
 
 
-# 功能：发布目录、分页和附件分块读取。
-# 输入：`tool` 为注册表的声明构造函数。
-# 输出：三个 read 和三个 write 工具声明，删除显式标为 destructiveHint。
-# 逻辑：批次、模型必须显式传入；服务端再检查精确清单，不接受任意路径或 URL。
-# 约束：文件格式、偏移和长度必须显式提供；文本上限沿用现有文件工具。
+# Function: Publish catalog, pagination, and attachment chunk-read tools.
+# Inputs: ``tool`` is the registry declaration constructor.
+# Outputs: Three read and three write tool declarations, with delete explicitly marked ``destructiveHint``.
+# Logic: Batch and model must be explicit; server then checks the exact allowlist and accepts no arbitrary path or URL.
+# Constraints: File format, offset, and length must be explicit; text bound reuses the existing file tool.
 def experiment_specs(tool):
     text = {"type": "string", "minLength": 1, "maxLength": 500}
     location = {"batch": text, "model": text}
@@ -57,11 +57,11 @@ def experiment_specs(tool):
     return entries
 
 
-# 功能：执行已授权的实验读取或维护。
-# 输入：`request` 含真实用户与查询参数，`spec` 固定工具声明，`args` 经 Schema 校验的参数。
-# 输出：含 JSON 数据的 Response；清单不存在或漂移时保留原 404/409 错误。
-# 逻辑：维护分派 mutate；读取复用分页和文件核验，允许 text/plain 实验文件的 UTF-8 文本块。
-# 约束：调用方负责认证、写幂等与工具授权；不把附件路径或凭据传给调用者。
+# Function: Execute an authorized experiment read or maintenance operation.
+# Inputs: ``request`` contains the real user and query parameters, ``spec`` is the fixed tool declaration, and ``args`` are Schema-validated parameters.
+# Outputs: ``Response`` containing JSON data; missing or drifted catalog retains original 404 or 409 errors.
+# Logic: Maintenance dispatches to ``mutate``; reads reuse pagination and file verification and allow UTF-8 text chunks for ``text/plain`` experiment files.
+# Constraints: Caller owns authentication, write idempotency, and tool authorization; attachment paths and credentials are not passed to callers.
 def execute_experiment(request, spec, args):
     operation = spec["operation"]
     if operation in {"create", "update", "delete"}:

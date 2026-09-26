@@ -1,31 +1,31 @@
-# SalesMate 项目参考总览
+# SalesMate Project Reference Overview
 
-更新：2026-09-14。当前前端、Django 后端和 Agent 已完成本地 HTTP 主链路整合。软件 [README](../README.md) 是范围、数据流、配置、启动和测试的首要文档。
+Updated 2026-09-14. The frontend, Django backend, and Agent have completed local HTTP primary-workflow integration. The software [README](../README.md) is the primary document for scope, data flow, configuration, startup, and testing.
 
-## 当前实现
+## Current Implementation
 
-- 原生 HTML/CSS/JavaScript 工作台展示当前员工 Gmail 授权、同步状态、公司、邮件、画像、分析、业务上下文和跟进优先级。
-- Django + DRF 保存用户、员工 Gmail 授权、邮箱、公司、联系人、邮件、抽取、任务和 L2–L4 结果。
-- Agent 首次扫描最近 Gmail 邮件、后续使用 History 游标增量读取；L1 最多四路并发并完成即逐封提交，L2/L3/L4 按公司 Job 执行，通过 HTTP 与 Django 通信。L1 与 L3 模型能力由项目 Skill 提供，便于后续路由扩展。
-- 根 `.env` 是唯一配置文件；`DATABASE_URL` 必填，本机使用原 PostgreSQL；SQLite 需显式配置。
-- `rules` 模式保留为无需 Gmail 和百炼的界面演示，不是模型失败回退。
+- The native HTML/CSS/JavaScript workspace displays current-employee Gmail authorization, synchronization state, companies, mail, profiles, analysis, business context, and follow-up priority.
+- Django + DRF persist users, employee Gmail authorization, mailboxes, companies, contacts, mail, extraction, tasks, and L2–L4 results.
+- The Agent initially scans recent Gmail mail and later reads incrementally through History cursor. L1 uses at most four concurrent requests and submits each on completion. L2/L3/L4 run per company Job and communicate with Django through HTTP. Project Skills provide L1/L3 model capability for future routing extension.
+- Root .env is the only configuration file. DATABASE_URL is mandatory; local development uses existing PostgreSQL. SQLite requires explicit configuration.
+- rules mode remains a user-interface demonstration requiring neither Gmail nor Bailian; it is not a fallback for model failure.
 
-## 文档定位
+## Documentation Locations
 
-| 文档 | 定位 |
+| Document | Purpose |
 |---|---|
-| [软件 README](../README.md) | 当前范围、完整流程、统一配置、启动和验收 |
-| [Agent README](../../agent/README.md) | L1–L4 字段、Skill、校验和 Agent CLI |
-| [OpenAPI](../contracts/openapi.yaml) | 当前 HTTP 机器可读契约 |
-| [API 契约](api-contract.md) | 认证、路由和传输一致性说明 |
-| [数据模型](data-model.md) | Django 持久化对象与约束 |
-| [Agent 接入](agent-integration.md) | Agent/Django 职责与一次任务过程 |
-| [本地开发](local-development.md) | 精简的本地启动和检查入口 |
-| [产品需求摘要](references/product-requirements.md) | 原 MVP 产品文档的历史需求摘要 |
-| [早期设计摘要](references/agent-and-early-design.md) | 早期宽范围技术路线，仅作背景 |
+| [Software README](../README.md) | Current scope, complete workflow, shared configuration, startup, and acceptance |
+| [Agent README](../../agent/README.md) | L1–L4 fields, Skills, validation, and Agent CLI |
+| [OpenAPI](../contracts/openapi.yaml) | Current machine-readable HTTP contract |
+| [API Contract](api-contract.md) | Authentication, route, and transport-consistency notes |
+| [Data Model](data-model.md) | Django persistent objects and constraints |
+| [Agent Integration](agent-integration.md) | Agent/Django responsibilities and one-shot task flow |
+| [Local Development](local-development.md) | Compact local startup and check entry point |
+| [Product Requirements Summary](references/product-requirements.md) | Historical requirements summary of the original MVP product document |
+| [Early Design Summary](references/agent-and-early-design.md) | Early broad technical direction, background only |
 
-历史摘要中的版本号、路径和规划不构成当前实现要求。当前代码、根 README、Agent README 和 OpenAPI 不一致时，应先核对实际行为并同步这些当前文档。邮件级持久任务、公司画像并行 Worker、非业务隐藏和人工复核已实现；当前规则与待补齐事项见 [邮件处理适配](processing-integration.md)。
+Version numbers, paths, and plans in historical summaries do not define current implementation requirements. When current code, root README, Agent README, and OpenAPI disagree, verify actual behavior first and synchronize current documents. Mail-level durable tasks, company-profile parallel Workers, non-business hiding, and manual review are implemented. See [Mail Processing Integration](processing-integration.md) for current rules and outstanding work.
 
-## 后续范围
+## Future Scope
 
-销售 Schema、业务管理页、私有会话草稿、团队权限、审计、附件和销售 Worker 已实现；Gmail/日历适配器有确认流程，实际外部执行需完成写权限授权。只读聊天与显式内部知识已接入，见 [聊天适配](chat-integration.md)；WhatsApp、会议纪要、外部知识/行业新闻及聊天自主工具调用未实现，聊天生产上线仍须迁移和独立消费者部署。范围及运行步骤见 [销售扩展](backend-expansion.md)。
+Sales schema, business-management pages, private conversation drafts, team permissions, audit, attachments, and sales Worker are implemented. Gmail/calendar adapters have confirmation flows; real external execution requires write-permission authorization. Read-only chat and explicit internal knowledge are integrated; see [Chat Integration](chat-integration.md). WhatsApp, meeting notes, external knowledge/industry news, and autonomous chat tool calls are not implemented. Chat production launch still requires migration and dedicated-consumer deployment. See [Sales Expansion](backend-expansion.md) for scope and runtime steps.

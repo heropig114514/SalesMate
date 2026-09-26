@@ -1,10 +1,10 @@
 /**
- * 职责：验证 QQ 发信连接表单、服务筛选及发送前预览。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：先验证 QQ 关闭时入口、动作及连接筛选均隐藏，再启用原场景；真实业务页面运行于隔离静态服务，全部 API 被模拟，任何非预期写入失败。
- * 关联：business.js 与 sales-api.js；使用显式 Playwright 模块和浏览器路径。
- * 目录：main 执行连接和待确认邮件场景。
- * 变量索引：FRONTEND 为页面目录；OUTPUT 为忽略的截图目录。
+ * Responsibility: Verify QQ-send connection forms, provider filtering, and previews before sending.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so existing Chinese assertions do not depend on host language.
+ * Implementation: Verify hidden QQ entries/actions/connections while disabled before enabling original scenarios. Real business pages run on isolated static serving with all APIs mocked and unexpected writes rejected.
+ * Relationships: business.js, sales-api.js; explicit Playwright/browser paths.
+ * Directory: main exercises connections and pending-email confirmation.
+ * Variable index: FRONTEND is the page directory; OUTPUT is the ignored screenshot directory.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,9 +14,9 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：执行独立 QQ 发信 UI 验收。输入：环境中的 Playwright/浏览器路径。
- * 输出：检查结果和预览截图。逻辑：先验证关闭不产生写入，再验证授权码清除、按服务筛选连接及完整冻结预览。
- * 约束：模拟连接与准备请求，不点击发送确认；所有外部网络禁止。 */
+/** Function: Run independent QQ-send UI acceptance. Inputs: Environment Playwright/browser paths.
+ * Outputs: Results and preview screenshots. Logic: Verify no writes while disabled, then authorization-code clearing, provider-filtered connections, and complete frozen previews.
+ * Constraints: Mock connection/preparation requests without clicking send confirmation; block all external networks. */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;

@@ -1,168 +1,168 @@
-"""职责：校验当前 Agent README 业务载荷及浏览器请求。
-实现：显式声明协议字段并校验事实证据、状态与分数一致性；正式评分支持原子提交解释，服务层再校验归属与来源范围。
-关联：API 与规则占位共用校验，OpenAPI 以这些声明生成。
-目录：
-- StrictSerializer：严格拒绝未声明字段，避免授权令牌或拼错字段被静默接收。
-- StrictSerializer.to_internal_value：校验输入对象及其字段集合。
-- EmailSubmissionSerializer：声明单封邮件标准载荷。
-- EmailSubmissionSerializer.get_fields：增加 Python 保留字 from 对应的协议字段。
-- EmailSubmissionSerializer.validate：核对邮件天然键、抽取状态和逐字证据。
-- compact_evidence_text：移除证据定位允许忽略的空白和格式字符。
-- evidence_is_locatable：按 Agent 相同规则判断证据是否来自主题或正文。
-- validate_extraction：校验抽取事实的完整字段及可定位证据。
-- FactsResubmissionSerializer：声明失败事实补交载荷。
-- AnalysisInputSerializer：声明 Agent 原样归档的 L2 输入。
-- EvidenceSerializer：声明带来源的事实或解释证据。
-- InferenceSerializer：声明与事实分离的推断。
-- DimensionSerializer：声明七个分析维度共用结构。
-- ProfileSerializer：声明三维客户画像。
-- DimensionsSerializer：声明四维客户分析。
-- ConflictSerializer：声明事实冲突或明确变更。
-- DetailSerializer：声明详情输出结构。
-- FeatureValueField：声明可空的 0–3 整数特征值。
-- FeatureValueField.to_internal_value：验证评分特征的联合类型。
-- FeatureValueField.to_representation：输出已经验证的特征值。
-- FeatureSerializer：声明 L4 使用的单个特征。
-- FeaturesSerializer：声明 L4 三个模型特征。
-- ListViewSerializer：声明公司列表投影。
-- AnalysisSerializer：声明 L3 分析整体输出。
-- AnalysisSerializer.validate：检查分析状态与载荷的对应关系。
-- ScoreSerializer：声明 L4 分数与贡献说明。
-- ScoreSerializer.validate：检查贡献解释能否与分数对账。
-- SyncStateSerializer：声明同步游标的乐观锁写入。
-- ClaimSerializer：声明任务领取请求。
-- JobReportSerializer：声明任务完成回报。
-- RegisterSerializer：声明显式 CRM 建档输入。
-- SimulateSerializer：声明前端手工输入的模拟邮件。
-- MailboxSerializer：声明邮件业务邮箱创建。
-- MailboxSyncClaimSerializer：声明员工邮箱同步领取数量。
-- MailboxSyncReportSerializer：声明员工邮箱同步最终回报。
-变量索引：
-- ScoreSerializer.score_details：score-v2 的可选分项、原因、证据和建议动作；省略表示尚未提交解释。
-- RegisterSerializer.country：可选权威客户国家或地区；缺失不自动推断。
-- AnalysisInputSerializer.built_at：L2 快照构建时间
-- AnalysisInputSerializer.business_context：后端客户、工单、报价和订单快照
-- AnalysisInputSerializer.company：公司、域名和联系人归组快照
-- AnalysisInputSerializer.company_id：后端分配的公司 UUID
-- AnalysisInputSerializer.external_snapshot_version：后端 CRM 快照版本的原样回显
-- AnalysisInputSerializer.facts：可定位的事实结构，失败时按协议为 null
-- AnalysisInputSerializer.input_version：Agent 计算并原样提交的输入版本
-- AnalysisInputSerializer.latest_message_summary：最近一封已完成抽取邮件的摘要
-- AnalysisInputSerializer.member_dedupe_keys：参与本次分析的完整邮件去重键集合
-- AnalysisInputSerializer.merge_version：L2 确定性归并规则版本
-- AnalysisInputSerializer.metrics：L2 往来计数、时间间隔和 CRM 状态
-- AnalysisInputSerializer.unparsed_message_count：未完成抽取的邮件数量
-- AnalysisSerializer.analysis_base_time：允许参与分析的业务事实时间上界
-- AnalysisSerializer.analysis_prompt_version：L3 模型提示词或规则生产者版本
-- AnalysisSerializer.company_id：后端分配的公司 UUID
-- AnalysisSerializer.detail_view：三维画像与四维分析的详情投影
-- AnalysisSerializer.error：显式失败说明，不作为成功结果展示
-- AnalysisSerializer.generated_at：分析生成时间，前端据此标示旧结果
-- AnalysisSerializer.input_version：Agent 计算并原样提交的输入版本
-- AnalysisSerializer.list_view：公司列表的轻量分析投影
-- AnalysisSerializer.status：当前协议载荷或任务状态，具体允许值见字段声明
-- ClaimSerializer.lease_seconds：调用方显式指定的租期秒数，10–600
-- ClaimSerializer.limit：单批领取任务数量，1–50
-- ConflictSerializer.field：发生变化或冲突的事实字段
-- ConflictSerializer.kind：value_changed 或 source_disagree 冲突类型
-- ConflictSerializer.source_refs：可定位的邮件或业务记录 ID 数组
-- ConflictSerializer.summary：变化或冲突的文字解释
-- DetailSerializer.analysis：评分所属分析外键；序列化器中为四维分析结果
-- DetailSerializer.conflicts：至少引用两个来源的冲突与变化清单
-- DetailSerializer.context_completeness：未解析邮件数和上下文不完整说明
-- DetailSerializer.missing_fields：分析所需但当前上下文没有提供的信息
-- DetailSerializer.profile：三维客户画像
-- DimensionSerializer.facts：可定位的事实结构，失败时按协议为 null
-- DimensionSerializer.inferences：与事实分开保存的有依据推断
-- DimensionSerializer.missing_fields：该维度或全局仍缺少的信息
-- DimensionsSerializer.guidance：客户分析中的下一步引导维度
-- DimensionsSerializer.opportunity：客户分析中的商机与需求维度
-- DimensionsSerializer.risk：客户分析中的风险和约束维度
-- DimensionsSerializer.timeline：客户分析中的历史时间轴
-- EmailSubmissionSerializer.body_text：保留逐字证据的原始纯文本正文
-- EmailSubmissionSerializer.cc：完整抄送人邮箱数组
-- EmailSubmissionSerializer.contact_email：L1 提交的主要外部联系人邮箱
-- EmailSubmissionSerializer.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
-- EmailSubmissionSerializer.direction：邮件入站 inbound、出站 outbound 或未知 unknown
-- EmailSubmissionSerializer.extract_error：抽取失败摘要，成功时为空
-- EmailSubmissionSerializer.extract_prompt_version：L1 提示词或规则版本
-- EmailSubmissionSerializer.extract_status：单封抽取的完成、失败或非业务跳过状态
-- EmailSubmissionSerializer.facts：可定位的事实结构，失败时按协议为 null
-- EmailSubmissionSerializer.gmail_message_id：Gmail 原始消息标识，模拟数据使用独立样例标识
-- EmailSubmissionSerializer.mailbox_id：后端分配的业务邮箱 UUID
-- EmailSubmissionSerializer.mailbox_address：已授权 Gmail 邮箱地址，也是 dedupe_key 的组成部分
-- EmailSubmissionSerializer.non_business_hint：疑似非业务邮件标记
-- EmailSubmissionSerializer.non_business_reason：非业务邮件判断依据
-- EmailSubmissionSerializer.received_at：邮件接收时间，用于今日新邮件统计
-- EmailSubmissionSerializer.sent_at：邮件或业务动作发生的带时区时间
-- EmailSubmissionSerializer.source：真实、合成、研究或模拟数据来源标记
-- EmailSubmissionSerializer.subject：邮件原始主题
-- EmailSubmissionSerializer.thread_id：同线程邮件与响应间隔配对标识
-- EmailSubmissionSerializer.to：完整收件人邮箱数组
-- EvidenceSerializer.source_refs：可定位的邮件或业务记录 ID 数组
-- EvidenceSerializer.text：事实或证据解释文本
-- FACT_FIELDS：L1 中多值事实字段名称集合
-- PURCHASE_STAGES：extract-v7 六级采购阶段枚举
-- FactsResubmissionSerializer.dedupe_key：邮箱地址与 Gmail 消息 ID 组成的天然幂等键
-- FactsResubmissionSerializer.extract_error：抽取失败摘要，成功时为空
-- FactsResubmissionSerializer.extract_prompt_version：L1 提示词或规则版本
-- FactsResubmissionSerializer.extract_status：单封抽取的完成、失败或非业务跳过状态
-- FactsResubmissionSerializer.facts：可定位的事实结构，失败时按协议为 null
-- FeatureSerializer.basis：推断或特征判断的依据说明
-- FeatureSerializer.value：可空的 0–3 整数特征值
-- FeaturesSerializer.decision_visibility：决策流程可见性特征
-- FeaturesSerializer.demand_clarity：需求明确程度特征
-- FeaturesSerializer.urgency：需求紧迫性特征
-- INDUSTRIES：产品四个行业及 unknown 枚举
-- InferenceSerializer.basis：推断或特征判断的依据说明
-- InferenceSerializer.confidence：low/medium/high 推断置信等级，不是成交百分比
-- JobReportSerializer.duration_ms：任务处理耗时毫秒
-- JobReportSerializer.error：显式失败说明，不作为成功结果展示
-- JobReportSerializer.input_version：Agent 计算并原样提交的输入版本
-- JobReportSerializer.job_id：后端任务 UUID
-- JobReportSerializer.produced：实际产出的分析、评分与邮件数量声明
-- JobReportSerializer.status：当前协议载荷或任务状态，具体允许值见字段声明
-- ListViewSerializer.headline_summary：列表最新消息摘要
-- ListViewSerializer.industry：列表行业枚举
-- ListViewSerializer.industry_evidence：行业判定的事实依据和来源
-- ListViewSerializer.score_features：供 L4 使用的三个判断特征
-- ListViewSerializer.signal：公司主业务信号
-- ListViewSerializer.signal_evidence：信号判断的依据与来源
-- ListViewSerializer.size_band：员工人数展示档位，未知保持 unknown
-- ListViewSerializer.size_source：权威人数记录的来源说明
-- ListViewSerializer.ticket_signals：逐工单信号数组，不从邮件伪造工单
-- MailboxSerializer.address：业务邮箱展示地址，不作为 OAuth 验证证据
-- MailboxSyncClaimSerializer.limit：一次性 Agent 领取员工邮箱同步请求的上限
-- MailboxSyncReportSerializer.authorization：Agent 刷新后的 Google authorized user JSON
-- MailboxSyncReportSerializer.error：邮箱同步失败的可显示错误
-- MailboxSyncReportSerializer.mailbox_id：本次同步对应的员工邮箱 UUID
-- MailboxSyncReportSerializer.status：completed 或 failed 同步状态
-- MailboxSyncReportSerializer.sync_result：GmailSyncResult 汇总
-- ProfileSerializer.company_ops：客户画像中的经营与决策情况维度
-- ProfileSerializer.industry_context：客户画像中的行业情况维度
-- ProfileSerializer.intent：客户画像中的采购意向维度
-- RegisterSerializer.company_name：公司展示名，不参与自动归组
-- RegisterSerializer.employee_count：有来源的准确员工人数，未知保持 null
-- RegisterSerializer.employee_count_source：权威员工人数的事实来源
-- RegisterSerializer.industry_from_crm：用户确认的 CRM 行业
-- SIGNALS：公司业务信号枚举
-- SIZES：不重叠的人数档位及 unknown 枚举
-- ScoreSerializer.company_id：后端分配的公司 UUID
-- ScoreSerializer.input_version：Agent 计算并原样提交的输入版本
-- ScoreSerializer.score：0–100 跟进优先级，缺失资料时为 null
-- ScoreSerializer.score_reasons：评分贡献与解释，贡献和须等于 score
-- ScoreSerializer.score_version：评分规则版本，规则占位与正式 Agent 版本分开
-- ScoreSerializer.scored_at：该次评分的计算时间
-- SimulateSerializer.body_text：保留逐字证据的原始纯文本正文
-- SimulateSerializer.mailbox_id：后端分配的业务邮箱 UUID
-- SimulateSerializer.sender：模拟来信的发送人邮箱
-- SimulateSerializer.subject：邮件原始主题
-- SyncStateSerializer.cursor：Gmail 同步游标，不包含访问凭证
-- SyncStateSerializer.last_synced_at：最近成功同步时间
-- SyncStateSerializer.mailbox_id：后端分配的业务邮箱 UUID
-- SyncStateSerializer.scope：显式同步标签与历史起点范围
-- SyncStateSerializer.status：当前协议载荷或任务状态，具体允许值见字段声明
-- SyncStateSerializer.version：同步状态的乐观锁版本
+"""Responsibility: Validate Agent business payloads and browser requests.
+Implementation: Declare protocol fields explicitly and validate fact evidence, state, and score consistency. Formal scores submit explanations atomically; the service layer validates ownership and source scope afterward.
+Relationships: API endpoints and rules placeholders share these validators, and OpenAPI is generated from their declarations.
+Directory:
+- StrictSerializer: Reject undeclared fields so credentials and misspelled fields are never accepted silently.
+- StrictSerializer.to_internal_value: Validate the input object and its declared field set.
+- EmailSubmissionSerializer: Declare the standard payload for one email.
+- EmailSubmissionSerializer.get_fields: Add the protocol field corresponding to Python's reserved `from` word.
+- EmailSubmissionSerializer.validate: Verify the email natural key, extraction status, and verbatim evidence.
+- compact_evidence_text: Remove whitespace and formatting characters that evidence matching may ignore.
+- evidence_is_locatable: Determine whether evidence comes from the subject or body using the Agent's rules.
+- validate_extraction: Validate complete extracted-fact fields and locatable evidence.
+- FactsResubmissionSerializer: Declare the payload for resubmitting failed facts.
+- AnalysisInputSerializer: Declare the L2 input archived unchanged by the Agent.
+- EvidenceSerializer: Declare fact or explanatory evidence with its source.
+- InferenceSerializer: Declare inferences that remain separate from facts.
+- DimensionSerializer: Declare the shared structure for seven analysis dimensions.
+- ProfileSerializer: Declare the three-dimension customer profile.
+- DimensionsSerializer: Declare the four-dimension customer analysis.
+- ConflictSerializer: Declare fact conflicts or explicit changes.
+- DetailSerializer: Declare the detailed result structure.
+- FeatureValueField: Declare nullable integer feature values from 0 to 3.
+- FeatureValueField.to_internal_value: Validate the union type used for scoring features.
+- FeatureValueField.to_representation: Emit a validated feature value.
+- FeatureSerializer: Declare one feature used by L4.
+- FeaturesSerializer: Declare the three L4 model features.
+- ListViewSerializer: Declare the company-list projection.
+- AnalysisSerializer: Declare the complete L3 analysis output.
+- AnalysisSerializer.validate: Check that analysis state corresponds to its payload.
+- ScoreSerializer: Declare the L4 score and contribution explanations.
+- ScoreSerializer.validate: Check whether contribution explanations reconcile with the score.
+- SyncStateSerializer: Declare optimistic-lock writes for synchronization cursors.
+- ClaimSerializer: Declare a job-claim request.
+- JobReportSerializer: Declare a job-completion report.
+- RegisterSerializer: Declare explicit CRM registration input.
+- SimulateSerializer: Declare a simulated email entered manually in the frontend.
+- MailboxSerializer: Declare business mailbox creation.
+- MailboxSyncClaimSerializer: Declare the number of employee-mailbox synchronizations to claim.
+- MailboxSyncReportSerializer: Declare the final employee-mailbox synchronization report.
+Variable index:
+- ScoreSerializer.score_details: Optional score-v2 breakdown, reasons, evidence, and recommended action; omission means no explanation was submitted.
+- RegisterSerializer.country: Optional authoritative customer country or region; a missing value is not inferred automatically.
+- AnalysisInputSerializer.built_at: L2 snapshot construction time.
+- AnalysisInputSerializer.business_context: Backend customer, ticket, quote, and order snapshot.
+- AnalysisInputSerializer.company: Company, domain, and contact-grouping snapshot.
+- AnalysisInputSerializer.company_id: Backend-assigned company UUID.
+- AnalysisInputSerializer.external_snapshot_version: Unchanged echo of the backend CRM snapshot version.
+- AnalysisInputSerializer.facts: Locatable fact structure; null on failure as required by the protocol.
+- AnalysisInputSerializer.input_version: Input version calculated and submitted unchanged by the Agent.
+- AnalysisInputSerializer.latest_message_summary: Summary of the latest email whose extraction completed.
+- AnalysisInputSerializer.member_dedupe_keys: Complete set of email deduplication keys participating in this analysis.
+- AnalysisInputSerializer.merge_version: L2 deterministic merge-rule version.
+- AnalysisInputSerializer.metrics: L2 interaction counts, time intervals, and CRM state.
+- AnalysisInputSerializer.unparsed_message_count: Number of emails whose extraction is unfinished.
+- AnalysisSerializer.analysis_base_time: Upper time bound for business facts permitted in the analysis.
+- AnalysisSerializer.analysis_prompt_version: L3 model-prompt or rules-producer version.
+- AnalysisSerializer.company_id: Backend-assigned company UUID.
+- AnalysisSerializer.detail_view: Detailed projection of the three-dimension profile and four-dimension analysis.
+- AnalysisSerializer.error: Explicit failure description that is not displayed as a successful result.
+- AnalysisSerializer.generated_at: Analysis generation time used by the frontend to mark stale results.
+- AnalysisSerializer.input_version: Input version calculated and submitted unchanged by the Agent.
+- AnalysisSerializer.list_view: Lightweight analysis projection for the company list.
+- AnalysisSerializer.status: Current protocol-payload or task state; the field declaration defines permitted values.
+- ClaimSerializer.lease_seconds: Lease duration explicitly specified by the caller, from 10 to 600 seconds.
+- ClaimSerializer.limit: Number of jobs claimed in one batch, from 1 to 50.
+- ConflictSerializer.field: Fact field that changed or conflicts.
+- ConflictSerializer.kind: `value_changed` or `source_disagree` conflict type.
+- ConflictSerializer.source_refs: Array of locatable email or business-record IDs.
+- ConflictSerializer.summary: Textual explanation of a change or conflict.
+- DetailSerializer.analysis: Foreign key to the analysis being scored; the serializer holds its four-dimension analysis result.
+- DetailSerializer.conflicts: Conflict and change list citing at least two sources.
+- DetailSerializer.context_completeness: Unparsed-email count and explanation of incomplete context.
+- DetailSerializer.missing_fields: Information required for analysis but absent from the current context.
+- DetailSerializer.profile: Three-dimension customer profile.
+- DimensionSerializer.facts: Locatable fact structure; null on failure as required by the protocol.
+- DimensionSerializer.inferences: Grounded inferences stored separately from facts.
+- DimensionSerializer.missing_fields: Information still missing for this dimension or globally.
+- DimensionsSerializer.guidance: Next-step guidance dimension in customer analysis.
+- DimensionsSerializer.opportunity: Opportunity and demand dimension in customer analysis.
+- DimensionsSerializer.risk: Risk and constraint dimension in customer analysis.
+- DimensionsSerializer.timeline: Historical timeline dimension in customer analysis.
+- EmailSubmissionSerializer.body_text: Original plain-text body retaining verbatim evidence.
+- EmailSubmissionSerializer.cc: Complete CC-recipient email array.
+- EmailSubmissionSerializer.contact_email: Primary external contact email in an L1 submission.
+- EmailSubmissionSerializer.dedupe_key: Natural idempotency key formed from mailbox address and Gmail message ID.
+- EmailSubmissionSerializer.direction: Email direction: inbound, outbound, or unknown.
+- EmailSubmissionSerializer.extract_error: Extraction failure summary; empty on success.
+- EmailSubmissionSerializer.extract_prompt_version: L1 prompt or rules version.
+- EmailSubmissionSerializer.extract_status: Completed, failed, or non-business-skipped state for one extraction.
+- EmailSubmissionSerializer.facts: Locatable fact structure; null on failure as required by the protocol.
+- EmailSubmissionSerializer.gmail_message_id: Gmail source-message identifier; samples use an independent sample identifier.
+- EmailSubmissionSerializer.mailbox_id: Backend-assigned business-mailbox UUID.
+- EmailSubmissionSerializer.mailbox_address: Authorized Gmail address and a component of `dedupe_key`.
+- EmailSubmissionSerializer.non_business_hint: Flag indicating a suspected non-business email.
+- EmailSubmissionSerializer.non_business_reason: Basis for the non-business-email judgement.
+- EmailSubmissionSerializer.received_at: Email receipt time used for today's new-email statistics.
+- EmailSubmissionSerializer.sent_at: Timezone-aware time when the email or business action occurred.
+- EmailSubmissionSerializer.source: Real, synthetic, research, or simulated data-origin marker.
+- EmailSubmissionSerializer.subject: Original email subject.
+- EmailSubmissionSerializer.thread_id: Identifier pairing messages in one thread and their response intervals.
+- EmailSubmissionSerializer.to: Complete recipient email array.
+- EvidenceSerializer.source_refs: Array of locatable email or business-record IDs.
+- EvidenceSerializer.text: Fact or explanatory-evidence text.
+- FACT_FIELDS: Set of multi-value fact-field names in L1.
+- PURCHASE_STAGES: Six-level purchasing-stage enumeration for extract-v7.
+- FactsResubmissionSerializer.dedupe_key: Natural idempotency key formed from mailbox address and Gmail message ID.
+- FactsResubmissionSerializer.extract_error: Extraction failure summary; empty on success.
+- FactsResubmissionSerializer.extract_prompt_version: L1 prompt or rules version.
+- FactsResubmissionSerializer.extract_status: Completed, failed, or non-business-skipped state for one extraction.
+- FactsResubmissionSerializer.facts: Locatable fact structure; null on failure as required by the protocol.
+- FeatureSerializer.basis: Explanation supporting an inference or feature judgement.
+- FeatureSerializer.value: Nullable integer feature value from 0 to 3.
+- FeaturesSerializer.decision_visibility: Decision-process visibility feature.
+- FeaturesSerializer.demand_clarity: Demand-clarity feature.
+- FeaturesSerializer.urgency: Demand-urgency feature.
+- INDUSTRIES: Enumeration of four product industries plus unknown.
+- InferenceSerializer.basis: Explanation supporting an inference or feature judgement.
+- InferenceSerializer.confidence: Low, medium, or high inference-confidence level; it is not a deal percentage.
+- JobReportSerializer.duration_ms: Job processing duration in milliseconds.
+- JobReportSerializer.error: Explicit failure description that is not displayed as a successful result.
+- JobReportSerializer.input_version: Input version calculated and submitted unchanged by the Agent.
+- JobReportSerializer.job_id: Backend job UUID.
+- JobReportSerializer.produced: Declaration of the analyses, scores, and emails actually produced.
+- JobReportSerializer.status: Current protocol-payload or task state; the field declaration defines permitted values.
+- ListViewSerializer.headline_summary: Latest-message summary for the list.
+- ListViewSerializer.industry: Industry enumeration for the list.
+- ListViewSerializer.industry_evidence: Fact basis and source for the industry judgement.
+- ListViewSerializer.score_features: Three judgement features used by L4.
+- ListViewSerializer.signal: Company's primary business signal.
+- ListViewSerializer.signal_evidence: Basis and source for the signal judgement.
+- ListViewSerializer.size_band: Employee-count display band; an unknown count remains unknown.
+- ListViewSerializer.size_source: Source explanation for the authoritative employee-count record.
+- ListViewSerializer.ticket_signals: Per-ticket signal array; tickets are never fabricated from email.
+- MailboxSerializer.address: Business-mailbox display address, not OAuth verification evidence.
+- MailboxSyncClaimSerializer.limit: Maximum employee-mailbox synchronization requests claimed by a one-shot Agent.
+- MailboxSyncReportSerializer.authorization: Google authorized-user JSON refreshed by the Agent.
+- MailboxSyncReportSerializer.error: Displayable mailbox-synchronization failure error.
+- MailboxSyncReportSerializer.mailbox_id: Employee-mailbox UUID for this synchronization.
+- MailboxSyncReportSerializer.status: Completed or failed synchronization state.
+- MailboxSyncReportSerializer.sync_result: GmailSyncResult summary.
+- ProfileSerializer.company_ops: Operations and decision dimension in the customer profile.
+- ProfileSerializer.industry_context: Industry-context dimension in the customer profile.
+- ProfileSerializer.intent: Purchasing-intent dimension in the customer profile.
+- RegisterSerializer.company_name: Company display name; it does not participate in automatic grouping.
+- RegisterSerializer.employee_count: Exact sourced employee count; unknown remains null.
+- RegisterSerializer.employee_count_source: Fact source for the authoritative employee count.
+- RegisterSerializer.industry_from_crm: CRM industry confirmed by the user.
+- SIGNALS: Company business-signal enumeration.
+- SIZES: Non-overlapping employee-count bands plus unknown.
+- ScoreSerializer.company_id: Backend-assigned company UUID.
+- ScoreSerializer.input_version: Input version calculated and submitted unchanged by the Agent.
+- ScoreSerializer.score: Follow-up priority from 0 to 100; null when information is missing.
+- ScoreSerializer.score_reasons: Score contributions and explanations whose sum must equal `score`.
+- ScoreSerializer.score_version: Scoring-rule version separating rules placeholders from formal Agent versions.
+- ScoreSerializer.scored_at: Calculation time for this score.
+- SimulateSerializer.body_text: Original plain-text body retaining verbatim evidence.
+- SimulateSerializer.mailbox_id: Backend-assigned business-mailbox UUID.
+- SimulateSerializer.sender: Sender email of the simulated incoming message.
+- SimulateSerializer.subject: Original email subject.
+- SyncStateSerializer.cursor: Gmail synchronization cursor without access credentials.
+- SyncStateSerializer.last_synced_at: Most recent successful synchronization time.
+- SyncStateSerializer.mailbox_id: Backend-assigned business-mailbox UUID.
+- SyncStateSerializer.scope: Explicit synchronization labels and historical starting scope.
+- SyncStateSerializer.status: Current protocol-payload or task state; the field declaration defines permitted values.
+- SyncStateSerializer.version: Optimistic-lock version of the synchronization state.
 """
 import unicodedata
 
@@ -181,24 +181,24 @@ INDUSTRIES = ("半导体检测", "精密量测", "光学检测", "工业检测",
 SIZES = ("lt_50", "50_100", "100_200", "200_500", "gte_500", "unknown")
 
 
-# 功能：严格拒绝未声明字段，避免授权令牌或拼错字段被静默接收。
-# 逻辑：在 DRF 常规校验前比较字段集合。
-# 约束：JSON 扩展字段的内部结构由其专门校验负责。
+# Function: Strictly reject undeclared fields so authorization tokens or misspelled fields are not silently accepted.
+# Logic: Compare field sets before ordinary DRF validation.
+# Constraints: Dedicated validation owns internal structure of JSON extension fields.
 class StrictSerializer(s.Serializer):
-    # 功能：校验输入对象及其字段集合。
-    # 输入：`data` 为客户端原始 JSON。
-    # 输出：DRF 验证后的字段字典；未知字段抛 ValidationError。
-    # 逻辑：仅接收字典并排除未声明字段；对象级错误使用 DRF non_field_errors 字典以正确返回 400。
-    # 约束：无数据库或日志副作用。
+    # Function: Validate an input object and its field set.
+    # Inputs: `data` is client raw JSON.
+    # Outputs: DRF-validated field dictionary; unknown fields raise ValidationError.
+    # Logic: Accept dictionaries only and exclude undeclared fields; object errors use DRF non_field_errors dictionary for correct 400 response.
+    # Constraints: Has no database or log side effects.
     def to_internal_value(self, data):
         if not isinstance(data, dict) or set(data) - set(self.fields):
             raise s.ValidationError({s.api_settings.NON_FIELD_ERRORS_KEY: ["必须为对象，且不得包含未声明字段。"]})
         return super().to_internal_value(data)
 
 
-# 功能：声明单封邮件标准载荷。
-# 逻辑：将 from 映射回原始 JSON 名称，要求实际时间、方向与来源；qq_real 标记 QQ IMAP 原文。
-# 约束：授权邮箱所有权在服务层验证，不信任载荷自报身份。
+# Function: Declare normalized payload for one email.
+# Logic: Map from back to its original JSON name and require real time, direction, and origin; qq_real identifies QQ IMAP source text.
+# Constraints: Service layer validates authorized mailbox ownership and does not trust self-reported payload identity.
 class EmailSubmissionSerializer(StrictSerializer):
     dedupe_key = s.CharField(max_length=400)
     mailbox_id = s.UUIDField()
@@ -221,21 +221,21 @@ class EmailSubmissionSerializer(StrictSerializer):
     extract_error = s.CharField(allow_null=True, allow_blank=True)
     facts = s.JSONField(allow_null=True)
 
-    # 功能：增加 Python 保留字 from 对应的协议字段。
-    # 输入：实例声明的字段配置，无外部参数。
-    # 输出：含 from 的字段映射。
-    # 逻辑：扩展父类复制出的字段，不修改全局声明。
-    # 约束：Schema 与实际校验共用该映射。
+    # Function: Add the protocol field corresponding to Python reserved word from.
+    # Inputs: Instance-declared field configuration with no external parameters.
+    # Outputs: Field mapping containing from.
+    # Logic: Extend fields copied by the parent class without modifying global declaration.
+    # Constraints: Schema and actual validation share this mapping.
     def get_fields(self):
         fields = super().get_fields()
         fields["from"] = s.EmailField(allow_null=True)
         return fields
 
-    # 功能：核对邮件天然键、抽取状态和逐字证据。
-    # 输入：`attrs` 为标准化字段，包括正文与 facts。
-    # 输出：原 attrs；契约不符时抛 ValidationError。
-    # 逻辑：键由邮箱与消息 ID 拼接；已完成事实逐项校验，采购阶段只接受 inbound 来源。
-    # 约束：不调用模型、不更改事实或补齐未知值。
+    # Function: Check email natural key, extraction state, and verbatim evidence.
+    # Inputs: `attrs` are normalized fields including body and facts.
+    # Outputs: Original attrs; contract mismatch raises ValidationError.
+    # Logic: Key concatenates mailbox and message ID; validate completed facts item by item, accepting purchasing stage only from inbound origin.
+    # Constraints: Does not call models, modify facts, or fill unknown values.
     def validate(self, attrs):
         expected_key = f"{attrs['mailbox_address'].casefold()}:{attrs['gmail_message_id']}"
         if attrs["dedupe_key"] != expected_key:
@@ -246,11 +246,11 @@ class EmailSubmissionSerializer(StrictSerializer):
         return attrs
 
 
-# 功能：移除证据定位允许忽略的空白和格式字符。
-# 输入：`value` 为证据或邮件原文字符串。
-# 输出：保留所有可见字符原顺序的紧凑字符串。
-# 逻辑：移除 isspace 字符和 Unicode Cf 格式字符。
-# 约束：不执行大小写、标点、NFKC 或全半角转换。
+# Function: Remove whitespace and format characters ignored by evidence location.
+# Inputs: `value` is an evidence or source-email string.
+# Outputs: Compact string retaining the original order of every visible character.
+# Logic: Remove isspace characters and Unicode Cf format characters.
+# Constraints: Does not perform case, punctuation, NFKC, or full-width/half-width conversion.
 def compact_evidence_text(value):
     return "".join(
         character
@@ -259,11 +259,11 @@ def compact_evidence_text(value):
     )
 
 
-# 功能：按 Agent 相同规则判断证据是否来自主题或正文。
-# 输入：`evidence` 为模型证据；`subject` 和 `body_text` 为当前邮件边界。
-# 输出：精确匹配，或仅移除空白与 Unicode 格式字符后匹配时返回 True。
-# 逻辑：先检查逐字子串，再分别压缩证据、主题和正文；不跨主题/正文边界拼接。
-# 约束：不做 NFKC、大小写、标点或全半角转换，避免接受模型改写。
+# Function: Determine under the same Agent rules whether evidence comes from subject or body.
+# Inputs: `evidence` is model evidence and `subject` and `body_text` are current email boundaries.
+# Outputs: True on exact match or after removing only whitespace and Unicode format characters.
+# Logic: Check verbatim substring first, then separately compact evidence, subject, and body; never concatenate across subject/body boundaries.
+# Constraints: Does not apply NFKC, case, punctuation, or full-width/half-width conversion to avoid accepting model rewrites.
 def evidence_is_locatable(evidence, subject, body_text):
     if evidence in subject or evidence in body_text:
         return True
@@ -278,11 +278,11 @@ def evidence_is_locatable(evidence, subject, body_text):
     )
 
 
-# 功能：校验抽取事实的完整字段及可定位证据。
-# 输入：`data` 包含版本、状态、facts、错误；`subject`、`body_text` 为原文；`direction` 为必须提供的邮件方向。
-# 输出：无返回值；不符合契约抛 ValidationError。
-# 逻辑：完成状态要求完整字段；仅 inbound 可标采购阶段；证据按允许的空白及不可见格式差异定位。
-# 约束：仅验证可定位性，不声称证明模型语义正确。
+# Function: Validate complete extraction facts and locatable evidence.
+# Inputs: `data` contains version, status, facts, and error; `subject` and `body_text` are source; `direction` is required email direction.
+# Outputs: None; raises ValidationError when the contract is not met.
+# Logic: Completed state requires complete fields; only inbound may declare purchasing stage; evidence locates under allowed whitespace and invisible-format differences.
+# Constraints: Validates location only and does not claim to prove model semantic correctness.
 def validate_extraction(data, subject, body_text, *, direction):
     if data["extract_prompt_version"] != "extract-v7":
         raise s.ValidationError("仅接受 extract-v7 邮件事实结构。")
@@ -348,9 +348,9 @@ def validate_extraction(data, subject, body_text, *, direction):
             seen_values.add(value)
 
 
-# 功能：声明失败事实补交载荷。
-# 逻辑：仅允许提交成功状态，正文证据从已存邮件校验。
-# 约束：失败到成功的一次转换由事务服务执行。
+# Function: Declare failed-fact resubmission payload.
+# Logic: Permit completed-state submission only and validate body evidence from stored email.
+# Constraints: Transactional service performs the one failed-to-completed transition.
 class FactsResubmissionSerializer(StrictSerializer):
     dedupe_key = s.CharField()
     extract_prompt_version = s.CharField(max_length=100)
@@ -359,9 +359,9 @@ class FactsResubmissionSerializer(StrictSerializer):
     facts = s.JSONField()
 
 
-# 功能：声明 Agent 原样归档的 L2 输入。
-# 逻辑：保留规范字段，JSON 事实与指标在服务层核对来源。
-# 约束：不替 Agent 计算 input_version。
+# Function: Declare L2 input archived unchanged from Agent.
+# Logic: Retain normalized fields while service layer verifies sources for JSON facts and metrics.
+# Constraints: Does not calculate input_version for Agent.
 class AnalysisInputSerializer(StrictSerializer):
     company_id = s.UUIDField()
     input_version = s.CharField(max_length=160)
@@ -377,43 +377,43 @@ class AnalysisInputSerializer(StrictSerializer):
     metrics = s.DictField()
 
 
-# 功能：声明带来源的事实或解释证据。
-# 逻辑：事实要求非空引用，服务层检查引用属于当前快照。
-# 约束：文本本身不代表经过人工真实性审核。
+# Function: Declare sourced fact or explanatory evidence.
+# Logic: Facts require nonempty references and service layer checks references belong to current snapshot.
+# Constraints: Text itself does not represent human truth verification.
 class EvidenceSerializer(StrictSerializer):
     text = s.CharField()
     source_refs = s.ListField(child=s.CharField(), allow_empty=False)
 
 
-# 功能：声明与事实分离的推断。
-# 逻辑：保留依据、置信等级和来源。
-# 约束：置信等级不映射为成交百分比。
+# Function: Declare inference separated from facts.
+# Logic: Retain basis, confidence, and sources.
+# Constraints: Confidence does not map to a deal percentage.
 class InferenceSerializer(EvidenceSerializer):
     basis = s.CharField()
     confidence = s.ChoiceField(choices=["low", "medium", "high"])
 
 
-# 功能：声明七个分析维度共用结构。
-# 逻辑：明确分开事实、推断与缺失信息。
-# 约束：空数组是合法未知结果。
+# Function: Declare shared structure for seven analysis dimensions.
+# Logic: Explicitly separate facts, inferences, and missing information.
+# Constraints: Empty arrays are valid unknown results.
 class DimensionSerializer(StrictSerializer):
     facts = EvidenceSerializer(many=True)
     inferences = InferenceSerializer(many=True)
     missing_fields = s.ListField(child=s.CharField())
 
 
-# 功能：声明三维客户画像。
-# 逻辑：字段名沿用 README，不增加概率字段。
-# 约束：缺失维度校验失败。
+# Function: Declare three-dimension customer profile.
+# Logic: Retain README field names and do not add probability fields.
+# Constraints: Missing dimensions fail validation.
 class ProfileSerializer(StrictSerializer):
     industry_context = DimensionSerializer()
     company_ops = DimensionSerializer()
     intent = DimensionSerializer()
 
 
-# 功能：声明四维客户分析。
-# 逻辑：分开时间轴、商机、风险与引导建议。
-# 约束：不自动填充模型内容。
+# Function: Declare four-dimension customer analysis.
+# Logic: Separate timeline, opportunity, risk, and guidance.
+# Constraints: Does not automatically fill model content.
 class DimensionsSerializer(StrictSerializer):
     timeline = DimensionSerializer()
     opportunity = DimensionSerializer()
@@ -421,9 +421,9 @@ class DimensionsSerializer(StrictSerializer):
     guidance = DimensionSerializer()
 
 
-# 功能：声明事实冲突或明确变更。
-# 逻辑：至少引用两个来源。
-# 约束：不能将一般多值事实自动认定为冲突。
+# Function: Declare fact conflict or explicit change.
+# Logic: Cite at least two sources.
+# Constraints: Does not automatically classify ordinary multi-value facts as conflict.
 class ConflictSerializer(StrictSerializer):
     field = s.ChoiceField(choices=FACT_FIELDS)
     kind = s.ChoiceField(choices=["value_changed", "source_disagree"])
@@ -431,9 +431,9 @@ class ConflictSerializer(StrictSerializer):
     source_refs = s.ListField(child=s.CharField(), min_length=2)
 
 
-# 功能：声明详情输出结构。
-# 逻辑：组合三维画像、四维分析和冲突说明。
-# 约束：来源范围在保存结果前验证。
+# Function: Declare detail-output structure.
+# Logic: Combine three-dimension profile, four-dimension analysis, and conflict description.
+# Constraints: Validate source scope before saving results.
 class DetailSerializer(StrictSerializer):
     conflicts = ConflictSerializer(many=True)
     profile = ProfileSerializer()
@@ -442,50 +442,50 @@ class DetailSerializer(StrictSerializer):
     context_completeness = s.DictField()
 
 
-# 功能：声明可空的 0–3 整数特征值。
-# 逻辑：保留 JSON null 表示信息不足，不把缺失值强制转换成数字。
-# 约束：布尔值不作为整数特征接收。
+# Function: Declare nullable integer feature value from 0 to 3.
+# Logic: Retain JSON null for insufficient information and do not coerce missing values to numbers.
+# Constraints: Does not accept booleans as integer features.
 @extend_schema_field({"type": "integer", "minimum": 0, "maximum": 3, "nullable": True})
 class FeatureValueField(s.Field):
-    # 功能：验证评分特征的联合类型。
-    # 输入：`data` 为原始 JSON 整数；JSON null 由字段的 allow_null 处理。
-    # 输出：原值；类型或范围错误抛 ValidationError。
-    # 逻辑：只接收真正整数 0–3。
-    # 约束：不把缺失字段默认为零。
+    # Function: Validate the score-feature union type.
+    # Inputs: `data` is raw JSON integer; field allow_null handles JSON null.
+    # Outputs: Original value; incorrect type or range raises ValidationError.
+    # Logic: Accept true integers from 0 to 3 only.
+    # Constraints: Does not default missing fields to zero.
     def to_internal_value(self, data):
         if type(data) is int and 0 <= data <= 3:
             return data
         raise s.ValidationError("特征必须为 0–3 整数或 null。")
 
-    # 功能：输出已经验证的特征值。
-    # 输入：`value` 为 0–3 整数。
-    # 输出：同类型 JSON 原值。
-    # 逻辑：不进行字符串化或舍入。
-    # 约束：数据应已通过输入校验。
+    # Function: Output an already validated feature value.
+    # Inputs: `value` is an integer from 0 to 3.
+    # Outputs: Same-type JSON source value.
+    # Logic: Does not stringify or round.
+    # Constraints: Data should have passed input validation.
     def to_representation(self, value):
         return value
 
 
-# 功能：声明 L4 使用的单个特征。
-# 逻辑：数值限定 0 至 3，JSON null 表示没有依据。
-# 约束：null 不等同于零。
+# Function: Declare one feature used by L4.
+# Logic: Limit value to 0 through 3 and use JSON null for no basis.
+# Constraints: null is not zero.
 class FeatureSerializer(StrictSerializer):
     value = FeatureValueField(allow_null=True)
     basis = s.CharField()
 
 
-# 功能：声明 L4 三个模型特征。
-# 逻辑：字段沿用 README。
-# 约束：全部字段必填。
+# Function: Declare three model features for L4.
+# Logic: Retain README fields.
+# Constraints: All fields are required.
 class FeaturesSerializer(StrictSerializer):
     demand_clarity = FeatureSerializer()
     urgency = FeatureSerializer()
     decision_visibility = FeatureSerializer()
 
 
-# 功能：声明公司列表投影。
-# 逻辑：限制产品枚举并保留依据。
-# 约束：信号来源的业务门槛由结果服务校验。
+# Function: Declare company-list projection.
+# Logic: Constrain product enumerations and retain basis.
+# Constraints: Results service validates business threshold for signal sources.
 class ListViewSerializer(StrictSerializer):
     signal = s.ChoiceField(choices=SIGNALS)
     signal_evidence = s.DictField()
@@ -498,9 +498,9 @@ class ListViewSerializer(StrictSerializer):
     score_features = FeaturesSerializer()
 
 
-# 功能：声明 L3 分析整体输出。
-# 逻辑：失败时轻重段为空，成功时保留完整七维结果。
-# 约束：时间边界、引用与业务状态在事务服务校验。
+# Function: Declare complete L3 analysis output.
+# Logic: List and detail sections are empty on failure and retain complete seven-dimension results on success.
+# Constraints: Transactional service validates time boundaries, references, and business state.
 class AnalysisSerializer(StrictSerializer):
     company_id = s.UUIDField()
     input_version = s.CharField(max_length=160)
@@ -512,11 +512,11 @@ class AnalysisSerializer(StrictSerializer):
     detail_view = DetailSerializer(allow_null=True)
     error = s.DictField(allow_null=True, required=False)
 
-    # 功能：检查分析状态与载荷的对应关系。
-    # 输入：`attrs` 为已校验字段。
-    # 输出：attrs；状态矛盾抛 ValidationError。
-    # 逻辑：成功要求完整结果，失败要求错误对象且两段为空。
-    # 约束：不自动将失败转换为规则输出。
+    # Function: Check correspondence between analysis state and payload.
+    # Inputs: `attrs` are validated fields.
+    # Outputs: attrs; contradictory state raises ValidationError.
+    # Logic: Success requires complete result, while failure requires error object and empty sections.
+    # Constraints: Does not automatically convert failure to rules output.
     def validate(self, attrs):
         if attrs["status"] == "completed":
             if attrs["list_view"] is None or attrs["detail_view"] is None or attrs.get("error"):
@@ -526,9 +526,9 @@ class AnalysisSerializer(StrictSerializer):
         return attrs
 
 
-# 功能：声明 L4 分数与贡献说明。
-# 逻辑：校验空分语义、贡献和及 score-v2 可选解释；不依赖旧 L3 特征。
-# 约束：实际规则版本由生产者提交，不重写用户已定权重。
+# Function: Declare L4 score and contribution explanation.
+# Logic: Validate empty-score semantics, contribution sum, and optional score-v2 explanation without relying on legacy L3 features.
+# Constraints: Producer submits actual rule version and already chosen weights are not rewritten.
 class ScoreSerializer(StrictSerializer):
     company_id = s.UUIDField()
     input_version = s.CharField(max_length=160)
@@ -538,11 +538,11 @@ class ScoreSerializer(StrictSerializer):
     scored_at = s.DateTimeField()
     score_details = s.DictField(required=False)
 
-    # 功能：检查贡献解释能否与分数对账。
-    # 输入：`attrs` 为评分载荷。
-    # 输出：attrs；不一致时抛 ValidationError。
-    # 逻辑：有分值要求贡献和相等，无分值要求唯一 insufficient_data；正式版本额外检查三项整数贡献及解释。
-    # 约束：不将空分填零，不修改分数；非有限贡献拒绝，来源校验由保存事务执行。
+    # Function: Check whether contribution explanation reconciles with score.
+    # Inputs: `attrs` is score payload.
+    # Outputs: attrs; mismatch raises ValidationError.
+    # Logic: Scores require equal contribution sum, empty scores require only insufficient_data, and formal version additionally checks three integer contributions and explanation.
+    # Constraints: Does not fill empty score with zero or modify score; rejects non-finite contributions and save transaction validates sources.
     def validate(self, attrs):
         from math import isfinite
         from .priority_results import validate_priority_score
@@ -562,9 +562,9 @@ class ScoreSerializer(StrictSerializer):
         return attrs
 
 
-# 功能：声明同步游标的乐观锁写入。
-# 逻辑：保存业务游标，不接收 Gmail 凭证。
-# 约束：expected_version 通过 HTTP If-Match 提供。
+# Function: Declare optimistic-lock writes for synchronization cursor.
+# Logic: Save business cursor and do not accept Gmail credentials.
+# Constraints: HTTP If-Match supplies expected_version.
 class SyncStateSerializer(StrictSerializer):
     mailbox_id = s.UUIDField()
     cursor = s.CharField(allow_null=True, allow_blank=True)
@@ -574,17 +574,17 @@ class SyncStateSerializer(StrictSerializer):
     version = s.IntegerField(min_value=0)
 
 
-# 功能：声明任务领取请求。
-# 逻辑：限制批量领取数量，租约秒数由请求显式提供。
-# 约束：不定义自动重试策略。
+# Function: Declare job-claim request.
+# Logic: Limit batch claim count and require request to explicitly provide lease seconds.
+# Constraints: Does not define automatic retry policy.
 class ClaimSerializer(StrictSerializer):
     limit = s.IntegerField(min_value=1, max_value=50)
     lease_seconds = s.IntegerField(min_value=10, max_value=600)
 
 
-# 功能：声明任务完成回报。
-# 逻辑：字段沿用 JobReport；租约凭证置于 HTTP 头。
-# 约束：回报不会覆盖过期任务。
+# Function: Declare job completion report.
+# Logic: Retain JobReport fields and put lease credential in HTTP headers.
+# Constraints: Reports do not overwrite expired jobs.
 class JobReportSerializer(StrictSerializer):
     job_id = s.UUIDField()
     status = s.ChoiceField(choices=["completed", "failed", "skipped"])
@@ -594,9 +594,9 @@ class JobReportSerializer(StrictSerializer):
     duration_ms = s.IntegerField(min_value=0)
 
 
-# 功能：声明显式 CRM 建档输入。
-# 逻辑：接收公司名、行业、有来源的人数及可选权威国家或地区；不从邮件补全未知地区。
-# 约束：不会虚构报价或订单，业务快照通过独立协议提交。
+# Function: Declare explicit CRM record-creation input.
+# Logic: Accept company name, industry, sourced employee count, and optional authoritative country or region; do not complete unknown region from email.
+# Constraints: Does not fabricate quotes or orders; business snapshots submit through separate protocol.
 class RegisterSerializer(StrictSerializer):
     company_name = s.CharField(max_length=240)
     industry_from_crm = s.ChoiceField(choices=INDUSTRIES)
@@ -605,9 +605,9 @@ class RegisterSerializer(StrictSerializer):
     country = s.CharField(max_length=100, allow_null=True, required=False)
 
 
-# 功能：声明前端手工输入的模拟邮件。
-# 逻辑：规则抽取仅处理该显式模拟入口。
-# 约束：不把输入伪装为真实 Gmail 同步。
+# Function: Declare sample email manually entered by frontend.
+# Logic: Rules extraction processes this explicit sample entry point only.
+# Constraints: Does not disguise input as real Gmail synchronization.
 class SimulateSerializer(StrictSerializer):
     mailbox_id = s.UUIDField()
     sender = s.EmailField()
@@ -615,23 +615,23 @@ class SimulateSerializer(StrictSerializer):
     body_text = s.CharField(max_length=200000, trim_whitespace=False)
 
 
-# 功能：声明邮件业务邮箱创建。
-# 逻辑：仅保存展示地址。
-# 约束：真实 Gmail 接入前须补 OAuth 验证绑定。
+# Function: Declare business-mailbox creation.
+# Logic: Save display address only.
+# Constraints: Real Gmail connection must add OAuth verified binding first.
 class MailboxSerializer(StrictSerializer):
     address = s.EmailField()
 
 
-# 功能：声明网页授权邮箱的一次性同步领取数量。
-# 逻辑：Agent 每次只领取有限数量，处理结束即退出。
-# 约束：不包含租约或长期 Worker 参数。
+# Function: Declare one-shot synchronization claim count for web-authorized mailbox.
+# Logic: Agent claims only a limited number each time and exits after processing.
+# Constraints: Contains no lease or long-running Worker parameters.
 class MailboxSyncClaimSerializer(StrictSerializer):
     limit = s.IntegerField(min_value=1, max_value=10, default=5)
 
 
-# 功能：声明 Agent 对员工 Gmail 同步任务的最终回报。
-# 逻辑：保存汇总结果，并允许 Agent 回传刷新后的 Google 凭证。
-# 约束：authorization 不会经浏览器接口返回。
+# Function: Declare Agent terminal report for employee Gmail synchronization task.
+# Logic: Save summary result and permit Agent to return refreshed Google credential.
+# Constraints: authorization never returns through browser interfaces.
 class MailboxSyncReportSerializer(StrictSerializer):
     mailbox_id = s.UUIDField()
     status = s.ChoiceField(choices=["completed", "failed"])

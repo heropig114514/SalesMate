@@ -1,18 +1,18 @@
-"""职责：管理邮箱批次、逐封进度和恢复所需的持久状态。
-实现：实验模式允许跨账号显式重试，Worker 领取范围保持所选身份；行锁串行化请求并冻结用户范围，禁用 QQ 时拒绝排队和领取；批次租约拒绝旧执行者，计数从任务派生。
-关联：Gmail 与 QQ 共用持久队列，worker 分发提供方；processing_views 提供进度和显式重试。
-目录：
-- request_run：创建有界邮箱批次并拒绝重复活动批次。
-- claim_run：领取一个已排队批次。
-- require_run：核验当前执行租约。
-- record_event：幂等更新逐封处理阶段。
-- finish_run：完成同步并保存安全汇总。
-- run_data：生成邮箱及公司画像整体进度。
-- retry_run：明确重试一个失败批次的邮件。
-- expire_runs：将中断租约标为失败，保留逐封恢复依据。
-变量索引：
-- logger：批次状态转换诊断日志。
-- RUN_LEASE_SECONDS：邮箱批次租期 600 秒，每次进度事件续期。
+"""Responsibility: Manage mailbox batches, per-message progress, and durable state required for recovery.
+Implementation: Experiment mode permits explicit cross-account retries and Worker claim scope retains its selected identity; row locks serialize requests and freeze user scope, disabled QQ rejects queueing and claiming, batch leases reject old executors, and counts derive from jobs.
+Relationships: Gmail and QQ share the durable queue, with worker dispatching providers; processing_views provides progress and explicit retry.
+Directory:
+- request_run: Create a bounded mailbox batch and reject duplicate active batches.
+- claim_run: Claim one queued batch.
+- require_run: Validate the current execution lease.
+- record_event: Idempotently update per-message processing stage.
+- finish_run: Complete synchronization and save a safe summary.
+- run_data: Generate overall mailbox and company-profile progress.
+- retry_run: Explicitly retry messages in one failed batch.
+- expire_runs: Mark interrupted leases failed while retaining per-message recovery basis.
+Variable index:
+- logger: Batch state-transition diagnostic logger.
+- RUN_LEASE_SECONDS: 600-second mailbox batch lease renewed by every progress event.
 """
 
 from common.laboratory import owner_scope
@@ -36,11 +36,11 @@ logger = logging.getLogger("salesmate.processing")
 RUN_LEASE_SECONDS = 600
 
 
-# 功能：把同步请求保存为独立批次。
-# 输入：`owner` 为员工，`mailbox_id` 为邮箱，`message_ids` 为可选明确范围；`sync_options` 为邮箱限制，`retry_scope` 为内部重试原快照。
-# 输出：新建的 MailboxSyncRun。
-# 逻辑：邮箱锁内冻结范围；活动批次拒绝替换，防止并发重复同步；重试保留原时间窗口及批准封数；未批准的超量任务不能排队。
-# 约束：必须有凭证；QQ 关闭时拒绝排队；不启动线程或访问邮箱。
+# Function: Save a synchronization request as an independent batch.
+# Inputs: `owner` is an employee, `mailbox_id` is a mailbox, `message_ids` is optional explicit scope, `sync_options` limits the mailbox, and `retry_scope` is the original snapshot for internal retry.
+# Outputs: Newly created MailboxSyncRun.
+# Logic: Freeze scope under the mailbox lock; active batches reject replacement to prevent concurrent duplicate synchronization; retries retain the original time window and approved count; unapproved over-limit work cannot queue.
+# Constraints: Requires credentials, rejects queuing when QQ is disabled, and neither starts threads nor accesses mailboxes.
 @transaction.atomic
 def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry_scope=None):
     mailbox = mailbox_for(owner, mailbox_id, lock=True)
@@ -75,11 +75,11 @@ def request_run(owner, mailbox_id, message_ids=None, *, sync_options=None, retry
     return run
 
 
-# 功能：原子领取当前员工的一个批次。
-# 输入：`owner` 为服务凭证关联员工；`gmail_only` 为旧 Gmail CLI 的显式过滤开关。
-# 输出：含邮箱的运行批次，队列为空返回 None。
-# 逻辑：禁用时跳过 QQ 队列；锁邮箱再锁批次，只有 queued 可领取，生成租约凭证。
-# 约束：不自动重试失败或过期批次；避免与请求路径反向加锁。
+# Function: Atomically claim one batch for the current employee.
+# Inputs: `owner` is the employee attached to the service credential; `gmail_only` is the explicit legacy Gmail CLI filter.
+# Outputs: Running batch with mailbox, or None when the queue is empty.
+# Logic: Skip QQ queues when disabled; lock mailbox then batch, claim only queued records, and generate a lease credential.
+# Constraints: Does not retry failed or expired batches automatically and avoids reverse lock ordering against request paths.
 @transaction.atomic
 def claim_run(owner, *, gmail_only=False):
     candidates = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="queued")
@@ -104,11 +104,11 @@ def claim_run(owner, *, gmail_only=False):
     return run
 
 
-# 功能：核验逐封事件对应的当前执行者。
-# 输入：`run_id` 为批次 UUID，`token` 为领取凭证。
-# 输出：锁定的运行批次；过期或旧执行者抛 Conflict。
-# 逻辑：状态、凭证和截止时间同时满足才允许写入。
-# 约束：调用者必须处于事务中，凭证不进入错误或日志。
+# Function: Validate the current executor for a per-message event.
+# Inputs: `run_id` is the batch UUID and `token` is the claim credential.
+# Outputs: Locked running batch; expired or old executors raise Conflict.
+# Logic: Permit writes only when status, credential, and expiration all match.
+# Constraints: Callers must be in a transaction and credentials never enter errors or logs.
 def require_run(run_id, token):
     run = MailboxSyncRun.objects.select_for_update(of=("self",)).select_related("mailbox").get(pk=run_id)
     if run.status != "running" or str(run.lease_token) != str(token) or run.lease_until <= timezone.now():
@@ -116,11 +116,11 @@ def require_run(run_id, token):
     return run
 
 
-# 功能：保存 Agent 观察事件并刷新批次租约。
-# 输入：`run_id`、`token` 为批次凭证，`stage` 为阶段，`data` 含 message_ids 或 gmail_message_id/error。
-# 输出：无；逐封记录及批次租期更新。
-# 逻辑：发现事件幂等登记；失败仅更新单封，错误只保存代码和安全说明。
-# 约束：事件必须来自本批次；完成后旧事件不得重新打开任务。
+# Function: Save an Agent observation event and refresh the batch lease.
+# Inputs: `run_id` and `token` are batch credentials, `stage` is the stage, and `data` contains message_ids or gmail_message_id/error.
+# Outputs: None; updates per-message records and batch lease.
+# Logic: Register discovery events idempotently; failures update one message only and retain only code and safe guidance.
+# Constraints: Events must come from this batch; old events cannot reopen a completed job.
 @transaction.atomic
 def record_event(run_id, token, stage, data):
     run = require_run(run_id, token)
@@ -148,11 +148,11 @@ def record_event(run_id, token, stage, data):
     item.save()
 
 
-# 功能：完成邮箱批次并保存刷新凭证和安全统计。
-# 输入：`run_id`、`token` 为执行凭证，`result` 为 Agent 结果，`authorization` 为可选刷新凭证。
-# 输出：最终批次表示。
-# 逻辑：Gmail/QQ 单封失败产生 partial/failed，未完成任务及原文显式失败；仅 Gmail 可提交刷新凭证。
-# 约束：不自动重试；批次完成不宣称所有公司画像完成，后者由 run_data 查询。
+# Function: Complete a mailbox batch and save refreshed credentials and safe statistics.
+# Inputs: `run_id` and `token` are execution credentials, `result` is the Agent result, and `authorization` is an optional refreshed credential.
+# Outputs: Terminal batch representation.
+# Logic: Gmail or QQ per-message failure produces partial or failed; unfinished jobs and sources fail explicitly; only Gmail can submit refreshed credentials.
+# Constraints: Does not retry automatically; batch completion does not claim every company profile is complete, which run_data queries separately.
 @transaction.atomic
 def finish_run(run_id, token, result, authorization=None):
     candidate = MailboxSyncRun.objects.select_related("mailbox").get(pk=run_id)
@@ -186,11 +186,11 @@ def finish_run(run_id, token, result, authorization=None):
     return run_data(run)
 
 
-# 功能：生成不受前端分页影响的批次整体进度。
-# 输入：`run` 为已授权批次。
-# 输出：邮件计数、公司分析计数、逐封错误、时间及冻结的同步范围。
-# 逻辑：计数来自实际任务；画像按本批次关联的业务邮件公司去重并检查当前任务。
-# 约束：不返回租约、凭证或原始邮件正文；分析可晚于邮箱批次完成。
+# Function: Generate overall batch progress independent of frontend pagination.
+# Inputs: `run` is an authorized batch.
+# Outputs: Message counts, company-analysis counts, per-message errors, times, and frozen synchronization scope.
+# Logic: Derive counts from actual jobs; deduplicate companies with business messages in this batch and inspect their current jobs for profiling.
+# Constraints: Does not return leases, credentials, or original email bodies; analysis can finish after the mailbox batch.
 def run_data(run):
     counts = dict(run.email_jobs.values("status").annotate(n=Count("id")).values_list("status", "n"))
     company_ids = run.email_jobs.filter(company__emails__business_classification="business").exclude(company=None).values_list("company_id", flat=True).distinct()
@@ -208,11 +208,11 @@ def run_data(run):
             "finished_at": run.finished_at.isoformat() if run.finished_at else None, "error": run.error, "email_errors": errors}
 
 
-# 功能：为明确失败的邮件建立新批次。
-# 输入：`owner` 为员工，`run_id` 为终态批次。
-# 输出：新重试批次；无失败或仍活动时拒绝。
-# 逻辑：正式模式限定原员工邮箱，实验模式允许跨账号读取失败批次；显式重试复用原消息标识，保留历史记录。
-# 约束：保留旧批次审计历史和原 dedupe_key，不覆盖正常邮件。
+# Function: Create a new batch for explicitly failed messages.
+# Inputs: `owner` is the employee and `run_id` is a terminal batch.
+# Outputs: New retry batch; rejects absent failures or an active batch.
+# Logic: Production mode limits to the original employee mailbox, while experiment mode permits cross-account reading of failed batches; explicit retries reuse original message identifiers and retain history.
+# Constraints: Retains old batch audit history and original dedupe_key without overwriting healthy messages.
 def retry_run(owner, run_id):
     run = MailboxSyncRun.objects.filter(owner_scope(owner, "mailbox__owner"), pk=run_id).first()
     if run is None:
@@ -223,11 +223,11 @@ def retry_run(owner, run_id):
     return request_run(owner, run.mailbox_id, ids or run.message_ids, retry_scope=run.sync_options)
 
 
-# 功能：显式标记租约过期批次，解除邮箱活动占用。
-# 输入：`owner` 为 Worker 绑定员工。
-# 输出：过期数量。
-# 逻辑：逐个锁邮箱和批次后复查时间，保留完成记录；中断任务及原文状态一起失败，防止下次同步隐式重试。
-# 约束：不自动重试中断工作；queued 任务不受影响，用户可从进度页明确重试。
+# Function: Explicitly mark lease-expired batches failed and release mailbox active occupancy.
+# Inputs: `owner` is the employee bound to Worker.
+# Outputs: Expired count.
+# Logic: Recheck time after locking each mailbox and batch and retain completed records; interrupted jobs and source states fail together to prevent implicit retry on the next synchronization.
+# Constraints: Does not retry interrupted work automatically; queued jobs remain unaffected and users can explicitly retry from the progress page.
 def expire_runs(owner):
     candidates = MailboxSyncRun.objects.filter(mailbox__owner=owner, status="running", lease_until__lte=timezone.now())
     expired = 0

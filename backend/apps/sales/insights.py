@@ -1,11 +1,11 @@
-"""职责：校验全球活动、资讯事实及查询条件，不生成推荐或评分。
-实现：校验共享事实的来源、日期精度及跨账号采集去重；关联商机保持原授权；兼容 Agent 明确日期标记，支持日期与地区筛选。
-关联：销售序列化器调用 validate_insight，ResourceView 使用 filter_insights；数据沿用 Record 权限和版本。
-目录：
-- validate_insight：核对跨字段及引用关系。
-- filter_insights：处理活动与资讯的查询条件。
-变量索引：
-- logger：兼容日期协议和重复采集诊断，不记录正文或令牌。
+"""Responsibility: Validate global events, news facts, and query conditions without generating recommendations or scores.
+Implementation: Validate shared facts' sources, date precision, and cross-account collection deduplication; retain original opportunity authorization. Support explicit Agent date markers and date/region filters.
+Relationships: Sales serializers call validate_insight and ResourceView uses filter_insights; data retains Record permissions and versioning.
+Directory:
+- validate_insight: Check cross-field and reference relationships.
+- filter_insights: Process event and news query conditions.
+Variable index:
+- logger: Date-protocol compatibility and duplicate-collection diagnostics without bodies or tokens.
 """
 
 from urllib.parse import urlsplit
@@ -23,11 +23,11 @@ from .insight_dates import LEGACY_DATE_MARKER, legacy_date_event
 logger = logging.getLogger("salesmate.insights")
 
 
-# 功能：校验活动与资讯事实。
-# 输入：`serializer` 为当前序列化器，`attrs` 为验证后的字段。
-# 输出：已校验字段及兼容协议明确指定的 time_precision；无效字段抛 400，同源采集重复抛 409。
-# 逻辑：合并旧值验证；Agent 日期占位须完整标记和 UTC 中午匹配；显式 date 接受 UTC 午夜或中午一致边界，结束日排除；数据库约束防止并发重复。
-# 约束：不改变原时间或正文；归档不释放来源；商机关联仍校验当前用户权限，不访问外站。
+# Function: Validate event and news facts.
+# Inputs: `serializer`: current serializer; `attrs`: validated fields.
+# Outputs: Validated fields and time_precision explicitly specified by the compatibility protocol; invalid fields raise 400 and duplicate source collection raises 409.
+# Logic: Merge existing values for validation. Agent date placeholders require a complete marker and UTC-noon match; explicit date precision accepts consistent UTC-midnight or noon boundaries with an exclusive end date. Database constraints prevent concurrent duplicates.
+# Constraints: Preserve original timestamps and content; archival does not release sources. Opportunity links still require current-user permissions; no external site access.
 def validate_insight(serializer, attrs):
     url = attrs.get("source_url", getattr(serializer.instance, "source_url", ""))
     parsed = urlsplit(url)
@@ -73,11 +73,11 @@ def validate_insight(serializer, attrs):
     return attrs
 
 
-# 功能：筛选活动或资讯查询。
-# 输入：`query` 为已按公共读取规则授权的 QuerySet，`params` 为查询参数。
-# 输出：附加条件并按时间/ID 排序的 QuerySet。
-# 逻辑：活动按开始时间、资讯按发布时间过滤；from/to 为带时区 ISO 时间，区间包含下界不包含上界。
-# 约束：不按价值排序，不跨币种汇总；无效条件明确报错，不默默忽略类型字段。
+# Function: Filter event or news queries.
+# Inputs: `query`: QuerySet authorized under public-read rules; `params`: query parameters.
+# Outputs: QuerySet with added conditions and time/ID ordering.
+# Logic: Filter events by start time and news by publication time; from/to are timezone-aware ISO timestamps with inclusive lower and exclusive upper bounds.
+# Constraints: No value ranking or cross-currency aggregation; reject invalid conditions explicitly rather than silently ignoring type fields.
 def filter_insights(query, params):
     field = "starts_at" if query.model is WorldEvent else "published_at"
     category = "event_type" if query.model is WorldEvent else "category"

@@ -1,15 +1,15 @@
-"""职责：限定销售业务共享、个人会话和团队管理的授权范围。
-实现：全球资讯和活动对已认证用户共享读取；其他记录保留个人/团队隔离；实验模式沿用开放规则。
-关联：序列化关系字段和事务服务共用本模块；不按客户端自报 owner 授权。
-目录：
-- visible_company_ids：返回用户可访问的公司标识查询。
-- company_access：验证公司业务读写权限。
-- managed_team_ids：返回用户管理的团队标识。
-- scope：生成模型级可见查询集。
-- require_edit：确认对象编辑权限。
-变量索引：
-- PRIVATE_MODELS：只允许 owner 访问的助手、文件、产品和连接模型。
-- SHARED_INSIGHTS：共享读取但仍按原所有者控制写入的资讯和活动模型。
+"""Responsibility: Bound authorization for sales business sharing, personal conversations, and team management.
+Implementation: Authenticated users share read access to global news/events; other records retain personal/team isolation. Experiment mode retains open rules.
+Relationships: Serialized relations and transactional services share this module; never authorize using client-declared owner values.
+Directory:
+- visible_company_ids: Return a query of company identifiers accessible to the user.
+- company_access: Validate company business read/write permissions.
+- managed_team_ids: Return identifiers of teams managed by the user.
+- scope: Build model-level visible querysets.
+- require_edit: Verify object edit permission.
+Variable index:
+- PRIVATE_MODELS: Assistant, file, product, and connection models accessible only to owners.
+- SHARED_INSIGHTS: News/event models with shared reads and writes controlled by original owners.
 """
 
 from django.db.models import Q
@@ -32,11 +32,11 @@ PRIVATE_MODELS = (
 SHARED_INSIGHTS = (models.WorldEvent, models.WorldNews)
 
 
-# 功能：返回用户可访问的公司标识查询。
-# 输入：`user` 为已认证用户。
-# 输出：公司主键 QuerySet。
-# 逻辑：个人隔离只返回自有公司；实验模式返回全部，正式协作模式含团队共享。
-# 约束：返回范围不能用于读取私人邮件或 L1–L4 输入。
+# Function: Return a query of company identifiers accessible to the user.
+# Inputs: `user`: authenticated user.
+# Outputs: Company primary-key QuerySet.
+# Logic: Personal isolation returns owned companies only; experiment mode returns all, while production collaboration includes team sharing.
+# Constraints: This scope must not authorize private email or L1-L4 input reads.
 def visible_company_ids(user):
     if enabled():
         return Company.objects.values_list("pk", flat=True)
@@ -55,11 +55,11 @@ def visible_company_ids(user):
     )
 
 
-# 功能：验证公司业务读写权限。
-# 输入：`user`、`company` 和 `write`，默认只读。
-# 输出：原 Company；无权限返回与不存在一致的 404。
-# 逻辑：个人隔离拒绝其他 owner；实验模式直接允许，协作模式校验团队和授权。
-# 约束：不升级邮箱权限；所有者始终保有业务管理权。
+# Function: Validate company business read/write permissions.
+# Inputs: `user`, `company`, and `write`, defaulting to read-only.
+# Outputs: Original Company; lack of access returns the same 404 as absence.
+# Logic: Personal isolation rejects other owners; experiment mode allows directly, while collaboration validates teams/grants.
+# Constraints: No mailbox permission upgrades; owners always retain business management rights.
 def company_access(user, company, write=False):
     if company.owner_id == user.pk:
         return company
@@ -89,11 +89,11 @@ def company_access(user, company, write=False):
     return company
 
 
-# 功能：返回用户管理的团队标识。
-# 输入：`user` 为当前用户。
-# 输出：团队主键查询集。
-# 逻辑：个人隔离仅管理自有团队；实验模式开放全部，协作模式含有效 manager。
-# 约束：已归档团队不接受成员变更。
+# Function: Return identifiers of teams managed by the user.
+# Inputs: `user`: current user.
+# Outputs: Team primary-key queryset.
+# Logic: Personal isolation manages owned teams only; experiment mode opens all, while collaboration includes active managers.
+# Constraints: Archived teams reject membership changes.
 def managed_team_ids(user):
     if owner_only():
         return models.Team.objects.filter(owner=user, archived=False).values_list("pk", flat=True)
@@ -114,11 +114,11 @@ def managed_team_ids(user):
     )
 
 
-# 功能：生成模型级可见查询集。
-# 输入：`model` 为白名单模型类，`user` 为当前用户。
-# 输出：按个人或业务共享权限过滤的 QuerySet，包含归档记录供显式筛选。
-# 逻辑：已认证用户可读公共资讯和活动，包括个人隔离模式；其他模型沿用既定隔离规则。
-# 约束：共享只扩展读取，写入仍经 require_edit；活动关联业务字段由序列化器按用户投影。
+# Function: Build model-level visible querysets.
+# Inputs: `model`: allowlisted model class; `user`: current user.
+# Outputs: QuerySet filtered by personal/business-sharing permissions, including archived records for explicit filtering.
+# Logic: Authenticated users may read public news/events even under personal isolation; other models retain existing isolation rules.
+# Constraints: Sharing expands reads only; writes still use require_edit. Serializers project event-linked business fields per user.
 def scope(model, user):
     if model in SHARED_INSIGHTS:
         return model.objects.all() if user and user.is_authenticated else model.objects.none()
@@ -167,11 +167,11 @@ def scope(model, user):
     raise PermissionDenied("该模型未开放业务访问。")
 
 
-# 功能：确认对象编辑权限。
-# 输入：`instance` 为已有记录，`user` 为认证操作者。
-# 输出：无；无权限抛 404 或 PermissionDenied。
-# 逻辑：共享资讯仅扩展可读范围；个人隔离拒绝修改其他 owner，实验模式或原所有者允许，其余检查协作授权。
-# 约束：授权不能通过修改 owner、公司或单据归属来转移。
+# Function: Verify object edit permission.
+# Inputs: `instance`: existing record; `user`: authenticated actor.
+# Outputs: None; unauthorized access raises 404 or PermissionDenied.
+# Logic: Shared news expands reads only. Personal isolation rejects other-owner edits; experiment mode/original ownership permits them; otherwise check collaboration authorization.
+# Constraints: Authorization cannot be transferred by changing owner, company, or document ownership.
 def require_edit(instance, user):
     if enabled() or instance.owner_id == user.pk:
         return

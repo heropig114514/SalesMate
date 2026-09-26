@@ -1,9 +1,9 @@
 /**
- * 职责：提供保留登录身份的账号清空操作。
- * 实现：一次明确确认后发送幂等请求；成功清理缓存、广播并刷新，失败保留操作键供显式重试。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 挂载按钮，api.js 提供 Session/CSRF 请求，account-cache.js 管理缓存。
- * 目录：resetAccountData、showResetRecovery。
- * 变量索引：labels 为当前语言的按钮和状态说明。
+ * Responsibility: Reset account data while preserving the login identity.
+ * Implementation: Send an idempotent request after explicit confirmation; on success clear caches, broadcast, and reload; on failure retain the operation key for an explicit retry.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; workspace.js mounts the button, api.js supplies Session/CSRF requests, and account-cache.js manages caches.
+ * Directory: resetAccountData, showResetRecovery.
+ * Variable index: labels contains button and status text in the current language.
  */
 import { request } from './api.js?v=20260921-product';
 import { accountIdentity, finishAccountReset } from './account-cache.js?v=20260921-product';
@@ -17,9 +17,9 @@ const labels = language === 'en' ? {
   busy: '正在清空…', failure: '清理尚未完成：',
 };
 
-/** 功能：执行用户明确触发的账号清空。输入：button 为触发按钮。输出：成功后刷新页面。
- * 逻辑：先读取认证身份；每个未完成操作保留唯一键，失败不自动重试；服务器确认后清理缓存。
- * 约束：不发送账号选择参数或密码；按钮禁用只防止当前页面重复提交，后端幂等处理网络重复请求。
+/** Function: Perform an account reset explicitly requested by the user. Inputs: button is the triggering button. Outputs: Reload the page on success.
+ * Logic: Read the authenticated identity first; retain a unique key for each incomplete operation, never retry automatically, and clear caches after server confirmation.
+ * Constraints: Send neither account selection parameters nor passwords; disabling the button prevents duplicate submissions only on this page, while backend idempotency handles duplicate network requests.
  */
 export async function resetAccountData(button) {
   if (!confirm(labels.confirm)) return;
@@ -43,9 +43,9 @@ export async function resetAccountData(button) {
   }
 }
 
-/** 功能：在附件清理失败或刷新后提供可达的恢复入口。输入：无，响应头事件触发。
- * 输出：无，创建覆盖旧业务页面的恢复面板。逻辑：只创建一次，按钮仍走明确确认与相同幂等键。
- * 约束：不自动执行清理，旧业务内容不再展示给用户。
+/** Function: Provide accessible recovery after attachment cleanup fails or the page reloads. Inputs: None; triggered by a response-header event.
+ * Outputs: None; create a recovery panel covering the old application page. Logic: Create the panel once; its button still requires explicit confirmation and uses the same idempotency key.
+ * Constraints: Never run cleanup automatically or display old application content to the user.
  */
 function showResetRecovery() {
   if (document.getElementById('account-reset-recovery')) return;

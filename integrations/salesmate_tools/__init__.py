@@ -1,8 +1,8 @@
-"""职责：标识独立业务工具客户端包。
-实现：客户端按需读取显式环境配置。
-关联：client、cli、mcp_server 共用后端工具协议。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Identify the standalone business-tool client package.
+Implementation: Clients read explicit environment configuration on demand.
+Relationships: client, cli, and mcp_server share the backend tool protocol.
+Directory:
+- None
+Variable index:
+- None
 """

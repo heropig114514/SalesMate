@@ -1,16 +1,16 @@
 /**
- * 职责：让员工每次明确选择 Gmail 同步范围。
- * 实现：天数与封数取交集，未填封数默认 50；超量提交逐次警告，明确批准后才携带批准字段。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 在首次授权、单邮箱同步和刷新入口调用；index.html 提供独立 Gmail 范围弹窗。
- * 目录：readGmailScope 校验范围；chooseGmailScope 返回选择或取消结果。
- * 变量索引：GMAIL_MESSAGE_LIMIT 为普通同步的 50 封上限；选择和批准只保存在本次弹窗 Promise 中。
+ * Responsibility: Require employees to explicitly select Gmail synchronization scope each time.
+ * Implementation: Intersect day/message limits; an omitted message count defaults to 50. Warn on each oversized submission and include approval only after explicit consent.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; app.js calls this for initial authorization, individual mailbox sync, and refresh; index.html provides a separate Gmail-scope dialog.
+ * Directory: readGmailScope validates scope; chooseGmailScope returns the selection or cancellation.
+ * Variable index: GMAIL_MESSAGE_LIMIT is the ordinary 50-message limit; selection/approval exist only in the current dialog Promise.
  */
 import { t } from './i18n.js?v=20260921-product';
 
 const GMAIL_MESSAGE_LIMIT = 50;
 
-/** 功能：读取一次明确的同步限制。输入：form 为本次表单。输出：天数和封数对象。
- * 逻辑：至少选择一项正安全整数；只选天数时封数设为 50。约束：空表单仍拒绝，不从历史选择继承批准。 */
+/** Function: Read one explicit sync limit selection. Inputs: form is the current form. Outputs: A day/message-limit object.
+ * Logic: Require at least one positive safe integer; selecting days alone sets the message count to 50. Constraints: Reject empty forms and never inherit approval from prior choices. */
 function readGmailScope(form) {
   const options = Object.fromEntries(['recent_days', 'max_messages'].map(name => [name, form.elements[name].value === '' ? null : Number(form.elements[name].value)]));
   if (!Object.values(options).some(value => value !== null)) throw new Error(t('请填写最近 N 天或最近 N 封，至少一项。'));
@@ -19,9 +19,9 @@ function readGmailScope(form) {
   return options;
 }
 
-/** 功能：同步前等待用户选择空白范围。输入：address 为展示用邮箱地址。输出：所选范围，取消返回 null。
- * 逻辑：每次重置表单；提交超过 50 封时弹出含本次数量的警告，确认后记录批准；取消警告保留表单。
- * 约束：关闭表单不发请求，批准不跨提交或数量变化复用；只选天数仍受 50 封限制。 */
+/** Function: Wait for a scope selection from a blank form before syncing. Inputs: address is the displayed mailbox address. Outputs: Selected scope, or null on cancellation.
+ * Logic: Reset the form each time; submitting over 50 messages shows a warning with the current count and records approval after confirmation. Cancelling the warning retains the form.
+ * Constraints: Closing the form sends no request; never reuse approval across submissions/count changes. Day-only selections still have a 50-message limit. */
 export function chooseGmailScope(address) {
   const dialog = document.getElementById('gmail-scope-dialog');
   const form = document.getElementById('gmail-scope-form');

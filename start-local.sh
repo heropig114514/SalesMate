@@ -1,18 +1,28 @@
 #!/bin/bash
-# 职责：提供 macOS/POSIX 本地启动、状态查询和停止入口，兼容 macOS 自带 Bash 3.2。
-# 实现：按脚本位置定位仓库，创建本平台虚拟环境，检查依赖摘要并安装原依赖，再调用共享 Python 监督器。
-# 关联：backend/tools/local_server.py 管理服务；start-local.ps1 保留 Windows 入口；根 .env 由共享监督器读取。
-# 目录：usage 显示参数；fail 报告错误并退出；无类。
-# 变量索引：PROJECT_ROOT 为仓库绝对路径；ACTION 选择 start/status/stop；PYTHON 为首次建环境的解释器；
-# BREW_SERVICE 为显式 Homebrew 公式名；NO_BROWSER 控制浏览器；VENV_PYTHON、LAUNCHER 为本地入口；
-# HASH_PATH、DEPENDENCY_HASH、SAVED_HASH 记录原四份依赖清单摘要；INSTALL_LOG 保存 pip 安装输出；LAUNCHER_ARGS 为安全 argv 数组。
-# 约束：要求已安装 Python 3.11+ 及数据库；不 source .env、不安装系统软件、不覆盖其他平台的 .venv、不重试安装。
+# Responsibility: Provide macOS/POSIX local start, status, and stop entry points compatible with macOS Bash 3.2.
+# Implementation: Locate the repository from the script, create the platform virtual environment, check and install the original dependency manifest, then call the shared Python supervisor.
+# Relationships: backend/tools/local_server.py manages services; start-local.ps1 remains the Windows entry point; the shared supervisor reads the root .env.
+# Directory:
+# - usage: Display command-line help.
+# - fail: Report an error and exit.
+# Variable index:
+# - PROJECT_ROOT: Absolute repository path.
+# - ACTION: Selects start, status, or stop.
+# - PYTHON: Interpreter used to create the initial environment.
+# - BREW_SERVICE: Explicit Homebrew formula name.
+# - NO_BROWSER: Controls browser opening.
+# - VENV_PYTHON/LAUNCHER: Local runtime entry paths.
+# - HASH_PATH/DEPENDENCY_HASH/SAVED_HASH: Track the original four dependency-manifest hashes.
+# - INSTALL_LOG: Captures pip installation output.
+# - LAUNCHER_ARGS: Safe argv array.
+# Constraints: Requires Python 3.11+ and a configured database. It does not source .env, install system software, overwrite another platform's .venv, or retry installation.
 set -euo pipefail
 
-# 功能：显示入口用法。
-# 输入：无参数；输出：帮助文本到标准输出。
-# 逻辑：列出共享动作和 macOS 专属数据库启动选项。
-# 约束：不访问文件、数据库或外部服务。
+# Function: Display entry-point usage.
+# Inputs: No parameters.
+# Outputs: Help text on standard output.
+# Logic: List shared actions and the macOS-specific database-start option.
+# Constraints: Does not access files, databases, or external services.
 usage() {
     cat <<'USAGE'
 Usage: bash start-local.sh [start|status|stop] [--python /path/to/python3] [--no-browser]
@@ -23,10 +33,11 @@ No database, credentials, or analysis settings are replaced automatically.
 USAGE
 }
 
-# 功能：明确报告参数、依赖或环境错误。
-# 输入：第一个位置参数为已脱敏错误文本；输出：stderr 消息，退出码 1。
-# 逻辑：保持失败语义，指向可操作的配置或日志位置。
-# 约束：调用者不得传入密钥或完整数据库连接字符串。
+# Function: Report an argument, dependency, or environment error clearly.
+# Inputs: The first positional parameter is redacted error text.
+# Outputs: A stderr message and exit status 1.
+# Logic: Preserve failure semantics and point to an actionable configuration or log location.
+# Constraints: Callers must not provide secrets or full database connection strings.
 fail() {
     printf '[setup] ERROR: %s\n' "$1" >&2
     exit 1

@@ -1,12 +1,12 @@
-"""职责：集中声明工作台、业务、本公司设置、世界消息、实验数据、管理、健康检查和 API 文档路由。
-实现：商机优先级页读取独立存储结果；按 urlpatterns 分派请求；实验页通过登录只读 API 展示获准的虚构批次；世界消息地图与详情共用展示模板，业务鉴权由被分派的视图执行。
-关联：组合 common.views、apps.accounts、apps.crm、apps.sales、apps.chat、apps.agent_tools 和 backend/frontend；本地静态资源仅在 DEBUG 下提供。
+"""Responsibility: Declare workspace, business, company settings, world, experiment, administration, health-check, and API-documentation routes.
+Implementation: The read-only graph API exposes current facts and version lineage; the opportunity-priority page reads separately stored results; urlpatterns dispatches requests; experiment pages expose approved synthetic batches; dispatched views perform business authorization.
+Relationships: Combines common.views, apps.accounts, apps.crm, apps.sales, apps.chat, apps.agent_tools, and backend/frontend; local static assets are served only when DEBUG is enabled.
 
-目录：
-- 无
+Directory:
+- None
 
-变量索引：
-- urlpatterns：项目 URL 路径与视图映射的有序列表。
+Variable index:
+- urlpatterns: Ordered mapping of project URL paths to views.
 """
 
 from django.contrib import admin
@@ -36,6 +36,7 @@ urlpatterns = [
     path("api/v1/health/ready/", ReadinessView.as_view(), name="health-ready"),
     path("api/v1/accounts/", include("apps.accounts.urls")),
     path("api/v1/sales/", include("apps.sales.urls")),
+    path("api/v1/graph/", include("apps.knowledge_graph.urls")),
     path("api/v1/agent-tools/", include("apps.agent_tools.urls")),
     path("api/v1/", include("apps.chat.urls")),
     path("api/v1/", include("apps.crm.urls")),

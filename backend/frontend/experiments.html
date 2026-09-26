@@ -1,9 +1,9 @@
 <!doctype html>
-<!-- 职责：在现有网站提供所有登录用户可读的虚构实验数据浏览器。
-实现：experiments.js 加载表目录、归属、字段与外键，支持检索、分页、下载及关联跳转。
-关联：入口缓存版本同步顶栏实验入口移除；复用 product-header 顶栏与会话，实验 API 独立校验精确批次，维护通过统一 Tool API。
-目录：无函数或类；experiment-tables 为表目录，experiment-rows 为记录列表，record-dialog 为详情。
-变量索引：无；DOM id 仅作为脚本定位入口。 -->
+<!-- Responsibility: Provide a synthetic experiment-data browser readable by all authenticated users within the existing site.
+Implementation: experiments.js loads catalogs, ownership, fields, and foreign keys, supporting search, pagination, downloads, and relation navigation.
+Relationships: Entry versions reflect experiment-entry removal; reuse product-header and sessions. Experiment APIs verify exact batches independently; maintenance uses the shared Tool API.
+Directory: No functions or classes; experiment-tables holds the catalog, experiment-rows the record list, and record-dialog the details.
+Variable index: None; DOM ids serve only as script lookup points. -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

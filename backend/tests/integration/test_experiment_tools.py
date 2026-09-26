@@ -1,20 +1,20 @@
-"""职责：验证普通账号通过工具协议和网页 Agent 读取他人共享实验数据。
-实现：隔离 PostgreSQL 真实生成夹具；使用真实认证 HTTP 和 Agent 工作流，仅模拟模型决策。
-关联：experiments、agent_tools、chat.tool_reads；MCP stdio 另由独立 SDK 测试连接本服务。
-目录：
-- ExperimentToolTests：跨账号工具与聊天端到端验证。
-- ExperimentToolTests.setUp：建立临时文件、两个账号和独立凭据。
-- ExperimentToolTests.call：发送真实 Tool 认证调用。
-- ExperimentToolTests.test_all_tables_and_boundaries：遍历全部表并验证权限及完整性拒绝。
-- ExperimentToolTests.test_file_blocks_and_frozen_grants：验证文件块和旧凭据不隐式扩权。
-- ExperimentToolTests.test_chat_agent_http_evidence_round_trip：经真实 HTTP 完成实验读取与回答引用。
-- ExperimentToolTests.test_chat_agent_http_evidence_round_trip.decide：按工具结果返回确定性模型决策。
-- ExperimentToolTests.test_chat_agent_write_http_round_trip：经真实工作流修改共享记录并保存回执引用。
-- ExperimentToolTests.test_chat_agent_write_http_round_trip.decide：根据读取指纹选择维护并引用回执。
-- ExperimentToolTests.test_real_mcp_stdio：通过真实 MCP SDK 子进程读取全部实验表。
-- ExperimentToolTests.test_real_mcp_stdio.check：核对协议目录、调用与错误回执。
-变量索引：
-- 无
+"""Responsibility: Verifies that an ordinary account reads another user's shared experiment data through the tool protocol and web Agent.
+Implementation: Creates fixtures in isolated PostgreSQL; uses real authenticated HTTP and Agent workflow, mocking only model decisions.
+Relationships: `experiments`, `agent_tools`, and `chat.tool_reads`; MCP stdio is separately connected to this service by SDK tests.
+Directory:
+- ExperimentToolTests: Cross-account tool and chat end-to-end verification.
+- ExperimentToolTests.setUp: Creates temporary files, two accounts, and independent credentials.
+- ExperimentToolTests.call: Sends a real Tool-authenticated call.
+- ExperimentToolTests.test_all_tables_and_boundaries: Iterates all tables and verifies permissions and integrity rejection.
+- ExperimentToolTests.test_file_blocks_and_frozen_grants: Verifies that file chunks and old credentials do not implicitly expand authority.
+- ExperimentToolTests.test_chat_agent_http_evidence_round_trip: Completes experiment reads and answer citations through real HTTP.
+- ExperimentToolTests.test_chat_agent_http_evidence_round_trip.decide: Returns deterministic model decisions based on tool results.
+- ExperimentToolTests.test_chat_agent_write_http_round_trip: Modifies a shared record through the real workflow and saves a receipt citation.
+- ExperimentToolTests.test_chat_agent_write_http_round_trip.decide: Chooses maintenance from the read fingerprint and cites the receipt.
+- ExperimentToolTests.test_real_mcp_stdio: Reads all experiment tables through a real MCP SDK subprocess.
+- ExperimentToolTests.test_real_mcp_stdio.check: Checks protocol directory, invocations, and error receipts.
+Variable index:
+- None
 """
 
 import asyncio
@@ -48,16 +48,16 @@ from apps.sales.models import AuditEvent, Conversation
 from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS
 
 
-# 功能：验证共享批次在两个真实身份协议下的边界。
-# 逻辑：LiveServerTestCase 让生产 HTTP 客户端连接真实 Django 路由和测试数据库。
-# 约束：全部账号、令牌、文件和模型输出均为隔离测试用途，不访问真实业务库。
+# Function: Verifies boundaries of a shared batch under two real identity protocols.
+# Logic: `LiveServerTestCase` lets the production HTTP client connect to real Django routes and the test database.
+# Constraints: All accounts, tokens, files, and model outputs are isolated test artifacts and do not access the real business database.
 @override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"], LOCAL_DEBUG_AUTO_LOGIN=False)
 class ExperimentToolTests(LiveServerTestCase):
-    # 功能：建立普通读取者和不同的批次拥有者。
-    # 输入：测试数据库、临时服务地址和文件目录。
-    # 输出：owner、reader、manifest、credential、client、batch 实例状态。
-    # 逻辑：生成两组完整夹具；Tool 与 Agent 使用不同测试令牌及认证协议。
-    # 约束：测试结束回滚数据库并清理临时文件；不启动后台 Worker。
+    # Function: Creates an ordinary reader and a different batch owner.
+    # Inputs: Test database, temporary service URL, and file directory.
+    # Outputs: `owner`, `reader`, `manifest`, `credential`, `client`, and `batch` instance state.
+    # Logic: Generates two complete fixture sets; Tool and Agent use separate test tokens and authentication protocols.
+    # Constraints: Rolls back the database and removes temporary files after the test; does not start a background Worker.
     def setUp(self):
         folder = tempfile.TemporaryDirectory(prefix="experiment-tool-test-")
         self.addCleanup(folder.cleanup)
@@ -77,21 +77,21 @@ class ExperimentToolTests(LiveServerTestCase):
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION="Tool experiment-tool-test")
 
-    # 功能：执行一次认证工具调用。
-    # 输入：`name` 工具名称、`arguments` JSON 参数、`status` 预期 HTTP 状态。
-    # 输出：原始 JSON 响应。
-    # 逻辑：使用真实认证和 Schema 验证，不绕过权限服务。
-    # 约束：不自动重试，错误状态保留供测试断言。
+    # Function: Executes one authenticated tool call.
+    # Inputs: `name` is the tool name, `arguments` are JSON parameters, and `status` is the expected HTTP status.
+    # Outputs: Raw JSON response.
+    # Logic: Uses real authentication and schema validation without bypassing the permission service.
+    # Constraints: Does not retry automatically; error states remain available for assertions.
     def call(self, name, arguments, status=200):
         response = self.client.post("/api/v1/agent-tools/call/", {"name": name, "arguments": arguments}, format="json")
         self.assertEqual(response.status_code, status, response.data)
         return response.data
 
-    # 功能：验证全部模型可读而清单外数据及未授权操作不可读。
-    # 输入：两账号夹具、私有伪装记录和原始清单。
-    # 输出：44 表共 120 条夹具可读、维护标记符合 WRITE_MODELS、字段脱敏、原归属保留，越界请求拒绝。
-    # 逻辑：逐表读取并核对原始计数；修改一行后确认 409，撤销清单后确认 404。
-    # 约束：仅在测试库故意修改和删除；读取不得修改夹具指纹。
+    # Function: Verifies all model-readable data is available while unlisted data and unauthorized operations are not readable.
+    # Inputs: Two-account fixtures, a private decoy record, and the raw manifest.
+    # Outputs: All 120 fixtures across 44 tables are readable; maintenance flags match `WRITE_MODELS`, fields are redacted, original ownership remains, and out-of-scope requests are rejected.
+    # Logic: Reads every table and checks original counts; modifies one row to confirm 409, then revokes the manifest to confirm 404.
+    # Constraints: Intentionally modifies and deletes only in the test database; reads must not alter fixture fingerprints.
     def test_all_tables_and_boundaries(self):
         catalog = self.client.get("/api/v1/agent-tools/catalog/", {"category": "experiments"})
         self.assertEqual({item["name"] for item in catalog.data["tools"]}, EXPERIMENT_TOOLS)
@@ -118,11 +118,11 @@ class ExperimentToolTests(LiveServerTestCase):
         AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id=self.batch).delete()
         self.call("experiments.rows", args, 404)
 
-    # 功能：验证跨账号文件内容与冻结工具授权。
-    # 输入：共享文档和附件，已签发的限定工具凭据。
-    # 输出：文本块、归属、偏移可追踪；旧授权和匿名请求被拒绝。
-    # 逻辑：读取两类文件，并缩减测试令牌到旧工具验证新工具不能自动取得权限。
-    # 约束：不打印令牌，不授予写入或确认工具；原文件内容未变。
+    # Function: Verifies cross-account file contents and frozen tool authorization.
+    # Inputs: Shared documents and attachments with issued restricted tool credentials.
+    # Outputs: Text chunks, ownership, and offsets are traceable; old authorization and anonymous requests are rejected.
+    # Logic: Reads both file kinds, then reduces the test token to the old tool and verifies the new tool does not automatically gain access.
+    # Constraints: Does not print tokens or grant write/confirmation tools; original file content remains unchanged.
     def test_file_blocks_and_frozen_grants(self):
         for label in ("sales.Attachment", "accounts.SetupDocument"):
             pk = next(row["pk"] for row in self.manifest["rows"] if row["model"] == label)
@@ -140,11 +140,11 @@ class ExperimentToolTests(LiveServerTestCase):
         self.client.credentials()
         self.call("experiments.catalog", {}, 401)
 
-    # 功能：验证其他账号的内置 Agent 经真实 HTTP 读取实验数据并保存引用。
-    # 输入：普通读取者的通用会话和确定性模型决策。
-    # 输出：三个实验工具均成功；回答和引用归属读取者，来源正文保留原批次归属。
-    # 逻辑：实际领取请求、发现八工具、查目录、查表、读文件、回报回答，再核对持久化来源。
-    # 约束：模型边界模拟，不证明真实模型的规划质量；其余传输、授权和证据登记均真实。
+    # Function: Verifies another account's built-in Agent reads experiment data through real HTTP and saves citations.
+    # Inputs: An ordinary reader's general conversation and deterministic model decisions.
+    # Outputs: All three experiment tools succeed; answer and citations belong to the reader while source text retains the original batch ownership.
+    # Logic: Actually claims a request, discovers eight tools, reads the directory, queries tables, reads files, reports an answer, then verifies persisted sources.
+    # Constraints: The model boundary is mocked and does not prove real-model planning quality; all other transport, authorization, and evidence registration are real.
     def test_chat_agent_http_evidence_round_trip(self):
         conversation = Conversation.objects.create(owner=self.reader)
         request, _ = services.submit(self.reader, {"conversation_id": str(conversation.pk),
@@ -152,11 +152,11 @@ class ExperimentToolTests(LiveServerTestCase):
         backend = DjangoBackendClient(self.live_server_url + "/api/v1/agent/", "experiment-agent-test")
         self.addCleanup(backend.close)
 
-        # 功能：根据真实工具结果选择下一步或引用回答。
-        # 输入：`messages` 是工作流提供的提示，`max_tokens` 是未改变的模型预算。
-        # 输出：标准 JSON 工具决策或带真实来源标识的最终回答。
-        # 逻辑：确认八工具候选后查目录、附件表及文本，最后引用实际展示的文件块证据。
-        # 约束：不构造伪造来源；模拟仅作用于语言模型边界。
+        # Function: Chooses the next step or cited answer from real tool results.
+        # Inputs: `messages` is workflow-provided prompting and `max_tokens` is the unchanged model budget.
+        # Outputs: A standard JSON tool decision or final answer with real source identifiers.
+        # Logic: After confirming eight tool candidates, reads the directory, attachment table, and text, then cites the actually displayed file-chunk evidence.
+        # Constraints: Does not construct fabricated sources; the mock applies only to the language-model boundary.
         def decide(messages, *, max_tokens):
             payload = json.loads(messages[-1]["content"])
             count = len(payload["tool_results"])
@@ -185,11 +185,11 @@ class ExperimentToolTests(LiveServerTestCase):
         self.assertEqual(request.citations.get().source_type, "experiment_file")
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])
 
-    # 功能：验证工作空间模型决策能驱动真实实验修改并保存回答。
-    # 输入：已认证的新账号、真实 HTTP 后端和测试模型决策函数。
-    # 输出：客户名称变更、回执被引用且原归属保持不变。
-    # 逻辑：按目录、精确行、修改、回答的四步运行完整工作流。
-    # 约束：仅替换 LLM 决策，不模拟授权、数据库或 HTTP。
+    # Function: Verifies that workspace model decisions drive real experiment modifications and save answers.
+    # Inputs: A newly authenticated account, real HTTP backend, and test model-decision function.
+    # Outputs: Customer name changes, receipt is cited, and original ownership remains unchanged.
+    # Logic: Runs the complete four-step workflow of directory, exact row, modification, and answer.
+    # Constraints: Replaces only the LLM decision and does not mock authorization, database, or HTTP.
     def test_chat_agent_write_http_round_trip(self):
         conversation = Conversation.objects.create(owner=self.reader)
         request, _ = services.submit(self.reader, {"conversation_id": str(conversation.pk),
@@ -198,11 +198,11 @@ class ExperimentToolTests(LiveServerTestCase):
         self.addCleanup(backend.close)
         company = self.manifest["truth"][0]["company_id"]
 
-        # 功能：使用真实工具目录与读取指纹构造下一步。
-        # 输入：`messages` 工作流上下文、`max_tokens` 未改变的模型预算。
-        # 输出：工具调用或引用实际维护回执的回答 JSON。
-        # 逻辑：三次工具操作后停止，不从旧清单伪造指纹。
-        # 约束：此函数替代模型规划，不替代任何业务执行。
+        # Function: Builds the next step from the real tool directory and read fingerprint.
+        # Inputs: `messages` is workflow context and `max_tokens` is the unchanged model budget.
+        # Outputs: Tool invocation or answer JSON citing the actual maintenance receipt.
+        # Logic: Stops after three tool operations and does not fabricate a fingerprint from an old manifest.
+        # Constraints: This function replaces model planning, not any business execution.
         def decide(messages, *, max_tokens):
             payload = json.loads(messages[-1]["content"])
             results = payload["tool_results"]
@@ -226,11 +226,11 @@ class ExperimentToolTests(LiveServerTestCase):
         self.assertEqual(Company.objects.get(pk=company).owner_id, self.owner.pk)
         self.assertEqual(request.citations.get().source_type, "experiment_mutation")
 
-    # 功能：验证 MCP 宿主能以另一个普通账号读取全部共享实验表并维护业务记录。
-    # 输入：LiveServer 地址、测试专用令牌和可选安装的 MCP SDK。
-    # 输出：六个工具发布、44 表总计 120 条、真实 CRUD 与非法表 is_error 的断言。
-    # 逻辑：启动真实 stdio bridge 子进程，SDK 握手后经真实 HTTP 和 PostgreSQL 逐表读取。
-    # 约束：需安装 integrations/salesmate_tools/requirements.txt；未安装显式跳过，不误报协议已验证。
+    # Function: Verifies that an MCP host can use another ordinary account to read all shared experiment tables and maintain business records.
+    # Inputs: LiveServer address, test-only token, and optionally installed MCP SDK.
+    # Outputs: Asserts six published tools, 120 rows across 44 tables, real CRUD, and `is_error` for an invalid table.
+    # Logic: Starts a real stdio bridge subprocess; after SDK handshake, reads every table through real HTTP and PostgreSQL.
+    # Constraints: Requires `integrations/salesmate_tools/requirements.txt`; explicitly skips when absent and does not misreport that the protocol was verified.
     @skipUnless(importlib.util.find_spec("mcp"), "需要单独安装固定版本 MCP SDK 才能验证 stdio")
     def test_real_mcp_stdio(self):
         from mcp import Client, StdioServerParameters
@@ -243,11 +243,11 @@ class ExperimentToolTests(LiveServerTestCase):
             env={**os.environ, "SALESMATE_TOOLS_URL": self.live_server_url,
                  "SALESMATE_TOOLS_TOKEN": "experiment-tool-test"})
 
-        # 功能：完成真实协议发现与数据读取断言。
-        # 输入：无显式参数，读取外层 params、self.manifest 和实时测试服务。
-        # 输出：无返回值；不符预期时断言失败。
-        # 逻辑：SDK 管理 stdio，逐表核对数量后创建、修改、删除一条共享客户，最后检查非法表拒绝。
-        # 约束：不模拟 HTTP、权限或协议；测试结束关闭 SDK 子进程。
+        # Function: Completes real protocol-discovery and data-read assertions.
+        # Inputs: No explicit parameters; reads outer params, self.manifest, and the live test service.
+        # Outputs: No return value; assertion failure signals unexpected results.
+        # Logic: The SDK manages stdio, checks counts per table, then creates, modifies, and deletes one shared customer before checking invalid-table rejection.
+        # Constraints: Does not mock HTTP, permission, or protocol; closes the SDK subprocess after the test.
         async def check():
             async with Client(params) as client:
                 catalog = await client.list_tools()

@@ -1,12 +1,12 @@
-"""职责：建立业务工具授权、回执与确认提案表。
-实现：仅新建模型及其唯一约束；不迁移或修改既有业务数据。
-关联：agent_tools.models；依赖可替换用户模型。
-目录：
-- Migration：初始建表操作。
-变量索引：
-- Migration.initial：初始迁移标记。
-- Migration.dependencies：用户表依赖。
-- Migration.operations：三个模型及回执唯一约束。
+"""Responsibility: Create tables for business-tool authorization, receipts, and confirmation proposals.
+Implementation: Create only models and their unique constraints; does not migrate or modify existing business data.
+Relationships: ``agent_tools.models``; depends on the swappable user model.
+Directory:
+- Migration: Initial table-creation operations.
+Variable index:
+- Migration.initial: Initial-migration marker.
+- Migration.dependencies: User-table dependency.
+- Migration.operations: Three models and the receipt unique constraint.
 """
 
 import django.db.models.deletion
@@ -15,9 +15,9 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：新增工具持久化结构。
-# 逻辑：新表及内联约束。
-# 约束：回退会删除这些新表中的记录。
+# Function: Add tool-persistence structures.
+# Logic: New tables and inline constraints.
+# Constraints: Rollback deletes records in these new tables.
 class Migration(migrations.Migration):
 
     initial = True

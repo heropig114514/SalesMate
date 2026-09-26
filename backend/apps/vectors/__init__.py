@@ -1,8 +1,8 @@
-"""职责：声明向量存储应用包。
-实现：包初始化不执行数据库或网络操作。
-关联：模型和服务位于 models/services。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the vector-storage application package.
+Implementation: Package initialization performs no database or network operations.
+Relationships: Models and services reside in ``models`` and ``services``.
+Directory:
+- None
+Variable index:
+- None
 """

@@ -1,11 +1,11 @@
-"""职责：将现有业务工作单元包装为 Celery 任务。
-实现：消息只包含工作类型和数据库主键；执行前重新校验员工，业务领取仍使用数据库锁与租约。
-关联：config.celery 注册任务，common.execution 提交任务，CRM/Sales 保留既有领域逻辑。
-目录：
-- execute：执行一个同步、分析或已批准销售动作。
-- probe：验证真实消息传递及结果回传。
-变量索引：
-- logger：任务开始和失败日志，不包含邮件内容、凭证或外部响应。
+"""Responsibility: Wrap existing business work units as Celery tasks.
+Implementation: Messages contain only work type and database key; execution revalidates the employee, while business claims continue to use database locks and leases.
+Relationships: config.celery registers tasks, common.execution submits them, and CRM/Sales retain existing domain logic.
+Directory:
+- execute: Executes a sync, analysis, or approved sales action.
+- probe: Verifies real message delivery and result return.
+Variable index:
+- logger: Logs task start and failure without mail content, credentials, or external responses.
 """
 import logging
 from django.contrib.auth import get_user_model
@@ -16,11 +16,11 @@ from config.celery import app
 logger = logging.getLogger("salesmate.tasks")
 
 
-# 功能：在 Celery 进程中调用一个现有业务工作单元。
-# 输入：`kind` 为 sync/analysis/sales；`key` 为员工主键或销售动作 UUID。
-# 输出：业务是否执行的布尔值；异常记录类型后重新抛出。
-# 逻辑：重新加载员工有效状态，调用仍受事务保护的领域函数，finally 释放数据库连接。
-# 约束：无自动重试；销售仅处理已批准动作；队列仅允许受信服务器访问。
+# Function: Invoke an existing business work unit in a Celery process.
+# Inputs: `kind` is sync, analysis, or sales; `key` is an employee primary key or sales-action UUID.
+# Outputs: Boolean indicating whether business work ran; after recording its type, exceptions are re-raised.
+# Logic: Reloads employee validity, calls the domain function still protected by transactions, and releases database connections in finally.
+# Constraints: No automatic retries; sales handles approved actions only; queues are accessible only to trusted servers.
 @app.task(name="salesmate.execute", max_retries=0)
 def execute(kind, key):
     logger.info("task_started kind=%s key=%s", kind, key)
@@ -42,11 +42,11 @@ def execute(kind, key):
         connections.close_all()
 
 
-# 功能：检查 broker、消费者与结果后端的完整往返。
-# 输入：`token` 为调用方生成的非敏感随机探测标识。
-# 输出：原样返回 token。
-# 逻辑：使用与业务相同的 JSON 消息和结果通道。
-# 约束：不读写业务数据，不触发模型或外部邮件调用。
+# Function: Check the complete round trip through the broker, consumer, and result backend.
+# Inputs: `token` is a caller-generated, non-sensitive random probe identifier.
+# Outputs: Returns token unchanged.
+# Logic: Uses the same JSON message and result channels as business work.
+# Constraints: Does not read or write business data or trigger model or external-mail calls.
 @app.task(name="salesmate.probe", max_retries=0)
 def probe(token):
     return token

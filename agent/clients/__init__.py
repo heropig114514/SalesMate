@@ -1,4 +1,13 @@
-"""Agent 使用的外部服务客户端。"""
+"""Responsibility: External service clients used by the agent.
+Implementation: Define the package boundary and re-export explicitly listed public symbols.
+Relationships: Imported by adjacent agent modules and test discovery.
+
+Directory:
+- None
+
+Variable index:
+- __all__: Public exports of this module.
+"""
 
 from agent.clients.backend_api import (
     BackendClient,

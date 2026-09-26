@@ -1,4 +1,20 @@
-"""SalesMate Agent MVP 的一次性命令行入口。"""
+"""Responsibility: One-shot command-line entry point for the SalesMate Agent MVP.
+Implementation: Parse one-shot commands, load environment configuration, invoke backend-bound workflows, and emit JSON results.
+Relationships: Connects DjangoBackendClient to analysis, job, chat, and Gmail workflows.
+
+Directory:
+- main: Run one company analysis, job processing pass, chat answer, or employee-authorized mailbox synchronization.
+- _run_chat_once: Claim and process at most one chat answer request from the real Django backend.
+- _process_chat_once: Load chat modules lazily so chat skill settings do not affect existing L1-L4 commands.
+- _run_l2: Read company context from Django and build one L2 snapshot.
+- _run_jobs_once: Claim jobs from the real Django backend and execute one L2-L4 pass.
+- _run_authorized_sync: Process employee Gmail synchronization requested through the web UI.
+- _print_json: Write one UTF-8-capable JSON document to standard output.
+- _print_safe_error: Write a CLI error as the sole safe JSON document on standard output.
+
+Variable index:
+- None
+"""
 
 import argparse
 import json
@@ -6,7 +22,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# 同时支持直接运行 ``agent/main.py`` 与 ``python -m agent.main``。
+# Support both direct execution of ``agent/main.py`` and ``python -m agent.main``.
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -19,7 +35,7 @@ from agent.workflows.orchestration import process_jobs_once
 
 
 def main(argv: list[str] | None = None) -> int:
-    """执行一次公司分析、任务处理、聊天回答或员工授权邮箱同步。"""
+    """Run one company analysis, job processing pass, chat answer, or employee-authorized mailbox synchronization."""
     raw_argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(description="SalesMate one-shot Agent commands")
     selection = parser.add_mutually_exclusive_group(required=True)
@@ -70,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_chat_once() -> int:
-    """从真实 Django 后端领取并处理至多一条聊天回答请求。"""
+    """Claim and process at most one chat answer request from the real Django backend."""
     try:
         load_environment()
         backend = django_backend_from_environment()
@@ -86,7 +102,7 @@ def _run_chat_once() -> int:
 
 
 def _process_chat_once(*, backend):
-    """延迟加载聊天模块，避免聊天 Skill 配置影响现有 L1-L4 命令。"""
+    """Load chat modules lazily so chat skill settings do not affect existing L1-L4 commands."""
     from agent.workflows.chat import process_chat_once
 
     return process_chat_once(backend=backend)
@@ -97,7 +113,7 @@ def _run_l2(
     *,
     merge_version: str,
 ) -> int:
-    """从 Django 后端读取公司上下文并构建一份 L2 快照。"""
+    """Read company context from Django and build one L2 snapshot."""
     try:
         load_environment()
         backend = django_backend_from_environment()
@@ -119,7 +135,7 @@ def _run_l2(
 
 
 def _run_jobs_once(limit: int) -> int:
-    """从真实 Django 后端领取任务并执行一轮 L2-L4。"""
+    """Claim jobs from the real Django backend and execute one L2-L4 pass."""
     try:
         load_environment()
         backend = django_backend_from_environment()
@@ -139,7 +155,7 @@ def _run_jobs_once(limit: int) -> int:
 
 
 def _run_authorized_sync(limit: int) -> int:
-    """处理网页发起的员工 Gmail 同步请求。"""
+    """Process employee Gmail synchronization requested through the web UI."""
     try:
         load_environment()
         backend = django_backend_from_environment()
@@ -158,12 +174,12 @@ def _run_authorized_sync(limit: int) -> int:
 
 
 def _print_json(document: object) -> None:
-    """将一个支持 UTF-8 的 JSON 文档写到标准输出。"""
+    """Write one UTF-8-capable JSON document to standard output."""
     print(json.dumps(document, ensure_ascii=False, indent=2))
 
 
 def _print_safe_error(code: str, message: str, exit_code: int) -> int:
-    """将 CLI 错误作为唯一、安全的 JSON 文档写到标准输出。"""
+    """Write a CLI error as the sole safe JSON document on standard output."""
     _print_json({"error": {"code": code, "message": message}})
     return exit_code
 

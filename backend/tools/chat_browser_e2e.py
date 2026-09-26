@@ -1,14 +1,14 @@
-"""职责：验证真实网页悬浮助手、HTTP、数据库与 Agent 的组合闭环。
-实现：Django LiveServerTestCase 创建隔离库及会话，Node 浏览器实际提问，原 Agent 经 HTTP 回报。
-关联：browser_chat_live.cjs、tests.integration.test_chat 夹具；模型输出仅在调用边界模拟。
-目录：
-- ChatBrowserTests：需要显式 Playwright 环境的联合验收。
-- ChatBrowserTests.test_browser_agent_round_trip：工作空间查询客户到引用展示完整链路。
-- ChatBrowserTests.test_general_browser_round_trip：零客户账户通用聊天、收起展开与刷新恢复。
-- ChatBrowserTests.run_round_trip：有客户数据与空账号的工作空间 HTTP 联合测试。
-- ChatBrowserTests.run_round_trip.decide：根据真实工具证据生成模拟模型决策。
-变量索引：
-- 无
+"""Responsibility: Verify the end-to-end combination of the real floating web assistant, HTTP, database, and Agent.
+Implementation: Django LiveServerTestCase creates an isolated database and session, a Node browser asks real questions, and the original Agent reports over HTTP.
+Relationships: browser_chat_live.cjs and tests.integration.test_chat fixtures; model output is mocked only at the invocation boundary.
+Directory:
+- ChatBrowserTests: Integrated acceptance tests requiring an explicit Playwright environment.
+- ChatBrowserTests.test_browser_agent_round_trip: Full workspace path from customer query to citation display.
+- ChatBrowserTests.test_general_browser_round_trip: General chat for an account with no customers, collapse/expand, and refresh recovery.
+- ChatBrowserTests.run_round_trip: Workspace HTTP integration test for accounts with customer data and empty accounts.
+- ChatBrowserTests.run_round_trip.decide: Generate a mocked model decision from real tool evidence.
+Variable index:
+- None
 """
 
 import hashlib
@@ -31,18 +31,18 @@ from apps.crm.models import AgentCredential
 from tests.integration.test_chat import fixture
 
 
-# 功能：联合验证网页浮窗与真实后端。
-# 逻辑：测试静态根目录指向真实前端资源，有客户数据的工作空间替换启动脚本挂载共享浮窗，通用模式使用完整主页及悬浮入口，不拦截业务 API。
-# 约束：单独通过 manage.py test tools.chat_browser_e2e 运行，必须配置 Playwright；不模拟数据库。
+# Function: Jointly verify the web floating window and real backend.
+# Logic: The test static root points at real frontend assets; the workspace with customer data replaces the launch script to mount the shared floating window, while general mode uses the complete home page and floating entry point without intercepting business APIs.
+# Constraints: Run separately through manage.py test tools.chat_browser_e2e and require Playwright; the database is not mocked.
 @override_settings(
     STATIC_ROOT=Path(__file__).resolve().parents[1] / "frontend" / "assets"
 )
 class ChatBrowserTests(LiveServerTestCase):
-    # 功能：从网页提交问题并自动显示真实落库回答与来源。
-    # 输入：无外部参数，环境提供浏览器运行时，夹具提供合成员工和证据。
-    # 输出：浏览器成功退出、数据库 completed 且一条引用。
-    # 逻辑：委托共享 run_round_trip 使用有客户数据的工作空间；浏览器写入 pending 后由原 Agent 读取并回报，页面自行轮询显示。
-    # 约束：仅模型函数使用 Mock；测试会话 cookie 只经子进程环境传递，不打印或写入仓库。
+    # Function: Submit a question from the web page and automatically display the real persisted answer and source.
+    # Inputs: No external parameters; the environment supplies the browser runtime and fixtures supply synthetic employees and evidence.
+    # Outputs: Browser exits successfully, the database is completed, and one citation exists.
+    # Logic: Delegates to shared run_round_trip using the workspace with customer data; after the browser writes pending, the original Agent claims and reports it and the page polls to display it.
+    # Constraints: Only the model function uses Mock; the test-session cookie passes only through the child-process environment and is neither printed nor written to the repository.
     @override_settings(
         ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"],
         LOCAL_DEBUG_AUTO_LOGIN=False,
@@ -50,11 +50,11 @@ class ChatBrowserTests(LiveServerTestCase):
     def test_browser_agent_round_trip(self):
         self.run_round_trip(general=False)
 
-    # 功能：验证无客户账号直接聊天及刷新恢复。
-    # 输入：无外部参数；运行时提供浏览器路径。
-    # 输出：浏览器成功退出及 completed 记录。
-    # 逻辑：使用真实主页路由和 API，从空账号创建通用会话；收起/展开及刷新后重新展开均恢复已保存回答。
-    # 约束：仅模型输出模拟，不创建客户夹具或拦截业务 API。
+    # Function: Verify direct chat and refresh recovery for an account without customers.
+    # Inputs: No external parameters; runtime supplies the browser path.
+    # Outputs: Browser exits successfully and a completed record exists.
+    # Logic: Uses the real home-page route and API to create a general session from an empty account; collapse/expand and re-expansion after refresh both restore the saved answer.
+    # Constraints: Only model output is mocked; does not create customer fixtures or intercept business APIs.
     @override_settings(
         ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"],
         LOCAL_DEBUG_AUTO_LOGIN=False,
@@ -62,11 +62,11 @@ class ChatBrowserTests(LiveServerTestCase):
     def test_general_browser_round_trip(self):
         self.run_round_trip(general=True)
 
-    # 功能：协调浏览器提交和真实 Agent 消费。
-    # 输入：`general` 决定空客户账号或客户证据夹具。
-    # 输出：断言持久化回答、引用数量与浏览器结果。
-    # 逻辑：等待 pending 后经 HTTP 领取、按需搜索客户并回报，浏览器观察完成。
-    # 约束：模型仅调用 Mock，cookie 只通过子进程环境传递，不打印。
+    # Function: Coordinate browser submission and real Agent consumption.
+    # Inputs: `general` selects an empty-customer account or customer-evidence fixtures.
+    # Outputs: Assertions for the persisted answer, citation count, and browser result.
+    # Logic: After waiting for pending, claims through HTTP, searches customers when needed, reports, and lets the browser observe completion.
+    # Constraints: The model uses Mock only and the cookie passes only through the child-process environment without printing.
     def run_round_trip(self, general):
         self.assertTrue(
             os.environ.get("SALESMATE_PLAYWRIGHT_MODULE"),
@@ -121,11 +121,11 @@ class ChatBrowserTests(LiveServerTestCase):
                 self.live_server_url + "/api/v1/agent/", "chat-test-token"
             )
 
-            # 功能：模拟工作空间模型的回答或查询决策。
-            # 输入：`messages` 为真实提示，`max_tokens` 为原模型预算。
-            # 输出：action=tool 或 action=answer JSON。
-            # 逻辑：空账号直接回答，有客户数据则搜索后引用真实登记证据。
-            # 约束：只模拟模型；所有工具读取和回答保存通过真实 HTTP。
+    # Function: Mock a workspace-model answer or query decision.
+    # Inputs: `messages` are real prompts and `max_tokens` is the original model budget.
+    # Outputs: action=tool or action=answer JSON.
+    # Logic: Answers directly for empty accounts; with customer data, searches and then cites real registered evidence.
+    # Constraints: Mocks the model only; every tool read and answer save uses real HTTP.
             def decide(messages, *, max_tokens):
                 payload = json.loads(messages[-1]["content"])
                 if general:

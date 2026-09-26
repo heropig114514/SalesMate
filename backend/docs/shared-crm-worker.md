@@ -1,41 +1,22 @@
-# 多员工共享 CRM Worker
+# Shared CRM worker for multiple employees
 
-原 Worker 在启动时把环境 Agent 令牌解析为唯一员工，因此其他员工提交的批次即使
-服务正常也不会被领取。现在 `crm_worker` 对所有启用员工的同步、人工补抽取和公司画像
-分别轮转调度，不再要求管理员把环境令牌重新绑定到新员工。
+Previously, workers resolved the environment Agent token to one employee at startup, leaving other employees' batches unclaimed even while healthy. `crm_worker` now rotates synchronization, manual extraction repair, and company profiling across all active employees without requiring administrators to rebind environment tokens.
 
-## 身份与并发
+## Identity and concurrency
 
-- `dispatch.next_owner` 从数据库发现待办，按员工 ID 游标循环选择；这只是任务边界的
-  公平性，不中断一个正在执行的大邮箱批次，也不改变消息数量/时间范围。
-- 全进程仍是 1 路同步、默认 2 路画像、原有 1 秒轮询；多个进程的领取依靠原有事务锁
-  和租约。单个员工不同公司的画像仍可并行，相同公司的互斥不变。
-- `dispatch.scoped_backend` 为每个工作单元创建随机临时 AgentCredential，只保存摘要。
-  原始令牌显式传入独立 DjangoBackendClient，邮箱、ETag、公司租约和连接池也按实例隔离。
-  不修改 `os.environ`，不会把另一员工的环境邮箱继承进任务。
-- 任务通过原 Agent HTTP API；认证和每个邮箱、公司的 owner 过滤保持不变。
-  浏览器和外部 Agent 不能调用服务器内部凭证工厂申请其他员工身份。
-- 单元正常结束或异常退出均关闭客户端并撤销临时凭证；SIGTERM 等待在途单元退出。
-  若进程被强杀，可能遗留 `name=crm-work-unit` 的摘要记录，原始令牌未持久化。
-  管理员只有在确认无相关在途工作后才能清理这些记录，不能按名称批量删除运行中凭证。
-- 固定的 `SALESMATE_AGENT_SERVICE_TOKEN` 和 `SALESMATE_MAILBOX_ID` 保留给原有 CLI；
-  共享 Worker 不再使用它们确定员工。内部 HTTP 地址、超时、租约和模型配置保持原值。
+- `dispatch.next_owner` discovers pending work in the database and cycles through employee IDs. Fairness applies at task boundaries: it does not interrupt large mailbox batches or change message/time limits.
+- Each process still has 1 synchronization channel, 2 default profiling channels, and the original 1-second poll. Multiple processes use existing transaction locks/leases. Different companies of one employee may profile concurrently; same-company exclusion is unchanged.
+- `dispatch.scoped_backend` creates a random temporary AgentCredential per work unit, storing only its digest. Pass plaintext tokens explicitly to independent DjangoBackendClient instances; mailbox, ETag, company leases, and pools are instance-isolated. Never mutate `os.environ` or inherit another employee's environment mailbox into tasks.
+- Tasks use original Agent HTTP APIs with unchanged authentication and owner filters. Browsers/external Agents cannot call the internal credential factory to obtain other employee identities.
+- Normal/error exits close clients and revoke temporary credentials; SIGTERM waits for in-flight units. Forced termination may leave `name=crm-work-unit` digest records without persisted plaintext tokens. Administrators may remove them only after confirming no related in-flight work, never deleting active credentials in bulk by name.
+- Fixed `SALESMATE_AGENT_SERVICE_TOKEN` and `SALESMATE_MAILBOX_ID` remain for existing CLI use. Shared workers no longer use them to choose employees. Internal HTTP addresses, timeouts, leases, and model settings remain unchanged.
 
-## 部署与故障定位
+## Deployment and diagnosis
 
-推送 main 后，现有 Actions 验证并自动部署，无新增数据库迁移、依赖或操作系统服务。
-运行中的 Worker 排空后重启，即会发现此前排队的新员工批次。部署不重试已 failed 的批次，
-也不迁移邮箱归属。若任务领取后遭遇邮箱授权或模型错误，应根据实际失败修复并由用户明确重试。
+After pushing main, existing Actions verifies and deploys automatically, with no new migrations, dependencies, or operating-system services. Draining/restarting workers discovers previously queued new-employee batches. Deployment neither retries failed batches nor transfers mailbox ownership. After authorization/model failures, fix the actual cause and require explicit user retries.
 
-日志 `crm_worker_started scope=all_active_owners` 表明共享模式已启动；
-`crm_work_scheduled` 包含 channel/owner_id；`mailbox_run_claimed` 包含批次 ID；
-`crm_identity_created` / `crm_identity_revoked` 记录凭证生命周期且不记录令牌。
-页面 queued 表示尚未领取，不能直接解释为邮箱认证失败；结合日志、服务状态、批次开始时间
-和租约诊断。active 仅表示进程存活，不能单独证明邮箱同步成功。
+`crm_worker_started scope=all_active_owners` indicates shared mode. `crm_work_scheduled` includes channel/owner_id; `mailbox_run_claimed` includes batch ID. `crm_identity_created` / `crm_identity_revoked` log credential lifecycles without tokens. A queued page state means unclaimed, not necessarily mailbox authentication failure; diagnose using logs, service state, batch start time, and leases. active indicates process liveness only, not successful synchronization.
 
-## 验证范围
+## Validation scope
 
-`tests.integration.test_shared_worker` 使用 PostgreSQL 和本机真实 HTTP 服务，验证两个
-无预配凭证员工均完成同步调度、跨员工请求 404、撤销令牌 401、画像身份隔离、公平轮转、
-停用员工排除、租约过期显式失败与并发领取唯一。Gmail/QQ 原有流水线回归仍模拟邮箱和模型。
-这些测试不证明真实邮箱授权或模型服务有效，部署后应另外检查用户原批次的实际终态。
+`tests.integration.test_shared_worker` uses PostgreSQL and a real local HTTP service to verify two employees without preconfigured credentials both complete scheduling, cross-employee requests return 404, revoked tokens return 401, profile identities remain isolated, rotation is fair, disabled employees are excluded, expired leases fail explicitly, and concurrent claims are unique. Existing Gmail/QQ regressions still mock mailbox/model services. These tests do not establish real authorization/model availability; separately inspect users' original batch terminal states after deployment.

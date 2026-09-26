@@ -1,18 +1,18 @@
-"""职责：提供员工同步进度、明确重试及邮件人工复核接口。
-实现：实验模式使用公开跨账号业务范围；Session 身份限定邮箱 owner；可查看某邮箱全部已保存邮件，复核使用 If-Match 避免覆盖并发判断。
-关联：urls 注册显式路径，processing 和 classification 承担数据库事务。
-目录：
-- ReviewRequestSerializer：声明人工确认载荷。
-- SyncRunView：查询或明确重试一个同步批次。
-- SyncRunView.get：返回批次整体进度。
-- SyncRunView.post：明确重试失败邮件。
-- EmailReviewsView：查询待复核、已隐藏或全部已保存邮件。
-- EmailReviewsView.get：按员工和可选邮箱分页返回原文证据。
-- EmailReviewView：保存一封邮件的人工决定。
-- EmailReviewView.patch：验证版本并持久化人工确认。
-变量索引：
-- ReviewRequestSerializer.review_status：两个允许的人工决定。
-- OBJECT：OpenAPI 通用对象表示。
+"""Responsibility: Provide employee synchronization progress, explicit retry, and email human-review interfaces.
+Implementation: Experiment mode uses public cross-account business scope; Session identity limits mailbox owner. A mailbox can display all persisted messages, and review uses If-Match to avoid overwriting concurrent judgments.
+Relationships: urls registers explicit paths, while processing and classification own database transactions.
+Directory:
+- ReviewRequestSerializer: Declare human-confirmation payload.
+- SyncRunView: Query or explicitly retry a synchronization batch.
+- SyncRunView.get: Return overall batch progress.
+- SyncRunView.post: Explicitly retry failed messages.
+- EmailReviewsView: Query pending-review, hidden, or all persisted messages.
+- EmailReviewsView.get: Return source evidence in pages by employee and optional mailbox.
+- EmailReviewView: Save a human decision for one email.
+- EmailReviewView.patch: Validate version and persist human confirmation.
+Variable index:
+- ReviewRequestSerializer.review_status: Two allowed human decisions.
+- OBJECT: Generic OpenAPI object representation.
 """
 
 from common.laboratory import owner_scope
@@ -32,22 +32,22 @@ from .serializers import StrictSerializer
 OBJECT = OpenApiTypes.OBJECT
 
 
-# 功能：声明明确的人工分类决定。
-# 逻辑：只允许确认业务或非业务，不接受自报身份和任意模型字段。
-# 约束：邮箱权限及版本由事务服务校验。
+# Function: Declare an explicit human classification decision.
+# Logic: Allow confirmation only as business or non-business; reject self-reported identity and arbitrary model fields.
+# Constraints: Transactional service validates mailbox authorization and version.
 class ReviewRequestSerializer(StrictSerializer):
     review_status = serializers.ChoiceField(choices=["confirmed_business", "confirmed_non_business"])
 
 
-# 功能：提供独立于公司分页的批次状态。
-# 逻辑：仅查询当前员工邮箱的批次，POST 显式重试。
-# 约束：不返回授权或租约凭证。
+# Function: Provide batch state independent of company pagination.
+# Logic: Query only current employee mailbox batches and use POST for explicit retry.
+# Constraints: Does not return authorization or lease credentials.
 class SyncRunView(APIView):
-    # 功能：查询同步和画像整体进度。
-    # 输入：`request` 为员工会话，`run_id` 为批次 UUID。
-    # 输出：批次计数和逐封安全错误。
-    # 逻辑：正式模式限定邮箱 owner，实验模式按批次 ID 跨账号查询，再生成派生统计。
-    # 约束：不存在与越权均返回 404，无写入副作用。
+    # Function: Query overall synchronization and profiling progress.
+    # Inputs: `request` is an employee session and `run_id` is a batch UUID.
+    # Outputs: Batch counts and safe per-message errors.
+    # Logic: Production mode limits mailbox owner, experiment mode queries across accounts by batch ID, then generates derived statistics.
+    # Constraints: Absent and unauthorized records both return 404 with no write side effects.
     @extend_schema(responses=OBJECT, tags=["processing"])
     def get(self, request, run_id):
         run = MailboxSyncRun.objects.filter(owner_scope(request.user, "mailbox__owner"), pk=run_id).first()
@@ -55,25 +55,25 @@ class SyncRunView(APIView):
             raise NotFound("批次不存在。")
         return Response(run_data(run))
 
-    # 功能：明确重试失败邮件。
-    # 输入：`request` 为员工会话，`run_id` 为失败批次 UUID。
-    # 输出：HTTP 202 和新的排队批次。
-    # 逻辑：复用原消息 ID，保留旧失败记录。
-    # 约束：非失败批次或存在活动同步时拒绝，不启动 Web 线程。
+    # Function: Explicitly retry failed messages.
+    # Inputs: `request` is an employee session and `run_id` is a failed batch UUID.
+    # Outputs: HTTP 202 and newly queued batch.
+    # Logic: Reuse original message IDs and retain old failure records.
+    # Constraints: Reject non-failed batches or existing active synchronization and do not start Web threads.
     @extend_schema(request=None, responses={202: OBJECT}, tags=["processing"])
     def post(self, request, run_id):
         return Response(run_data(retry_run(request.user, run_id)), status=202)
 
 
-# 功能：提供人工复核分页列表。
-# 逻辑：默认 needs_review，可查询隐藏邮件或显式选择全部已保存邮件。
-# 约束：员工仅访问自己邮箱的原文和证据。
+# Function: Provide a paginated human-review list.
+# Logic: Default to needs_review and permit hidden email or all persisted message selection explicitly.
+# Constraints: Employees access source text and evidence from their own mailboxes only.
 class EmailReviewsView(APIView):
-    # 功能：按邮箱和状态列出可复核邮件。
-    # 输入：`request` 可带 status/page，`mailbox_id` 可限定一个邮箱。
-    # 输出：最多 20 项、总数和待复核数量。
-    # 逻辑：正式模式按邮箱 owner 过滤，实验模式跨账号；all 保留复核范围，saved 包含业务邮件，按接收时间倒序。
-    # 约束：不解析正文为 HTML；非法状态或分页返回 400。
+    # Function: List reviewable messages by mailbox and status.
+    # Inputs: `request` may include status and page, while `mailbox_id` may limit one mailbox.
+    # Outputs: At most 20 items, total count, and pending-review count.
+    # Logic: Production mode filters by mailbox owner and experiment mode crosses accounts; all retains review scope, saved includes business messages, and results order by received time descending.
+    # Constraints: Does not parse bodies as HTML; invalid status or pagination returns 400.
     @extend_schema(responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("status", str, enum=["pending", "non_business", "all", "saved"]), OpenApiParameter("page", int)])
     def get(self, request, mailbox_id=None):
         query = Email.objects.filter(owner_scope(request.user, "mailbox__owner"))
@@ -102,15 +102,15 @@ class EmailReviewsView(APIView):
         return Response({"results": [review_data(item) for item in items], "count": count, "pending_count": pending_count, "page": page, "page_size": 20})
 
 
-# 功能：处理版本化的人工决定。
-# 逻辑：序列化器白名单与事务层权限双重校验。
-# 约束：遵循 Session/CSRF，不调用 Gmail 或 LLM。
+# Function: Handle versioned human decisions.
+# Logic: Serializer allowlist and transactional authorization validate together.
+# Constraints: Follows Session/CSRF and does not call Gmail or LLM.
 class EmailReviewView(APIView):
-    # 功能：确认业务或非业务邮件。
-    # 输入：`request` 含 review_status 和 If-Match，`email_id` 为完整去重键。
-    # 输出：新复核版本及决定。
-    # 逻辑：保存人工优先结果，按需求触发或禁止画像。
-    # 约束：并发冲突返回 409，未知邮件或越权返回 404。
+    # Function: Confirm a business or non-business email.
+    # Inputs: `request` contains review_status and If-Match, and `email_id` is the complete deduplication key.
+    # Outputs: New review version and decision.
+    # Logic: Save a human-priority result and trigger or suppress profiling as needed.
+    # Constraints: Concurrent conflict returns 409, while unknown or unauthorized email returns 404.
     @extend_schema(request=ReviewRequestSerializer, responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("If-Match", int, OpenApiParameter.HEADER, required=True)])
     def patch(self, request, email_id):
         data = ReviewRequestSerializer(data=request.data)

@@ -1,60 +1,63 @@
-"""职责：生成和验证 L3 画像、规模与可追溯来源。
-实现：保持原有 L1/L4 规则，资料经后端核验后独立传递，人数优先 CRM。
-关联：后端公司上下文、共享 enrichment 契约与分析编排；不新增授权令牌。
-目录：
-- AnalysisValidationError：表示模型输出契约错误。
-- bailian_analysis_provider：调用模型生成 L3。
-- generate_analysis：生成并验证 L3 分析。
-- validate_analysis_payload：验证模型负责的列表与详情。
-- _validate_business_rules：复核信号门槛和人数档位。
-- _size_band：确定员工规模档位。
-- _authoritative_size_source：确定规模来源标签。
-- _conflict_field：规范冲突字段名称。
-- _validate_list_view：核对列表输出。
-- _validate_detail_view：核对七维详情和上下文完整性。
-- _dimension_group：校验维度组。
-- _dimension：校验事实和推断维度。
-- _allowed_source_refs：收集本次输入允许引用的来源。
-- _source_aliases：生成本次输入专用的短引用编号。
-- _annotate_sources：为模型输入中的来源对象附加短编号。
-- _prepare_candidate：还原引用并由程序生成完整性说明。
-- _normalize_probability_denial：规范独立的无法评估交易结果说明。
-- _probability_violation：返回触发概率限制的字段路径和关键词。
-- _evidence_block：校验证据块。
-- _source_refs：规范并核对引用列表。
-- _analysis_model_input：精简模型输入。
-- _analysis_business_context：移除仅供后端校验的补充资料元数据。
-- _decode_model_json：解析模型 JSON。
-- _canonical_source_ref：规范可确认的引用前缀。
-- _contains_deal_probability：检测不允许的成交概率表述。
-- _as_document：将输入转为 L2 字典。
-- _clock_text：读取明确时区的构建时钟。
-- _object：要求对象类型。
-- _array：要求数组类型。
-- _keys：核对精确字段集合。
-- _nonblank：判断非空字符串。
-- _enum：核对非空枚举。
-- _strings：校验无重复字符串数组。
-变量索引：
-- ANALYSIS_DIMENSIONS：四个分析维度。
-- ANALYSIS_PROMPT：L3 Skill 指令正文。
-- ANALYSIS_PROMPT_VERSION：当前 L3 缓存隔离版本。
-- CONFIDENCES：推断置信度枚举。
-- CONFLICT_FIELDS：允许冲突事实字段。
-- CONFLICT_FIELD_ALIASES：模型常用冲突字段别名。
-- CONFLICT_KINDS：冲突类别。
-- INDUSTRIES：行业枚举。
-- PROFILE_DIMENSIONS：三个画像维度。
-- SCORE_FEATURES：兼容输出特征名称。
-- SIGNALS：列表信号枚举。
-- SIZE_BANDS：规模档位枚举。
-- _CUSTOMER_ANALYSIS_SKILL：加载的 L3 Skill。
-- _DEAL_PROBABILITY_PATTERN：成交概率限制的既定正则。
-- _PROBABILITY_DENIAL_PATTERN：不含数字或肯定判断的完整否定句。
-- _JSON_FENCE：单层 JSON 围栏正则。
-- _SOURCE_REF_PREFIXES：允许规范化的已知引用前缀。
-- __all__：公开导出的符号。
-- logger：脱敏诊断日志。
+"""Responsibility: Generate and validate L3 profiles, size bands, and traceable sources.
+Implementation: Preserve L1/L4 rules, pass backend-verified supplementary data independently, and prefer CRM headcount.
+Relationships: Backend company context, shared enrichment contract, and analysis orchestration; no new authorization tokens.
+Directory:
+- AnalysisValidationError: Represent a model output contract error.
+- bailian_analysis_provider: Invoke the model to generate L3.
+- generate_analysis: Generate and validate L3 analysis.
+- validate_analysis_payload: Validate model-generated list and detail views.
+- _validate_business_rules: Recheck signal thresholds and headcount bands.
+- _size_band: Determine the employee size band.
+- _authoritative_size_source: Determine the size source label.
+- _conflict_field: Normalize conflicting field names.
+- _validate_list_view: Validate list output.
+- _validate_detail_view: Validate seven-dimension details and context completeness.
+- _dimension_group: Validate a dimension group.
+- _dimension: Validate fact and inference dimensions.
+- _allowed_source_refs: Collect sources that this input may cite.
+- _source_aliases: Generate short citation IDs specific to this input.
+- _annotate_sources: Attach short IDs to source objects in model input.
+- _annotate_sources.annotate: Recursively annotate known source identities.
+- _prepare_candidate: Restore citations and generate completeness notes programmatically.
+- _prepare_candidate.restore: Restore source aliases and normalize supported prose fields.
+- _normalize_probability_denial: Normalize standalone statements that deal outcomes cannot be assessed.
+- _probability_violation: Return field paths and keywords triggering probability restrictions.
+- _evidence_block: Validate an evidence block.
+- _source_refs: Normalize and validate citation lists.
+- _analysis_model_input: Reduce model input.
+- _analysis_business_context: Remove supplementary metadata used only for backend validation.
+- _decode_model_json: Parse model JSON.
+- _canonical_source_ref: Normalize verifiable citation prefixes.
+- _contains_deal_probability: Detect disallowed deal-probability statements.
+- _as_document: Convert input to an L2 dictionary.
+- _clock_text: Read the construction clock with an explicit timezone.
+- _object: Require an object type.
+- _array: Require an array type.
+- _keys: Validate the exact field set.
+- _nonblank: Check for a nonempty string.
+- _enum: Validate a nonempty enum.
+- _strings: Validate a string array without duplicates.
+Variable index:
+- ANALYSIS_DIMENSIONS: Four analysis dimensions.
+- ANALYSIS_PROMPT: L3 skill instruction body.
+- ANALYSIS_PROMPT_VERSION: Current L3 cache isolation version.
+- CONFIDENCES: Inference confidence enum.
+- CONFLICT_FIELDS: Allowed conflicting fact fields.
+- CONFLICT_FIELD_ALIASES: Common model aliases for conflicting fields.
+- CONFLICT_KINDS: Conflict categories.
+- INDUSTRIES: Industry enum.
+- PROFILE_DIMENSIONS: Three profile dimensions.
+- SCORE_FEATURES: Compatible output feature names.
+- SIGNALS: List signal enum.
+- SIZE_BANDS: Size-band enum.
+- _CUSTOMER_ANALYSIS_SKILL: Loaded L3 skill.
+- _DEAL_PROBABILITY_PATTERN: Established regex for deal-probability restrictions.
+- _PROBABILITY_DENIAL_PATTERN: Complete negative statements without numbers or affirmative judgments.
+- _ENGLISH_PROBABILITY_DENIAL_PATTERN: Match complete English statements denying an ability to assess a deal outcome.
+- _JSON_FENCE: Single-layer JSON fence regex.
+- _SOURCE_REF_PREFIXES: Known citation prefixes eligible for normalization.
+- __all__: Publicly exported symbols.
+- logger: Sanitized diagnostic logging.
 """
 
 from __future__ import annotations
@@ -135,25 +138,25 @@ _SOURCE_REF_PREFIXES = (
 )
 
 
-# 功能：表示模型输出契约错误。
-# 逻辑：继承 ValueError，供既定重试边界区分业务校验。
-# 约束：无网络和数据库副作用。
+# Function: Represent a model output contract error.
+# Logic: Extend ValueError so the existing retry boundary can distinguish business validation.
+# Constraints: No network or database side effects.
 class AnalysisValidationError(ValueError):
-    """百炼返回的 L3 数据不符合 MVP 契约。"""
+    """L3 data returned by Bailian violates the MVP contract."""
 
 
-# 功能：调用模型生成 L3。
-# 输入：`analysis_input` 为 L2 输入；`validation_error` 为上次错误；`previous_output` 为待修正输出。
-# 输出：JSON 文本。
-# 逻辑：发送带短来源编号的精简输入与原失败输出，使用 Skill 固定预算并记录耗时。
-# 约束：异常记录脱敏上下文后重新抛出，不在此重试。
+# Function: Invoke the model to generate L3.
+# Inputs: `analysis_input`: L2 input; `validation_error`: previous error; `previous_output`: output to correct.
+# Outputs: JSON text.
+# Logic: Send reduced input with short source IDs and previous failed output, using the fixed skill budget and recording elapsed time.
+# Constraints: Log sanitized context and re-raise exceptions; do not retry here.
 def bailian_analysis_provider(
     analysis_input: Mapping[str, Any],
     *,
     validation_error: str | None = None,
     previous_output: str | None = None,
 ) -> str:
-    """调用百炼生成 L3 JSON 文本。"""
+    """Invoke Bailian to generate L3 JSON text."""
     aliases = _source_aliases(analysis_input)
     model_input = _annotate_sources(_analysis_model_input(analysis_input), aliases)
     retry_instruction = ""
@@ -202,18 +205,18 @@ def bailian_analysis_provider(
     return result
 
 
-# 功能：生成并验证 L3 分析。
-# 输入：`analysis_input` 为L2 输入对象；`analysis_provider` 为模型调用函数；`clock` 为返回带时区 datetime 的时钟。
-# 输出：completed 或 failed 分析字典。
-# 逻辑：构建时间和版本，调用 provider；仅默认 provider 的 JSON 或契约失败按既有行为纠正一次。
-# 约束：自定义 provider 或网络异常不自动重试；不保存后端。
+# Function: Generate and validate L3 analysis.
+# Inputs: `analysis_input`: L2 input object; `analysis_provider`: model-call function; `clock`: clock returning a timezone-aware datetime.
+# Outputs: completed or failed analysis dictionary.
+# Logic: Build timestamp/version and call the provider; only JSON or contract failures from the default provider receive one correction under existing behavior.
+# Constraints: Do not automatically retry custom providers or network errors; do not persist to the backend.
 def generate_analysis(
     analysis_input: object,
     *,
     analysis_provider: Callable[[Mapping[str, Any]], str] = bailian_analysis_provider,
     clock: Callable[[], datetime],
 ) -> dict[str, Any]:
-    """生成并校验 L3；失败时返回结构稳定且便于本地调试的结果。"""
+    """Generate and validate L3; on failure return a stable structure suitable for local debugging."""
     try:
         document = _as_document(analysis_input)
         generated_at = _clock_text(clock)
@@ -266,8 +269,8 @@ def generate_analysis(
             company_id, type(first_error).__name__,
             first_error if isinstance(first_error, (json.JSONDecodeError, AnalysisValidationError)) else "provider_unavailable",
         )
-        # 默认百炼输出若只是 JSON 或业务契约不合格，携带具体原因修正一次。
-        # 网络、配置和自定义 provider 错误保持原行为，交由显式任务重试。
+        # If default Bailian output fails only JSON or business-contract validation, correct it once with the specific reason.
+        # Network, configuration, and custom-provider errors retain their behavior and require explicit task retries.
         if analysis_provider is bailian_analysis_provider and isinstance(
             first_error,
             (json.JSONDecodeError, AnalysisValidationError),
@@ -333,16 +336,16 @@ def generate_analysis(
     }
 
 
-# 功能：验证模型负责的列表与详情。
-# 输入：`candidate` 为模型解析结果；`analysis_input` 为L2 输入对象。
-# 输出：规范 list_view/detail_view 字典。
-# 逻辑：还原短引用、生成完整性信息，再核对封闭结构、概率限制、来源与信号。
-# 约束：错误抛 AnalysisValidationError；不验证后端凭证。
+# Function: Validate model-generated list and detail views.
+# Inputs: `candidate`: parsed model result; `analysis_input`: L2 input object.
+# Outputs: Normalized list_view/detail_view dictionary.
+# Logic: Restore short citations, generate completeness information, then validate closed structure, probability restrictions, sources, and signals.
+# Constraints: Errors raise AnalysisValidationError; do not validate backend credentials.
 def validate_analysis_payload(
     candidate: object,
     analysis_input: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """校验模型负责的 list/detail 两段，并返回隔离的普通字典。"""
+    """Validate model-generated list/detail sections and return independent plain dictionaries."""
     root = _object(_prepare_candidate(candidate, analysis_input), "analysis")
     _keys(root, {"list_view", "detail_view"}, "analysis")
     violation = _probability_violation(root)
@@ -365,16 +368,16 @@ def validate_analysis_payload(
     return {"list_view": list_view, "detail_view": detail_view}
 
 
-# 功能：复核信号门槛和人数档位。
-# 输入：`list_view` 为已校验列表结果；`analysis_input` 为L2 输入对象。
-# 输出：无返回值。
-# 逻辑：核对订单、采购、报价、新线索、人数档位及工单集合。
-# 约束：人数优先 CRM，否则使用已验证实验资料；档位阈值保持原值。
+# Function: Recheck signal thresholds and headcount bands.
+# Inputs: `list_view`: validated list result; `analysis_input`: L2 input object.
+# Outputs: No return value.
+# Logic: Check orders, purchases, quotations, new leads, headcount bands, and ticket sets.
+# Constraints: Prefer CRM headcount, otherwise verified experimental data; preserve size thresholds.
 def _validate_business_rules(
     list_view: Mapping[str, Any],
     analysis_input: Mapping[str, Any],
 ) -> None:
-    """对能由输入直接判断的信号门槛和规模档位做确定性复核。"""
+    """Deterministically recheck signal thresholds and size bands directly supported by input."""
     business = analysis_input.get("business_context", {})
     business = business if isinstance(business, Mapping) else {}
     facts = analysis_input.get("facts", {})
@@ -422,11 +425,11 @@ def _validate_business_rules(
         raise AnalysisValidationError("ticket_signals contains a nonexistent ticket.")
 
 
-# 功能：确定员工规模档位。
-# 输入：`value` 为待检查值。
-# 输出：档位字符串。
-# 逻辑：按 50、100、200、500 的原阈值划分人数。
-# 约束：非法人数返回 unknown，不做估计。
+# Function: Determine the employee size band.
+# Inputs: `value`: value to inspect.
+# Outputs: Band string.
+# Logic: Partition headcounts using the original thresholds of 50, 100, 200, and 500.
+# Constraints: Return unknown for invalid headcounts without estimating.
 def _size_band(value: object) -> str:
     if type(value) is not int or value < 0:
         return "unknown"
@@ -441,34 +444,34 @@ def _size_band(value: object) -> str:
     return "gte_500"
 
 
-# 功能：确定规模来源标签。
-# 输入：`analysis_input` 为L2 输入对象。
-# 输出：crm、synthetic_sample、已有标签或 unknown。
-# 逻辑：委托共享人数选择规则，CRM 优先于 matched 实验资料。
-# 约束：不相信模型自行填写的来源。
+# Function: Determine the size source label.
+# Inputs: `analysis_input`: L2 input object.
+# Outputs: crm, synthetic_sample, an existing label, or unknown.
+# Logic: Delegate to shared headcount selection, preferring CRM over matched experimental data.
+# Constraints: Do not trust a model-authored source label.
 def _authoritative_size_source(analysis_input: Mapping[str, Any]) -> str:
-    """按 CRM 优先顺序使用后端已验证人数，实验补充保留独立标签。"""
+    """Use backend-verified headcount in CRM-first order, retaining a separate label for experimental enrichment."""
     business = analysis_input.get("business_context")
     return employee_size(business if isinstance(business, Mapping) else {})[1]
 
 
-# 功能：规范冲突字段名称。
-# 输入：`value` 为待检查值；`path` 为错误定位路径。
-# 输出：规范字段名。
-# 逻辑：将既有公司别名映射为 L1 字段，再核对枚举。
-# 约束：不增加事实类别。
+# Function: Normalize conflicting field names.
+# Inputs: `value`: value to inspect; `path`: error location path.
+# Outputs: Normalized field name.
+# Logic: Map existing company aliases to L1 fields and validate the enum.
+# Constraints: Do not add fact categories.
 def _conflict_field(value: object, path: str) -> str:
-    """规范常见模型别名，并确保最终字段符合后端 L1 事实枚举。"""
+    """Normalize common model aliases and ensure the final field belongs to the backend L1 fact enum."""
     field = _nonblank(value, path)
     normalized = CONFLICT_FIELD_ALIASES.get(field, field)
     return _enum(normalized, CONFLICT_FIELDS, path)
 
 
-# 功能：核对列表输出。
-# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`analysis_input` 为L2 输入对象。
-# 输出：独立列表字典。
-# 逻辑：检查封闭字段、枚举、来源、工单与特征；人数来源使用确定性规则。
-# 约束：模型自由改写来源不会制造虚假来源。
+# Function: Validate list output.
+# Inputs: `value`: value to inspect; `allowed_refs`: allowed source set; `analysis_input`: L2 input object.
+# Outputs: Independent list dictionary.
+# Logic: Validate closed fields, enums, sources, tickets, and features; determine headcount source by deterministic rules.
+# Constraints: Freely rewritten model source labels cannot create false sources.
 def _validate_list_view(
     value: object,
     allowed_refs: set[str],
@@ -536,8 +539,8 @@ def _validate_list_view(
         "industry": industry,
         "industry_evidence": industry_evidence,
         "size_band": size_band,
-        # 规模来源由 CRM 或经后端核验的实验资料确定。模型仍需输出该键，
-        # 但空值或自由改写不会再让整份画像失败或制造虚假来源。
+        # Size provenance comes from CRM or backend-verified experimental data. The model must still output the key,
+        # but empty or freely rewritten values no longer invalidate the entire profile or create false provenance.
         "size_source": _authoritative_size_source(analysis_input),
         "headline_summary": _nonblank(
             item["headline_summary"], "list_view.headline_summary"
@@ -546,11 +549,11 @@ def _validate_list_view(
     }
 
 
-# 功能：核对七维详情和上下文完整性。
-# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`expected_unparsed` 为真实未解析邮件数。
-# 输出：详情字典。
-# 逻辑：验证冲突至少两来源、三画像四分析及未解析计数。
-# 约束：缺失邮件须明确说明，不生成新事实。
+# Function: Validate seven-dimension details and context completeness.
+# Inputs: `value`: value to inspect; `allowed_refs`: allowed source set; `expected_unparsed`: actual unparsed email count.
+# Outputs: Detail dictionary.
+# Logic: Validate at least two sources per conflict, three profiles, four analyses, and the unparsed count.
+# Constraints: Explicitly describe missing emails without generating new facts.
 def _validate_detail_view(
     value: object,
     allowed_refs: set[str],
@@ -608,11 +611,11 @@ def _validate_detail_view(
     }
 
 
-# 功能：校验维度组。
-# 输入：`value` 为待检查值；`dimensions` 为要求的维度名称；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
-# 输出：维度字典。
-# 逻辑：要求 dimensions 指定的精确字段并逐项校验。
-# 约束：path 定位错误，不增加维度。
+# Function: Validate a dimension group.
+# Inputs: `value`: value to inspect; `dimensions`: required dimension names; `allowed_refs`: allowed source set; `path`: error location path.
+# Outputs: Dimension dictionary.
+# Logic: Require exactly the fields named by dimensions and validate each one.
+# Constraints: path locates errors; do not add dimensions.
 def _dimension_group(
     value: object,
     dimensions: tuple[str, ...],
@@ -627,11 +630,11 @@ def _dimension_group(
     }
 
 
-# 功能：校验事实和推断维度。
-# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
-# 输出：规范维度字典。
-# 逻辑：逐项检查文本、依据、置信度及非空允许来源。
-# 约束：引用必须来自当前输入。
+# Function: Validate fact and inference dimensions.
+# Inputs: `value`: value to inspect; `allowed_refs`: allowed source set; `path`: error location path.
+# Outputs: Normalized dimension dictionary.
+# Logic: Check text, rationale, confidence, and nonempty allowed sources item by item.
+# Constraints: Citations must come from current input.
 def _dimension(value: object, allowed_refs: set[str], path: str) -> dict[str, Any]:
     dimension = _object(value, path)
     _keys(dimension, {"facts", "inferences", "missing_fields"}, path)
@@ -672,11 +675,11 @@ def _dimension(value: object, allowed_refs: set[str], path: str) -> dict[str, An
     }
 
 
-# 功能：收集本次输入允许引用的来源。
-# 输入：`analysis_input` 为L2 输入对象。
-# 输出：来源集合。
-# 逻辑：合并公司、邮件、联系人、业务记录及 matched 实验来源。
-# 约束：排除空字符串，不向后端请求额外数据。
+# Function: Collect sources that this input may cite.
+# Inputs: `analysis_input`: L2 input object.
+# Outputs: Source set.
+# Logic: Combine company, email, contact, business-record, and matched experimental sources.
+# Constraints: Exclude empty strings; do not request additional backend data.
 def _allowed_source_refs(analysis_input: Mapping[str, Any]) -> set[str]:
     refs = {str(analysis_input.get("company_id", ""))}
     refs.update(str(value) for value in analysis_input.get("member_dedupe_keys", []))
@@ -703,8 +706,13 @@ def _allowed_source_refs(analysis_input: Mapping[str, Any]) -> set[str]:
     return refs
 
 
+# Function: Build stable short aliases for this input.
+# Inputs: `analysis_input`: current L2 mapping.
+# Outputs: Mapping from short aliases to original source IDs.
+# Logic: Sort allowed references, allocating src_NNN names while skipping collisions with existing IDs.
+# Constraints: Do not infer or merge source identities.
 def _source_aliases(analysis_input: Mapping[str, Any]) -> dict[str, str]:
-    """只为当前白名单分配确定性编号，不按邮件 ID 后缀猜测或跨邮箱合并。"""
+    """Assign deterministic IDs only to the current allowlist; do not guess from email ID suffixes or merge across mailboxes."""
     allowed = _allowed_source_refs(analysis_input)
     aliases: dict[str, str] = {}
     number = 1
@@ -716,10 +724,20 @@ def _source_aliases(analysis_input: Mapping[str, Any]) -> dict[str, str]:
     return aliases
 
 
+# Function: Copy model input and annotate explicit source identities.
+# Inputs: `value`: nested input; `aliases`: short-to-original source mapping.
+# Outputs: Copied mappings/lists with source_ref annotations; scalar values unchanged.
+# Logic: Invert aliases and recursively inspect known source identity fields in fixed order.
+# Constraints: Preserve original business identifiers and leave unknown identities unannotated.
 def _annotate_sources(value: object, aliases: Mapping[str, str]) -> object:
-    """保留原始业务 ID；给带明确来源的对象附加 source_ref 供模型引用。"""
+    """Preserve original business IDs; attach source_ref to explicitly sourced objects for model citations."""
     inverse = {ref: alias for alias, ref in aliases.items()}
 
+    # Function: Recursively annotate a source-bearing value.
+    # Inputs: `item`: nested value; reads enclosing inverse alias map.
+    # Outputs: Copied object or unchanged scalar.
+    # Logic: Traverse mappings and lists, assigning the first recognized source identity.
+    # Constraints: Do not mutate input containers or invent sources.
     def annotate(item: object) -> object:
         if isinstance(item, Mapping):
             result = {key: annotate(child) for key, child in item.items()}
@@ -737,10 +755,20 @@ def _annotate_sources(value: object, aliases: Mapping[str, str]) -> object:
     return annotate(value)
 
 
+# Function: Restore citations and derive known completeness information.
+# Inputs: `candidate`: model result; `analysis_input`: authoritative L2 input.
+# Outputs: Independent normalized candidate, or unchanged scalar.
+# Logic: Restore allowlisted aliases recursively, then derive completeness from the unparsed count and log normalization.
+# Constraints: Invalid counts raise AnalysisValidationError; unknown facts and references are not repaired.
 def _prepare_candidate(candidate: object, analysis_input: Mapping[str, Any]) -> object:
-    """仅还原白名单编号和生成系统已知的完整性信息，不修补未知事实或来源。"""
+    """Restore only allowlisted IDs and system-known completeness information; do not repair unknown facts or sources."""
     aliases = _source_aliases(analysis_input)
 
+    # Function: Restore aliases and normalize complete probability-denial statements.
+    # Inputs: `value`: nested model value; `path`: diagnostic location, default analysis; reads enclosing aliases and analysis_input.
+    # Outputs: Copied mappings/lists or unchanged scalar.
+    # Logic: Handle source_refs and supported prose fields specially, recursing through other children.
+    # Constraints: Log only company and field context; preserve unknown references for later validation.
     def restore(value: object, path: str = "analysis") -> object:
         if isinstance(value, Mapping):
             result = {}
@@ -787,8 +815,13 @@ def _prepare_candidate(candidate: object, analysis_input: Mapping[str, Any]) -> 
     return root
 
 
+# Function: Normalize complete statements that outcomes cannot be assessed.
+# Inputs: `text`: model prose.
+# Outputs: String after the established denial-pattern substitution.
+# Logic: Apply the Chinese and English denial patterns in sequence, preserving other prose and returning the established English outcome statement.
+# Constraints: Do not delete numeric, predictive, or conditional business claims.
 def _normalize_probability_denial(text: str) -> str:
-    """仅同义改写完整的无法判断句，不删除数字、预测或有条件的业务结论。"""
+    """Paraphrase only complete statements of inability to judge; do not remove numbers, predictions, or conditional business conclusions."""
     normalized = _PROBABILITY_DENIAL_PATTERN.sub(
         "The available information does not establish a deal outcome.", text,
     )
@@ -797,11 +830,11 @@ def _normalize_probability_denial(text: str) -> str:
     )
 
 
-# 功能：校验证据块。
-# 输入：`value` 为待检查值；`allowed_refs` 为允许引用来源集合；`path` 为错误定位路径。
-# 输出：证据字典。
-# 逻辑：核对 text/source_refs 并规范来源。
-# 约束：来源必须属于允许集合。
+# Function: Validate an evidence block.
+# Inputs: `value`: value to inspect; `allowed_refs`: allowed source set; `path`: error location path.
+# Outputs: Evidence dictionary.
+# Logic: Validate text/source_refs and normalize sources.
+# Constraints: Sources must belong to the allowed set.
 def _evidence_block(value: object, allowed_refs: set[str], path: str) -> dict[str, Any]:
     block = _object(value, path)
     _keys(block, {"text", "source_refs"}, path)
@@ -811,11 +844,11 @@ def _evidence_block(value: object, allowed_refs: set[str], path: str) -> dict[st
     }
 
 
-# 功能：规范并核对引用列表。
-# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合；`path` 为错误定位路径。
-# 输出：引用字符串列表。
-# 逻辑：去除可确认的已知前缀，验证集合成员后稳定去重。
-# 约束：不存在的来源立即报错。
+# Function: Normalize and validate citation lists.
+# Inputs: `value`: value to inspect; `allowed`: allowed source or enum set; `path`: error location path.
+# Outputs: Citation string list.
+# Logic: Strip verifiable known prefixes, validate membership, and deduplicate stably.
+# Constraints: Fail immediately on nonexistent sources.
 def _source_refs(value: object, allowed: set[str], path: str) -> list[str]:
     refs = [
         _canonical_source_ref(_nonblank(ref, f"{path}[{index}]"), allowed)
@@ -827,13 +860,13 @@ def _source_refs(value: object, allowed: set[str], path: str) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
-# 功能：精简模型输入。
-# 输入：`analysis_input` 为L2 输入对象。
-# 输出：模型输入字典。
-# 逻辑：去除重复事实证据和缓存字段，保留独立业务补充资料。
-# 约束：不修改原 L2 或扩大来源范围。
+# Function: Reduce model input.
+# Inputs: `analysis_input`: L2 input object.
+# Outputs: Model input dictionary.
+# Logic: Remove duplicate fact evidence and cache fields while retaining separate supplementary business data.
+# Constraints: Do not mutate original L2 or expand source scope.
 def _analysis_model_input(analysis_input: Mapping[str, Any]) -> dict[str, Any]:
-    """移除仅供缓存和证据复核使用的重复字段，缩短 L3 模型输入。"""
+    """Remove duplicate fields used only for caching and evidence checks to shorten L3 model input."""
     compact_facts: dict[str, list[dict[str, Any]]] = {}
     facts = analysis_input.get("facts", {})
     if isinstance(facts, Mapping):
@@ -859,18 +892,18 @@ def _analysis_model_input(analysis_input: Mapping[str, Any]) -> dict[str, Any]:
         "business_context": _analysis_business_context(
             analysis_input.get("business_context", {})
         ),
-        # L2 摘要未携带准确邮件来源，不作为 L3 独立证据发送；仍保留在原 L2 快照。
+        # L2 summaries lack precise email provenance and are not sent as independent L3 evidence; they remain in the original L2 snapshot.
         "unparsed_message_count": analysis_input.get("unparsed_message_count", 0),
         "facts": compact_facts,
         "metrics": analysis_input.get("metrics", {}),
     }
 
 
-# 功能：移除仅供后端校验的补充资料元数据。
-# 输入：`value` 为 L2 business_context。
-# 输出：适合发送给 L3 模型的独立业务上下文。
-# 逻辑：保留原业务集合；matched 补充资料仅暴露事实、独立来源 ID 和虚构标记，其他状态仅暴露状态及失败原因。
-# 约束：完整来源、指纹与版本仍保留在 L2 快照中；不改变引用白名单或后端保存载荷。
+# Function: Remove supplementary metadata used only for backend validation.
+# Inputs: `value`: L2 business_context.
+# Outputs: Independent business context suitable for the L3 model.
+# Logic: Preserve original business collections; matched enrichment exposes only facts, separate source IDs, and fictional markers; other statuses expose only status and failure reason.
+# Constraints: Complete provenance, fingerprints, and versions remain in the L2 snapshot; do not change citation allowlists or backend persistence payloads.
 def _analysis_business_context(value: object) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
@@ -901,24 +934,24 @@ def _analysis_business_context(value: object) -> dict[str, Any]:
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*(\{.*\})\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
-# 功能：解析模型 JSON。
-# 输入：`raw_text` 为模型返回文本。
-# 输出：解析对象。
-# 逻辑：支持既有单层 JSON Markdown 围栏后交由 json.loads。
-# 约束：不修补非法 JSON。
+# Function: Parse model JSON.
+# Inputs: `raw_text`: model response text.
+# Outputs: Parsed object.
+# Logic: Support the existing single-layer JSON Markdown fence before calling json.loads.
+# Constraints: Do not repair invalid JSON.
 def _decode_model_json(raw_text: str) -> object:
-    """接受 JSON Object，兼容模型偶发添加的单层 Markdown 代码围栏。"""
+    """Accept a JSON object, allowing an occasional single-layer Markdown code fence from the model."""
     match = _JSON_FENCE.fullmatch(raw_text)
     return json.loads(match.group(1) if match else raw_text)
 
 
-# 功能：规范可确认的引用前缀。
-# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合。
-# 输出：来源字符串。
-# 逻辑：先接受原字符串，再仅在去前缀精确命中允许集合时替换。
-# 约束：不模糊匹配或猜测主键。
+# Function: Normalize verifiable citation prefixes.
+# Inputs: `value`: value to inspect; `allowed`: allowed source or enum set.
+# Outputs: Source string.
+# Logic: Accept the original string first; replace it only if removing a prefix exactly matches an allowed source.
+# Constraints: Do not fuzzy-match or guess primary keys.
 def _canonical_source_ref(value: str, allowed: set[str]) -> str:
-    """仅在去掉模型常加的类型前缀后能精确命中来源时进行规范化。"""
+    """Normalize only when removing a common model-added type prefix yields an exact source match."""
     if value in allowed:
         return value
     for prefix in _SOURCE_REF_PREFIXES:
@@ -929,17 +962,22 @@ def _canonical_source_ref(value: str, allowed: set[str]) -> str:
     return value
 
 
-# 功能：检测不允许的成交概率表述。
-# 输入：`value` 为待检查值。
-# 输出：bool。
-# 逻辑：递归扫描字符串、Mapping 和数组。
-# 约束：保持原正则，不禁止普通业务百分比。
+# Function: Detect disallowed deal-probability statements.
+# Inputs: `value`: value to inspect.
+# Outputs: bool.
+# Logic: Recursively scan strings, mappings, and arrays.
+# Constraints: Preserve the existing regex; ordinary business percentages remain allowed.
 def _contains_deal_probability(value: object) -> bool:
     return _probability_violation(value) is not None
 
 
+# Function: Locate the first prohibited deal-probability statement.
+# Inputs: `value`: nested candidate; `path`: diagnostic path, default analysis.
+# Outputs: Field path and matched keyword tuple, or None.
+# Logic: Search strings with the established regex and recursively traverse mappings and lists.
+# Constraints: Do not change the regex or log complete customer passages.
 def _probability_violation(value: object, path: str = "analysis") -> tuple[str, str] | None:
-    """保留后端限制，只返回具体字段与命中关键词，不向日志泄露整段客户内容。"""
+    """Retain backend restrictions and return only specific fields and matched keywords, without logging entire customer passages."""
     if isinstance(value, str):
         match = _DEAL_PROBABILITY_PATTERN.search(value)
         return (path, match.group()) if match else None
@@ -956,11 +994,11 @@ def _probability_violation(value: object, path: str = "analysis") -> tuple[str, 
     return None
 
 
-# 功能：将输入转为 L2 字典。
-# 输入：`value` 为待检查值。
-# 输出：dict。
-# 逻辑：可调用 to_dict 后要求 Mapping，复制顶层。
-# 约束：非对象抛 AnalysisValidationError。
+# Function: Convert input to an L2 dictionary.
+# Inputs: `value`: value to inspect.
+# Outputs: dict.
+# Logic: Call to_dict when available, require a Mapping, and copy the top level.
+# Constraints: Non-objects raise AnalysisValidationError.
 def _as_document(value: object) -> dict[str, Any]:
     if hasattr(value, "to_dict"):
         value = value.to_dict()
@@ -969,11 +1007,11 @@ def _as_document(value: object) -> dict[str, Any]:
     return dict(value)
 
 
-# 功能：读取明确时区的构建时钟。
-# 输入：`clock` 为返回带时区 datetime 的时钟。
-# 输出：ISO 时间字符串。
-# 逻辑：调用 clock 并检查 datetime 时区。
-# 约束：无效时钟抛校验异常。
+# Function: Read the construction clock with an explicit timezone.
+# Inputs: `clock`: clock returning a timezone-aware datetime.
+# Outputs: ISO timestamp string.
+# Logic: Call clock and check the datetime timezone.
+# Constraints: Invalid clocks raise a validation exception.
 def _clock_text(clock: Callable[[], datetime]) -> str:
     value = clock()
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
@@ -981,54 +1019,54 @@ def _clock_text(clock: Callable[[], datetime]) -> str:
     return value.isoformat()
 
 
-# 功能：要求对象类型。
-# 输入：`value` 为待检查值；`path` 为错误定位路径。
-# 输出：Mapping。
-# 逻辑：检查 Mapping 后返回原对象。
-# 约束：错误以 path 定位并抛 AnalysisValidationError。
+# Function: Require an object type.
+# Inputs: `value`: value to inspect; `path`: error location path.
+# Outputs: Mapping.
+# Logic: Check Mapping and return the original object.
+# Constraints: Locate errors with path and raise AnalysisValidationError.
 def _object(value: object, path: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AnalysisValidationError(f"{path} must be an object.")
     return value
 
 
-# 功能：要求数组类型。
-# 输入：`value` 为待检查值；`path` 为错误定位路径。
-# 输出：list。
-# 逻辑：检查 list 后返回原数组。
-# 约束：错误以 path 定位并抛 AnalysisValidationError。
+# Function: Require an array type.
+# Inputs: `value`: value to inspect; `path`: error location path.
+# Outputs: list.
+# Logic: Check list and return the original array.
+# Constraints: Locate errors with path and raise AnalysisValidationError.
 def _array(value: object, path: str) -> list[Any]:
     if not isinstance(value, list):
         raise AnalysisValidationError(f"{path} must be an array.")
     return value
 
 
-# 功能：核对精确字段集合。
-# 输入：`value` 为待检查值；`expected` 为要求的精确字段集合；`path` 为错误定位路径。
-# 输出：无返回值。
-# 逻辑：比较实际键和 expected。
-# 约束：缺失或多余键抛 AnalysisValidationError。
+# Function: Validate the exact field set.
+# Inputs: `value`: value to inspect; `expected`: exact required field set; `path`: error location path.
+# Outputs: No return value.
+# Logic: Compare actual keys with expected.
+# Constraints: Missing or extra keys raise AnalysisValidationError.
 def _keys(value: Mapping[str, Any], expected: set[str], path: str) -> None:
     if set(value) != expected:
         raise AnalysisValidationError(f"{path} fields must match the contract exactly.")
 
 
-# 功能：要求非空字符串。
-# 输入：`value` 为待检查值；`path` 为错误定位路径。
-# 输出：原字符串。
-# 逻辑：验证类型与去空白后非空，返回原文。
-# 约束：无效值抛 AnalysisValidationError。
+# Function: Require a nonempty string.
+# Inputs: `value`: value to inspect; `path`: error location path.
+# Outputs: Original string.
+# Logic: Validate type and nonempty stripped content, returning the original text.
+# Constraints: Invalid values raise AnalysisValidationError.
 def _nonblank(value: object, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AnalysisValidationError(f"{path} must be a nonempty string.")
     return value
 
 
-# 功能：核对非空枚举。
-# 输入：`value` 为待检查值；`allowed` 为允许的来源或枚举集合；`path` 为错误定位路径。
-# 输出：字符串。
-# 逻辑：验证字符串后检查 allowed 集合。
-# 约束：未知枚举抛 AnalysisValidationError。
+# Function: Validate a nonempty enum.
+# Inputs: `value`: value to inspect; `allowed`: allowed source or enum set; `path`: error location path.
+# Outputs: String.
+# Logic: Validate the string, then check membership in allowed.
+# Constraints: Unknown enum values raise AnalysisValidationError.
 def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     text = _nonblank(value, path)
     if text not in allowed:
@@ -1036,11 +1074,11 @@ def _enum(value: object, allowed: frozenset[str], path: str) -> str:
     return text
 
 
-# 功能：校验无重复字符串数组。
-# 输入：`value` 为待检查值；`path` 为错误定位路径。
-# 输出：字符串数组。
-# 逻辑：逐项验证非空字符串并比较去重大小。
-# 约束：重复值抛 AnalysisValidationError。
+# Function: Validate a string array without duplicates.
+# Inputs: `value`: value to inspect; `path`: error location path.
+# Outputs: String array.
+# Logic: Validate each nonempty string and compare the deduplicated size.
+# Constraints: Duplicate values raise AnalysisValidationError.
 def _strings(value: object, path: str) -> list[str]:
     items = _array(value, path)
     result = [_nonblank(item, f"{path}[{index}]") for index, item in enumerate(items)]

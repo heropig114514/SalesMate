@@ -1,10 +1,10 @@
-"""职责：提供 Google 日历的受授权只读查询。
-实现：限定员工连接和带时区的时间窗口，显式单次查询事件及忙闲。
-关联：integrations 管理凭证；创建事件必须通过 actions 审批流程。
-目录：
-- read_calendar：读取事件或忙闲，不创建或通知参会人。
-变量索引：
-- logger：日历调用的脱敏错误日志。
+"""Responsibility: Provide authorized read-only Google Calendar queries.
+Implementation: Restrict employee connections and timezone-aware windows; explicitly query events or free/busy once.
+Relationships: integrations manages credentials; event creation must use the actions approval workflow.
+Directory:
+- read_calendar: Read events or free/busy without creating events or notifying attendees.
+Variable index:
+- logger: Redacted calendar-call error logs.
 """
 
 import logging
@@ -19,11 +19,11 @@ from .models import Connection
 logger = logging.getLogger("salesmate.calendar")
 
 
-# 功能：读取明确时间范围的事件或忙闲。
-# 输入：`actor`、`operation` 为 events/freebusy、`parameters` 含连接、日历、start/end 及可选 page_token。
-# 输出：有限事件列表和 next_page_token，或忙闲区间与外部日历错误。
-# 逻辑：验证账号所有权、时间时区和上限，再执行一次 Google API 请求。
-# 约束：窗口至多 366 天，事件每页 100 条；不自动翻页、不创建会议、不重试。
+# Function: Read events or free/busy within an explicit time range.
+# Inputs: `actor`; `operation`: events/freebusy; `parameters`: connection, calendar, start/end, and optional page_token.
+# Outputs: A bounded event list and next_page_token, or busy intervals and external calendar errors.
+# Logic: Validate account ownership, timezones, and limits, then issue one Google API request.
+# Constraints: At most 366 days per window and 100 events per page; no automatic pagination, meeting creation, or retries.
 def read_calendar(actor, operation, parameters):
     required = {"connection_id", "calendar_id", "start", "end"}
     if (

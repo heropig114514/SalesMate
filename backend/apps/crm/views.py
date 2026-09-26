@@ -1,64 +1,64 @@
-"""职责：提供浏览器工作台和 Agent Pull 协议的 HTTP 入口。
-实现：实验模式免登录并开放跨账号业务；OAuth 凭据领取保留机器认证；Web 校验后排队，运行时发布 QQ 能力；客户建档保存地区并传播行业变化；历史 L1 升级显式排队且详情附兼容状态；邮箱连接列表仅限当前 owner；会话与 Agent 身份隔离，注册用户按持久化状态进入首次引导。
-关联：sync_scope 要求 Gmail/QQ 同步范围；urls 注册路由，frontend 调用授权业务入口；sales 记录客户建档审计。
-目录：
-- AgentAuthenticationSchema：为 OpenAPI 声明独立 Agent 服务认证。
-- AgentAuthenticationSchema.get_security_definition：返回安全方案定义。
-- LoginSerializer：声明登录请求。
-- SessionView：提供受 CSRF 保护的浏览器会话入口。
-- SessionView.get：返回会话身份和 CSRF token。
-- SessionView.post：创建已认证用户会话。
-- SessionView.delete：注销当前会话。
-- validated：运行序列化器并返回验证后的数据。
-- versioned：生成附后端 revision 的响应。
-- expected：解析 If-Match 的整数版本表示。
-- process_if_rules：按显式 provider 执行规则任务或留给独立 Agent。
-- CompanyViewSet：提供公司列表、详情、建档和显式重分析。
-- CompanyViewSet.list：查询公司列表及统计。
-- CompanyViewSet.retrieve：返回客户工作区全部展示数据。
-- CompanyViewSet.analyze：显式请求公司分析并拒绝不兼容历史事实。
-- CompanyViewSet.extraction_upgrade：预览或显式排队客户历史事实升级。
-- CompanyViewSet.register：为公司建立 CRM 档案并保存带来源的基础资料。
-- MailboxViewSet：管理登录用户的业务邮箱。
-- MailboxViewSet.list：列出当前用户邮箱。
-- MailboxViewSet.create：创建或复用当前用户的业务邮箱。
-- MailboxViewSet.gmail_authorize：生成当前员工 Google OAuth 地址。
-- MailboxViewSet.gmail_callback：完成员工 Gmail 授权并返回工作台。
-- MailboxViewSet.request_sync：请求同步当前员工的已授权邮箱。
-- MailboxViewSet.disconnect_gmail：移除当前员工 Gmail 授权。
-- DemoViewSet：提供运行能力和显式模拟邮件入口。
-- DemoViewSet.runtime：返回前端需要的运行能力。
-- DemoViewSet.email：提交一封人工模拟邮件。
-- DemoViewSet.seed：显式导入独立合成演示材料。
-- AgentViewSet：承载 README 中 Agent 主动调用的后端协议。
-- AgentViewSet.submit_emails：接收整批标准邮件。
-- AgentViewSet.claim_mailbox_syncs：领取员工在网页请求的 Gmail 同步。
-- AgentViewSet.report_mailbox_sync：回报员工 Gmail 同步结果。
-- AgentViewSet.resubmit_facts：补交失败邮件事实。
-- AgentViewSet.failed_extractions：返回失败抽取的去重键或单封邮件完整重做输入。
-- AgentViewSet.grouping：读取公司归组对象。
-- AgentViewSet.context：读取邮件与 CRM 业务上下文。
-- AgentViewSet.latest_analysis_input：查询当前 revision 且实验来源仍有效的最新 AnalysisInput。
-- AgentViewSet.cached_analysis：查询分析缓存元数据。
-- AgentViewSet.save_analysis_input：保存 L2 快照。
-- AgentViewSet.save_analysis：保存 L3 分析。
-- AgentViewSet.save_score：保存 L4 评分。
-- AgentViewSet.get_sync_state：读取业务邮箱同步状态。
-- AgentViewSet.save_sync_state：写入同步游标。
-- AgentViewSet.claim_jobs：领取待处理任务。
-- AgentViewSet.report_job：回报任务最终状态。
-变量索引：
-- AgentAuthenticationSchema.name：实体名称；应用配置中表示模块导入路径
-- AgentAuthenticationSchema.target_class：需要扩展 OpenAPI 认证描述的类路径
-- AgentViewSet.authentication_classes：独立 Agent 服务认证策略
-- CompanyViewSet.queryset：供 OpenAPI 确定公司 UUID 路径类型的空查询集
-- LoginSerializer.password：仅用于身份认证的只写密码
-- LoginSerializer.username：浏览器登录用户名
-- MailboxViewSet.queryset：供 OpenAPI 推导邮箱 UUID 路径类型的空查询集
-- OBJECT：OpenAPI 通用对象响应类型
-- logger：记录本地开发会话创建和配置错误，不包含凭证。
-- SessionView.permission_classes：接口访问权限策略
-- VERSION_HEADERS：If-Match、任务 ID 与租约凭证的 Schema 定义
+"""Responsibility: Provide HTTP entry points for the browser workspace and Agent pull protocol.
+Implementation: Laboratory mode permits unauthenticated, cross-account business access while OAuth credential claims retain machine authentication. Web validation enqueues work and runtime exposes QQ capability. CRM registration stores country and propagates industry changes; historical L1 upgrades are explicitly queued and details include compatibility state. Mailbox connections are limited to the current owner, session and Agent identities are isolated, and registered users enter onboarding from persistent state.
+Relationships: sync_scope requires Gmail/QQ synchronization scope; urls registers routes; the frontend calls authorized business endpoints; sales records CRM-registration audits.
+Directory:
+- AgentAuthenticationSchema: Declare independent Agent-service authentication for OpenAPI.
+- AgentAuthenticationSchema.get_security_definition: Return the security-scheme definition.
+- LoginSerializer: Declare a login request.
+- SessionView: Provide CSRF-protected browser session entry points.
+- SessionView.get: Return session identity and a CSRF token.
+- SessionView.post: Create an authenticated user session.
+- SessionView.delete: Log out the current session.
+- validated: Run a serializer and return validated data.
+- versioned: Generate a response with the backend revision.
+- expected: Parse the integer version representation in If-Match.
+- process_if_rules: Run a rules job for the configured provider or leave work for an independent Agent.
+- CompanyViewSet: Provide company list, detail, registration, and explicit reanalysis.
+- CompanyViewSet.list: Query the company list and statistics.
+- CompanyViewSet.retrieve: Return all displayed data for the customer workspace.
+- CompanyViewSet.analyze: Explicitly request company analysis and reject incompatible historical facts.
+- CompanyViewSet.extraction_upgrade: Preview or explicitly queue historical-fact upgrades for a company.
+- CompanyViewSet.register: Register a company in CRM and save sourced baseline data.
+- MailboxViewSet: Manage the signed-in user's business mailboxes.
+- MailboxViewSet.list: List the current user's mailboxes.
+- MailboxViewSet.create: Create or reuse the current user's business mailbox.
+- MailboxViewSet.gmail_authorize: Generate the current employee's Google OAuth URL.
+- MailboxViewSet.gmail_callback: Complete an employee's Gmail authorization and return to the workspace.
+- MailboxViewSet.request_sync: Request synchronization of the current employee's authorized mailbox.
+- MailboxViewSet.disconnect_gmail: Remove the current employee's Gmail authorization.
+- DemoViewSet: Provide runtime capability and explicit simulated-email entry points.
+- DemoViewSet.runtime: Return runtime capabilities required by the frontend.
+- DemoViewSet.email: Submit one manually simulated email.
+- DemoViewSet.seed: Explicitly import independent synthetic demo material.
+- AgentViewSet: Host backend protocol calls initiated by the Agent in the README.
+- AgentViewSet.submit_emails: Receive a batch of standard emails.
+- AgentViewSet.claim_mailbox_syncs: Claim Gmail synchronizations requested by employees in the browser.
+- AgentViewSet.report_mailbox_sync: Report an employee Gmail synchronization result.
+- AgentViewSet.resubmit_facts: Resubmit facts for failed emails.
+- AgentViewSet.failed_extractions: Return failed-extraction deduplication keys or full redo input for one email.
+- AgentViewSet.grouping: Read the company-grouping object.
+- AgentViewSet.context: Read email and CRM business context.
+- AgentViewSet.latest_analysis_input: Query the latest AnalysisInput at the current revision with still-valid laboratory provenance.
+- AgentViewSet.cached_analysis: Query analysis-cache metadata.
+- AgentViewSet.save_analysis_input: Save an L2 snapshot.
+- AgentViewSet.save_analysis: Save an L3 analysis.
+- AgentViewSet.save_score: Save an L4 score.
+- AgentViewSet.get_sync_state: Read business-mailbox synchronization state.
+- AgentViewSet.save_sync_state: Write the synchronization cursor.
+- AgentViewSet.claim_jobs: Claim pending jobs.
+- AgentViewSet.report_job: Report a job's final state.
+Variable index:
+- AgentAuthenticationSchema.name: Entity name; in application configuration it identifies the module import path.
+- AgentAuthenticationSchema.target_class: Class path whose OpenAPI authentication description is extended.
+- AgentViewSet.authentication_classes: Authentication policy for the independent Agent service.
+- CompanyViewSet.queryset: Empty queryset that lets OpenAPI determine the company UUID path type.
+- LoginSerializer.password: Write-only password used only for authentication.
+- LoginSerializer.username: Browser login username.
+- MailboxViewSet.queryset: Empty queryset that lets OpenAPI infer the mailbox UUID path type.
+- OBJECT: Generic OpenAPI object response type.
+- logger: Records local-development session creation and configuration errors without credentials.
+- SessionView.permission_classes: Endpoint access-permission policy.
+- VERSION_HEADERS: Schema definitions for If-Match, job ID, and lease credentials.
 """
 import logging
 from urllib.parse import urlencode
@@ -104,42 +104,42 @@ VERSION_HEADERS = [OpenApiParameter("If-Match", int, OpenApiParameter.HEADER, re
                    OpenApiParameter("X-Lease-Token", str, OpenApiParameter.HEADER, required=True)]
 
 
-# 功能：为 OpenAPI 声明独立 Agent 服务认证。
-# 逻辑：使用 Authorization 头描述自定义 Agent 方案。
-# 约束：该声明不执行鉴权，实际校验在 AgentAuthentication。
+# Function: Declare independent Agent-service authentication for OpenAPI.
+# Logic: Describe the custom Agent scheme with the Authorization header.
+# Constraints: This declaration does not authenticate; AgentAuthentication performs the actual validation.
 class AgentAuthenticationSchema(OpenApiAuthenticationExtension):
     target_class = "apps.crm.access.AgentAuthentication"
     name = "agentCredential"
 
-    # 功能：返回安全方案定义。
-    # 输入：`auto_schema` 为 Schema 生成上下文。
-    # 输出：OpenAPI apiKey 方案对象。
-    # 逻辑：要求整个 Authorization 头填写 Agent 加服务令牌。
-    # 约束：不包含实际凭证。
+    # Function: Return the security-scheme definition.
+    # Inputs: `auto_schema` is the schema-generation context.
+    # Outputs: An OpenAPI apiKey scheme object.
+    # Logic: Require the whole Authorization header to contain the Agent service token.
+    # Constraints: Does not include actual credentials.
     def get_security_definition(self, auto_schema):
         return {"type": "apiKey", "in": "header", "name": "Authorization", "description": "Agent <service-token>; never a Gmail token."}
 
 
-# 功能：声明登录请求。
-# 逻辑：密码为只写字段。
-# 约束：认证结果由 Django 检查，不记录密码。
+# Function: Declare a login request.
+# Logic: The password is a write-only field.
+# Constraints: Django checks authentication results and the password is never logged.
 class LoginSerializer(StrictSerializer):
     username = s.CharField()
     password = s.CharField(write_only=True, trim_whitespace=False)
 
 
-# 功能：提供受 CSRF 保护的浏览器会话入口。
-# 逻辑：GET 可按本机调试配置建立会话或返回实验身份并获取 CSRF；POST 验证登录，DELETE 注销。
-# 约束：匿名登录也执行 Django csrf_protect，不以 DRF 匿名 CSRF 豁免代替安全验证。
+# Function: Provide CSRF-protected browser session entry points.
+# Logic: GET can establish a session from local-debug configuration or return the laboratory identity and obtain CSRF; POST validates login and DELETE logs out.
+# Constraints: Anonymous login also executes Django csrf_protect; it does not replace security validation with DRF anonymous-CSRF exemption.
 @method_decorator(csrf_protect, name="dispatch")
 class SessionView(APIView):
     permission_classes = [AllowAny]
 
-    # 功能：返回会话身份和 CSRF token。
-    # 输入：`request` 为浏览器请求。
-    # 输出：登录状态、用户名、CSRF 令牌、debug_auto_login 及 onboarding_required 标志。
-    # 逻辑：DEBUG 与显式开关开启且直连来自回环地址时，为匿名请求建立指定普通用户会话。
-    # 约束：本地自动登录不创建用户且拒绝停用/管理员；实验模式身份由认证层解析，默认实验账号按需创建。
+    # Function: Return session identity and a CSRF token.
+    # Inputs: `request` is a browser request.
+    # Outputs: Authentication state, username, CSRF token, debug_auto_login, and onboarding_required flags.
+    # Logic: When DEBUG and the explicit switch are enabled and a direct request comes from a loopback address, establish the configured ordinary-user session for an anonymous request.
+    # Constraints: Local auto-login neither creates users nor admits disabled or administrator accounts; the authentication layer resolves laboratory identity and creates the default laboratory account on demand.
     @extend_schema(responses=OBJECT, tags=["session"])
     def get(self, request):
         debug_auto_login = bool(settings.DEBUG and getattr(settings, "LOCAL_DEBUG_AUTO_LOGIN", False)
@@ -160,11 +160,11 @@ class SessionView(APIView):
                          "onboarding_required": bool(not enabled() and request.user.is_authenticated and SalesSetup.objects.filter(owner=request.user, completed=False).exists()),
                          "csrf_token": get_token(request)})
 
-    # 功能：创建已认证用户会话。
-    # 输入：`request`.data 包含 username 和 password。
-    # 输出：用户名与新的 CSRF 令牌；认证失败抛 AuthenticationFailed。
-    # 逻辑：使用 Django authenticate 与 login 轮换会话 ID。
-    # 约束：不自动创建用户，用户通过管理命令 provision。
+    # Function: Create an authenticated user session.
+    # Inputs: `request`.data contains username and password.
+    # Outputs: Username and a new CSRF token; authentication failure raises AuthenticationFailed.
+    # Logic: Use Django authenticate and login to rotate the session ID.
+    # Constraints: Does not create users automatically; users are provisioned through a management command.
     @extend_schema(request=LoginSerializer, responses=OBJECT, tags=["session"])
     def post(self, request):
         data = validated(LoginSerializer, request.data)
@@ -174,52 +174,52 @@ class SessionView(APIView):
         login(request, user)
         return Response({"authenticated": True, "username": user.get_username(), "csrf_token": get_token(request)})
 
-    # 功能：注销当前会话。
-    # 输入：`request` 为浏览器请求，写请求须有 CSRF。
-    # 输出：204 空响应。
-    # 逻辑：清除 Django 会话。
-    # 约束：不撤销独立 Agent 凭证。
+    # Function: Log out the current session.
+    # Inputs: `request` is a browser request; write requests require CSRF.
+    # Outputs: Empty 204 response.
+    # Logic: Clear the Django session.
+    # Constraints: Does not revoke independent Agent credentials.
     @extend_schema(responses={204: None}, tags=["session"])
     def delete(self, request):
         logout(request)
         return Response(status=204)
 
 
-# 功能：运行序列化器并返回验证后的数据。
-# 输入：`serializer_class` 为协议类；`data` 为请求载荷。
-# 输出：validated_data。
-# 逻辑：字段错误抛标准 DRF ValidationError。
-# 约束：不写数据库。
+# Function: Run a serializer and return validated data.
+# Inputs: `serializer_class` is a protocol class; `data` is the request payload.
+# Outputs: validated_data.
+# Logic: Field errors raise the standard DRF ValidationError.
+# Constraints: Does not write to the database.
 def validated(serializer_class, data):
     serializer = serializer_class(data=data)
     serializer.is_valid(raise_exception=True)
     return serializer.validated_data
 
 
-# 功能：生成附后端 revision 的响应。
-# 输入：`data` 为业务响应；`version` 为当前版本整数。
-# 输出：含 ETag 头的 Response。
-# 逻辑：ETag 使用带双引号的 HTTP 表示。
-# 约束：If-Match 接收时去除外层引号再比较。
+# Function: Generate a response carrying the backend revision.
+# Inputs: `data` is the business response; `version` is the current integer version.
+# Outputs: A Response with an ETag header.
+# Logic: ETag uses the HTTP representation with double quotes.
+# Constraints: Remove outer quotes from If-Match before comparison.
 def versioned(data, version):
     return Response(data, headers={"ETag": f'"{version}"'})
 
 
-# 功能：解析 If-Match 的整数版本表示。
-# 输入：`request` 为 HTTP 请求。
-# 输出：去除 HTTP 引号的字符串或 None。
-# 逻辑：不接受弱 ETag 或通配符，具体整数验证由服务执行。
-# 约束：无默认版本，缺失时写入失败。
+# Function: Parse the integer version representation in If-Match.
+# Inputs: `request` is an HTTP request.
+# Outputs: A string without HTTP quotes, or None.
+# Logic: Does not accept weak ETags or wildcards; the service performs concrete integer validation.
+# Constraints: There is no default version, so writes fail when it is missing.
 def expected(request):
     value = request.headers.get("If-Match")
     return value.strip('"') if value is not None else None
 
 
-# 功能：按显式 provider 执行规则任务或留给独立 Agent。
-# 输入：`owner` 为用户；`company_id` 为公司标识。
-# 输出：规则任务回报或 None。
-# 逻辑：rules 执行占位，agent 只保留已入队工作。
-# 约束：未知配置直接报错，Agent 故障不切换为规则。
+# Function: Run a rules job for the explicit provider or leave it for an independent Agent.
+# Inputs: `owner` is the user; `company_id` identifies the company.
+# Outputs: A rules-job report or None.
+# Logic: rules executes the placeholder; agent only retains already-enqueued work.
+# Constraints: Unknown configuration fails immediately and an Agent failure does not switch to rules.
 def process_if_rules(owner, company_id):
     if settings.ANALYSIS_PROVIDER == "rules":
         return rules.run_company(owner, company_id)
@@ -228,25 +228,25 @@ def process_if_rules(owner, company_id):
     return None
 
 
-# 功能：提供公司列表、详情、建档和显式重分析。
-# 逻辑：所有对象先按 当前模式的公司范围筛选；实验模式全局可见；旧事实通过独立版本升级入口处理。
-# 约束：不开放未验证的发送和 Gmail 同步能力。
+# Function: Provide company list, detail, registration, and explicit reanalysis.
+# Logic: Filter every object by the company scope for the current mode; laboratory mode is globally visible; historical facts use a separate version-upgrade entry point.
+# Constraints: Does not expose unverified sending or Gmail synchronization capability.
 class CompanyViewSet(ViewSet):
     queryset = Company.objects.none()
-    # 功能：查询公司列表及统计。
-    # 输入：`request`.query_params 为行业、规模、信号、关键词和分页。
-    # 输出：分页公司投影。
-    # 逻辑：调用当前模式下的列表 selector；实验模式不按账号过滤。
-    # 约束：未登录由默认 IsAuthenticated 拒绝。
+    # Function: Query the company list and statistics.
+    # Inputs: `request`.query_params contains industry, size, signal, keywords, and pagination.
+    # Outputs: Paginated company projection.
+    # Logic: Call the list selector for the current mode; laboratory mode does not filter by account.
+    # Constraints: The default IsAuthenticated rejects unauthenticated requests.
     @extend_schema(operation_id="companies_list", responses=OBJECT, tags=["companies"], parameters=[OpenApiParameter(name, str) for name in ["q", "industry", "size_band", "signal", "crm_status", "page", "page_size"]])
     def list(self, request):
         return Response(selectors.list_companies(Company.objects.filter(owner_scope(request.user)), request.query_params))
 
-    # 功能：返回客户工作区全部展示数据。
-    # 输入：`request` 为当前会话；`pk` 为公司 UUID。
-    # 输出：列表摘要、分组、邮件、上下文、分析、评分及事实升级状态。
-    # 逻辑：公司行锁保证本次多表读取的一致性，GET 本身不创建任务。
-    # 约束：页面打开后的分析触发通过独立 POST 执行。
+    # Function: Return all displayed data for the customer workspace.
+    # Inputs: `request` is the current session; `pk` is the company UUID.
+    # Outputs: List summary, grouping, emails, context, analysis, score, and fact-upgrade state.
+    # Logic: A company row lock keeps this multi-table read consistent; GET itself creates no job.
+    # Constraints: Analysis after opening the page is triggered by a separate POST.
     @extend_schema(operation_id="companies_retrieve", responses=OBJECT, tags=["companies"])
     @transaction.atomic
     def retrieve(self, request, pk=None):
@@ -258,11 +258,11 @@ class CompanyViewSet(ViewSet):
                           "analysis": analysis.payload if analysis else None, "score_detail": score.payload if score else None,
                           "extraction_upgrade": upgrade_summary(company)}, company.revision)
 
-    # 功能：显式请求公司分析。
-    # 输入：`request` 为已登录用户；`pk` 为公司 UUID。
-    # 输出：任务 ID、provider 和当前任务状态。
-    # 逻辑：按共享事实契约预检后入队；不兼容时提示网页与工具升级入口，规则处理保留公司原 owner。
-    # 约束：失败不会返回伪成功；agent 模式只入队。
+    # Function: Explicitly request company analysis.
+    # Inputs: `request` is an authenticated user; `pk` is the company UUID.
+    # Outputs: Job ID, provider, and current job status.
+    # Logic: Preflight against the shared fact contract before enqueueing; on incompatibility, direct callers to the web and tool upgrade entries, while rules processing retains the company’s original owner.
+    # Constraints: Failure never returns false success; agent mode only enqueues work.
     @extend_schema(request=None, responses=OBJECT, tags=["companies"])
     @action(detail=True, methods=["post"])
     def analyze(self, request, pk=None):
@@ -278,11 +278,11 @@ class CompanyViewSet(ViewSet):
         job.refresh_from_db()
         return Response({"job_id": str(job.pk), "status": job.status, "provider": settings.ANALYSIS_PROVIDER})
 
-    # 功能：预览或显式排队当前客户的历史 L1 升级。
-    # 输入：`request` 为 Session 请求，POST 需空正文及 If-Match；`pk` 为客户 UUID。
-    # 输出：版本分布及修复进度；POST 返回 202 和新的 ETag。
-    # 逻辑：GET 只读；POST 委托原子服务排队，Worker 从持久正文重抽取。
-    # 约束：不修改旧事实、不重拉邮箱；越权返回 404，过期版本返回 409。
+    # Function: Preview or explicitly queue historical L1 upgrades for the current customer.
+    # Inputs: `request` is a session request; POST requires an empty body and If-Match; `pk` is the customer UUID.
+    # Outputs: Version distribution and remediation progress; POST returns 202 and a new ETag.
+    # Logic: GET is read-only; POST delegates atomic queueing to the service, and the Worker re-extracts from the persisted body.
+    # Constraints: Does not alter old facts or refetch mailboxes; unauthorized access returns 404 and a stale version returns 409.
     @extend_schema(request=None, responses=OBJECT, tags=["companies"], parameters=[OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER)])
     @action(detail=True, methods=["get", "post"], url_path="extraction-upgrade")
     @transaction.atomic
@@ -296,11 +296,11 @@ class CompanyViewSet(ViewSet):
         company = company_for(request.user, pk, lock=True)
         return versioned(upgrade_summary(company), company.revision)
 
-    # 功能：为公司建立 CRM 档案并保存带来源的基础资料。
-    # 输入：`request` 含 RegisterSerializer 与 If-Match；`pk` 为公司 UUID。
-    # 输出：新的公司投影和 revision。
-    # 逻辑：按访问模式取得公司后保存 CRM 字段并审计；设置记录与规则处理使用公司原 owner，行业变化刷新同归属评分背景。
-    # 约束：人数非空必须有来源；不从邮件猜测权威字段，缺失 country 保留原值。
+    # Function: Register a company in CRM and save sourced baseline data.
+    # Inputs: `request` contains RegisterSerializer data and If-Match; `pk` is the company UUID.
+    # Outputs: The new company projection and revision.
+    # Logic: Retrieve the company under access-mode rules, save CRM fields, and audit the change; settings records and rules processing use the company’s original owner, and an industry change refreshes the matching owner’s scoring context.
+    # Constraints: A non-null employee count requires a source; authoritative fields are never guessed from email, and a missing country retains its prior value.
     @extend_schema(request=RegisterSerializer, responses=OBJECT, parameters=VERSION_HEADERS[:1], tags=["companies"])
     @action(detail=True, methods=["post"])
     def register(self, request, pk=None):
@@ -330,16 +330,16 @@ class CompanyViewSet(ViewSet):
         return versioned(selectors.company_row(company), company.revision)
 
 
-# 功能：管理当前登录员工自己的 Gmail 连接与同步状态。
-# 逻辑：OAuth 回调验证实际账号，所有读取和写入都按 request.user 隔离。
-# 约束：浏览器永远不接收 Google access token 或 refresh token。
+# Function: Manage the current signed-in employee’s Gmail connections and synchronization state.
+# Logic: The OAuth callback verifies the actual account, and every read and write is isolated by request.user.
+# Constraints: The browser never receives a Google access token or refresh token.
 class MailboxViewSet(ViewSet):
     queryset = Mailbox.objects.none()
-    # 功能：列出当前用户邮箱。
-    # 输入：`request` 提供会话用户。
-    # 输出：邮箱 ID、地址及 SyncState 数组。
-    # 逻辑：邮箱连接始终只查询当前 owner，避免把实验共享邮箱显示为自己的连接。
-    # 约束：不返回任何授权令牌。
+    # Function: List the current user’s mailboxes.
+    # Inputs: `request` provides the session user.
+    # Outputs: Mailbox IDs, addresses, and SyncState array.
+    # Logic: Mailbox connections always query only the current owner, preventing laboratory shared mailboxes from appearing as personal connections.
+    # Constraints: Returns no authorization tokens.
     @extend_schema(responses=MailboxResponseSerializer(many=True), tags=["mailboxes"])
     def list(self, request):
         mailboxes = Mailbox.objects.select_related("gmail_credential").filter(
@@ -347,32 +347,32 @@ class MailboxViewSet(ViewSet):
         )
         return Response([gmail_oauth.mailbox_status(item) for item in mailboxes])
 
-    # 功能：创建或复用当前用户的业务邮箱。
-    # 输入：`request`.data 含 address。
-    # 输出：邮箱标识与地址。
-    # 逻辑：地址小写后按 owner 唯一创建。
-    # 约束：不请求 Gmail，不宣称已同步。
+    # Function: Create or reuse the current user’s business mailbox.
+    # Inputs: `request`.data contains address.
+    # Outputs: Mailbox identifier and address.
+    # Logic: Lowercase the address and create it uniquely per owner.
+    # Constraints: Does not request Gmail or claim that synchronization occurred.
     @extend_schema(request=MailboxSerializer, responses=OBJECT, tags=["mailboxes"])
     def create(self, request):
         data = validated(MailboxSerializer, request.data)
         mailbox, created = Mailbox.objects.get_or_create(owner=request.user, address=data["address"].lower())
         return Response(gmail_oauth.mailbox_status(mailbox), status=201 if created else 200)
 
-    # 功能：为当前员工生成 Google OAuth 跳转地址。
-    # 输入：`request` 为已登录浏览器会话并携带 CSRF token。
-    # 输出：authorization_url。
-    # 逻辑：state 保存在该员工浏览器会话中，回调后才能建立 Mailbox 绑定。
-    # 约束：只申请 gmail.readonly 权限。
+    # Function: Generate a Google OAuth redirect URL for the current employee.
+    # Inputs: `request` is an authenticated browser session carrying a CSRF token.
+    # Outputs: authorization_url.
+    # Logic: Store state in that employee’s browser session; create the Mailbox binding only after the callback.
+    # Constraints: Requests only gmail.readonly permission.
     @extend_schema(request=None, responses=OBJECT, tags=["mailboxes"])
     @action(detail=False, methods=["post"], url_path="gmail-authorize")
     def gmail_authorize(self, request):
         return Response({"authorization_url": gmail_oauth.begin_authorization(request)})
 
-    # 功能：完成当前员工 Google OAuth 并等待选择同步范围。
-    # 输入：`request` 含 Google 返回的 code、state 和当前员工会话。
-    # 输出：重定向回工作台并携带授权结果。
-    # 逻辑：后端换取凭证、读取 Gmail profile、绑定真实邮箱；前端要求员工选择范围后单独排队。
-    # 约束：失败时不建立未经验证的邮箱连接。
+    # Function: Complete the current employee’s Google OAuth and await synchronization-scope selection.
+    # Inputs: `request` contains Google-returned code, state, and the current employee session.
+    # Outputs: Redirect to the workspace carrying the authorization result.
+    # Logic: The backend exchanges credentials, reads the Gmail profile, and binds the real mailbox; after the employee chooses scope, the frontend queues work separately.
+    # Constraints: Does not create an unverified mailbox connection on failure.
     @extend_schema(responses={302: None}, tags=["mailboxes"])
     @action(detail=False, methods=["get"], url_path="gmail-callback")
     def gmail_callback(self, request):
@@ -380,8 +380,8 @@ class MailboxViewSet(ViewSet):
             mailbox = gmail_oauth.finish_authorization(request)
             query = urlencode({"gmail": "authorized", "address": mailbox.address})
         except Exception as error:
-            # 本地开发阶段保留完整堆栈，便于区分 state、令牌交换和
-            # Gmail API 调用失败；日志中不主动输出授权码或凭证。
+            # During local development, retain the full stack trace to distinguish state, token exchange, and
+            # Gmail API call failures; logs do not deliberately emit authorization codes or credentials.
             logger.exception(
                 "Gmail OAuth callback failed: %s: %s",
                 type(error).__name__,
@@ -395,11 +395,11 @@ class MailboxViewSet(ViewSet):
             query = urlencode(query_data)
         return redirect(f"/?{query}")
 
-    # 功能：让当前员工请求刷新自己的 Gmail 或 QQ 邮件。
-    # 输入：`request` 为当前员工请求及必填 sync_options，`pk` 为 URL 中的 mailbox_id。
-    # 输出：不含凭证的最新连接及同步状态。
-    # 逻辑：创建持久批次并返回 HTTP 202，独立 Worker 领取。
-    # 约束：不可请求其他员工或未授权邮箱。
+    # Function: Let the current employee request refresh of their Gmail or QQ mail.
+    # Inputs: `request` is the current employee request with required sync_options; `pk` is the mailbox_id in the URL.
+    # Outputs: Latest connection and synchronization state without credentials.
+    # Logic: Create a persistent batch and return HTTP 202 for an independent Worker to claim.
+    # Constraints: Cannot request another employee’s or an unauthorized mailbox.
     @extend_schema(request=SyncRequestSerializer, responses={202: OBJECT}, tags=["mailboxes"])
     @action(detail=True, methods=["post"], url_path="request-sync")
     def request_sync(self, request, pk=None):
@@ -408,26 +408,26 @@ class MailboxViewSet(ViewSet):
         mailbox = gmail_oauth.request_mailbox_sync(request.user, pk, serializer.validated_data.get("sync_options"))
         return Response(mailbox, status=202)
 
-    # 功能：移除当前员工的 Gmail 本地授权。
-    # 输入：`request` 为当前员工请求，`pk` 为 URL 中的 mailbox_id。
-    # 输出：authorization_required 状态。
-    # 逻辑：删除凭证但保留已同步邮件和业务分析。
-    # 约束：不会删除历史客户或邮件。
+    # Function: Remove the current employee’s local Gmail authorization.
+    # Inputs: `request` is the current employee request; `pk` is the mailbox_id in the URL.
+    # Outputs: authorization_required state.
+    # Logic: Delete credentials while retaining synchronized emails and business analysis.
+    # Constraints: Does not delete historical customers or emails.
     @extend_schema(responses=MailboxResponseSerializer, tags=["mailboxes"])
     @action(detail=True, methods=["delete"], url_path="gmail-authorization")
     def disconnect_gmail(self, request, pk=None):
         return Response(gmail_oauth.disconnect_mailbox(request.user, pk))
 
 
-# 功能：提供运行能力和显式模拟邮件入口。
-# 逻辑：模拟数据通过正式邮件入库及分析服务执行。
-# 约束：仅 rules 模式允许写入演示数据，agent 模式拒绝而不回退。
+# Function: Provide runtime capability and explicit simulated-email entry points.
+# Logic: Simulated data uses the production email-ingestion and analysis services.
+# Constraints: Only rules mode may write demo data; agent mode rejects it without fallback.
 class DemoViewSet(ViewSet):
-    # 功能：返回前端需要的运行能力。
-    # 输入：`request` 为登录用户请求。
-    # 输出：provider、时区、是否可模拟、QQ 能力开关以及版本。
-    # 逻辑：读取显式配置，不探测后自动改变模式。
-    # 约束：只统计当前登录员工自己的授权连接。
+    # Function: Return runtime capabilities required by the frontend.
+    # Inputs: `request` is an authenticated-user request.
+    # Outputs: Provider, timezone, simulation availability, QQ capability flag, and version.
+    # Logic: Read explicit configuration and do not change mode automatically after probing.
+    # Constraints: Count only the current signed-in employee’s authorized connections.
     @extend_schema(responses=OBJECT, tags=["demo"])
     @action(detail=False, methods=["get"])
     def runtime(self, request):
@@ -435,11 +435,11 @@ class DemoViewSet(ViewSet):
                          "timezone": settings.TIME_ZONE, "qq_enabled": settings.QQ_MAIL_ENABLED,
                          "analysis_version": rules.ANALYSIS_VERSION if settings.ANALYSIS_PROVIDER == "rules" else None})
 
-    # 功能：提交一封人工模拟邮件。
-    # 输入：`request`.data 含业务邮箱、发送人、主题和正文。
-    # 输出：邮件入库结果和处理后的公司 ID。
-    # 逻辑：规则提取后走正式提交、Job、快照和结果接口服务。
-    # 约束：不发送邮件、不读取外部邮箱，邮件 source 为 synthetic_sample。
+    # Function: Submit one manually simulated email.
+    # Inputs: `request`.data contains business mailbox, sender, subject, and body.
+    # Outputs: Email-ingestion result and processed company ID.
+    # Logic: After rules extraction, use the production submission, Job, snapshot, and results services.
+    # Constraints: Does not send email or read external mailboxes; email source is synthetic_sample.
     @extend_schema(request=SimulateSerializer, responses=SubmissionResultSerializer(many=True), tags=["demo"])
     @action(detail=False, methods=["post"], url_path="email")
     def email(self, request):
@@ -451,11 +451,11 @@ class DemoViewSet(ViewSet):
         process_if_rules(request.user, result[0]["company_id"])
         return Response(result, status=201)
 
-    # 功能：显式导入独立合成演示材料。
-    # 输入：`request` 为用户点击导入样例的请求。
-    # 输出：已创建邮件数与公司数。
-    # 逻辑：固定样例 ID 保证重复导入不改变已有邮件或时间，首次生成当前时间。
-    # 约束：不修改研究数据库或实验划分，不创建真实业务交易。
+    # Function: Explicitly import independent synthetic demo material.
+    # Inputs: `request` is the user request made by selecting import sample.
+    # Outputs: Counts of created emails and companies.
+    # Logic: Fixed sample IDs ensure repeated import does not change existing emails or times; the first import generates the current time.
+    # Constraints: Does not modify the research database or experiment split, and does not create real business transactions.
     @extend_schema(request=None, responses=OBJECT, tags=["demo"])
     @action(detail=False, methods=["post"])
     def seed(self, request):
@@ -480,59 +480,59 @@ class DemoViewSet(ViewSet):
         return Response({"created_emails": len(inserted), "affected_companies": len(companies), "source": "synthetic_sample"})
 
 
-# 功能：承载 README 中 Agent 主动调用的后端协议。
-# 逻辑：正式模式独立 AgentAuthentication 验证服务身份；实验模式业务免登录，实体范围由公共访问策略决定。
-# 约束：正式模式浏览器会话不能调用这些路由；OAuth 凭据领取始终要求 Agent 服务令牌。
+# Function: Host backend protocol calls initiated by the Agent in the README.
+# Logic: Production mode uses independent AgentAuthentication to validate service identity; laboratory-mode business access is unauthenticated and the shared access policy determines entity scope.
+# Constraints: Browser sessions cannot call these routes in production mode; OAuth credential claims always require an Agent service token.
 class AgentViewSet(ViewSet):
     authentication_classes = [AgentAuthentication]
 
-    # 功能：领取当前凭证所属员工请求的 Gmail 同步任务。
-    # 输入：`request`.data 含 limit，单次最多十个邮箱。
-    # 输出：邮箱标识、地址、Google 授权信息和读取上限。
-    # 逻辑：将 sync_requested 改为 sync_running 后返回给一次性 Agent。
-    # 约束：完整 Google 凭证只通过 AgentAuthentication 路由返回。
+    # Function: Claim Gmail synchronization work requested by the employee belonging to the current credential.
+    # Inputs: `request`.data contains limit; each call handles at most ten mailboxes.
+    # Outputs: Mailbox identifier, address, Google authorization information, and read limit.
+    # Logic: Change sync_requested to sync_running before returning the work to a one-shot Agent.
+    # Constraints: Full Google credentials are returned only through an AgentAuthentication route.
     @extend_schema(request=MailboxSyncClaimSerializer, responses=MailboxSyncClaimResponseSerializer(many=True), tags=["agent"])
     @action(detail=False, methods=["post"], url_path="mailbox-syncs/claim")
     def claim_mailbox_syncs(self, request):
         data = validated(MailboxSyncClaimSerializer, request.data)
         return Response(gmail_oauth.claim_mailbox_syncs(request.user, data["limit"]))
 
-    # 功能：保存员工邮箱同步的成功或失败结果。
-    # 输入：`request`.data 含 mailbox_id、状态、同步摘要及可选刷新凭证。
-    # 输出：浏览器可见且不含凭证的邮箱状态。
-    # 逻辑：成功写入 last_synced_at，失败保留可显示错误。
-    # 约束：不自动重试或持续轮询。
+    # Function: Save a successful or failed employee-mailbox synchronization result.
+    # Inputs: `request`.data contains mailbox_id, status, synchronization summary, and optional refreshed credentials.
+    # Outputs: Browser-visible mailbox state without credentials.
+    # Logic: On success write last_synced_at; on failure retain a displayable error.
+    # Constraints: Does not retry automatically or poll continuously.
     @extend_schema(request=MailboxSyncReportSerializer, responses=MailboxResponseSerializer, tags=["agent"])
     @action(detail=False, methods=["post"], url_path="mailbox-syncs/report")
     def report_mailbox_sync(self, request):
         data = validated(MailboxSyncReportSerializer, request.data)
         return Response(gmail_oauth.report_mailbox_sync(request.user, data))
 
-    # 功能：接收整批标准邮件。
-    # 输入：`request`.data 为 EmailSubmission 数组。
-    # 输出：每封邮件的创建或去重状态。
-    # 逻辑：调用原子批量入库服务。
-    # 约束：不触发规则占位，任务等待 Agent 主动领取。
+    # Function: Receive a batch of standard emails.
+    # Inputs: `request`.data is an EmailSubmission array.
+    # Outputs: Creation or deduplication status for every email.
+    # Logic: Call the atomic batch-ingestion service.
+    # Constraints: Does not trigger the rules placeholder; jobs wait for the Agent to claim them.
     @extend_schema(request=EmailSubmissionSerializer(many=True), responses=SubmissionResultSerializer(many=True), tags=["agent"])
     @action(detail=False, methods=["post"], url_path="emails")
     def submit_emails(self, request):
         return Response(ingestion.submit_emails(request.user, request.data))
 
-    # 功能：补交失败邮件事实。
-    # 输入：`request`.data 为 FactsResubmission。
-    # 输出：新公司 revision。
-    # 逻辑：交由失败到成功的一次转换服务。
-    # 约束：完成记录不可再次补交。
+    # Function: Resubmit facts for failed emails.
+    # Inputs: `request`.data is FactsResubmission.
+    # Outputs: New company revision.
+    # Logic: Delegate to the one-time failed-to-success transition service.
+    # Constraints: Completed records cannot be resubmitted.
     @extend_schema(request=FactsResubmissionSerializer, responses=OBJECT, tags=["agent"])
     @action(detail=False, methods=["post"], url_path="facts")
     def resubmit_facts(self, request):
         return Response(ingestion.resubmit_facts(request.user, request.data))
 
-    # 功能：返回失败抽取的去重键或单封邮件完整重做输入。
-    # 输入：`request` 查询 mailbox_id，可选 dedupe_key。
-    # 输出：失败键数组，或包含当前事实与完整正文的邮件。
-    # 逻辑：先核验邮箱归属，再读取当前抽取状态。
-    # 约束：不跨邮箱查找相同 dedupe_key。
+    # Function: Return deduplication keys for failed extraction or full redo input for one email.
+    # Inputs: `request` queries mailbox_id and optionally dedupe_key.
+    # Outputs: An array of failed keys, or an email containing current facts and the complete body.
+    # Logic: Verify mailbox ownership before reading the current extraction state.
+    # Constraints: Does not search for the same dedupe_key across mailboxes.
     @extend_schema(responses={200: {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "object"}]}}, tags=["agent"], parameters=[OpenApiParameter("mailbox_id", str, required=True), OpenApiParameter("dedupe_key", str)])
     @action(detail=False, methods=["get"], url_path="failed-extractions")
     def failed_extractions(self, request):
@@ -545,11 +545,11 @@ class AgentViewSet(ViewSet):
             return Response(selectors.email_data(email))
         return Response([item.pk for item in query if selectors.latest_extraction(item).status == "failed"])
 
-    # 功能：读取公司归组对象。
-    # 输入：`request`.query_params.company_id 为公司 UUID。
-    # 输出：Grouping 与 ETag revision。
-    # 逻辑：在公司行锁内构造一致投影。
-    # 约束：后续 context 必须核对相同 ETag。
+    # Function: Read the company-grouping object.
+    # Inputs: `request`.query_params.company_id is the company UUID.
+    # Outputs: Grouping and ETag revision.
+    # Logic: Construct a consistent projection under the company row lock.
+    # Constraints: Subsequent context must verify the same ETag.
     @extend_schema(responses=GroupingResponseSerializer, tags=["agent"], parameters=[OpenApiParameter("company_id", str, required=True)])
     @action(detail=False, methods=["get"])
     @transaction.atomic
@@ -557,11 +557,11 @@ class AgentViewSet(ViewSet):
         company = company_for(request.user, request.query_params.get("company_id"), lock=True)
         return versioned(selectors.context_pair(company)[0], company.revision)
 
-    # 功能：读取邮件与 CRM 业务上下文。
-    # 输入：`request`.query_params.company_id，可选 If-Match 保证与 Grouping 同版。
-    # 输出：CompanyContext 与 ETag。
-    # 逻辑：持有公司锁读取全部邮件和外部业务快照。
-    # 约束：传入旧版本时返回冲突而不混合两次读取。
+    # Function: Read email and CRM business context.
+    # Inputs: `request`.query_params.company_id and optional If-Match ensure the same version as Grouping.
+    # Outputs: CompanyContext and ETag.
+    # Logic: Hold the company lock while reading all email and the external business snapshot.
+    # Constraints: A stale version returns a conflict instead of mixing two reads.
     @extend_schema(responses=CompanyContextResponseSerializer, tags=["agent"], parameters=[OpenApiParameter("company_id", str, required=True), *VERSION_HEADERS[:1]])
     @action(detail=False, methods=["get"])
     @transaction.atomic
@@ -570,11 +570,11 @@ class AgentViewSet(ViewSet):
         check_version(expected(request), company.revision)
         return versioned(selectors.context_pair(company)[1], company.revision)
 
-    # 功能：查询当前 revision 且实验来源仍有效的最新 AnalysisInput。
-    # 输入：`request`.query_params.company_id。
-    # 输出：原样快照及 ETag；尚无当前快照返回 404。
-    # 逻辑：排除业务血缘失效或实验来源变化的快照。
-    # 约束：不把旧快照冒充详情页当前输入。
+    # Function: Query the latest AnalysisInput at the current revision whose laboratory provenance remains valid.
+    # Inputs:`request`.query_params.company_id。
+    # Outputs: Unchanged snapshot and ETag; returns 404 when no current snapshot exists.
+    # Logic: Exclude snapshots whose business lineage is invalidated or whose laboratory source changed.
+    # Constraints: Does not present an old snapshot as the detail page’s current input.
     @extend_schema(responses=AnalysisInputSerializer, tags=["agent"], parameters=[OpenApiParameter("company_id", str, required=True)])
     @action(detail=False, methods=["get"], url_path="latest-analysis-input")
     def latest_analysis_input(self, request):
@@ -585,11 +585,11 @@ class AgentViewSet(ViewSet):
             raise NotFound("当前上下文尚未归并。")
         return versioned(snapshot.payload, company.revision)
 
-    # 功能：查询分析缓存元数据。
-    # 输入：`request` 含 company_id、input_version、可选 analysis_prompt_version。
-    # 输出：CachedAnalysis。
-    # 逻辑：仅当前 revision、输入和提示词匹配时 hit=true。
-    # 约束：未命中不调用规则或模型。
+    # Function: Query analysis-cache metadata.
+    # Inputs: `request` contains company_id, input_version, and optional analysis_prompt_version.
+    # Outputs:CachedAnalysis。
+    # Logic: hit=true only when the current revision, input, and prompt version match.
+    # Constraints: A cache miss does not invoke rules or a model.
     @extend_schema(responses=CachedAnalysisResponseSerializer, tags=["agent"], parameters=[OpenApiParameter(name, str, required=name != "analysis_prompt_version") for name in ["company_id", "input_version", "analysis_prompt_version"]])
     @action(detail=False, methods=["get"], url_path="cached-analysis")
     def cached_analysis(self, request):
@@ -598,52 +598,52 @@ class AgentViewSet(ViewSet):
             raise ValidationError("input_version 必填。")
         return Response(results.cached_analysis(company, request.query_params["input_version"], request.query_params.get("analysis_prompt_version")))
 
-    # 功能：保存 L2 快照。
-    # 输入：`request`.data 为 AnalysisInput，头含版本与领取凭证。
-    # 输出：原样归档载荷。
-    # 逻辑：统一服务验证来源、revision 和租约。
-    # 约束：不接受旧任务覆盖当前输入。
+    # Function: Save an L2 snapshot.
+    # Inputs: `request`.data is AnalysisInput; headers contain version and claim credentials.
+    # Outputs: The payload archived unchanged.
+    # Logic: The unified service validates provenance, revision, and lease.
+    # Constraints: Does not allow an old job to overwrite current input.
     @extend_schema(request=AnalysisInputSerializer, responses=AnalysisInputSerializer, parameters=VERSION_HEADERS, tags=["agent"])
     @action(detail=False, methods=["post"], url_path="analysis-inputs")
     def save_analysis_input(self, request):
         return Response(results.save_input(request.user, request.data, expected(request), request.headers.get("X-Job-ID"), request.headers.get("X-Lease-Token")))
 
-    # 功能：保存 L3 分析。
-    # 输入：`request`.data 为 Analysis，头含版本和领取凭证。
-    # 输出：已保存分析。
-    # 逻辑：强制 provider=agent，由服务核查原文来源。
-    # 约束：客户端不能把来源标成其他 provider。
+    # Function: Save an L3 analysis.
+    # Inputs: `request`.data is Analysis; headers contain version and claim credentials.
+    # Outputs: Saved analysis.
+    # Logic: Force provider=agent and have the service verify source provenance.
+    # Constraints: The client cannot label provenance as another provider.
     @extend_schema(request=AnalysisSerializer, responses=AnalysisSerializer, parameters=VERSION_HEADERS, tags=["agent"])
     @action(detail=False, methods=["post"], url_path="analyses")
     def save_analysis(self, request):
         return Response(results.save_analysis(request.user, request.data, expected(request), request.headers.get("X-Job-ID"), request.headers.get("X-Lease-Token")))
 
-    # 功能：保存 L4 评分。
-    # 输入：`request`.data 为 Score，头含版本和领取凭证。
-    # 输出：已保存 Score。
-    # 逻辑：绑定当前成功分析并核对贡献和。
-    # 约束：空分与零分严格区分。
+    # Function: Save an L4 score.
+    # Inputs: `request`.data is Score; headers contain version and claim credentials.
+    # Outputs: Saved Score.
+    # Logic: Bind the current successful analysis and verify the contribution sum.
+    # Constraints: Strictly distinguish a missing score from a zero score.
     @extend_schema(request=ScoreSerializer, responses=ScoreSerializer, parameters=VERSION_HEADERS, tags=["agent"])
     @action(detail=False, methods=["post"], url_path="scores")
     def save_score(self, request):
         return Response(results.save_score(request.user, request.data, expected(request), request.headers.get("X-Job-ID"), request.headers.get("X-Lease-Token")))
 
-    # 功能：读取业务邮箱同步状态。
-    # 输入：`request`.query_params.mailbox_id。
-    # 输出：SyncState 与 ETag version。
-    # 逻辑：授权后读取业务游标。
-    # 约束：不读取 Gmail 令牌。
+    # Function: Read business-mailbox synchronization state.
+    # Inputs:`request`.query_params.mailbox_id。
+    # Outputs: SyncState and ETag version.
+    # Logic: Read the business cursor after authorization.
+    # Constraints: Does not read Gmail tokens.
     @extend_schema(responses=SyncStateSerializer, tags=["agent"], parameters=[OpenApiParameter("mailbox_id", str, required=True)])
     @action(detail=False, methods=["get"], url_path="sync-state")
     def get_sync_state(self, request):
         mailbox = mailbox_for(request.user, request.query_params.get("mailbox_id"))
         return versioned(ingestion.sync_state(mailbox), mailbox.version)
 
-    # 功能：写入同步游标。
-    # 输入：`request`.data 为 SyncState，If-Match 指向旧版本。
-    # 输出：递增后的状态。
-    # 逻辑：调用邮箱行锁和乐观锁服务。
-    # 约束：Agent 负责保证此前所有邮件提交成功。
+    # Function: Write the synchronization cursor.
+    # Inputs: `request`.data is SyncState, and If-Match identifies the prior version.
+    # Outputs: State after incrementing.
+    # Logic: Call the mailbox row-lock and optimistic-lock service.
+    # Constraints: The Agent is responsible for ensuring all preceding email submissions succeeded.
     @extend_schema(request=SyncStateSerializer, responses=SyncStateSerializer, parameters=VERSION_HEADERS[:1], tags=["agent"])
     @action(detail=False, methods=["post"], url_path="sync-state-save")
     def save_sync_state(self, request):
@@ -651,22 +651,22 @@ class AgentViewSet(ViewSet):
         state = ingestion.save_sync_state(request.user, data, expected(request))
         return versioned(state, state["version"])
 
-    # 功能：领取待处理任务。
-    # 输入：`request`.data 包含 limit 和 lease_seconds。
-    # 输出：Job 数组，含领取凭证与 expected_version 扩展。
-    # 逻辑：行锁领取；无工作返回空数组。
-    # 约束：仅该服务凭证 owner 的任务。
+    # Function: Claim pending jobs.
+    # Inputs: `request`.data contains limit and lease_seconds.
+    # Outputs: Job array including claim credentials and expected_version extension.
+    # Logic: Claim under a row lock; return an empty array when no work exists.
+    # Constraints: Only jobs belonging to that service credential’s owner.
     @extend_schema(request=ClaimSerializer, responses=JobResponseSerializer(many=True), tags=["agent"])
     @action(detail=False, methods=["post"], url_path="jobs/claim")
     def claim_jobs(self, request):
         data = validated(ClaimSerializer, request.data)
         return Response(jobs.claim(request.user, data["limit"], data["lease_seconds"]))
 
-    # 功能：回报任务最终状态。
-    # 输入：`request`.data 为 JobReport，X-Lease-Token 为领取凭证。
-    # 输出：持久化状态。
-    # 逻辑：验证租约及成功产出，失败保留错误状态。
-    # 约束：不自动重试、不把回报当作产出已保存的证据。
+    # Function: Report a job’s final state.
+    # Inputs: `request`.data is JobReport and X-Lease-Token is the claim credential.
+    # Outputs: Persisted state.
+    # Logic: Validate the lease and successful output; retain error state on failure.
+    # Constraints: Does not retry automatically or treat a report as evidence that output was saved.
     @extend_schema(request=JobReportSerializer, responses=OBJECT, parameters=VERSION_HEADERS[2:], tags=["agent"])
     @action(detail=False, methods=["post"], url_path="jobs/report")
     def report_job(self, request):

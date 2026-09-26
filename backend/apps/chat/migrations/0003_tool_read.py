@@ -1,11 +1,11 @@
-"""职责：增加聊天只读查询的独立结果与证据存储。
-实现：仅创建 ToolRead 表及请求外键索引，不改写已有聊天或业务记录。
-关联：chat.models.ToolRead；部署新接口前须应用本迁移。
-目录：
-- Migration：工具读取记录的新增表迁移。
-变量索引：
-- Migration.dependencies：要求通用聊天请求的可空公司迁移已应用。
-- Migration.operations：创建带 UUID、请求外键、工具参数、结果和证据的新表。
+"""Responsibility: Add independent result and evidence storage for chat read-only queries.
+Implementation: Create only the ``ToolRead`` table and request foreign-key index without rewriting existing chat or business records.
+Relationships: ``chat.models.ToolRead``; apply this migration before deploying the new endpoint.
+Directory:
+- Migration: New-table migration for tool-read records.
+Variable index:
+- Migration.dependencies: Requires the nullable-company migration for general chat requests.
+- Migration.operations: Create a new table with UUID, request foreign key, tool arguments, result, and evidence.
 """
 
 import uuid
@@ -15,9 +15,9 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-# 功能：保存独立工具结果，不向原上下文 HTTP 契约添加内部字段。
-# 逻辑：通过 CreateModel 建立新表；请求外键采用 PROTECT，保留引用的历史依赖。
-# 约束：不搬迁旧证据、不修改旧版本回答；回滚会移除新表，部署方须先评估已产生的数据。
+# Function: Persist independent tool results without adding internal fields to the original context HTTP contract.
+# Logic: Create a new table through ``CreateModel``; request foreign key uses ``PROTECT`` to retain referenced historical dependencies.
+# Constraints: Does not move old evidence or modify old-version answers; rollback removes the new table and deployers must first assess data already produced.
 class Migration(migrations.Migration):
     dependencies: ClassVar[list] = [
         ("chat", "0002_general_answer_request"),

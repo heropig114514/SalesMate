@@ -1,11 +1,11 @@
-"""职责：把本人知识投影为工作空间聊天的有限、可追溯初始证据。
-实现：读取显式导入知识，正式模式限本人、实验模式跨账号；客户资料由请求绑定的只读工具按需查询。
-关联：chat.services 在员工锁内首次调用并冻结结果；不执行模型或外部网络。
-目录：
-- item：生成严格四字段证据条目。
-- build_context：组装当前请求的 internal 上下文。
-变量索引：
-- 无
+"""Responsibility: Project the caller's knowledge as bounded, traceable initial evidence for workspace chat.
+Implementation: Read explicitly imported knowledge, restricted to the caller in production mode and cross-account in experiment mode; request-bound read-only tools query customer data on demand.
+Relationships: ``chat.services`` first calls this under employee lock and freezes its result; does not execute models or external network access.
+Directory:
+- item: Generate a strict four-field evidence item.
+- build_context: Assemble ``internal`` context for the current request.
+Variable index:
+- None
 """
 
 from common.laboratory import owner_scope
@@ -13,11 +13,11 @@ from common.laboratory import owner_scope
 from .models import KnowledgeEntry
 
 
-# 功能：构造 Agent 可消费的来源。
-# 输入：`source_id` 稳定标识，`source_type` 类型，`title` 标题，`content` 证据正文。
-# 输出：严格四字段字典。
-# 逻辑：保留正文并按既定 Agent 2000 字符上限裁剪，截断明确标记。
-# 约束：截断不被描述为完整文档；不产生推断或补充事实。
+# Function: Construct a source consumable by the Agent.
+# Inputs: Stable identifier ``source_id``, type ``source_type``, title ``title``, and evidence content ``content``.
+# Outputs: Strict four-field dictionary.
+# Logic: Retain content and truncate to the established 2,000-character Agent limit with explicit truncation marker.
+# Constraints: Truncation is not described as a complete document and does not produce inference or supplemental facts.
 def item(source_id, source_type, title, content):
     return {
         "source_id": source_id,
@@ -31,16 +31,16 @@ def item(source_id, source_type, title, content):
     }
 
 
-# 功能：组装有界、员工隔离的本次证据。
-# 输入：`request` 为已授权工作空间 AnswerRequest；调用方持有员工锁。
-# 输出：严格 internal AnswerContext，不可用资料以缺口描述。
-# 逻辑：按模式选择本人或全账号知识，沿用至多 4 条知识的既定预算；初始客户证据始终为空。
-# 约束：不自动选择公司或读取邮件，不执行外部检索，工具查询的来源另行持久化。
+# Function: Assemble bounded, employee-isolated evidence for this request.
+# Inputs: ``request`` is an authorized workspace request object and the caller holds the employee lock.
+# Outputs: Strict internal ``AnswerContext``; unavailable records are represented as gaps.
+# Logic: Select the caller's or all-account knowledge by mode, reuse established budget of at most four entries, and always leave initial customer evidence empty.
+# Constraints: Does not automatically select a company or read email, execute external retrieval, and separately persists sources from tool queries.
 def build_context(request):
     entries = KnowledgeEntry.objects.filter(owner_scope(request.owner), active=True).order_by(
         "-created_at", "id"
     )
-    # 提问匹配优先使用完整问题词段；未匹配条目仍按版本时间排序提供，Agent 判断是否相关。
+    # Question matching prioritizes complete question terms; unmatched entries remain ordered by version time for the Agent to judge relevance.
     terms = request.user_message.content.split()
     candidates = list(entries)
     candidates.sort(

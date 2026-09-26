@@ -1,29 +1,29 @@
-# 邮件处理与复核适配
+# Email processing and review integration
 
-依据 2026-09-13 的需求及后续用户决策实施。Web 只排队，独立 Worker 调用 Agent；保留既有评分和模型参数。2026-09-20 起 Gmail 每次必须明确选择最近 N 天或最近 N 封；仅在该范围内按每页 20 封查询；普通同步最多 50 封（只填天数也适用），超量必须明确批准，不执行全量历史补采或 History 失效回退。当前 Agent 从 `customer-analysis` Skill 读取 `analysis-v3`，后端按请求中的版本保存和查询缓存，无需固定分析版本配置。
+Implemented from 2026-09-13 requirements and subsequent user decisions. Web enqueues only; independent workers invoke Agent, preserving scoring/model parameters. Since 2026-09-20, each Gmail sync explicitly selects recent N days or messages, querying that scope at 20 per page. Ordinary runs cap at 50, including day-only requests; larger runs require approval. No full-history backfill/expired-History fallback. Agent reads analysis-v3 from customer-analysis Skill; backend saves/caches submitted versions without fixed analysis-version settings.
 
-## 已实现
+## Implemented behavior
 
-| 需求 | 实现 |
+| Requirement | Implementation |
 |---|---|
-| 持久批次和逐封状态 | MailboxSyncRun、EmailProcessingJob；发现时登记，回报 fetching/extracting/persisting/completed/failed |
-| 快速返回 | request-sync 返回 202，附 run_id、queued 和原邮箱字段；活动批次期间重复请求返回 409，不覆盖原范围 |
-| 失败隔离 | Worker 启用 Agent 观察回调，单封 Gmail 读取、L1 或提交失败独立记录 |
-| 独立调度 | crm_worker：一个同步通道，默认两个画像通道；L1 保留四路 |
-| 公司互斥 | 复用 Job，所有者行锁串行化领取，同公司运行时后继等待，其他公司可领取 |
-| 整体进度 | 批次接口从数据库任务派生计数，画像统计覆盖关联公司，不受前端分页影响 |
-| 非业务与复核 | 规则跳过默认隐藏；v7 无采购阶段的入站邮件进入待复核；人工决定优先 |
-| 一致查询 | 收件箱、统计、详情邮件和 Agent 上下文使用同一业务分类；业务管理客户目录保持独立 |
-| 历史处理 | classify_emails 默认预览，--apply 应用；原文、抽取、交易和人工决定保留 |
-| 游标完整性 | 游标过期重新扫描时仍保留已有 pending/failed ID；显式重试只选择失败范围 |
-| 原文与 L1 缓存 | StoredMessage 先保存原文，再保存已完成的 L1 输出；HTTP 提交失败重试不重复调用模型 |
-| 血缘自动修正 | SnapshotSource 记录邮件、抽取、复核版本；失效沿 L2→L3→L4 传播，有剩余业务来源则自动重算 |
+| Persistent batches/per-email state | MailboxSyncRun/EmailProcessingJob register discovery and fetching/extracting/persisting/completed/failed stages |
+| Fast response | request-sync returns 202 with run_id, queued, original mailbox fields; active-batch repeats return 409 without replacing scope |
+| Failure isolation | Agent observation callbacks persist independent Gmail-read/L1/submission failures |
+| Independent scheduling | crm_worker: one sync channel, two default profile channels; four-way L1 retained |
+| Company exclusion | Existing Jobs with owner-row-serialized claims; same-company successors wait, others proceed |
+| Overall progress | Counts derive from tasks; profile statistics cover linked companies independent of frontend pages |
+| Nonbusiness/review | Rule skips hidden by default; inbound v7 without procurement stages enters review; manual decisions win |
+| Consistent queries | Inbox/statistics/details/Agent context share classification; management directory remains separate |
+| Historical processing | classify_emails previews by default, --apply writes; retain source, extractions, transactions, decisions |
+| Cursor integrity | Historical rescan after expiry retains pending/failed IDs; explicit retries use failed scope |
+| Source/L1 caches | StoredMessage saves text then completed L1; failed HTTP retries reuse output without model calls |
+| Lineage repair | SnapshotSource tracks email/extraction/review versions; invalidate L2→L3→L4 and recalculate remaining business sources |
 
-所有逐封计数由任务表派生，避免维护多个可漂移的累加字段。邮件本体已落库但事实抽取失败时，该邮件任务仍是 failed；批次有成功和失败为 partial，全部失败为 failed。
+Per-email counts derive from tasks instead of drifting accumulators. Persisted email bodies with failed extraction still count as failed tasks. Mixed success/failure yields partial; all failed yields failed.
 
-## 启动与升级
+## Startup and upgrade
 
-在仓库根目录，使用现有 Python 环境和 PostgreSQL：
+From repository root with existing Python/PostgreSQL:
 
 ```powershell
 python backend/manage.py migrate
@@ -31,82 +31,82 @@ python backend/manage.py classify_emails
 python backend/manage.py classify_emails --apply
 ```
 
-HTTP 后端运行后，在独立终端启动：
+After HTTP startup, separately run:
 
 ```powershell
 python backend/manage.py crm_worker --analysis-workers 2 --poll 1
 ```
 
-`--once` 排空当前可领取队列后退出，会实际调用 Gmail 与百炼，不能用于纯只读检查。Worker 要求 `ANALYSIS_PROVIDER=agent`；规则演示仍由页面的既有 rules 入口执行，不作为 Agent 失败回退。此次没有改变现有 provider。
+--once drains currently claimable work before exit and actually calls Gmail/Bailian; it is not read-only inspection. Workers require ANALYSIS_PROVIDER=agent. Rules demonstrations retain explicit page entry points without Agent-failure fallback; existing provider settings are unchanged.
 
-Web 内的旧调度线程及其开关已移除。共享 Worker 从数据库轮转调度所有有效员工；每个工作单元使用独立临时凭证和客户端，执行后撤销凭证，员工无需手工绑定进程。代码不创建操作系统服务，也不在 Web 启动时创建子进程。`sales_worker` 继续只负责已确认的发信/日历动作与跟进提醒。
+Old Web scheduling threads/switches were removed. Shared workers rotate all active employees from the database, creating independent temporary credentials/clients per unit and revoking credentials afterward. Employees need no manual process binding. Code creates neither OS services nor Web-startup subprocesses. sales_worker retains confirmed sending/calendar actions and follow-up reminders only.
 
-## 状态、恢复和兼容
+## State, recovery, compatibility
 
-- queued/pending 数据跨 Web 和 Worker 重启保留。Web 重启时，执行单元若遭遇 HTTP 连接失败，会留下可见失败记录；重新启动服务后由员工明确重试。
-- 邮箱批次租约为 600 秒，阶段事件续期。硬中断遗留的 running 在租约过期后标为 failed，原逐封状态保留；页面重试仅为失败邮件创建新批次，不隐式重试。
-- 公司 Job 保留既定租约、revision 和失败语义；旧结果不能覆盖新上下文。一个公司运行期间的多次更新合并到待办后继。
-- 新 Worker 的最终回报校验 run_id、租约和状态。旧 Agent CLI 的 mailbox-syncs 领取/回报接口保留用于迁移；其回报仍按当前邮箱运行批次匹配，缺少执行者身份的旧协议不要与新 Worker 混用同一邮箱。
-- Agent 可选 `progress` 回调仅传 ID、阶段及受控代码。回调失败向上报告。旧 CLI 未启用回调时仍保持原调用行为，完整逐封读取隔离请使用 crm_worker。
-- Worker 的接管标记、范围内消息发现与逐封任务在同一数据库事务提交；不推进全局 History 游标。数据库或网络失败直接报告。旧 CLI 已支持的游标协议也改为异常向上报告；Worker 接管邮箱后，后端拒绝旧 CLI 修改该邮箱游标，避免双写。
+- Queued/pending work survives Web/worker restarts. HTTP failures during Web restarts leave visible failed units; employees explicitly retry after services recover.
+- Mailbox leases are 600 seconds, renewed by stage events. Hard-interrupted running work becomes failed after expiry, retaining per-email state. Page retries create new batches only for failed emails.
+- Company Jobs retain leases/revisions/failure semantics. Stale results cannot overwrite newer context; updates during execution merge into pending successors.
+- New final reports validate run_id, lease, and state. Legacy mailbox-syncs claim/report APIs remain for migration, matching current mailbox runs; their missing executor identity means they must not share mailboxes concurrently with new workers.
+- Optional Agent progress callbacks pass IDs/stages/controlled codes only and propagate failures. Legacy CLI without callbacks retains behavior; use crm_worker for full read-failure isolation.
+- Worker takeover markers, scoped discovery, and tasks commit together without advancing global History cursors. Database/network errors propagate. Legacy cursor errors also propagate; takeover blocks CLI cursor writes to prevent dual ownership.
 
-## 接口
+## APIs
 
-| 接口 | 行为 |
+| Endpoint | Behavior |
 |---|---|
-| POST `/api/v1/mailboxes/{mailbox_id}/request-sync/` | 必须提供 sync_options，返回 202 和批次；无需等待模型 |
-| GET `/api/v1/mailbox-sync-runs/{run_id}/` | 邮件进度、公司分析进度、逐封安全错误 |
-| POST `/api/v1/mailbox-sync-runs/{run_id}/` | 明确重试 failed/partial 批次，返回新批次 202 |
-| GET `/api/v1/email-reviews/?status=pending&page=1` | 当前员工全部邮箱复核分页 |
-| GET `/api/v1/mailboxes/{mailbox_id}/email-reviews/` | 单邮箱复核分页 |
-| PATCH `/api/v1/email-reviews/{email_id}/` | review_status 为 confirmed_business/confirmed_non_business；携带 If-Match 复核 revision |
+| POST /api/v1/mailboxes/{mailbox_id}/request-sync/ | Requires sync_options; returns 202/batch without waiting for models |
+| GET /api/v1/mailbox-sync-runs/{run_id}/ | Email/profile progress and safe per-email errors |
+| POST /api/v1/mailbox-sync-runs/{run_id}/ | Explicit failed/partial retry; new batch with 202 |
+| GET /api/v1/email-reviews/?status=pending&page=1 | Review pagination across current employee mailboxes |
+| GET /api/v1/mailboxes/{mailbox_id}/email-reviews/ | Single-mailbox review pages |
+| PATCH /api/v1/email-reviews/{email_id}/ | confirmed_business/confirmed_non_business review_status with review revision in If-Match |
 
-复核列表支持 `status=non_business` 查看规则隐藏邮件，`status=all` 查看隐藏、待复核和人工决定。新增 `status=saved` 包含该范围全部已入库邮件（也包含未经人工复核的业务邮件），供 QQ 账号的「查看已同步邮件」入口核对原文；响应中的 `source`、`received_at` 和 `classification` 显示邮件来源、接收时间与分类。查询不修改分类。原始 email_id 在 URL 中应编码；不同员工访问返回同样的 404。所有写入使用 Session/CSRF，不能自报 owner。
+status=non_business shows rule-hidden emails; all includes hidden, pending, and manual decisions. Added saved includes all persisted in-scope emails, including unreviewed business emails, for QQ saved-email reconciliation. source, received_at, classification describe provenance/time/classification without changing it. URL-encode original email_id; other employees receive indistinguishable 404. Writes use Session/CSRF without caller-supplied owner.
 
-## 已统一的规则与持久化边界
+## Unified rules and persistence boundaries
 
-1. `extract-v7` 中 `intent_hint=null` 的入站邮件进入人工复核，包括有实质更新的情况；`null` 不直接等同于非业务，员工可以确认业务或非业务。规则阶段直接跳过的邮件仍在非业务筛选下可纠正。
-2. 人工确认尚未完成 L1 的邮件时创建 `ExtractionRepair`。Worker 从持久正文补抽取，使用原 L1 提示词，跳过已被人工否定的自动邮件过滤。旧抽取和原文保留，新抽取以 `repair_generation` 标记代次，不伪造新的提示词版本。此公司的画像等待 L1 修复；失败在“全部”复核列表显示，再次点击“确认业务”才重试。
-3. 分类、抽取变化沿 `邮件 → Extraction → AnalysisInput → Analysis → Score` 失效。旧结果保留用于追溯，展示与缓存立即排除；仍有业务邮件时自动合并一个公司重算任务，无业务邮件时停止待办。运行中的旧 revision 回报被拒绝。人工变更决定会撤销未完成补抽取，过时模型结果不能写回。
-4. 原文保存到 `StoredMessage.raw`，包括 Gmail 解析出的头、正文及 eligible body；LLM 输出保存到 `submission` 后才调用业务提交接口。已经落库且同提示词版本的终态不重复拉原文、不重复 L1。失败 L1 复用原文，失败 HTTP 提交复用 L1 输出。批量 ORM 查询替代每页逐封 HTTP 查询，仍沿用原业务写入 API。
-5. Gmail 使用冻结 UTC 秒级窗口（`after:since before:until`）；`recent_days` 按 24 小时计算，`max_messages` 指该窗口内最新 N 封，收件箱与已发送合计。普通同步的封数缺省为 50；大于 50 时必须携带 `allow_large_sync=true`，该批准仅适用于本次明确封数。先限量再排除已保存邮件及 completed/failed 缓存，不用更早邮件补足数量，不排空范围外 pending；提示词升级也不在普通同步中重抽已完成邮件。`SyncCheckpoint` 现在只标识 Worker 接管，旧游标字段保留审计，不再驱动扫描。明确重试只处理失败 ID；若分页失败但没有失败 ID，则使用原冻结范围重新选择并跳过已完成邮件。升级前无范围且无明确 ID 的旧批次必须重新选择范围。
-6. L1 只处理新增、缺失或明确重试的邮件。L2 仍从数据库读取该公司完整有效上下文，L3 对受影响公司整体生成新画像，L4 使用既定规则计算；没有把 LLM 改成只看最后一封邮件。人工维护的客户资料、报价、订单等权威记录不会因邮件误判而自动删除或改写。
+1. Inbound extract-v7 intent_hint=null enters review, including substantive updates. Null is not automatically nonbusiness; employees may confirm either. Rule-skipped mail remains correctable under nonbusiness filters.
+2. Confirming business mail without completed L1 creates ExtractionRepair. Workers use persisted text/original L1 prompts, bypassing automatic filters already rejected by human review. Preserve old extraction/text; repair_generation records generations without fabricated prompt versions. Profiles wait for repair. Failures appear in all review results and retry only after another explicit business confirmation.
+3. Classification/extraction changes invalidate Email → Extraction → AnalysisInput → Analysis → Score. Preserve history but immediately exclude stale display/cache. Remaining business mail merges a recalculation Job; no business mail stops pending work. Reject old running revisions. Changed manual decisions revoke unfinished repairs and reject stale model saves.
+4. StoredMessage.raw retains Gmail-parsed headers/body/eligible body. Save LLM output to submission before business APIs. Same-version terminal cached records skip source rereads/L1. Failed L1 reuses text; failed HTTP reuses output. Batch ORM reads replace per-email HTTP reads while retaining original write APIs.
+5. Gmail freezes second-resolution UTC windows (after:since before:until). recent_days means 24-hour periods; max_messages selects latest N across inbox/sent. Ordinary default is 50; larger counts require allow_large_sync=true specific to that count/run. Limit first, then exclude saved/completed/failed cache, without backfilling older mail or draining out-of-scope pending work. Ordinary sync does not re-extract completed mail after prompt upgrades. SyncCheckpoint now marks takeover; old cursor fields remain audit-only. Explicit retries use failed IDs; failed pagination without failed IDs reselects frozen scope and skips completed mail. Legacy batches lacking both scope/IDs require new scope selection.
+6. L1 processes new/missing/explicitly retried mail only. L2 still reads complete valid company context; L3 generates a whole-company profile and L4 follows existing rules. Models were not reduced to the last email only. Email misclassification never automatically deletes/rewrites authoritative profiles, quotes, or orders.
 
-新快照保存精确关系血缘；历史快照只能按其已有 `member_dedupe_keys` 识别依赖，不能倒填当时未知的抽取代次。分析快照唯一键扩展到公司、input_version 和 revision，支持分类撤销后恢复相同内容并保留各代记录。升级使用 `crm.0006_durable_lineage`，再执行历史分类预览及应用。已有人工决定不会被覆盖。
+New snapshots retain exact relational lineage. Historical snapshots infer dependencies only from existing member_dedupe_keys, never backfilled unknown extraction generations. Snapshot uniqueness spans company/input_version/revision, permitting restored identical content after classification revocation with separate history. Apply crm.0006_durable_lineage, preview/apply historical classification, preserving manual decisions.
 
-Gmail 同步只查询选定范围内当前收件箱及已发送邮件；Gmail 中删除邮件或更改标签不会自动删除本地业务档案。原文缓存不等于附件二进制归档。已发现但尚未开始的任务仅在本次范围内处理；已经失败的任务需要明确重试。恢复和增量依赖 Worker 运行，Web 重启不会自动启动 Worker。
+Gmail reads current inbox/sent within selected scope. Gmail deletion/label changes do not delete local business archives. Source caching is not binary attachment archival. Discovered unstarted work runs only within current scope; failed work needs explicit retries. Recovery/increments require workers; Web restart never starts them automatically.
 
-## 验证边界
+## Validation boundaries
 
-2026-09-13 血缘与持久化补强验证：本机完整 Django 测试 96 项通过（含原有 3 项本地演示测试）；Agent 离线测试 120 项通过。浏览器处理页检查覆盖补抽取失败说明、版本化确认、明确重试、转义和移动布局；JS 语法、迁移一致性及接口 Schema 回归通过。后端 95 个 Python 文件注释结构检查通过，变更检查 0 错误、0 待复核；Agent 修改文件单独通过检查，并人工核对行为与说明。测试数据库正常销毁。
+2026-09-13 lineage/persistence hardening: all 96 local Django tests passed, including 3 existing demo tests; 120 offline Agent tests passed. Browser checks covered repair-failure explanations, versioned confirmation, explicit retry, escaping, mobile layouts. JS syntax, migration consistency, and schema regressions passed. Documentation structure passed for 95 backend Python files; change checks had 0 errors/0 review items. Modified Agent files passed separately with manual semantics review. Test databases were destroyed normally.
 
-本机已应用 `crm.0006_durable_lineage`，历史分类预览、应用及再次预览均为 0 项变化；Web 重启后页面 HTTP 200、数据库就绪检查正常。本轮尚未提交 Git，也未启动真实 Gmail/LLM 队列消费；未验证真实模型效果、实际 Gmail 分页 token 寿命或生产规模吞吐。旧历史快照没有伪造精确来源版本。
+Local crm.0006_durable_lineage was applied; historical preview/apply/repreview each found 0 changes. Restarted Web returned HTTP 200/readiness ok. This update remained uncommitted and started no real Gmail/LLM queue consumption. Real model quality, Gmail pagination-token lifespan, and production throughput were unverified; historical snapshots gained no fabricated precise source versions.
 
-测试使用隔离 PostgreSQL 数据库和模拟 Gmail/模型，覆盖复核权限、版本冲突、人工优先、批次合并、逐封失败、租约过期、公司互斥及完整 Worker 回调持久化。不将模拟外部服务成功解释为真实授权、模型质量或生产恢复已经验收。提交状态与本轮实际检查结果以交付说明为准。
+Tests use isolated PostgreSQL and mocked Gmail/models, covering permissions, conflicts, manual precedence, batch merging, per-email failures, expiry, company exclusion, and worker callbacks/persistence. Mock success is not real authorization/model/recovery acceptance. Delivery notes determine actual checks/commit state.
 
-2026-09-13 初次实现检查（下列为历史验证记录，后续发布检查见 [结果逐步展示](live-results.md)）：
+Initial implementation checks on 2026-09-13 (historical; later release checks in [live results](live-results.md)):
 
-- 已合入远程 `0a4667e` 文档提交，当时功能变更保留在工作区，尚未提交；本次发布另合入 `19abc8b`。
-- Django 隔离 PostgreSQL 测试 84 项、Agent 离线测试 141 项通过；浏览器模拟接口验证复核、版本头、转义、失败重试及移动端布局通过。
-- Schema 生成校验、迁移一致性、Django 系统检查、JS 语法检查通过；Python 注释结构检查覆盖后端 90 个文件及改动的两个 Agent 文件，后端差分检查 0 错误、0 待复核，并人工核对相关语义。
-- 实际管理入口 `crm_worker --help` 已验证；没有启动真实队列消费，也没有进行真实 Gmail/百炼联调或生产压力、进程崩溃验收。
-- 本机已应用 `crm.0005_persistent_processing`；历史分类更新 21 封，再次预览 0 项差异。邮件原文及人工决定保留，21 是元数据变化数，不等于新增隐藏邮件数。
-- 当前 Python 环境未安装 Ruff，未完成该项静态检查；未改动检查器，也未声称验证 Git 提交原子性。
+- Merged remote documentation commit 0a4667e while functionality remained uncommitted; this release additionally merged 19abc8b.
+- 84 isolated PostgreSQL Django/141 offline Agent tests passed; mocked browser APIs verified review, version headers, escaping, retries, mobile layouts.
+- Schema, migration, Django, JS checks passed. Documentation covered 90 backend/two changed Agent files, with 0 errors/0 review items and manual review.
+- Actual crm_worker --help was verified without real queue consumption, Gmail/Bailian integration, production load, or crash acceptance.
+- Applied crm.0005_persistent_processing locally; historical classification updated 21 emails, then preview found 0 differences. Original text/manual decisions remained. 21 counts metadata changes, not newly hidden emails.
+- Ruff was absent, so that static check was not completed. Checkers were unchanged and Git atomicity was not claimed.
 
-## Gmail 范围请求示例
+## Gmail scope examples
 
 ```json
 {"sync_options":{"recent_days":7,"max_messages":50}}
 ```
 
-示例选择最近 7 天且最多 50 封。天数和封数至少填写一项，两项同时提供时取交集；仅填写天数时封数默认 50。超过 50 封会弹出警告，说明本次数量、长时间占用进程及分析成本风险；取消保留表单且不提交，批准后才发送 `allow_large_sync=true`。后端与 Worker 独立校验，缺少批准的超量请求直接拒绝，不能通过跳过前端或旧队列绕过。批准不跨新选择复用；同一失败批次的明确重试保留原批准和封数，不能扩大范围。Google 授权回调只保存连接，不排队；返回页面后由范围弹窗收集选择，取消不会同步。刷新收件箱也要求选择范围。
+This selects the last 7 days and at most 50 messages. Supply days or count; both intersect. Day-only requests default to 50. Above 50, a warning explains count, long worker occupancy, and analysis cost. Cancellation preserves the form without submission; approval sends allow_large_sync=true. Backend/workers independently reject unapproved oversized requests, preventing UI/legacy-queue bypass. Approval does not transfer to new selections; explicit retry of the same failed batch retains count/approval without expanding scope. OAuth callbacks save connections only, not batches; returned pages collect scope, and cancellation performs no sync. Inbox refresh also requests scope.
 
-范围列表按 [Gmail 官方最新优先分页说明](https://developers.google.com/workspace/gmail/api/guides/list-messages) 读取，UTC 时间边界使用 [Gmail 秒级查询条件](https://developers.google.com/workspace/gmail/api/guides/filtering)。正文读取和 L1 参数保持既定设置。
+Read scope using [Gmail newest-first pagination](https://developers.google.com/workspace/gmail/api/guides/list-messages) and [second-resolution filtering](https://developers.google.com/workspace/gmail/api/guides/filtering). Body-read/L1 parameters remain unchanged.
 
-超量请求示例（必须先获用户明确批准）：
+Oversized example requiring prior explicit approval:
 
 ```json
 {"sync_options":{"recent_days":7,"max_messages":100,"allow_large_sync":true}}
 ```
 
-批准不允许无限量同步，必须填写具体封数。旧的纯天数批次执行时也最多选 50 封；旧的超量且无批准批次会被拒绝。50 封是邮件数量上限，不是每封外部请求的耗时保证；分页大小、模型参数和失败重试语义不变。
+Approval never permits unlimited synchronization; a concrete count is mandatory. Legacy day-only batches still cap at 50; legacy oversized unapproved batches fail. The cap limits email count, not each external call's latency. Page size, model parameters, and failure-retry semantics remain unchanged.

@@ -1,12 +1,12 @@
-"""职责：校验公共新闻线索中的单组精确金额与证据一致性。
-实现：使用非负十进制字符串；合并更新前后值校验金额元数据及原文包含关系，不生成线索。
-关联：WorldNewsSerializer 调用金额字段与校验；不导入数据库模型、CRM 或 Agent。
-目录：
-- NewsAmountField：仅接收契约中的金额字符串。
-- NewsAmountField.to_internal_value：拒绝浮点、指数表示和负数。
-- validate_news_signal：核对完整记录中的金额组合与证据。
-变量索引：
-- logger：仅记录校验位置与字段，不记录证据正文。
+"""Responsibility: Validate consistency between one exact public-news amount and its evidence.
+Implementation: Use nonnegative decimal strings; merge existing/update values to validate monetary metadata and source-excerpt inclusion without generating leads.
+Relationships: WorldNewsSerializer uses the amount field and validation; no database-model, CRM, or Agent imports.
+Directory:
+- NewsAmountField: Accept only contract-defined amount strings.
+- NewsAmountField.to_internal_value: Reject floating-point values, exponential notation, and negative values.
+- validate_news_signal: Check monetary-field combinations and evidence in complete records.
+Variable index:
+- logger: Log validation location and field only, never evidence bodies.
 """
 
 import logging
@@ -17,15 +17,15 @@ from rest_framework import serializers
 logger = logging.getLogger("salesmate.news_signals")
 
 
-# 功能：为新闻来源金额保持精确的十进制字符串输入。
-# 逻辑：继承 DRF 精度与可空校验，额外拒绝隐式数值和指数转换。
-# 约束：范围由序列化器明确指定，超限报错，不截断或四舍五入输入。
+# Function: Preserve exact decimal-string inputs for news source amounts.
+# Logic: Inherit DRF precision/null validation and additionally reject implicit numeric and exponent conversions.
+# Constraints: The serializer explicitly specifies bounds; reject overflow without truncating or rounding inputs.
 class NewsAmountField(serializers.DecimalField):
-    # 功能：验证金额的传输类型和普通十进制语法。
-    # 输入：`data` 为非 null 原始 JSON 字段；null 由父类可空校验处理。
-    # 输出：精确 Decimal；类型或范围错误抛 ValidationError。
-    # 逻辑：先验证非负十进制字符串，再交由父类核对总位数和小数位数。
-    # 约束：不接受 float、整数 JSON、负数、空白、NaN 或科学计数法；日志不含数值。
+    # Function: Validate amount transport type and ordinary decimal syntax.
+    # Inputs: `data`: nonnull raw JSON field; parent nullable validation handles null.
+    # Outputs: Exact Decimal; type/range errors raise ValidationError.
+    # Logic: Validate a nonnegative decimal string, then delegate total/fractional digit checks to the parent.
+    # Constraints: Reject floats, integer JSON, negatives, whitespace, NaN, and scientific notation; logs omit values.
     def to_internal_value(self, data):
         if not isinstance(data, str) or re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", data) is None:
             logger.warning("news_signal_rejected field=amount reason=decimal_string_required")
@@ -33,11 +33,11 @@ class NewsAmountField(serializers.DecimalField):
         return super().to_internal_value(data)
 
 
-# 功能：验证公共新闻的金额及证据约束。
-# 输入：`serializer` 含可选旧实例，`attrs` 为字段级校验后的创建或部分更新数据。
-# 输出：原 attrs；组合矛盾时抛字段级 ValidationError。
-# 逻辑：合并现有记录与补丁；有金额时四个元数据字段必须含非空白内容，无金额时必须全空；金额证据逐字包含于 evidence。
-# 约束：不访问来源、不推断缺失信息、不关联 CRM；包含关系只能证明内部一致，不能证明外部新闻真实性。
+# Function: Validate public-news monetary and evidence constraints.
+# Inputs: `serializer`: optional existing instance; `attrs`: create/partial-update data after field validation.
+# Outputs: Original attrs; contradictory combinations raise field-level ValidationError.
+# Logic: Merge existing records and patches. With an amount, all four metadata fields require nonblank content; without one, all must be empty. Amount evidence must appear verbatim in evidence.
+# Constraints: No source access, missing-information inference, or CRM links; excerpt inclusion proves internal consistency only, not external news authenticity.
 def validate_news_signal(serializer, attrs):
     names = ("amount", "currency", "amount_type", "amount_scope", "amount_evidence", "evidence")
     record = {name: attrs.get(name, getattr(serializer.instance, name, None if name == "amount" else "")) for name in names}

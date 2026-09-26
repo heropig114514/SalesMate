@@ -1,11 +1,11 @@
-"""职责：建立销售关系记录和数据库约束。
-实现：Django 声明式建表和字段变更，依赖原 crm 公司及账号表。
-关联：apps.sales.models 为当前定义；不修改既有公司和邮件数据。
-目录：
-- Migration：销售数据库迁移。
-变量索引：
-- Migration.dependencies：前置迁移及可替换用户模型依赖。
-- Migration.operations：新增表、字段及唯一性、金额约束操作。
+"""Responsibility: Create sales relation records and database constraints.
+Implementation: Use declarative Django table/field operations, depending on existing CRM company and account tables.
+Relationships: apps.sales.models holds current definitions; preserve existing company and email data.
+Directory:
+- Migration: Sales database migration.
+Variable index:
+- Migration.dependencies: Prerequisite migrations and swappable user-model dependency.
+- Migration.operations: New tables/fields and uniqueness/amount constraint operations.
 """
 
 import django.db.models.deletion
@@ -14,9 +14,9 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：以声明式操作更新销售数据库。
-# 逻辑：迁移图保证依赖顺序，操作使用 Django 标准回滚定义。
-# 约束：回滚建表会删除该版本新增业务数据；上线后须按备份流程处理。
+# Function: Update the sales database through declarative operations.
+# Logic: The migration graph enforces dependency order; operations use standard Django reversal definitions.
+# Constraints: Reversing table creation deletes business data introduced by this version; follow backup procedures after deployment.
 class Migration(migrations.Migration):
     dependencies = [
         ("sales", "0001_initial"),

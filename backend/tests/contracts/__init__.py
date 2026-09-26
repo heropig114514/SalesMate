@@ -1,10 +1,10 @@
-"""职责：声明 tests.contracts 为 Python 包。
-实现：包初始化不执行额外逻辑，不声明函数、类或配置项。
-关联：供 Python 导入系统及 Django 应用、配置、迁移或测试模块发现使用；具体实现位于同包子模块。
+"""Responsibility: Declare `tests.contracts` as a Python package.
+Implementation: Package initialization performs no additional logic and declares no functions, classes, or configuration items.
+Relationships: Used by the Python import system and Django discovery of apps, configuration, migrations, and test modules; implementations reside in child modules of this package.
 
-目录：
-- 无
+Directory:
+- None
 
-变量索引：
-- 无
+Variable index:
+- None
 """

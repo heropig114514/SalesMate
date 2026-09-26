@@ -1,21 +1,21 @@
-"""职责：提供聊天事务、员工隔离、幂等保存与显式恢复。
-实现：实验模式跨账号读取和续写会话，续写仍使用原会话归属；按员工锁串行化工作空间任务；旧公司会话仅保留历史，回报只验结构，终态结果精确比较。
-关联：chat.views/Worker 调用，复用 sales Conversation/Message 与 crm 认证。
-目录：
-- lock_owner：取得既有员工锁。
-- conversation_for：读取员工自有通用或客户会话。
-- request_for：核验请求及全部绑定。
-- require_workspace：拒绝在旧公司会话中新建或继续执行聊天任务。
-- submit：事务内保存问题与待回答任务。
-- retry：为失败任务创建唯一新尝试。
-- retire_legacy_requests：按员工锁结束旧公司活动任务，保留历史。
-- claim：原子领取并冻结历史。
-- context_for：保存并返回一次性证据快照。
-- save_answer：校验结构后幂等写入回答和引用，未登记来源只存元数据。
-- request_data：输出已授权请求的状态和引用。
-- interrupt：显式终止中断请求。
-变量索引：
-- logger：仅记录任务标识、员工与状态的日志。
+"""Responsibility: Provide chat transactions, employee isolation, idempotent saving, and explicit recovery.
+Implementation: Experiment mode reads across accounts and continues conversations while continuation retains original conversation ownership; employee locks serialize workspace jobs; legacy company conversations retain only history, reports validate structure only, and terminal results compare exactly.
+Relationships: Called by ``chat.views`` and Worker; reuses sales ``Conversation`` and ``Message`` and crm authentication.
+Directory:
+- lock_owner: Acquire existing employee lock.
+- conversation_for: Read employee-owned general or customer conversation.
+- request_for: Validate request and all bindings.
+- require_workspace: Reject creating or continuing chat task in a legacy company conversation.
+- submit: Save question and awaiting-answer task in transaction.
+- retry: Create unique new attempt for a failed task.
+- retire_legacy_requests: End legacy company active tasks under employee lock while retaining history.
+- claim: Atomically claim and freeze history.
+- context_for: Persist and return one-time evidence snapshot.
+- save_answer: Idempotently write answer and citations after structural validation; unregistered sources retain metadata only.
+- request_data: Render status and citations for an authorized request.
+- interrupt: Explicitly terminate an interrupted request.
+Variable index:
+- logger: Logs only task identifier, employee, and status.
 """
 
 from common.laboratory import enabled, owner_scope
@@ -37,20 +37,20 @@ from .models import AnswerRequest, Citation
 logger = logging.getLogger("salesmate.chat")
 
 
-# 功能：取得与现有业务服务一致的员工锁。
-# 输入：`owner` 已认证用户。
-# 输出：无，当前事务持有用户行锁。
-# 逻辑：所有聊天写入先锁员工，再锁请求和公司，避免重复领取或提交。
-# 约束：必须在事务内调用；不把锁保持到模型执行阶段。
+# Function: Acquire the employee lock used by existing business services.
+# Inputs: Authenticated user ``owner``.
+# Outputs: None; current transaction holds the user row lock.
+# Logic: Every chat write locks employee before request and company, preventing duplicate claim or submission.
+# Constraints: Must run in a transaction and does not hold lock through model-execution phase.
 def lock_owner(owner):
     get_user_model().objects.select_for_update().get(pk=owner.pk, is_active=True)
 
 
-# 功能：读取可用于通用或客户问答的会话。
-# 输入：`owner` 当前员工，`conversation_id` UUID。
-# 输出：Conversation，其公司可为空；越权返回 404。
-# 逻辑：正式模式核验员工与公司归属；实验模式开放跨账号会话。
-# 约束：归档公司或会话不接受新任务和上下文读取。
+# Function: Read a conversation usable for general or customer question answering.
+# Inputs: Current employee ``owner`` and UUID ``conversation_id``.
+# Outputs: ``Conversation`` with nullable company; unauthorized access returns 404.
+# Logic: Production mode validates employee and company ownership; experiment mode opens cross-account conversations.
+# Constraints: Archived company or conversation accepts no new task or context read.
 def conversation_for(owner, conversation_id):
     conversation = (
         Conversation.objects.select_related("company")
@@ -68,11 +68,11 @@ def conversation_for(owner, conversation_id):
     return conversation
 
 
-# 功能：验证回答请求的全链路归属。
-# 输入：`owner` 当前员工，`request_id` UUID，`lock` 是否取得请求行锁。
-# 输出：带会话和消息的 AnswerRequest；越权或绑定异常返回 404。
-# 逻辑：检查消息与请求原归属和会话绑定；正式模式再限制调用者归属，实验模式允许跨账号。
-# 约束：锁定查询只锁请求表，避免可空助手关联导致数据库锁错误。
+# Function: Validate end-to-end ownership of an answer request.
+# Inputs: Current employee ``owner``, UUID ``request_id``, and whether ``lock`` acquires request row lock.
+# Outputs: ``AnswerRequest`` with conversation and message; unauthorized access or invalid binding returns 404.
+# Logic: Check original ownership and conversation binding of message and request; production mode additionally restricts caller ownership, while experiment mode permits cross-account access.
+# Constraints: Locked query locks only request table, avoiding database lock error from nullable assistant relation.
 def request_for(owner, request_id, lock=False):
     query = (
         AnswerRequest.objects.select_related(
@@ -104,21 +104,21 @@ def request_for(owner, request_id, lock=False):
     return request
 
 
-# 功能：确保执行路径只使用无预选公司的工作空间会话。
-# 输入：`conversation` 已通过员工权限检查的会话。
-# 输出：无；旧公司绑定会话抛 InvalidState。
-# 逻辑：保留历史读取能力，但要求用户在工作空间重新明确提交问题。
-# 约束：不把依赖旧客户语境的问题静默改写为全工作空间问题。
+# Function: Ensure execution path uses only workspace conversation without preselected company.
+# Inputs: ``conversation`` that passed employee permission checks.
+# Outputs: None; legacy company-bound conversation raises ``InvalidState``.
+# Logic: Retains historical read capability but requires user to explicitly resubmit question in workspace.
+# Constraints: Does not silently rewrite a question depending on legacy customer context into a whole-workspace question.
 def require_workspace(conversation):
     if conversation.company_id is not None:
         raise InvalidState("客户绑定聊天已停用，请在工作空间新建会话并重新提问。")
 
 
-# 功能：创建一次用户提问及回答请求。
-# 输入：`owner` 认证用户，`data` 含 conversation_id/content/client_key。
-# 输出：AnswerRequest 与是否首次创建的布尔值。
-# 逻辑：仅工作空间接受新任务；实验模式先解析原归属再只锁该账号并重读会话，客户端幂等键先于活动任务检查，同内容重传返回原请求。
-# 约束：普通历史消息不会被自动升级为模型请求；活动会话拒绝第二个新问题。
+# Function: Create one user question and answer request.
+# Inputs: Authenticated user ``owner`` and ``data`` containing conversation_id, content, and client_key.
+# Outputs: ``AnswerRequest`` and boolean indicating whether it was first created.
+# Logic: Only workspace accepts new tasks; experiment mode resolves original ownership then locks only that account and rereads conversation, client idempotency key precedes active-task check, and same-content retransmission returns original request.
+# Constraints: Ordinary historical messages are not automatically promoted to model requests; an active conversation rejects a second new question.
 @transaction.atomic
 def submit(owner, data):
     contracts.fields(data, {"conversation_id", "content", "client_key"})
@@ -165,11 +165,11 @@ def submit(owner, data):
     return request, True
 
 
-# 功能：为失败回答创建可追踪的新尝试。
-# 输入：`owner` 当前员工，`request_id` 原请求 UUID。
-# 输出：新请求与首次创建标志；重复点击返回原后继。
-# 逻辑：仅工作空间允许重试；实验模式先解析并锁定原请求归属，拒绝活动任务或已有后续问题。
-# 约束：不自动重试，不复活原 request_id，不覆盖历史回答。
+# Function: Create a traceable new attempt for a failed answer.
+# Inputs: Current employee ``owner`` and original-request UUID ``request_id``.
+# Outputs: New request and first-creation flag; repeated click returns original successor.
+# Logic: Only workspace permits retry; experiment mode resolves and locks original request ownership first and rejects active task or existing successor question.
+# Constraints: Does not retry automatically, revive original request_id, or overwrite historical answer.
 @transaction.atomic
 def retry(owner, request_id):
     if enabled():
@@ -210,11 +210,11 @@ def retry(owner, request_id):
     return request, True
 
 
-# 功能：结束工作空间 Agent 无法继续执行的旧公司聊天任务。
-# 输入：`owner` 可选已认证员工；省略时由 Worker 启动阶段检查所有员工。
-# 输出：实际结束的请求数量，并记录不含正文的退役日志。
-# 逻辑：按员工逐个事务锁定，再仅更新公司绑定的 pending/processing，保留消息、证据和终态历史。
-# 约束：不重派、不改写原问题；启动前必须停止旧 Worker，普通工作空间 processing 不受影响。
+# Function: End legacy company chat tasks that workspace Agent cannot continue to execute.
+# Inputs: Optional authenticated employee ``owner``; when omitted Worker startup checks all employees.
+# Outputs: Number of requests actually ended and retirement log without content.
+# Logic: Lock each employee transactionally and update only company-bound pending or processing requests, retaining messages, evidence, and terminal history.
+# Constraints: Does not redispatch or rewrite original question; old Worker must stop before startup, while ordinary workspace processing is unaffected.
 def retire_legacy_requests(owner=None):
     candidates = AnswerRequest.objects.filter(
         status__in=["pending", "processing"]
@@ -241,11 +241,11 @@ def retire_legacy_requests(owner=None):
     return total
 
 
-# 功能：原子领取当前员工的一条任务并冻结历史。
-# 输入：`owner` Agent 服务令牌绑定员工。
-# 输出：工作空间五字段请求或 None，不输出 company_id。
-# 逻辑：按所选账号领取 pending 请求并冻结该请求原归属的会话历史；不跨账号混领队列。
-# 约束：旧公司及撤销/归档请求不阻挡后续任务，不隐式重派；模型不在事务内调用。
+# Function: Atomically claim one task for current employee and freeze history.
+# Inputs: Employee ``owner`` bound by Agent service token.
+# Outputs: Five-field workspace request or ``None``; does not output company_id.
+# Logic: Claim pending request for selected account and freeze conversation history under that request's original ownership; does not mix queues across accounts.
+# Constraints: Legacy company and revoked or archived requests do not block later tasks and are not redispatched implicitly; model is not called in transaction.
 @transaction.atomic
 def claim(owner):
     lock_owner(owner)
@@ -302,11 +302,11 @@ def claim(owner):
     return None
 
 
-# 功能：返回请求绑定的稳定证据。
-# 输入：`owner` 当前 Agent 员工，`request_id` 请求 UUID，`scope` internal/external。
-# 输出：首次生成并持久化的 internal AnswerContext。
-# 逻辑：只对 processing 工作空间请求冻结本人知识，后续返回同一快照；客户资料由只读工具查询。
-# 约束：external 尚未启用时明确拒绝；不吞数据库错误或伪装空资料。
+# Function: Return stable evidence bound to a request.
+# Inputs: ``owner`` is the current Agent employee, ``request_id`` is a request UUID, and ``scope`` is internal or external.
+# Outputs: First-generated and persisted internal ``AnswerContext``.
+# Logic: Freeze caller's knowledge only for processing workspace request and return same snapshot subsequently; read-only tools query customer data.
+# Constraints: Explicitly rejects external while unavailable and does not swallow database errors or fabricate empty information.
 @transaction.atomic
 def context_for(owner, request_id, scope):
     if scope not in ("internal", "external"):
@@ -330,11 +330,11 @@ def context_for(owner, request_id, scope):
     return request.context_snapshot
 
 
-# 功能：保存 Agent 的一次最终结果。
-# 输入：`owner` 令牌绑定员工，`data` 严格回报对象。
-# 输出：request_id/saved/duplicate/assistant_message_id。
-# 逻辑：回报校验 Schema 并对终态精确去重；实验模式可跨账号回报，助手消息仍归属原请求；引用登记后附正文，否则只存元数据。
-# 约束：不根据来源标识查询其他记录，不判断正文含义或版本绑定；权限、状态和幂等仍强制，失败不创建助手消息。
+# Function: Save one final Agent result.
+# Inputs: Token-bound employee ``owner`` and strict report object ``data``.
+# Outputs: request_id, saved, duplicate, and assistant_message_id.
+# Logic: Validate report Schema and deduplicate terminal states exactly; experiment mode may report across accounts while assistant message retains original request ownership; citations attach content after registration or store metadata only.
+# Constraints: Does not query other records from source identifiers or decide content meaning or version binding; permission, state, and idempotency remain enforced and failures create no assistant message.
 @transaction.atomic
 def save_answer(owner, data):
     result = contracts.report(data)
@@ -372,7 +372,7 @@ def save_answer(owner, data):
             if key in snapshot_items:
                 cited.append(snapshot_items[key])
             else:
-                # 未登记来源是 Agent 声明的元数据，不赋予资料读取权，也不伪造证据正文。
+                # An unregistered source is Agent-declared metadata; it grants no information-read permission and does not fabricate evidence content.
                 cited.append({**citation, "content": ""})
                 metadata_only += 1
         if result["status"] == "completed":
@@ -428,11 +428,11 @@ def save_answer(owner, data):
     }
 
 
-# 功能：投影已授权请求的浏览器状态。
-# 输入：`request` 已由权限服务校验的 AnswerRequest。
-# 输出：状态、时间、助手消息标识、有序引用与 Agent 错误文本。
-# 逻辑：失败不返回助手正文；引用内容来自本请求上下文或工具记录，未登记来源的 content 为空。
-# 约束：不输出内部历史、完整快照、工具历史或凭证；Agent error 原样返回，其脱敏由 Agent 负责。
+# Function: Project browser state for an authorized request.
+# Inputs: ``request`` is a request object validated by the permission service.
+# Outputs: Status, times, assistant-message identifier, ordered citations, and Agent error text.
+# Logic: Failure returns no assistant content; citation content comes from this request context or tool records and unregistered source content is empty.
+# Constraints: Does not output internal history, complete snapshot, tool history, or credentials; Agent error returns unchanged and Agent owns its redaction.
 def request_data(request):
     return {
         "request_id": str(request.pk),
@@ -455,11 +455,11 @@ def request_data(request):
     }
 
 
-# 功能：人工确认后终止中断任务。
-# 输入：`owner` 指定员工，`request_id` 明确任务 UUID。
-# 输出：已失败请求。
-# 逻辑：正式模式限定所选员工，实验模式允许明确指定其他账号请求；终态不变，processing 变为 failed，旧 Agent 不得再写结果。
-# 约束：只能由管理命令在维护者确认中断后调用，不隐式回队或重新调用模型。
+# Function: Terminate interrupted task after human confirmation.
+# Inputs: Specified employee ``owner`` and explicit task UUID ``request_id``.
+# Outputs: Failed request.
+# Logic: Production mode restricts selected employee while experiment mode permits explicitly selected other-account request; terminal state stays unchanged, processing becomes failed, and old Agent cannot write results again.
+# Constraints: Callable only by management command after maintainer confirms interruption; does not implicitly requeue or call model again.
 @transaction.atomic
 def interrupt(owner, request_id):
     lock_owner(owner)

@@ -1,19 +1,19 @@
-"""职责：清空当前账号内部数据，保留账号、密码及认证身份。
-实现：显式归属规则生成删除集合；延迟外键约束保护跨账号引用；事务提交后清理文件和会话。
-关联：AccountReset、ResetView、账号独占锁；模型列表覆盖 accounts/crm/sales/chat/agent_tools/vectors。
-目录：
-- reset_error：构造带请求 ID 的标准错误响应。
-- scoped_records：生成每个业务模型的账号限定查询。
-- clear_sessions：清理当前账号全部数据库会话的业务缓存。
-- clean_files：删除已登记的私有附件。
-- reset_account：执行或继续一次幂等清理。
-- ResetView：当前账号的清理入口。
-- ResetView.post：执行清理并返回版本及浏览器清理指示。
-变量索引：
-- logger：阶段、数量与安全错误日志。
-- BUSINESS_APPS：参与重置的业务应用。
-- INDIRECT_OWNERS：不直接声明 owner 的模型归属路径。
-- AUTH_KEYS：必须保留的 Django 登录会话字段。
+"""Responsibility: Clear the current account's internal data while retaining account, password, and authenticated identity.
+Implementation: Explicit ownership rules build the deletion set, including graph versions, evidence, dependent join tables, and capture events created during cleanup; deferred foreign-key constraints protect cross-account references; files and sessions are cleaned after commit.
+Relationships: ``AccountReset``, ``ResetView``, and the account exclusive lock; covers accounts, crm, sales, chat, agent_tools, vectors, and knowledge_graph.
+Directory:
+- reset_error: Construct a standard error response with a request ID.
+- scoped_records: Build an account-scoped query for every business model.
+- clear_sessions: Clear business cache from all database sessions for the current account.
+- clean_files: Delete registered private attachments.
+- reset_account: Perform or continue an idempotent cleanup.
+- ResetView: Current-account cleanup entry point.
+- ResetView.post: Execute cleanup and return version and browser-cleanup instructions.
+Variable index:
+- logger: Stage, count, and safe-error logger.
+- BUSINESS_APPS: Business applications participating in reset.
+- INDIRECT_OWNERS: Ownership paths for models that do not declare ``owner`` directly.
+- AUTH_KEYS: Django login-session fields that must be retained.
 """
 import logging
 from pathlib import Path
@@ -36,7 +36,7 @@ from .reset_models import AccountReset
 from .reset_locks import account_lock, ResetBusy
 
 logger = logging.getLogger("salesmate.account_reset")
-BUSINESS_APPS = {"accounts", "crm", "sales", "chat", "agent_tools", "vectors"}
+BUSINESS_APPS = {"accounts", "crm", "sales", "chat", "agent_tools", "vectors", "knowledge_graph"}
 INDIRECT_OWNERS = {
     "crm.GmailCredential": "mailbox__owner", "crm.QQCredential": "mailbox__owner",
     "crm.QQSyncCheckpoint": "mailbox__owner", "crm.Contact": "company__owner",
@@ -49,24 +49,25 @@ INDIRECT_OWNERS = {
     "crm.SnapshotInvalidation": "snapshot__company__owner",
     "crm.ExtractionRepair": "email__mailbox__owner",
     "chat.Citation": "request__owner", "chat.ToolRead": "request__owner",
+    "knowledge_graph.Support": "fact__owner", "knowledge_graph.Change": "owner_id",
 }
 AUTH_KEYS = {SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY}
 
 
-# 功能：构造统一协议的账号清理错误。
-# 输入：`request` 为当前请求，`code` 为错误码，`detail` 为安全说明，`status` 为 HTTP 状态。
-# 输出：包含 error 和 request_id 的 Response。
-# 逻辑：只采用服务端已生成的请求 ID，便于关联清理阶段日志。
-# 约束：不输出数据库、文件或凭证正文。
+# Function: Construct an account-cleanup error using the standard contract.
+# Inputs: ``request`` is the current request, ``code`` is the error code, ``detail`` is safe detail, and ``status`` is the HTTP status.
+# Outputs: ``Response`` containing ``error`` and ``request_id``.
+# Logic: Use only the server-generated request ID to correlate cleanup-stage logs.
+# Constraints: Does not emit database, file, or credential content.
 def reset_error(request, code, detail, status):
     return Response({"error": {"code": code, "detail": detail}, "request_id": getattr(request, "request_id", None)}, status=status)
 
 
-# 功能：枚举明确归属当前账号的业务记录。
-# 输入：`owner` 为已认证账号。
-# 输出：模型及限定 QuerySet 列表；新模型缺少归属规则时抛 ValueError。
-# 逻辑：直接 owner 优先，子表使用显式路径；成员、授权和依赖通知随账号或其团队解除。
-# 约束：不沿可见权限扩展业务所有权，不选择 User、认证组或重置协调状态。
+# Function: Enumerate business records explicitly owned by the current account.
+# Inputs: ``owner`` is the authenticated account.
+# Outputs: A list of models and scoped QuerySets; a new model without an ownership rule raises ``ValueError``.
+# Logic: Prefer direct owner, use explicit paths for child tables, filter graph events by scalar ``owner_id``, explicitly include dependent join tables, and remove memberships and grants in their original scopes.
+# Constraints: Does not extend business ownership through visible permissions or select User, auth groups, or reset-coordination state.
 def scoped_records(owner):
     selections = []
     for model in apps.get_models():
@@ -76,7 +77,7 @@ def scoped_records(owner):
         path = "owner" if "owner" in fields else INDIRECT_OWNERS.get(model._meta.label)
         if path is None:
             raise ValueError(f"Missing reset ownership: {model._meta.label}")
-        scope = Q(**{path: owner})
+        scope = Q(**{path: owner.pk if path == "owner_id" else owner})
         if model._meta.label == "sales.Membership":
             scope |= Q(user=owner) | Q(team__owner=owner)
         if model._meta.label == "sales.CompanyGrant":
@@ -84,14 +85,16 @@ def scoped_records(owner):
         if model._meta.label == "sales.Notification":
             scope |= Q(follow_up__owner=owner)
         selections.append((model, model.objects.filter(scope)))
+    graph_inputs = apps.get_model("knowledge_graph", "Derivation").inputs.through
+    selections.append((graph_inputs, graph_inputs.objects.filter(derivation__owner=owner)))
     return selections
 
 
-# 功能：删除账号各个数据库会话中的业务缓存和未完成 OAuth 状态。
-# 输入：`owner`、`generation`；`current` 为发起操作的 Django session。
-# 输出：无；持久会话和当前请求会话只保留认证键及新版本。
-# 逻辑：仅解码未过期会话以核对账号；不调用全局 cache.clear 或删除其他账号会话。
-# 约束：账号与密码哈希不变；旧页面仍需版本头和广播处理内存状态。
+# Function: Remove business cache and unfinished OAuth state from the account's database sessions.
+# Inputs: ``owner`` and ``generation``; ``current`` is the Django session that initiated the operation.
+# Outputs: None; persistent and current-request sessions retain only authentication keys and the new version.
+# Logic: Decode only unexpired sessions to identify the account; do not call global ``cache.clear`` or delete sessions for other accounts.
+# Constraints: Account and password hash remain unchanged; stale pages still need version headers and broadcast handling for in-memory state.
 def clear_sessions(owner, generation, current):
     for record in Session.objects.filter(expire_date__gt=timezone.now()).iterator():
         payload = record.get_decoded()
@@ -107,11 +110,11 @@ def clear_sessions(owner, generation, current):
     current["account_data_generation"] = generation
 
 
-# 功能：清理已提交清单中的实际附件。
-# 输入：`state` 为持有账号独占锁的 AccountReset。
-# 输出：无；失败保持完整清单，下一次显式请求可继续。
-# 逻辑：逐一核对路径属于 private_uploads/owner，缺失文件视为已清理。
-# 约束：不删除目录、不跟随越界路径；清单全部成功后才可报告重置完成。
+# Function: Clean actual attachments in the committed manifest.
+# Inputs: ``state`` is reset-state data holding the account exclusive lock.
+# Outputs: None; on failure the complete manifest remains so a later explicit request can continue.
+# Logic: Verify each path belongs to ``private_uploads/owner`` and treat a missing file as already cleaned.
+# Constraints: Does not delete directories or follow paths outside the owner root; reset can be reported complete only after every manifest entry succeeds.
 def clean_files(state):
     root = (Path(settings.BASE_DIR) / "private_uploads").resolve()
     owner_root = root / str(state.owner_id)
@@ -122,11 +125,11 @@ def clean_files(state):
         target.unlink(missing_ok=True)
 
 
-# 功能：在账号独占锁下执行数据库、文件、会话清理。
-# 输入：`owner`、`key` 为幂等 UUID、`session` 为当前登录会话。
-# 输出：AccountReset；数据库错误回滚，附件错误保留 cleaning 状态。
-# 逻辑：历史幂等键直接返回；冻结主键集合并解除他人记录的可变负责人关联，同一事务删除及验证外键；文件清理可显式恢复。
-# 约束：只删除选择集合，直接 SQL 避免 ORM 隐式级联到其他账号；不禁用约束、不修改 User。
+# Function: Perform database, file, and session cleanup under the account exclusive lock.
+# Inputs: ``owner`` and idempotent UUID ``key``; ``session`` is the current logged-in session.
+# Outputs: ``AccountReset``; database errors roll back, while attachment errors retain ``cleaning`` state.
+# Logic: Return immediately for a historic idempotency key; freeze primary-key sets and clear mutable assignee relations on other records, delete and validate foreign keys in one transaction, and permit explicit file-cleanup recovery.
+# Constraints: Deletes only selected records and the owner's graph events created in the same transaction; direct SQL avoids ORM implicit cascades to other accounts; does not disable constraints or modify ``User``.
 def reset_account(owner, key, session):
     state, _ = AccountReset.objects.get_or_create(owner=owner)
     if not state.cleaning and str(key) in state.keys:
@@ -134,7 +137,7 @@ def reset_account(owner, key, session):
     if not state.cleaning:
         with transaction.atomic():
             selections = [(model, list(query.values_list("pk", flat=True))) for model, query in scoped_records(owner)]
-            # 清空账号在他人记录上的可变负责人关系，防止到期提醒再次生成本账号数据。
+            # Clear mutable assignee relations from other records to prevent due reminders from creating this account's data again.
             for model, _ in selections:
                 if any(field.name == "assigned_to" for field in model._meta.fields):
                     model.objects.filter(assigned_to=owner).exclude(owner=owner).update(assigned_to=None)
@@ -143,12 +146,14 @@ def reset_account(owner, key, session):
             with connection.cursor() as cursor:
                 cursor.execute("SET CONSTRAINTS ALL DEFERRED")
                 for model, ids in selections:
-                    # 参数绑定主键值；标识符来自 Django 模型元数据而非请求正文。
+                    # Bind primary-key values as parameters; identifiers come from Django model metadata rather than request content.
                     table = connection.ops.quote_name(model._meta.db_table)
                     column = connection.ops.quote_name(model._meta.pk.column)
                     for offset in range(0, len(ids), 1000):
                         chunk = ids[offset:offset + 1000]
                         cursor.execute(f"DELETE FROM {table} WHERE {column} IN ({','.join(['%s'] * len(chunk))})", chunk)
+                # Source deletion triggers new events; clear events from this pass too, avoiding residual source identifiers.
+                apps.get_model("knowledge_graph", "Change").objects.filter(owner_id=owner.pk).delete()
                 cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
             apps.get_model("admin", "LogEntry").objects.filter(user=owner).delete()
             state.generation += 1
@@ -166,15 +171,15 @@ def reset_account(owner, key, session):
     return state
 
 
-# 功能：提供保留登录身份的内部数据清空接口。
-# 逻辑：继承会话认证与 CSRF，账号只取 request.user；不校验业务内容。
-# 约束：不接受 Agent/Tool 身份；仅成功完成数据库、附件和会话清理才返回 completed。
+# Function: Provide an internal-data clearing endpoint that retains login identity.
+# Logic: Inherit session authentication and CSRF protection, take the account only from ``request.user``, and do not validate business content.
+# Constraints: Does not accept Agent or Tool identity; returns ``completed`` only after database, attachment, and session cleanup succeed.
 class ResetView(APIView):
-    # 功能：执行当前账号重置。
-    # 输入：`request` 的登录态和 Idempotency-Key；无业务正文要求。
-    # 输出：200 完成、400 非法幂等键、409 忙碌/跨账号引用、503 附件或会话清理待继续。
-    # 逻辑：独占锁覆盖事务和附件阶段；错误日志只包含类型及账号；成功要求客户端清理内存和缓存。
-    # 约束：Clear-Site-Data 只清理 HTTP cache，保留登录 cookie；前端负责账户存储和跨页广播。
+    # Function: Execute reset for the current account.
+    # Inputs: Login state and ``Idempotency-Key`` from ``request``; no business content is required.
+    # Outputs: 200 on completion, 400 for invalid idempotency key, 409 for busy or cross-account references, and 503 when attachment or session cleanup must continue.
+    # Logic: The exclusive lock covers transaction and attachment stages; error logs contain only type and account; success requires the client to clear in-memory state and cache.
+    # Constraints: ``Clear-Site-Data`` clears only HTTP cache and retains the login cookie; the frontend owns account storage and cross-page broadcast.
     @extend_schema(
         tags=["accounts"], request=None,
         description="Clear the authenticated account's internal data and caches while preserving the user record, password and login. Retry the same operation with the same Idempotency-Key.",

@@ -1,9 +1,9 @@
 /**
- * 职责：验收账号清空按钮、错误恢复、缓存隔离与多标签页刷新。
- * 实现：真实浏览器加载工作空间导航和重置模块，模拟 HTTP 状态；缓存使用真实浏览器存储。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；workspace.js、account-reset.js、account-cache.js、api.js；后端事务另由集成测试验证。
- * 目录：main 执行忙碌、部分失败、刷新恢复及成功广播场景。
- * 变量索引：FRONTEND 为实际静态模块目录；其余导入无业务状态。
+ * Responsibility: Verify account reset buttons, error recovery, cache isolation, and cross-tab reloads.
+ * Implementation: A real browser loads workspace navigation/reset modules with mocked HTTP states; caches use actual browser storage.
+ * Relationships: Chat Markdown, 0919 interface, and shared language resources use coordinated cache versions; workspace.js, account-reset.js, account-cache.js, api.js. Integration tests separately cover backend transactions.
+ * Directory: main runs busy, partial-failure, reload-recovery, and successful-broadcast scenarios.
+ * Variable index: FRONTEND is the actual static-module directory; other imports carry no business state.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,9 +12,9 @@ const http = require('node:http');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend/assets');
 
-/** 功能：执行真实浏览器中的清空交互和缓存验收。输入：环境中的 Playwright 模块与 Chrome 路径。
- * 输出：成功摘要或非零失败。逻辑：两页属于账号 7，第三页模拟账号 8；先忙碌、后附件失败，再刷新后继续。
- * 约束：全部业务 HTTP 都被拦截，不访问用户真实账号，不宣称模拟接口验证了生产删除。
+/** Function: Verify reset interactions and caches in a real browser. Inputs: Environment Playwright module and Chrome paths.
+ * Outputs: A success summary or nonzero failure. Logic: Two pages use account 7 and a third simulates account 8; exercise busy state, attachment failure, then continuation after reload.
+ * Constraints: Intercept all business HTTP; never access real user accounts or claim that mock endpoints verify production deletion.
  */
 async function main() {
   const server = http.createServer((req, res) => {

@@ -1,19 +1,19 @@
-"""职责：集中控制实验环境的免登录身份与跨账号业务访问。
-实现：个人空间隔离优先于实验开关；显式开关开启时使用会话、已有令牌或公开身份选择头，匿名请求归入独立实验账号。
-关联：Session、Agent、Tool 认证和业务 scope 共用；关闭开关恢复各入口原鉴权。
-目录：
-- owner_only：读取个人空间隔离策略。
-- enabled：读取实验模式开关。
-- identity：解析无需证明身份的实验操作者。
-- owner_scope：按当前模式构造业务归属查询。
-- LaboratoryAuthentication：在实验模式提供免登录 DRF 身份。
-- LaboratoryAuthentication.authenticate：按开关解析身份。
-- LaboratoryAuthenticationSchema：声明可选实验身份头。
-- LaboratoryAuthenticationSchema.get_security_definition：描述实验身份选择。
-变量索引：
-- logger：记录实验账号建立，不输出令牌。
-- LaboratoryAuthenticationSchema.target_class：认证器路径。
-- LaboratoryAuthenticationSchema.name：OpenAPI 身份选择名称。
+"""Responsibility: Centrally control unauthenticated identity and cross-account business access in laboratory environments.
+Implementation: Personal-workspace isolation takes priority over the laboratory switch; when explicitly enabled, uses a session, existing token, or public identity-selection header, assigning anonymous requests to a dedicated laboratory account.
+Relationships: Shared by Session, Agent, Tool authentication, and business scopes; disabling the switch restores original authorization at each entry point.
+Directory:
+- owner_only: Reads personal-workspace isolation policy.
+- enabled: Reads the laboratory-mode switch.
+- identity: Resolves a laboratory actor whose identity need not be proved.
+- owner_scope: Builds a business-ownership query for the current mode.
+- LaboratoryAuthentication: Supplies unauthenticated DRF identity in laboratory mode.
+- LaboratoryAuthentication.authenticate: Resolves identity according to the switch.
+- LaboratoryAuthenticationSchema: Declares the optional laboratory identity header.
+- LaboratoryAuthenticationSchema.get_security_definition: Describes laboratory identity selection.
+Variable index:
+- logger: Records laboratory-account creation without outputting tokens.
+- LaboratoryAuthenticationSchema.target_class: Authenticator path.
+- LaboratoryAuthenticationSchema.name: OpenAPI identity-selection name.
 """
 
 import hashlib
@@ -29,29 +29,29 @@ from rest_framework.exceptions import NotFound
 logger = logging.getLogger("salesmate.laboratory")
 
 
-# 功能：读取个人空间隔离策略。
-# 输入：无外部参数，读取 Django settings。
-# 输出：bool。
-# 逻辑：显式启用时关闭跨账号实验和团队共享。
-# 约束：仅提供策略，不自行读取业务记录。
+# Function: Read the personal-workspace isolation policy.
+# Inputs: No external parameters; reads Django settings.
+# Outputs: bool.
+# Logic: Explicit activation disables cross-account experiments and team sharing.
+# Constraints: Supplies policy only and does not read business records itself.
 def owner_only():
     return getattr(settings, "WORKSPACE_OWNER_ONLY", False)
 
 
-# 功能：读取实验模式开关。
-# 输入：无外部参数，读取 Django settings。
-# 输出：bool。
-# 逻辑：默认关闭；个人空间隔离开启时，即便遗留实验开关为真也不会开放。
-# 约束：不依赖 DEBUG，不连接数据库。
+# Function: Read the laboratory-mode switch.
+# Inputs: No external parameters; reads Django settings.
+# Outputs: bool.
+# Logic: Disabled by default; when personal-workspace isolation is enabled, legacy true laboratory switches do not grant access.
+# Constraints: Does not depend on DEBUG or connect to the database.
 def enabled():
     return not owner_only() and getattr(settings, "LAB_OPEN_ACCESS", False)
 
 
-# 功能：解析无需证明身份的实验操作者。
-# 输入：`request` 为 DRF 或 Django 请求。
-# 输出：User 或关闭模式时的 None。
-# 逻辑：显式 X-Lab-User 优先，其次现有会话、可识别服务凭据，最后独立实验账号。
-# 约束：此模式中的身份仅用于归属和日志，不证明调用者身份；不改变 Django admin 会话或输出密钥。
+# Function: Resolve a laboratory actor whose identity does not need proof.
+# Inputs: `request` is a DRF or Django request.
+# Outputs: User or None when the mode is disabled.
+# Logic: Explicit X-Lab-User takes priority, followed by an existing session, recognizable service credentials, and finally the dedicated laboratory account.
+# Constraints: This identity is used only for ownership and logs and does not prove caller identity; it does not alter the Django admin session or output secrets.
 def identity(request):
     if not enabled():
         return None
@@ -82,41 +82,41 @@ def identity(request):
     return actor
 
 
-# 功能：按当前模式构造业务归属查询。
-# 输入：`owner` 为原归属用户，`path` 为 owner 关系路径，默认 owner。
-# 输出：Q 条件。
-# 逻辑：实验模式不限制归属，正式模式保留原关系过滤。
-# 约束：仅用于明确的业务查询，不用于密码、OAuth 或管理员权限判定。
+# Function: Build a business-ownership query for the current mode.
+# Inputs: `owner` is the original owning user; `path` is the owner relation path and defaults to owner.
+# Outputs: Q condition.
+# Logic: Laboratory mode does not restrict ownership; production mode retains original relationship filtering.
+# Constraints: Used only for explicit business queries, never for passwords, OAuth, or administrator-permission decisions.
 def owner_scope(owner, path="owner"):
     return Q() if enabled() else Q(**{path: owner})
 
 
-# 功能：在实验模式提供免登录 DRF 身份。
-# 逻辑：开启时优先于 Session 认证，不触发其 CSRF 检查。
-# 约束：关闭时返回 None，继续既有认证链。
+# Function: Provide unauthenticated DRF identity in laboratory mode.
+# Logic: When enabled, takes precedence over Session authentication without triggering its CSRF check.
+# Constraints: Returns None when disabled so the existing authentication chain continues.
 class LaboratoryAuthentication(BaseAuthentication):
-    # 功能：按开关解析身份。
-    # 输入：`request` HTTP 请求。
-    # 输出：身份元组或 None。
-    # 逻辑：共享 identity 策略；不签发会话或令牌。
-    # 约束：只影响采用此认证器的业务 API。
+    # Function: Resolve identity according to the switch.
+    # Inputs: `request` is the HTTP request.
+    # Outputs: Authentication tuple or None.
+    # Logic: Shares the identity policy and does not issue sessions or tokens.
+    # Constraints: Affects only business APIs that use this authenticator.
     def authenticate(self, request):
         actor = identity(request)
         return (actor, None) if actor is not None else None
 
 
-# 功能：声明可选实验身份头。
-# 逻辑：文档明确它不是认证凭据。
-# 约束：关闭实验模式时不授予任何权限。
+# Function: Declare the optional laboratory identity header.
+# Logic: Documentation explicitly states that it is not an authentication credential.
+# Constraints: Grants no permission when laboratory mode is disabled.
 class LaboratoryAuthenticationSchema(OpenApiAuthenticationExtension):
     target_class = "common.laboratory.LaboratoryAuthentication"
     name = "laboratoryIdentity"
 
-    # 功能：描述实验身份选择。
-    # 输入：`auto_schema` 为 Schema 上下文。
-    # 输出：OpenAPI Header 描述。
-    # 逻辑：公开 X-Lab-User 的可选选择语义。
-    # 约束：无数据库读取，不提供密码或令牌。
+    # Function: Describe laboratory identity selection.
+    # Inputs: `auto_schema` is schema context.
+    # Outputs: OpenAPI Header description.
+    # Logic: Publishes optional X-Lab-User selection semantics.
+    # Constraints: Does not read the database or supply passwords or tokens.
     def get_security_definition(self, auto_schema):
         return {"type": "apiKey", "in": "header", "name": "X-Lab-User",
                 "description": "仅 LAB_OPEN_ACCESS=true 时可选的实验归属用户名，无需令牌；省略使用实验默认身份。正式模式不可用。"}

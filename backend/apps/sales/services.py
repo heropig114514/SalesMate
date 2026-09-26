@@ -1,22 +1,22 @@
-"""职责：执行销售记录的授权事务、金额校验、状态流转和 Agent 快照同步。
-实现：公开新闻允许金额未知时币种为空；其他交易币种、金额和状态约束保留；共享资讯的跨账号来源唯一性由数据库最终裁决。按业务 owner 串行化写入；商机及销售方变更传播评分依赖；审计、版本和任务原子提交。
-国际化：参数化字段错误在产生时按当前语言翻译；字段名、校验条件、状态和写入行为不变。
-关联：views 先执行序列化，permissions 控制范围，crm.jobs 保持原分析触发语义。
-目录：
-- audit：追加不含正文或凭证的操作事件。
-- company_of：解析记录所属公司。
-- validate_record：验证跨实体关系和金额、草稿及负责人约束。
-- save_record：创建或版本化修改销售记录。
-- archive_record：归档或恢复记录。
-- transition_record：执行业务状态流转。
-- sync_company：将关系业务映射到已有 Agent 业务快照。
-- notify_due：为到期未完成跟进创建去重提醒。
-- enqueue_analysis：入队并在事务提交后按既有配置调度分析。
-- sync_priority_dependencies：传播订单及产品对其他客户评分的影响。
-变量索引：
-- logger：不输出业务正文或凭证的事务日志。
-- TRANSITIONS：各类单据允许的显式状态边。
-- IMMUTABLE_RELATIONS：已有实体禁止变更的归属关系。
+"""Responsibility: Execute authorized sales transactions, amount validation, state transitions, and Agent snapshot synchronization.
+Implementation: Public news may omit currency when amount is unknown; retain other transaction currency/amount/state constraints. The database resolves cross-account shared-source uniqueness. Serialize writes by business owner, propagate opportunity/seller scoring dependencies, and commit audits, versions, and tasks atomically.
+Internationalization: translate parameterized field errors when raised using the current language; preserve field names, validation conditions, states, and write behavior.
+Relationships: views serializes first, permissions controls scope, and crm.jobs retains existing analysis-trigger semantics.
+Directory:
+- audit: Append operation events without bodies or credentials.
+- company_of: Resolve the company owning a record.
+- validate_record: Validate cross-entity relations, amounts, drafts, and assignee constraints.
+- save_record: Create or version-update sales records.
+- archive_record: Archive or restore records.
+- transition_record: Execute business state transitions.
+- sync_company: Map relational business data to existing Agent snapshots.
+- notify_due: Create deduplicated reminders for due unfinished follow-ups.
+- enqueue_analysis: Enqueue analysis and schedule it after commit using existing configuration.
+- sync_priority_dependencies: Propagate order/product effects on other companies' scores.
+Variable index:
+- logger: Transaction logs without business bodies or credentials.
+- TRANSITIONS: Allowed explicit state transitions for document types.
+- IMMUTABLE_RELATIONS: Ownership relations immutable on existing entities.
 """
 
 from common.laboratory import enabled
@@ -86,11 +86,11 @@ IMMUTABLE_RELATIONS = (
 )
 
 
-# 功能：入队并在事务提交后按既有 provider 调度。
-# 输入：`company` 为已锁定公司，`trigger` 为原协议事件名。
-# 输出：Job。
-# 逻辑：agent 模式只入队由独立 Worker 消费；rules 模式事务提交后执行既有规则入口。
-# 约束：不修改 provider、提示词或参数，无错误降级；回滚不会启动分析。
+# Function: Enqueue and schedule after commit using the existing provider.
+# Inputs: `company`: locked company; `trigger`: existing protocol event name.
+# Outputs: Job.
+# Logic: Agent mode only enqueues for independent workers; rules mode invokes the existing rules entry point after commit.
+# Constraints: Preserve provider, prompts, and parameters; no error fallback. Rollback never starts analysis.
 def enqueue_analysis(company, trigger):
     from functools import partial
     from apps.crm.rules import run_company
@@ -103,11 +103,11 @@ def enqueue_analysis(company, trigger):
     return job
 
 
-# 功能：追加不含正文或凭证的操作事件。
-# 输入：`actor` 为操作者，`instance` 为记录，`event` 为事件名，`changes` 为安全元数据或 None。
-# 输出：AuditEvent。
-# 逻辑：记录归属、实体和字段名/状态，正文与外部参数不得由调用者传入。
-# 约束：调用方事务回滚时审计同步回滚；仅记录标识和受控状态。
+# Function: Append operation events without bodies or credentials.
+# Inputs: `actor`: operator; `instance`: record; `event`: event name; `changes`: safe metadata or None.
+# Outputs: AuditEvent.
+# Logic: Record ownership, entity, and field names/states; callers must not supply bodies or external parameters.
+# Constraints: Audit rolls back with the caller transaction; record identifiers and controlled states only.
 def audit(actor, instance, event, changes=None):
     record = models.AuditEvent.objects.create(
         owner_id=instance.owner_id,
@@ -128,11 +128,11 @@ def audit(actor, instance, event, changes=None):
     return record
 
 
-# 功能：解析记录所属公司。
-# 输入：`instance` 为销售记录。
-# 输出：Company 或 None。
-# 逻辑：直接公司、联系人、单据行和会话关联均映射到同一公司。
-# 约束：不从文本猜测公司，不返回邮件数据。
+# Function: Resolve the company owning a record.
+# Inputs: `instance`: sales record.
+# Outputs: Company or None.
+# Logic: Direct company, contact, document-line, and conversation links resolve to the same company.
+# Constraints: Do not infer companies from text or return email data.
 def company_of(instance):
     if hasattr(instance, "company"):
         return instance.company
@@ -145,11 +145,11 @@ def company_of(instance):
     return None
 
 
-# 功能：验证跨实体关系、金额、草稿和负责人约束。
-# 输入：`instance` 为待保存的模型，`actor` 为用户，`changed` 为本次字段集合，`creating` 为是否新增。
-# 输出：无；业务约束不满足抛 ValidationError/PermissionDenied，参数化金额错误使用当前语言。
-# 逻辑：新闻仅在 amount=null 且 currency 为空时允许缺币种；交易币种要求不变。实验模式跳过所有者与管理角色判断、允许跨账号产品；保留冻结单据、同币种、数量折扣及客户关系约束，新会话仍无预选公司。
-# 约束：仅在授权事务内调用；不自动改价、换汇或推断交易事实。
+# Function: Validate cross-entity relations, amounts, drafts, and assignee constraints.
+# Inputs: `instance`: model to save; `actor`: user; `changed`: current field set; `creating`: whether this is creation.
+# Outputs: None; violated constraints raise ValidationError/PermissionDenied, with parameterized amount errors in the current language.
+# Logic: News may omit currency only when amount=null and currency is empty; transaction currency requirements remain unchanged. Experiment mode skips owner/manager checks and permits cross-account products, but retains frozen-document, same-currency, quantity/discount, and company-relation constraints. New conversations still have no preselected company.
+# Constraints: Call only within authorized transactions; no automatic repricing, currency conversion, or transaction inference.
 def validate_record(instance, actor, changed, creating):
     if creating and isinstance(instance, models.Conversation) and instance.company_id is not None:
         raise ValidationError("客户绑定聊天已停用，请创建无预选公司的工作空间会话。")
@@ -299,11 +299,11 @@ def validate_record(instance, actor, changed, creating):
         raise InvalidState("消息不可编辑，浏览器只能记录用户消息。")
 
 
-# 功能：创建或版本化修改销售记录。
-# 输入：`serializer` 为已校验序列化器，`actor` 为用户，`expected` 为旧 revision 或 None。
-# 输出：已保存模型；归属转移拒绝文案按当前语言插入原字段名。
-# 逻辑：锁 owner 后检查关系及版本；公共资讯已在 serializer 预检来源，最终唯一性由数据库裁决并发，避免 full_clean 把竞争错误变成 400；其他模型仍执行全部模型约束校验。
-# 约束：公共资讯数据库唯一冲突由原视图映射为 409；不吞错或重试；动作、附件与提醒使用专门入口，事务整体回滚。
+# Function: Create or version-update sales records.
+# Inputs: `serializer`: validated serializer; `actor`: user; `expected`: old revision or None.
+# Outputs: Saved model; ownership-transfer rejection inserts the original field name into the current-language message.
+# Logic: Lock owner, then check relations/version. Serializers precheck public sources, but the database resolves concurrent uniqueness to avoid full_clean turning races into 400; other models retain full model-constraint validation.
+# Constraints: Existing views map public-source database uniqueness conflicts to 409; never swallow errors or retry. Actions, attachments, and reminders use dedicated entry points; roll back the entire transaction.
 @transaction.atomic
 def save_record(serializer, actor, expected=None):
     model = serializer.Meta.model
@@ -393,11 +393,11 @@ def save_record(serializer, actor, expected=None):
     return candidate
 
 
-# 功能：归档或恢复记录。
-# 输入：`instance`、`actor`、`expected` 旧版本，`archived` 为目标布尔值。
-# 输出：更新后的实例。
-# 逻辑：事务内取得原记录和归属锁，实验模式不要求团队管理身份或旧版本；保留运行中动作、关联单据等状态检查，保存审计。
-# 约束：不可归档不可变消息、提醒或执行记录；冻结单据不得通过归档明细改变金额。
+# Function: Archive or restore records.
+# Inputs: `instance`, `actor`, and `expected`: old version; `archived`: target boolean.
+# Outputs: Updated instance.
+# Logic: Lock the original record and owner within the transaction. Experiment mode requires neither team-manager identity nor old version; retain running-action/related-document state checks and save audits.
+# Constraints: Immutable messages, reminders, and execution records cannot be archived; archiving details must not alter frozen document amounts.
 @transaction.atomic
 def archive_record(instance, actor, expected, archived):
     if type(archived) is not bool:
@@ -453,11 +453,11 @@ def archive_record(instance, actor, expected, archived):
     return instance
 
 
-# 功能：执行业务状态流转。
-# 输入：`instance`、`actor`、`expected` 为版本，`target` 为明确目标状态。
-# 输出：已转换记录。
-# 逻辑：校验状态边及单据明细；商机状态更新当前公司，确认或取消订单同步更新依赖该成交历史的其他公司。
-# 约束：禁止客户端声明报价已发送；不推断成交，也不触发外部服务。
+# Function: Execute business state transitions.
+# Inputs: `instance`, `actor`, `expected`: version; `target`: explicit target state.
+# Outputs: Transitioned record.
+# Logic: Validate state edges and document details; opportunity transitions update the current company, while order confirmation/cancellation also updates companies dependent on that transaction history.
+# Constraints: Clients cannot declare quotes sent; no inferred completed transactions or external-service calls.
 @transaction.atomic
 def transition_record(instance, actor, expected, target):
     get_user_model().objects.select_for_update().get(pk=instance.owner_id)
@@ -468,7 +468,7 @@ def transition_record(instance, actor, expected, target):
         getattr(instance, "status", None), []
     ):
         raise InvalidState("当前记录不允许该状态转换。")
-    # 已确认或结果不明的外发保留报价版本，防止网络调用期间撤销审核改变其含义。
+    # Confirmed or uncertain external sends retain the quote version, preventing review revocation during network calls from changing its meaning.
     if (
         isinstance(instance, models.Quote)
         and models.ToolAction.objects.filter(
@@ -496,11 +496,11 @@ def transition_record(instance, actor, expected, target):
     return instance
 
 
-# 功能：传播订单及产品对其他客户评分的影响。
-# 输入：`instance` 为刚保存、归档或完成状态转换的销售记录。
-# 输出：无；为相关客户更新两个版本并入队。
-# 逻辑：订单和订单行影响同 owner 历史均值与相似赢单，产品影响目录及历史产品名称。
-# 约束：调用者已持 owner 锁且已同步记录所属公司；普通商机不触发全 owner 扇出。
+# Function: Propagate order/product effects on other companies' scores.
+# Inputs: `instance`: sales record just saved, archived, or transitioned.
+# Outputs: None; update both versions and enqueue work for related companies.
+# Logic: Orders/order lines affect same-owner historical averages and similar wins; products affect catalogs and historical product names.
+# Constraints: The caller holds the owner lock and has synchronized the record's company; ordinary opportunities do not trigger owner-wide fan-out.
 def sync_priority_dependencies(instance):
     from .priority import refresh_owner_priority
 
@@ -509,11 +509,11 @@ def sync_priority_dependencies(instance):
         refresh_owner_priority(instance.owner_id, exclude=[company.pk] if company else [])
 
 
-# 功能：将关系业务映射到已有 Agent 业务快照。
-# 输入：`company` 为关系业务的客户。
-# 输出：无。
-# 逻辑：只替换 source=sales_record 的受管条目，保留原有历史 JSON；同步递增两个版本并入队。
-# 约束：草稿订单不是历史订单，未真实发送的报价不提供 actual_outbound 证据；提交后沿用现有 provider 调度。
+# Function: Map relational business data to existing Agent snapshots.
+# Inputs: `company`: company associated with relational business data.
+# Outputs: Outputs: None.
+# Logic: Replace only managed source=sales_record entries, retaining original historical JSON; increment both versions and enqueue together.
+# Constraints: Draft orders are not historical orders, and unsent quotes provide no actual_outbound evidence; use existing provider scheduling after commit.
 def sync_company(company):
     from .serializers import QuoteSerializer, SalesOrderSerializer
 
@@ -574,11 +574,11 @@ def sync_company(company):
     enqueue_analysis(company, "external_updated")
 
 
-# 功能：为到期未完成跟进创建去重提醒。
-# 输入：无参数；读取当前时钟和数据库中的 open 跟进。
-# 输出：新增提醒条数。
-# 逻辑：先取得所有者与收件人的账号共享锁，再事务重读跟进；清理未完成或关系变化时本轮不生成提醒。
-# 约束：只写应用内通知，不发送邮件；先取得账号锁再取得行锁，避免与重置删除形成等待环。
+# Function: Create deduplicated reminders for due unfinished follow-ups.
+# Inputs: No parameters; read the current clock and open follow-ups from the database.
+# Outputs: Number of newly created reminders.
+# Logic: Acquire shared account locks for owners/recipients, then reread follow-ups transactionally; unfinished cleanup or changed relations suppress reminders for this iteration.
+# Constraints: Write in-app notifications only, never email; account locks precede row locks to avoid wait cycles with reset deletion.
 def notify_due():
     created = 0
     candidates = list(models.FollowUp.objects.filter(

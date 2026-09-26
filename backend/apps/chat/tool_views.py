@@ -1,19 +1,19 @@
-"""职责：发布 Agent 聊天工具目录、请求绑定读取及实验维护与回答状态查询。
-实现：只接受员工绑定 Agent 认证，错误分为请求级和工具级，所有响应禁止缓存。
-关联：tool_reads 复用业务读取与实验维护并冻结证据；services 负责请求授权和最终回答状态。
-目录：
-- AgentChatView：认证、错误及缓存策略。
-- AgentChatView.handle_exception：输出稳定且不泄露异常正文的请求错误。
-- AgentChatView.finalize_response：禁止客户端缓存私有结果。
-- ToolCatalogView：读取工具目录。
-- ToolCatalogView.get：解析分页并调用请求目录服务。
-- ToolReadView：执行请求绑定数据操作。
-- ToolReadView.post：校验调用并保留业务 HTTP 状态。
-- AgentRequestView：核对聊天回报的权威状态。
-- AgentRequestView.get：只返回授权请求的浏览器安全投影。
-变量索引：
-- AgentChatView.authentication_classes：仅 Agent 凭证，禁止 Tool 或 Session 替代。
-- logger：记录视图、异常类型及 HTTP 请求关联 ID，不记录凭证或正文。
+"""Responsibility: Publish Agent chat tool catalog, request-bound reads and experiment maintenance, and answer-status query.
+Implementation: Accept only employee-bound Agent authentication, distinguish request-level from tool-level errors, and prohibit caching for every response.
+Relationships: ``tool_reads`` reuses business reads and experiment maintenance and freezes evidence; ``services`` owns request authorization and final answer status.
+Directory:
+- AgentChatView: Authentication, error, and cache policy.
+- AgentChatView.handle_exception: Return stable request error without exposing exception content.
+- AgentChatView.finalize_response: Prohibit client caching of private results.
+- ToolCatalogView: Read tool catalog.
+- ToolCatalogView.get: Parse pagination and call request-catalog service.
+- ToolReadView: Execute request-bound data operation.
+- ToolReadView.post: Validate invocation and retain business HTTP status.
+- AgentRequestView: Check authoritative chat-report status.
+- AgentRequestView.get: Return browser-safe projection only for authorized request.
+Variable index:
+- AgentChatView.authentication_classes: Agent credentials only; Tool or Session cannot substitute.
+- logger: Records view, exception type, and HTTP request correlation ID without credential or content.
 """
 
 import logging
@@ -30,17 +30,17 @@ from . import services, tool_reads
 logger = logging.getLogger("salesmate.chat.tools")
 
 
-# 功能：隔离员工绑定的聊天服务身份并规范错误。
-# 逻辑：继承默认登录权限，仅使用 AgentAuthentication；响应禁止缓存。
-# 约束：凭证标识员工而不是 Worker 进程类型，业务范围由请求与工具白名单继续限定。
+# Function: Isolate employee-bound chat-service identity and normalize errors.
+# Logic: Inherit default login permission, use only ``AgentAuthentication``, and prohibit response caching.
+# Constraints: Credential identifies employee rather than Worker process type; request and tool allowlists continue to limit business scope.
 class AgentChatView(APIView):
     authentication_classes = (AgentAuthentication,)
 
-    # 功能：规范请求授权、状态、结构与服务器异常的失败信封。
-    # 输入：`exc` 为视图执行异常，self.request 提供 HTTP 关联 ID。
-    # 输出：保留真实 HTTP 状态的 JSON，error.scope=request；未知异常为安全 500。
-    # 逻辑：DRF 异常沿用项目处理器，未知异常只记录类型并返回通用错误，不输出 Django DEBUG 页面。
-    # 约束：不自动重试、不改变聊天状态，业务工具错误由 ToolReadView 原样返回且 scope=tool。
+    # Function: Normalize failure envelope for request authorization, state, structure, and server exceptions.
+    # Inputs: View exception ``exc``; ``self.request`` supplies HTTP correlation ID.
+    # Outputs: JSON retaining actual HTTP status with error.scope=request; unknown exceptions become safe 500.
+    # Logic: DRF exceptions use project handler; unknown exception logs type only and returns generic error without Django DEBUG page.
+    # Constraints: Does not retry or change chat state; ``ToolReadView`` returns business-tool errors unchanged with scope=tool.
     def handle_exception(self, exc):
         logger.warning(
             "chat_endpoint_failed view=%s error_type=%s http_request_id=%s",
@@ -54,26 +54,26 @@ class AgentChatView(APIView):
         response.data["error"]["scope"] = "request"
         return response
 
-    # 功能：为成功和失败响应统一禁止缓存。
-    # 输入：`request` 为 HTTP 请求，`response` 为响应，`args`/`kwargs` 为 DRF 扩展参数。
-    # 输出：完成渲染协商且带 Cache-Control: no-store 的响应。
-    # 逻辑：保留框架状态、认证头和媒体类型，再追加缓存策略。
-    # 约束：不修改业务正文或错误信息。
+    # Function: Uniformly prohibit caching for successful and failed responses.
+    # Inputs: HTTP ``request``, ``response``, and DRF extension ``args`` and ``kwargs``.
+    # Outputs: Response after rendering negotiation with ``Cache-Control: no-store``.
+    # Logic: Retain framework state, authentication headers, and media type then append cache policy.
+    # Constraints: Does not modify business content or error information.
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
         response["Cache-Control"] = "no-store"
         return response
 
 
-# 功能：提供请求绑定的实际工具发现接口。
-# 逻辑：只发布当前请求获准的读取及实验维护工具 Schema。
-# 约束：需有效 processing 请求，不返回整个业务目录。
+# Function: Provide request-bound actual tool-discovery endpoint.
+# Logic: Publish only read and experiment-maintenance tool Schema authorized for current request.
+# Constraints: Requires valid processing request and does not return entire business catalog.
 class ToolCatalogView(AgentChatView):
-    # 功能：读取一页工具描述。
-    # 输入：`request` 查询参数 request_id、可选 page/page_size。
-    # 输出：tools/count/page/page_size 与协议、请求标识。
-    # 逻辑：只转换分页整数，参数合法性及请求权限由服务验证。
-    # 约束：未知字段和重复参数拒绝，不自动翻页或推断公司。
+    # Function: Read one page of tool descriptions.
+    # Inputs: request_id and optional page and page_size query parameters from ``request``.
+    # Outputs: tools, count, page, page_size, protocol, and request identifier.
+    # Logic: Converts only pagination integers; service validates parameter legality and request permission.
+    # Constraints: Rejects unknown fields and repeated parameters and does not automatically advance pages or infer company.
     @extend_schema(
         parameters=[
             OpenApiParameter("request_id", OpenApiTypes.UUID, required=True),
@@ -96,15 +96,15 @@ class ToolCatalogView(AgentChatView):
         return Response(tool_reads.catalog_for(request.user, query))
 
 
-# 功能：执行一次读取或实验维护工具并返回本次稳定来源。
-# 逻辑：只从已认证身份推导 owner，原样传递参数给请求绑定服务。
-# 约束：不接受客户端幂等键或身份参数；实验维护的幂等键由请求及参数派生。
+# Function: Execute one read or experiment-maintenance tool and return stable sources for this invocation.
+# Logic: Derives owner only from authenticated identity and passes arguments unchanged to request-bound service.
+# Constraints: Does not accept client idempotency key or identity parameters; request and arguments derive experiment-maintenance idempotency key.
 class ToolReadView(AgentChatView):
-    # 功能：执行获准的数据工具。
-    # 输入：`request`.data 为 request_id/name/arguments 对象。
-    # 输出：成功业务数据和证据，或 scope=tool 的明确失败；HTTP 状态保留。
-    # 逻辑：服务事务成功后再返回，不把工具 404 转为空列表或聊天失败。
-    # 约束：查询不要求聊天绑定公司；customers.context 的定位参数仍须遵循其原 Schema。
+    # Function: Execute an authorized data tool.
+    # Inputs: ``request`` data is request_id, name, and arguments object.
+    # Outputs: Successful business data and evidence or explicit failure with scope=tool; retains HTTP status.
+    # Logic: Returns after service transaction succeeds and does not turn a tool 404 into empty list or chat failure.
+    # Constraints: Query does not require a chat-bound company; ``customers.context`` location parameters still follow original Schema.
     @extend_schema(
         request={"application/json": tool_reads.CALL_SCHEMA},
         responses={
@@ -122,15 +122,15 @@ class ToolReadView(AgentChatView):
         return Response(result, status=result["http_status"])
 
 
-# 功能：允许 Agent 在回报响应丢失后查询权威请求状态。
-# 逻辑：读取原请求，不重新运行模型或创建重试任务。
-# 约束：允许本人 pending/processing/终态，沿用会话访问限制。
+# Function: Allow Agent to query authoritative request status after losing report response.
+# Logic: Reads original request without rerunning model or creating retry job.
+# Constraints: Permits caller's pending, processing, and terminal states and retains conversation access restrictions.
 class AgentRequestView(AgentChatView):
-    # 功能：查询已授权请求的状态和最终引用。
-    # 输入：`request` 为 Agent HTTP 请求，`request_id` 为路径 UUID。
-    # 输出：请求状态、消息 ID、版本、错误及已引用证据。
-    # 逻辑：复用浏览器安全投影，不发布完整上下文或工具调用历史。
-    # 约束：员工越权统一 404，不通过请求体自报身份。
+    # Function: Query status and final citations for an authorized request.
+    # Inputs: Agent HTTP ``request`` and path UUID ``request_id``.
+    # Outputs: Request status, message ID, version, error, and cited evidence.
+    # Logic: Reuses browser-safe projection and does not publish complete context or tool-invocation history.
+    # Constraints: Employee unauthorized access consistently returns 404 and request body cannot self-report identity.
     @extend_schema(
         responses=OpenApiTypes.OBJECT, operation_id="agent_chat_request_status"
     )

@@ -1,13 +1,13 @@
-"""职责：提供全球洞察的数据库查询与地图业务聚合。
-实现：公共活动批量投影并过滤私人商机 ID；关联金额按访问者可见商机去重、分币种累加，国家高亮仍来自可见客户。
-关联：world-news.js 消费本视图；活动与资讯仍通过通用 CRUD 和 MCP 维护。
-目录：
-- country_code：规范已知国家名称或代码。
-- amounts：统计有效商机金额。
-- WorldView：返回分页活动及全局国家统计。
-- WorldView.get：读取可见记录并投影地图数据。
-变量索引：
-- COUNTRY_CODES：已有客户常用国家名称与 ISO 代码的明确映射。
+"""Responsibility: Provide global-insight database queries and map business aggregation.
+Implementation: Batch-project public events and filter private opportunity IDs; deduplicate linked amounts by viewer-visible opportunity and sum per currency. Country highlights still derive from visible companies.
+Relationships: world-news.js consumes this view; generic CRUD and MCP still maintain events/news.
+Directory:
+- country_code: Normalize known country names/codes.
+- amounts: Aggregate valid opportunity amounts.
+- WorldView: Return paginated events and global country statistics.
+- WorldView.get: Read visible records and project map data.
+Variable index:
+- COUNTRY_CODES: Explicit mappings between common country names in existing company profiles and ISO codes.
 """
 
 from decimal import Decimal
@@ -25,21 +25,21 @@ from .views import SalesView, paged
 COUNTRY_CODES = {"singapore": "SG", "新加坡": "SG", "china": "CN", "中国": "CN", "taiwan": "TW", "台湾": "TW", "germany": "DE", "德国": "DE", "japan": "JP", "日本": "JP", "united states": "US", "美国": "US", "south korea": "KR", "韩国": "KR", "united kingdom": "GB", "英国": "GB"}
 
 
-# 功能：规范权威国家字段。
-# 输入：`value` 为客户资料中的名称或 ISO 代码。
-# 输出：两字母代码，无法明确映射返回空字符串。
-# 逻辑：只匹配明确映射，不根据地址或邮箱猜测。
-# 约束：未知国家仍计入 unmapped_customer_count。
+# Function: Normalize authoritative country fields.
+# Inputs: `value`: country name or ISO code from company profiles.
+# Outputs: Two-letter code, or an empty string when no explicit mapping exists.
+# Logic: Match explicit mappings only; never infer from addresses or emails.
+# Constraints: Unknown countries still contribute to unmapped_customer_count.
 def country_code(value):
     text = str(value or "").strip()
     return text.upper() if len(text) == 2 and text.isascii() and text.isalpha() else COUNTRY_CODES.get(text.casefold(), "")
 
 
-# 功能：按币种统计活跃商机。
-# 输入：`opportunities` 为已授权且去重的商机序列。
-# 输出：币种至精确十进制金额字符串的映射。
-# 逻辑：仅计入已知金额，不汇率换算。
-# 约束：未知金额不伪造为零；调用方单独返回未知数量。
+# Function: Aggregate active opportunities by currency.
+# Inputs: `opportunities`: authorized, deduplicated opportunity sequence.
+# Outputs: Mapping from currencies to exact decimal amount strings.
+# Logic: Count known amounts only, without currency conversion.
+# Constraints: Never fabricate unknown amounts as zero; callers return their count separately.
 def amounts(opportunities):
     totals = {}
     for item in opportunities:
@@ -48,15 +48,15 @@ def amounts(opportunities):
     return {key: str(value) for key, value in sorted(totals.items())}
 
 
-# 功能：生成地图和活动列表数据。
-# 逻辑：全部查询经过 scope，复用活动筛选，金额不从活动说明中提取。
-# 约束：无外部调用、无自动数据填充。
+# Function: Generate map and event-list data.
+# Logic: All queries pass through scope and reuse event filters; never extract amounts from event descriptions.
+# Constraints: No external calls or automatic data filling.
 class WorldView(SalesView):
-    # 功能：返回数据库活动与统计。
-    # 输入：`request` 包含 page/page_size、country、event_type、from/to，可选 q。
-    # 输出：分页活动、国家统计、高亮国家、可选币种及未知国家客户数。
-    # 逻辑：活动共享读取，批量序列化过滤关联 ID；国家数量忽略国家筛选，金额和客户仅按当前用户可见的商机去重聚合。
-    # 约束：公共活动不扩大客户权限；归档客户/商机与非活跃状态不计额；客户无国家不猜测，不写数据库。
+    # Function: Return database events and statistics.
+    # Inputs: `request`: page/page_size, country, event_type, from/to, and optional q.
+    # Outputs: Paginated events, country statistics, highlighted countries, available currencies, and companies with unknown countries.
+    # Logic: Events have shared reads and batch serialization filters linked IDs. Country counts ignore the country filter; amount/company aggregation uses deduplicated opportunities visible to the current user.
+    # Constraints: Public events do not expand company permissions. Archived companies/opportunities and inactive states contribute no amounts; never infer missing countries or write the database.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         query = scope(WorldEvent, request.user).filter(archived=False)

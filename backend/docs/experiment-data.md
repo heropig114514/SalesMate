@@ -1,107 +1,107 @@
-# KG 实验数据共享
+# KG experimental-data sharing
 
-当前算法联调服务器启用[公开实验模式](laboratory-access.md)：所有业务数据（含非 KGSEED）免登录、跨账号可读写，Tool/MCP 无需令牌。下文原鉴权约束仅在关闭实验开关后生效，保留的外部动作与密钥边界见该说明。
+The algorithm integration server currently enables [public laboratory mode](laboratory-access.md): all business data, including non-KGSEED data, is readable and writable across accounts without login, and Tool/MCP requires no token. The authorization constraints below apply only when that switch is disabled; see that document for retained external-action and secret boundaries.
 
-所有有效登录账号均可跨账号读取 **KGSEED_20260921_01** 批次的 44 张表（最初 6,000 条虚构记录，维护后数量以目录为准）。现有「客户、商机、报价、订单、工单」等销售列表直接合并显示对应实验行，标注虚构、维护权限和原归属。顶部「实验数据」仍可进入 `/experiments/` 浏览全部 44 表及血缘。无需加入团队，也不需要管理员权限。
+All active signed-in accounts can read the 44 tables in batch **KGSEED_20260921_01** across accounts. The batch initially contained 6,000 fictional records; use the catalog for counts after maintenance. Existing customer, opportunity, quote, order, and ticket lists merge the corresponding experimental rows, identifying fictional status, maintenance permissions, and original ownership. The experiment-data entry in the top navigation opens `/experiments/` to browse all 44 tables and lineage. Neither team membership nor administrator access is required.
 
-网页、内置聊天 Agent、工具 API 与 MCP 共同使用同一份批次清单。原客户工作台和业务写入继续使用既有授权范围；共享不转移 `owner`，仅通过共享维护入口开放下述业务数据的新增、修改和删除，不赋予外部发送或队列执行权限。个人资料表的 100 个禁用测试账号也是虚构数据的一部分，密码等登录字段不会返回。
+The website, built-in chat Agent, tool API, and MCP use the same batch manifest. Original customer workspaces and business writes retain their existing authorization scope. Sharing does not transfer `owner`; the shared-maintenance entry points permit the business-data creation, modification, and deletion described below without granting external sending or queue-execution permissions. The 100 disabled test accounts in the profile table are also fictional; login fields such as passwords are not returned.
 
-## 页面使用
+## Using the page
 
-1. 用任意正常账号登录工作台，点击顶栏「实验数据」。
-2. 左侧选表，可搜索原始字段内容，或按归属用户名 / ID 筛选。
-3. 「查看详情」展示完整允许字段、原始主键、归属、批次、可写能力和虚构标记。外键链接可继续查看关联记录。
-4. 「快照来源血缘」可追踪分析输入到邮件与抽取；「AI 回答生成记录」「回答引用证据」「工具读取证据」可查看回答证据链。
-5. 「下载完整 JSON」返回全部表的记录、字段结构和场景关联清单。二进制文档在 JSON 中保留大小与摘要，实际内容使用详情中的「下载文件」入口取得。
+1. Sign in with any normal account and open experiment data from the top navigation.
+2. Select a table on the left. Search raw field contents or filter by owner username/ID.
+3. Details show all permitted fields, original primary keys, ownership, batch, write capabilities, and fictional status. Follow foreign-key links to related records.
+4. Snapshot-source lineage traces analysis inputs to mail and extraction. Answer-generation records, citations, and tool-read evidence show the answer evidence chain.
+5. Downloading complete JSON returns every table's records, field structures, and scenario-link manifest. Binary documents retain size and digest in JSON; use the detail view's file-download entry for contents.
 
-在现有销售列表中，普通业务记录和实验记录按主键去重、统一分页。点击实验记录打开详情，可维护项提供「编辑 / 删除共享记录」链接；选中实验客户时不显示新建业务按钮，写表单的候选客户仍来自原业务权限范围。客户上下文中的私人邮件入口改为实验来源入口。计数卡包含共享实验并单独注明数量；金额沿用原业务权限范围，不加入额外共享的模拟交易。
+Existing sales lists deduplicate normal and experimental records by primary key and paginate them together. Experimental records open detail views with edit/delete links where maintenance is allowed. Selecting an experimental customer hides new-business buttons; customer choices in write forms still come from original business permissions. Private-mail entries in customer context become experimental-source entries. Count cards include and separately identify shared experimental counts; monetary totals retain original business scope and exclude additionally shared simulated transactions.
 
-页面合并读取使用 Session 认证的 `GET /api/v1/sales/browse/{resource}/` 和 `GET /api/v1/sales/browse/overview/`。列表支持 `company`、`status`、`archived`、`page`、`page_size`，默认 20 条、最多 100 条；仅接受 GET/HEAD/OPTIONS。原 `sales/directory/`、`sales/records/`、客户私有详情和写接口保持原授权契约。普通记录先显示，共享实验随后显示，拥有者或团队原已可见的同批记录不会重复；共享详情只展开清单内的联系人、设置和字段，不带出后来关联的普通私有记录。
+Merged page reads use session-authenticated `GET /api/v1/sales/browse/{resource}/` and `GET /api/v1/sales/browse/overview/`. Lists support `company`, `status`, `archived`, `page`, and `page_size`, defaulting to 20 and allowing at most 100 rows. Only GET/HEAD/OPTIONS are accepted. Original sales/directory/, sales/records/, private customer details, and write endpoints retain their authorization contracts. Normal records appear first, shared experiments second; batch records already visible through ownership/team access are not duplicated. Shared details expose only listed contacts, settings, and fields, not ordinary private records linked later.
 
-分析与评分可按明确维护请求修改，向量仍保留原夹具值。它们是模拟记录，不能当作真实模型推理、语义嵌入或模型质量评测结果。
+Analysis and scores can change through explicit maintenance requests; vectors retain original fixture values. These are simulated records, not real model inference, semantic embeddings, or model-quality evaluation results.
 
-## 只读接口
+## Read-only interfaces
 
-本节网页接口沿用网站的 Session 认证，只接受 GET、HEAD、OPTIONS。未登录不能读取数据；不把网页会话或 Agent 凭据共享给其他人。Agent 工具认证见下一节。
+These website interfaces use Session authentication and accept only GET, HEAD, and OPTIONS. Anonymous users cannot read data under the ordinary authorization mode. Do not share website sessions or Agent credentials. Agent-tool authentication is described next.
 
-| 接口 | 内容 |
+| Interface | Contents |
 |---|---|
-| `/api/v1/experiments/` | 已批准批次、44 张表、登记数量、字段与外键结构 |
-| `/api/v1/experiments/KGSEED_20260921_01/crm.Company/` | 客户表；其他模型名以目录为准 |
-| `/api/v1/experiments/KGSEED_20260921_01/export/` | 全部表的 JSON 下载 |
-| `/api/v1/experiments/KGSEED_20260921_01/sales.Attachment/{pk}/download/` | 客户附件 |
-| `/api/v1/experiments/KGSEED_20260921_01/accounts.SetupDocument/{pk}/download/` | 产品与方案文档 |
+| `/api/v1/experiments/` | Approved batches, 44 tables, registered counts, field and foreign-key structures |
+| `/api/v1/experiments/KGSEED_20260921_01/crm.Company/` | Customer table; use catalog names for other models |
+| `/api/v1/experiments/KGSEED_20260921_01/export/` | JSON download of all tables |
+| `/api/v1/experiments/KGSEED_20260921_01/sales.Attachment/{pk}/download/` | Customer attachments |
+| `/api/v1/experiments/KGSEED_20260921_01/accounts.SetupDocument/{pk}/download/` | Product and solution documents |
 
-表接口支持 `q`、`owner`、`pk`、`page`、`page_size`。默认每页 50 条，最多 200 条；精确主键和外键保持数据库原始身份，不重新编号。导出包中 `scenario_links` 是生成器登记的模拟场景关联，不是模型发现的关系。
+Table endpoints support `q`, `owner`, `pk`, `page`, and `page_size`, defaulting to 50 rows and allowing at most 200. Exact primary and foreign keys retain database identities without renumbering. Exported `scenario_links` are simulated scenario links registered by the generator, not relationships discovered by a model.
 
-## 公司分析补充资料
+## Supplemental company-analysis material
 
-公司分析 Worker 已可通过原 Agent 上下文接口获得跨账号的匹配实验资料，无需额外 Tool 令牌；L2 独立保存来源，L3 可使用补充人数，来源变更后旧缓存失效。契约与集成方法见 [公司资料补充](company-enrichment.md)。
+The company-analysis Worker can obtain matching cross-account experimental material through the original Agent context endpoint without an additional Tool token. L2 stores sources separately; L3 can use supplemental headcounts; changed sources invalidate old caches. See [company enrichment](company-enrichment.md) for contracts and integration.
 
-## Agent、工具 API 和 MCP
+## Agent, tool API, and MCP
 
-普通账号可在网页助手提问：“请查看 KGSEED 实验数据目录，读取两条客户记录，注明原归属和来源。”内置 Agent 自动使用请求绑定的数据工具接口，无需用户手动配置 Tool token。提示词版本为 `workspace-chat-v3`，查询次数、分页预算、上下文和模型参数保持原值。维护回执与文件优先展示，其后是目录/分页、行记录，保证文件证据不会被前一页记录挤出上下文；不会把未展示来源用于引用。
+A normal account can ask the website assistant to inspect the KGSEED catalog, read two customer rows, and state their original ownership and sources. The built-in Agent automatically uses request-bound data tools without manual Tool-token configuration. Prompt version is `workspace-chat-v3`; query counts, pagination budgets, context, and model parameters retain their existing values. Maintenance receipts and files precede catalog/pages and row records so prior-page rows cannot displace file evidence. Undisplayed sources are never cited.
 
-外部算法程序先由各自账号登录网站，向 `POST /api/v1/agent-tools/credentials/` 提交以下授权（携带 Session 和 CSRF）：
+External algorithm clients first sign in with their own accounts and submit this authorization to `POST /api/v1/agent-tools/credentials/` with Session and CSRF:
 
 ```json
 {"name":"KG实验只读","expires_in_hours":24,"allowed_tools":["experiments.catalog","experiments.rows","experiments.file_read"]}
 ```
 
-返回的 token 仅显示一次。程序使用 `Authorization: Tool <token>` 访问 `GET /api/v1/agent-tools/catalog/?category=experiments` 和 `POST /api/v1/agent-tools/call/`。已有令牌的名称清单在签发时冻结，部署不会自动扩权；需要签发包含新工具的新令牌。新签发的 `read_only` 模板也包含这三个工具。
+The returned token appears only once. Clients use `Authorization: Tool <token>` with `GET /api/v1/agent-tools/catalog/?category=experiments` and `POST /api/v1/agent-tools/call/`. Existing token name lists are frozen at issuance and never gain permissions through deployment; issue a new token containing new tools. Newly issued `read_only` presets include these three tools.
 
-| 工具 | 参数及返回 |
+| Tool | Arguments and results |
 |---|---|
-| `experiments.catalog` | `{}`；返回批次、原归属、表计数、字段及外键 |
-| `experiments.rows` | 必填 `batch`、`model`；可选 `q`、`owner`、`pk`、`page`、`page_size`；返回分页和保留主外键的原记录 |
-| `experiments.file_read` | 必填 `batch`、`model`、`pk`、`format`、`offset`、`limit`；仅附件/方案文档；返回归属、摘要、内容块及 `next_offset` |
+| `experiments.catalog` | `{}`; returns batches, original owners, table counts, fields, and foreign keys |
+| `experiments.rows` | Required `batch`, `model`; optional `q`, `owner`, `pk`, `page`, `page_size`; returns paginated original records with unchanged primary/foreign keys |
+| `experiments.file_read` | Required `batch`, `model`, `pk`, `format`, `offset`, `limit`; attachments/solution documents only; returns ownership, digest, content chunks, and `next_offset` |
 
-例如向工具调用入口发送：
+Example tool call:
 
 ```json
 {"name":"experiments.rows","arguments":{"batch":"KGSEED_20260921_01","model":"crm.Company","page":1,"page_size":20}}
 ```
 
-工具分页默认 50、最多 100 条，网页 Agent 每页最多 20 条。按 `count` 和页码逐页读取全部数据，不能把一页称为全量。文件 `text` 支持 UTF-8 TXT 或已核验为 `text/plain` 的实验记录，每次最多 16,000 字符；`base64` 每次最多 256 KiB 原始字节。两者都必须显式给出偏移和长度，二进制文档不会自动提取文本。
+Tool pagination defaults to 50 and allows at most 100 rows; the website Agent allows at most 20 per page. Read every page using count and page numbers; one page is not the complete dataset. File `text` supports UTF-8 TXT or experimental records verified as text/plain, at most 16,000 characters per read. `base64` allows at most 256 KiB of raw bytes. Both require explicit offsets and lengths; binary documents do not receive automatic text extraction.
 
-MCP 使用已有 stdio 桥接，无需新增公网端口。安装 `integrations/salesmate_tools/requirements.txt`，宿主以仓库根目录为工作目录，启动 `python -m integrations.salesmate_tools.mcp_server`，私密环境设置 `SALESMATE_TOOLS_URL=https://milkdragon.dev` 及各自的 `SALESMATE_TOOLS_TOKEN`。MCP 动态发布该令牌获准的目录，不维护第二套实验权限。完整配置见 [业务工具接入](agent-business-tools.md)。
+MCP uses the existing stdio bridge without another public port. Install `integrations/salesmate_tools/requirements.txt`; configure the host with the repository root as working directory and `python -m integrations.salesmate_tools.mcp_server`, privately injecting `SALESMATE_TOOLS_URL=https://milkdragon.dev` and the account's `SALESMATE_TOOLS_TOKEN`. MCP dynamically publishes the permitted catalog and maintains no separate experiment permission system. See [business-tool integration](agent-business-tools.md).
 
-网页 Agent 的成功读取会生成属于提问者请求的 `ToolRead`，回答引用保留实际读取证据，证据里的原 `owner` 不变。读取不会修改业务记录；维护会原子更新当前清理清单，并保存原清单与操作者审计。证据快照与夹具分离。
+Successful website Agent reads create ToolRead records belonging to the questioner's request. Answer citations retain actual read evidence with its original owner. Reads do not modify business records. Maintenance atomically updates the current cleanup manifest and saves the original manifest and operator audit. Evidence snapshots remain separate from fixtures.
 
-## 新增、修改和删除
+## Creation, modification, and deletion
 
-所有有效登录账号（包括新注册账号）均可维护 28 类业务与知识数据：公司资料、引导资料、销售画像；客户、联系人、邮件、持久邮件、抽取事实、分析快照、分析结果、评分、快照来源与失效记录；客户设置、别名、联系人补充资料、产品、工单、商机、报价及明细、订单及明细、跟进、会话、消息、草稿；知识条目。三个单账号资料模型仅允许修改和删除，避免新增时覆盖批次拥有者的真实资料。
+All active signed-in accounts, including new registrations, can maintain 28 business/knowledge model types: company profiles, onboarding profiles, seller profiles; customers, contacts, mail, durable mail, extracted facts, analysis snapshots, analysis results, scores, snapshot sources and invalidations; company settings, aliases, supplemental contact profiles, products, tickets, opportunities, quotes and lines, orders and lines, follow-ups, conversations, messages, drafts; and knowledge entries. Three per-account profile models permit only update/delete, preventing creation from overwriting the batch owner's real profiles.
 
-身份账号、团队与授权、附件/文档、向量、通知、执行请求/回执及审计证据等 16 类表保留只读。目录 `tables[].write` 与分页响应的 `write` 是当前能力和字段的权威说明。
+The other 16 table types remain read-only, including identity accounts, teams/grants, attachments/documents, vectors, notifications, execution requests/receipts, and audit evidence. Catalog `tables[].write` and paginated response `write` are authoritative for current capabilities and fields.
 
-网页：在「实验数据」选表后点击「新增共享虚构记录」；详情中点击「修改记录」或「删除记录」。普通业务页详情也有维护链接。外键需填同批次主键，归属不能修改；持久邮件与跟进任务只能保存终态（completed/failed 或 completed/cancelled），不启动后台处理或提醒。每次操作保存操作者、时间、变更字段名和前后指纹。删除只允许没有反向引用的单行，不隐式级联。
+On the website, select a table and create a shared fictional record, or edit/delete from details. Ordinary business detail pages also link to maintenance. Foreign keys must belong to the same batch, and ownership cannot change. Durable mail and follow-ups accept only terminal states (completed/failed or completed/cancelled), without launching processing or reminders. Every operation records operator, time, changed field names, and before/after fingerprints. Deletion permits only one row without reverse references and never cascades implicitly.
 
-工具 API：仍用 `POST /api/v1/agent-tools/call/`，Session 需要 CSRF，外部调用需要包含对应工具名称的 Tool token。写入信封必须提供 UUID `idempotency_key`；结果未知时保持原参数和同一键，不自动重新生成逻辑操作。
+Tool writes still use `POST /api/v1/agent-tools/call/`; Session requires CSRF and external callers need a Tool token containing the tool name. The envelope requires a UUID `idempotency_key`. If the outcome is unknown, retain the original arguments and key instead of automatically generating another logical operation.
 
-| 工具 | arguments |
+| Tool | arguments |
 |---|---|
-| `experiments.create` | `batch`, `model`, `data`（只含 `write.fields` 中的字段） |
+| `experiments.create` | `batch`, `model`, `data` (only fields listed in `write.fields`) |
 | `experiments.update` | `batch`, `model`, `pk`, `expected`, `data` |
 | `experiments.delete` | `batch`, `model`, `pk`, `expected` |
 
-`expected` 必须等于最近读取的行 `fingerprint`；版本过期返回 409。保存与当前清单指纹原子更新，非法字段/关系返回 400，未开放模型返回 403，非清单主键返回 404。新行自动登记批次，归属固定为批次拥有者。首次维护保留 `original_rows`，后续变更追加 `mutations`。生成器的 `scenario_links` 保留原始值，发生维护后 `scenario_links_status=original_before_edits`，不能把它当作更新后的真值。
+`expected` must equal the latest read's row fingerprint; stale versions return 409. Saving and current-manifest fingerprint updates are atomic. Invalid fields/relationships return 400, unavailable models 403, and unlisted primary keys 404. New rows register automatically in the batch with ownership fixed to its owner. Initial maintenance preserves `original_rows`; later changes append `mutations`. Generator scenario_links retain their original values; after maintenance, `scenario_links_status=original_before_edits` prevents treating them as updated ground truth.
 
-内置网页 Agent 可按明确请求维护虚构数据，例如“请把 KGSEED 中已确定主键的客户名称改为……”。它先读取目录与最新指纹，再执行维护并引用真实回执。请求绑定接口保留 `tool-reads/` 路径；写工具按 `executionMode=write` 执行，幂等键由请求 ID、工具名和完整参数派生。真实业务写入和外部动作仍不在工作空间聊天范围内。
+The built-in website Agent can maintain fictional data on explicit request, such as renaming a KGSEED customer with an identified primary key. It first reads the catalog and latest fingerprint, then performs maintenance and cites the actual receipt. Request-bound interfaces retain the tool-reads/ path; write tools use executionMode=write with an idempotency key derived from request ID, tool name, and complete arguments. Real-business writes and external actions remain outside workspace chat.
 
-MCP 动态发布三个新增写工具，参数除上表之外须显式带 `idempotency_key`。旧只读 token 不自动扩权；可重新签发明确包含六个实验工具的 token，或使用会包含其它业务维护权限的 `data_management` 预设。
+MCP dynamically publishes the three write tools with explicit idempotency_key in addition to the arguments above. Old read-only tokens do not gain permissions. Issue a token explicitly containing all six experiment tools, or use data_management, which also includes other business-maintenance permissions.
 
-## 共享边界与清理
+## Sharing boundaries and cleanup
 
-- 只开放代码 `APPROVED_BATCHES` 中明确列出的这一批次，不通过 `KGSEED` 名称前缀判断授权，也不自动开放未来批次。
-- 只读取 `AuditEvent` 当前批次清单内的精确主键，并核对保存时的行指纹。清单外记录不返回，包括后来关联到同一虚构客户的普通数据。
-- 仅允许 44 个模型；凭据、连接、框架权限和任务调度表没有实验读取入口。账号密码、内部附件路径和工具授权关联字段被排除。
-- 任一表出现未通过维护入口登记的缺失或修改，该表返回 409；全量导出同样失败，不默默跳过损坏数据。恢复共享需维护者核验，不能绕过维护事务手动刷新指纹。
-- 清单处于文件清理状态时停止读取；清单删除后原批次路径返回 404。现有 `seed_kg_lab --action delete` 使用当前清单与当前外键依赖顺序清理，不必反向撤销权限记录。
-- 读取日志仅记录访问账号、批次、模型与下载类型，不记录邮件正文或凭据。维护日志只含定位元数据；聊天证据快照保存 JSON，不给原夹具添加外键依赖。
+- Only this batch explicitly listed in code `APPROVED_BATCHES` is available. A KGSEED name prefix grants no authorization, and future batches are not automatically shared.
+- Read only exact primary keys in the current AuditEvent batch manifest and verify stored row fingerprints. Unlisted records, including ordinary records linked later to the same fictional customer, are excluded.
+- Only 44 models are allowed. Credentials, connections, framework permissions, and scheduler tables have no experimental-read entry point. Passwords, internal attachment paths, and tool-authorization links are excluded.
+- Missing or modified rows not registered through maintenance cause that table to return 409; full export also fails instead of skipping damaged data. Restoring sharing requires maintainer verification, not manually refreshing fingerprints outside maintenance transactions.
+- Reads stop during file cleanup. After manifest deletion, original batch routes return 404. Existing `seed_kg_lab --action delete` uses the current manifest and current foreign-key dependency order, without needing to undo permission records.
+- Read logs include only requesting account, batch, model, and download type, never mail bodies or credentials. Maintenance logs contain diagnostic metadata only; chat evidence snapshots store JSON without adding foreign-key dependencies to original fixtures.
 
-## 验证
+## Validation
 
-在隔离 PostgreSQL 数据库运行：
+Run against isolated PostgreSQL:
 
 ```sh
 python manage.py test tests.integration.test_experiments tests.integration.test_sales tests.integration.test_crm --noinput
@@ -111,4 +111,4 @@ python manage.py test tests.contracts.test_schema --noinput
 python tools/check_docs.py
 ```
 
-实验测试覆盖全部表跨账号读取、归属、精确批次、伪造前缀、匿名拒绝、受保护写入拒绝、跨账号 CRUD、幂等及旧指纹冲突、旧业务权限不升级、修改和缺失时停止读取、分页、血缘外键、完整导出、附件摘要及清单撤销。Agent 测试使用真实 HTTP 和数据库，模型决策为确定性模拟；MCP 用真实 SDK 和 stdio 子进程，未安装 SDK 时该项明确跳过。不得连接实验站点实际数据库运行这些测试。
+Experiment tests cover cross-account reads for every table, ownership, exact batches, forged prefixes, anonymous rejection, protected-write rejection, cross-account CRUD, idempotency, stale fingerprints, unchanged original business permissions, stopping reads on changes/missing rows, pagination, lineage foreign keys, complete export, attachment digests, and manifest revocation. Agent tests use real HTTP/database with deterministic mocked model decisions. MCP uses the real SDK and stdio subprocesses and explicitly skips that case when the SDK is absent. Never run these tests against the experimental site's actual database.

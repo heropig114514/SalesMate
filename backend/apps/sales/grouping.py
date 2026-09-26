@@ -1,14 +1,14 @@
-"""职责：管理客户目录、联系人及明确的人工邮件归组。
-实现：实验模式使用公开跨账号业务范围；owner 锁与 revision 保护批量搬移；合并保留历史分析，并传播成交归属变化对其他客户评分的影响。
-关联：crm.ingestion 使用 CompanyAlias 的精确映射，sales API 仅向共享用户返回业务目录。
-目录：
-- directory_row：生成不含私人邮件的客户目录项。
-- create_company：建立明确命名的客户。
-- save_contact：新增或编辑人工联系人。
-- move_emails：把明确选择的邮件和联系人关联移动到同一员工的目标公司。
-- merge_companies：合并同一员工的公司并归档来源。
-变量索引：
-- logger：记录人工归组数量与对象标识，不记录邮件内容。
+"""Responsibility: Manage company directories, contacts, and explicit manual email grouping.
+Implementation: Experiment mode uses public cross-account business scope; owner locks and revision checks protect bulk moves. Merges preserve historical analyses and propagate transaction ownership changes to other company scores.
+Relationships: crm.ingestion uses exact CompanyAlias mappings; sales API exposes only the business directory to shared users.
+Directory:
+- directory_row: Build a company directory entry without private emails.
+- create_company: Create an explicitly named company.
+- save_contact: Create or edit a manual contact.
+- move_emails: Move explicitly selected emails and contact relations to a target company belonging to the same employee.
+- merge_companies: Merge companies belonging to the same employee and archive the source.
+Variable index:
+- logger: Log manual grouping counts and object identifiers without email content.
 """
 
 from common.laboratory import owner_scope
@@ -30,11 +30,11 @@ from .services import audit, enqueue_analysis, sync_company
 logger = logging.getLogger("salesmate.grouping")
 
 
-# 功能：生成不含私人邮件的客户目录项。
-# 输入：`company` 为已授权客户。
-# 输出：基础资料、联系人和版本字典。
-# 逻辑：只输出人工业务资料，不复用含邮件与分析的 crm selectors。
-# 约束：共享权限不会因此扩大到邮箱；归档状态来自 CompanySettings。
+# Function: Build a company directory entry without private emails.
+# Inputs: `company`: authorized company.
+# Outputs: Dictionary of basic profile, contacts, and version.
+# Logic: Return only manual business data without reusing CRM selectors containing emails and analyses.
+# Constraints: Sharing does not thereby grant mailbox access; archival state comes from CompanySettings.
 def directory_row(company):
     settings = models.CompanySettings.objects.filter(company=company).first()
     return {
@@ -55,11 +55,11 @@ def directory_row(company):
     }
 
 
-# 功能：建立明确命名的客户。
-# 输入：`actor` 为用户，`name` 为非空名称。
-# 输出：新 Company。
-# 逻辑：使用独立 manual UUID 归组键，不自动假定公司域名。
-# 约束：只有显式提供的公司名写入 CRM；其余字段保持未知。
+# Function: Create an explicitly named company.
+# Inputs: `actor`: user; `name`: nonempty name.
+# Outputs: A new Company.
+# Logic: Use an independent manual UUID grouping key without inferring a company domain.
+# Constraints: Write only the explicitly supplied company name to CRM; other fields remain unknown.
 @transaction.atomic
 def create_company(actor, name):
     if not isinstance(name, str) or not name.strip() or len(name) > 240:
@@ -77,11 +77,11 @@ def create_company(actor, name):
     return company
 
 
-# 功能：新增或编辑人工联系人。
-# 输入：`actor`、`company_id`、`expected` 公司版本、`data` 含 email/name 及可选 id。
-# 输出：联系人标识和新公司版本。
-# 逻辑：锁所有者和公司；有邮件的联系人禁止修改邮箱以免破坏原归组依据。
-# 约束：姓名为空表示未知；不覆写邮件抽取事实。
+# Function: Create or edit a manual contact.
+# Inputs: `actor`; `company_id`; `expected`: company version; `data`: email/name and optional id.
+# Outputs: Contact identifier and new company version.
+# Logic: Lock owner and company; prohibit changing email addresses of contacts with emails to preserve the original grouping basis.
+# Constraints: An empty name means unknown; do not overwrite facts extracted from emails.
 @transaction.atomic
 def save_contact(actor, company_id, expected, data):
     company = Company.objects.get(pk=company_id)
@@ -127,11 +127,11 @@ def save_contact(actor, company_id, expected, data):
     }
 
 
-# 功能：将明确选择的邮件移动到同员工的目标公司。
-# 输入：`actor`、`source_id`、`target_id`、`source_revision`、`target_revision`、`keys` 邮件去重键数组。
-# 输出：移动条数和两公司新版本。
-# 逻辑：按当前模式查询并锁定两公司，实验模式可跨账号；联系人按邮箱复用，设置保持各公司原归属，邮件正文不变。
-# 约束：不授予共享用户搬移私人邮件；不自动转移交易或改变未来域名路由。
+# Function: Move explicitly selected emails to the same employee's target company.
+# Inputs: `actor`, `source_id`, `target_id`, `source_revision`, `target_revision`, and `keys`: email deduplication-key array.
+# Outputs: Moved count and new versions of both companies.
+# Logic: Query and lock both companies according to the current mode; experiment mode permits cross-account moves. Reuse contacts by email, retain each company's settings ownership, and preserve email bodies.
+# Constraints: Do not authorize shared users to move private email; do not automatically transfer transactions or change future domain routing.
 @transaction.atomic
 def move_emails(actor, source_id, target_id, source_revision, target_revision, keys):
     if str(source_id) == str(target_id):
@@ -197,11 +197,11 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
     }
 
 
-# 功能：合并同一员工的公司并归档来源。
-# 输入：`actor`、`source_id`、`target_id`、`source_revision`、`target_revision`。
-# 输出：目标公司目录项。
-# 逻辑：拒绝冲突字段，转移业务关系；历史分析留在来源，成交订单归属变化同步更新其他公司的评分背景版本。
-# 约束：正式模式只允许公司所有者，实验模式跨账号；团队共享授权不自动扩大，来源存在共享授权时须先撤销。
+# Function: Merge companies belonging to the same employee and archive the source.
+# Inputs: `actor`、`source_id`、`target_id`、`source_revision`、`target_revision`.
+# Outputs: Target company directory entry.
+# Logic: Reject conflicting fields and transfer business relations; retain historical analyses at the source. Transaction-order ownership changes also update other companies' scoring-context versions.
+# Constraints: Production allows only company owners, while experiment mode permits cross-account access. Team-sharing grants do not expand automatically; revoke source sharing grants first.
 @transaction.atomic
 def merge_companies(actor, source_id, target_id, source_revision, target_revision):
     get_user_model().objects.select_for_update().get(pk=actor.pk)

@@ -1,15 +1,15 @@
-"""职责：保存分析输入、判断与评分并验证并发和 CRM／实验来源。
-实现：以安全原因码区分版本、快照及不可变载荷冲突；在公司行锁下验证 revision、租约、引用及不可变键及实验资料新鲜度；正式评分解释与分数原子保存并核验邮件证据。
-关联：API 与规则占位共用该入口，selectors 从这些快照投影页面。
-目录：
-- save_input：保存 L2 原始输入快照。
-- validate_refs：递归核对每条来源引用属于当前业务快照。
-- save_analysis：保存经验证的 L3 分析。
-- save_score：保存与当前成功分析对应的评分。
-- cached_analysis：查询指定版本的分析缓存元数据。
-变量索引：
-- logger：模块脱敏诊断日志记录器
-- DEAL_PROBABILITY_PATTERN：识别并禁止 Agent 输出成交概率或胜率表述。
+"""Responsibility: Save analysis input, judgment, and score while validating concurrency and CRM/experiment sources.
+Implementation: Use safe reason codes to distinguish version, snapshot, and immutable-payload conflicts; validate revision, lease, references, immutable keys, and experiment-data freshness under the company row lock. Atomically save formal score explanations and score after verifying email evidence.
+Relationships: API and rules placeholders share this entry point, and selectors projects pages from these snapshots.
+Directory:
+- save_input: Save L2 source input snapshot.
+- validate_refs: Recursively verify every source reference belongs to current business snapshot.
+- save_analysis: Save validated L3 analysis.
+- save_score: Save score corresponding to current successful analysis.
+- cached_analysis: Query analysis-cache metadata for a specified version.
+Variable index:
+- logger: Redacted diagnostic logger for this module.
+- DEAL_PROBABILITY_PATTERN: Recognizes and prohibits Agent statements of deal probability or win rate.
 """
 import json
 import logging
@@ -38,11 +38,11 @@ DEAL_PROBABILITY_PATTERN = re.compile(
 )
 
 
-# 功能：保存 L2 原始输入快照。
-# 输入：`owner` 为认证用户；`payload` 为 AnalysisInput；`expected` 为读取版本；`job_id`、`token` 为租约凭证。
-# 输出：原始快照载荷；冲突包含可区分的安全原因码及阶段日志。
-# 逻辑：核查当前成员、外部版本、未解析数量与事实全集，复核独立实验资料及其输入版本，并登记精确抽取来源边。
-# 约束：启用补充资料时核验包含其内容的 input_version；旧客户端保持原协议；built_at 不参与实质内容比较。
+# Function: Save L2 source input snapshot.
+# Inputs: `owner` is authenticated, `payload` is AnalysisInput, `expected` is the read version, and `job_id` and `token` are lease credentials.
+# Outputs: Source snapshot payload; conflicts include distinguishable safe reason code and stage log.
+# Logic: Verify current members, external version, unparsed count, and complete facts; revalidate independent experiment data and its input version and register exact extraction source edges.
+# Constraints: Validate an input_version that includes enrichment when it is enabled; legacy clients retain original protocol and built_at is excluded from substantive content comparison.
 @transaction.atomic
 def save_input(owner, payload, expected, job_id, token):
     serializer = AnalysisInputSerializer(data=payload)
@@ -130,11 +130,11 @@ def save_input(owner, payload, expected, job_id, token):
     return snapshot.payload
 
 
-# 功能：递归核对每条来源引用属于当前业务快照。
-# 输入：`value` 为 JSON 结果节点；`allowed` 为当前允许的来源 ID 集合。
-# 输出：无；发现越界来源抛 ValidationError。
-# 逻辑：遍历对象与数组，检查每个 source_refs。
-# 约束：引用可定位不等于陈述已被人工核实。
+# Function: Recursively verify every source reference belongs to current business snapshot.
+# Inputs: `value` is a JSON result node and `allowed` is the currently allowed source-ID set.
+# Outputs: None; raises ValidationError for an out-of-scope source.
+# Logic: Traverse objects and arrays and inspect every source_refs.
+# Constraints: A locatable reference does not mean a statement was human-verified.
 def validate_refs(value, allowed):
     if isinstance(value, dict):
         if "source_refs" in value:
@@ -148,11 +148,11 @@ def validate_refs(value, allowed):
             validate_refs(child, allowed)
 
 
-# 功能：保存经验证的 L3 分析。
-# 输入：`owner`、`payload`、`expected`、`job_id`、`token` 指定用户、分析、版本与任务；`provider` 标识 rules 或 agent。
-# 输出：已保存 Analysis 原始载荷；版本、快照、不可变载荷冲突分别说明原因。
-# 逻辑：当前 revision 与仍有效的实验快照一致后检查来源、时间、缺失信息和强信号；允许独立实验人数，保留其来源标签。
-# 约束：失败不覆盖成功，不接受未知来源或详情中的成交概率；原文业务百分比可以保留。
+# Function: Save validated L3 analysis.
+# Inputs: `owner`, `payload`, `expected`, `job_id`, and `token` specify user, analysis, version, and job; `provider` identifies rules or agent.
+# Outputs: Saved Analysis source payload; version, snapshot, and immutable-payload conflicts separately state reasons.
+# Logic: After current revision agrees with still-valid experiment snapshot, check sources, times, missing information, and strong signals; allow independent experiment employee counts while retaining their source labels.
+# Constraints: Failure does not overwrite success and unknown sources or deal probability in details are rejected; source business percentages may remain.
 @transaction.atomic
 def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     serializer = AnalysisSerializer(data=payload)
@@ -212,7 +212,7 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     result, created = Analysis.objects.get_or_create(snapshot=snapshot, prompt_version=data["analysis_prompt_version"], defaults={"payload": data, "provider": provider})
     if not created and result.payload != data:
         if result.payload["status"] == "failed" and data["status"] == "completed":
-            # 仅在显式新任务的有效租约内补齐失败结果；成功结果保持不可变。
+            # Complete failed results only under a valid lease from an explicit new job; successful results remain immutable.
             result.payload, result.provider = data, provider
             result.save(update_fields=["payload", "provider"])
         else:
@@ -221,11 +221,11 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     return result.payload
 
 
-# 功能：保存与当前成功分析对应的评分。
-# 输入：`owner`、`payload`、`expected`、`job_id`、`token` 为身份、Score、后端版本与任务凭证。
-# 输出：Score 原始载荷；版本及同键不同评分冲突分别说明原因。
-# 逻辑：绑定当前输入及实验来源仍有效的成功分析；正式结果独立于旧特征，解释来源验证后与分数原子保存；按规则版本和 scored_at 去重。
-# 约束：无有效分析不接收分数；只有旧版本继续校验旧特征，相同键的解释也不可覆盖。
+# Function: Save score corresponding to current successful analysis.
+# Inputs: `owner`, `payload`, `expected`, `job_id`, and `token` provide identity, Score, backend version, and job credential.
+# Outputs: Score source payload; version conflicts and same-key different-score conflicts state separate reasons.
+# Logic: Bind successful analysis whose current input and experiment source remain valid; formal results are independent of legacy features, and after explanation source validation save with score atomically; deduplicate by rule version and scored_at.
+# Constraints: Does not accept score without valid analysis; only legacy versions continue validating legacy features and same-key explanations cannot be overwritten.
 @transaction.atomic
 def save_score(owner, payload, expected, job_id, token):
     serializer = ScoreSerializer(data=payload)
@@ -252,11 +252,11 @@ def save_score(owner, payload, expected, job_id, token):
     return data
 
 
-# 功能：查询指定版本的分析缓存元数据。
-# 输入：`company` 为授权公司；`input_version` 为 Agent 输入键；`prompt_version` 可限定提示词版本。
-# 输出：README CachedAnalysis，未命中可附旧结果时间。
-# 逻辑：命中要求未失效、当前 revision、输入版本、成功状态及可选提示词一致，实验资料还须与当前来源一致。
-# 约束：旧结果 hit 为 false，不冒充新分析。
+# Function: Query analysis-cache metadata for a specified version.
+# Inputs: `company` is authorized, `input_version` is the Agent input key, and `prompt_version` may limit prompt version.
+# Outputs: README CachedAnalysis, including old result time on a miss when available.
+# Logic: A hit requires no invalidation, current revision, input version, successful state, and optional prompt match; experiment data must also agree with current source.
+# Constraints: Old results have hit false and never impersonate new analysis.
 def cached_analysis(company, input_version, prompt_version=None):
     query = Analysis.objects.filter(snapshot__company=company, snapshot__invalidation__isnull=True, payload__status="completed").select_related("snapshot")
     exact = query.filter(snapshot__input_version=input_version, snapshot__revision=company.revision)

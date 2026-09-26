@@ -1,18 +1,18 @@
-"""职责：提供无需邮箱或手机验证的普通账号注册接口。
-实现：错误响应按请求语言展示；验证用户名与最少 8 字符的密码长度规则，事务创建账号后建立 Session；数据库唯一约束处理并发重名。
-关联：accounts.urls 注册路由；前端复用 session/ 获取 CSRF；新用户数据由既有 owner 权限隔离。
-目录：
-- RegistrationSerializer：限制注册可写字段并校验账号信息。
-- RegistrationSerializer.to_internal_value：拒绝额外字段及非对象载荷。
-- RegistrationSerializer.validate_username：规范化并验证用户名和重名。
-- RegistrationSerializer.validate：使用仅要求最少长度的 Django 密码校验器。
-- RegistrationView：承载带 CSRF 保护的匿名注册入口。
-- RegistrationView.post：创建普通用户并登录当前浏览器。
-变量索引：
-- logger：记录注册结果，不记录用户名、密码或会话令牌。
-- RegistrationSerializer.username：最多 150 字符的用户名。
-- RegistrationSerializer.password：最多 128 字符的只写密码，保留空格语义。
-- RegistrationView.permission_classes：允许匿名发起注册，已登录请求单独拒绝。
+"""Responsibility: Provide standard-account registration without mailbox or phone verification.
+Implementation: Error responses follow the request language; validate username and the minimum eight-character password rule, create the account transactionally, then establish a Session; the database unique constraint handles concurrent duplicate names.
+Relationships: ``accounts.urls`` registers the route; the frontend reuses ``session/`` to obtain CSRF; existing owner permissions isolate new-user data.
+Directory:
+- RegistrationSerializer: Restrict writable registration fields and validate account information.
+- RegistrationSerializer.to_internal_value: Reject extra fields and non-object payloads.
+- RegistrationSerializer.validate_username: Normalize and validate username and duplicates.
+- RegistrationSerializer.validate: Use the Django password validator that requires only minimum length.
+- RegistrationView: Host the CSRF-protected anonymous registration entry point.
+- RegistrationView.post: Create a standard user and log in the current browser.
+Variable index:
+- logger: Records registration results without usernames, passwords, or session tokens.
+- RegistrationSerializer.username: Username up to 150 characters.
+- RegistrationSerializer.password: Write-only password up to 128 characters that preserves whitespace semantics.
+- RegistrationView.permission_classes: Allows anonymous registration and separately rejects authenticated requests.
 """
 
 import logging
@@ -37,28 +37,28 @@ from .models import User, SalesSetup
 logger = logging.getLogger("salesmate.accounts")
 
 
-# 功能：声明公开注册所接受的账号字段。
-# 逻辑：只允许 username/password；复用模型用户名规则和项目既有密码校验配置。
-# 约束：不接受角色、邮箱验证状态或 Agent 凭证，密码不进入序列化响应。
+# Function: Declare account fields accepted by public registration.
+# Logic: Allow only ``username`` and ``password``; reuse the model username rules and the project's existing password-validation configuration.
+# Constraints: Does not accept roles, mailbox-verification status, or Agent credentials; passwords never enter serialized responses.
 class RegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     password = serializers.CharField(max_length=128, write_only=True, trim_whitespace=False)
 
-    # 功能：限定注册输入的字段集合。
-    # 输入：`data` 为请求的原始 JSON。
-    # 输出：字段转换结果，非法结构抛 ValidationError。
-    # 逻辑：先检查对象及未知字段，以 non_field_errors 字典报告结构错误，再执行 DRF 字段校验。
-    # 约束：不创建账号，不静默忽略权限相关字段。
+    # Function: Restrict the set of registration-input fields.
+    # Inputs: ``data`` is raw JSON from the request.
+    # Outputs: Field-conversion result; invalid structure raises ``ValidationError``.
+    # Logic: Check the object and unknown fields first, report structural errors through ``non_field_errors``, then run DRF field validation.
+    # Constraints: Does not create an account or silently ignore permission-related fields.
     def to_internal_value(self, data):
         if not isinstance(data, dict) or set(data) - set(self.fields):
             raise serializers.ValidationError({"non_field_errors": ["注册只接受用户名和密码。"]})
         return super().to_internal_value(data)
 
-    # 功能：统一用户名表示并验证可用性。
-    # 输入：`value` 为去除首尾空白后的用户名。
-    # 输出：规范化用户名；格式或重名错误抛 ValidationError。
-    # 逻辑：先按 User 的 Unicode 规则规范化，再运行模型字段校验和精确重名查询。
-    # 约束：保持现有大小写语义；并发冲突仍由数据库唯一约束裁决。
+    # Function: Normalize username representation and validate availability.
+    # Inputs: ``value`` is the username after leading and trailing whitespace removal.
+    # Outputs: Normalized username; invalid format or duplicate name raises ``ValidationError``.
+    # Logic: Normalize by ``User`` Unicode rules, then run model-field validation and an exact duplicate-name query.
+    # Constraints: Preserves current case semantics; the database unique constraint still decides concurrent conflicts.
     def validate_username(self, value):
         value = User.normalize_username(value)
         try:
@@ -69,11 +69,11 @@ class RegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError("用户名已被使用，请换一个。")
         return value
 
-    # 功能：验证密码是否达到项目长度要求。
-    # 输入：`attrs` 含已验证用户名和原始密码。
-    # 输出：通过校验的字段字典；错误以 password 字段报告。
-    # 逻辑：构造未保存的用户交给 Django validate_password，全局校验器仅保留最少 8 字符，不限制字符组合。
-    # 约束：不要求邮箱、手机号、验证码或实名信息；不记录密码。
+    # Function: Validate that the password meets the project's length requirement.
+    # Inputs: ``attrs`` contains validated username and raw password.
+    # Outputs: Validated field dictionary; errors are reported on the ``password`` field.
+    # Logic: Pass an unsaved user to Django ``validate_password``; global validators retain only the eight-character minimum and do not restrict character combinations.
+    # Constraints: Does not require mailbox, phone, verification code, or legal identity information; does not log passwords.
     def validate(self, attrs):
         try:
             validate_password(attrs["password"], user=User(username=attrs["username"]))
@@ -82,18 +82,18 @@ class RegistrationSerializer(serializers.Serializer):
         return attrs
 
 
-# 功能：通过同源浏览器创建普通账号并登录。
-# 逻辑：匿名注册保留 CSRF，已登录用户不能用注册请求替换当前身份。
-# 约束：不创建管理员、不复制演示数据、不自动授权 Gmail 或启动系统进程。
+# Function: Create a standard account and log in through the same-origin browser.
+# Logic: Anonymous registration retains CSRF protection, and an authenticated user cannot replace their current identity with a registration request.
+# Constraints: Does not create administrators, copy demo data, automatically authorize Gmail, or start system processes.
 @method_decorator(csrf_protect, name="dispatch")
 class RegistrationView(APIView):
     permission_classes = [AllowAny]
 
-    # 功能：提交账号注册并返回已认证会话。
-    # 输入：`request` 含 username/password JSON 及有效 CSRF Cookie/请求头。
-    # 输出：成功返回 201 和身份、轮换后的 CSRF；已登录返回按请求语言显示的 409，输入错误返回 400。
-    # 逻辑：事务创建经哈希存储密码的普通用户及未完成引导记录，提交后登录；仅将已确认的重名冲突转换为输入错误。
-    # 约束：非重名的 IntegrityError 记录错误类型并继续抛出；不泄露秘密、不重试、不生成虚构邮箱。
+    # Function: Submit account registration and return an authenticated session.
+    # Inputs: ``request`` contains username/password JSON and a valid CSRF cookie or header.
+    # Outputs: On success, 201 with identity and rotated CSRF; authenticated callers receive language-specific 409, and invalid input receives 400.
+    # Logic: Transactionally create a standard user with a hashed password and an incomplete-onboarding record, then log in after commit; convert only confirmed duplicate-name conflicts into input errors.
+    # Constraints: Log the error type and re-raise non-duplicate ``IntegrityError``; do not expose secrets, retry, or generate fictional mailboxes.
     @extend_schema(request=RegistrationSerializer, responses={201: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 403: OpenApiTypes.OBJECT, 409: OpenApiTypes.OBJECT}, tags=["accounts"])
     def post(self, request):
         if request.user.is_authenticated:

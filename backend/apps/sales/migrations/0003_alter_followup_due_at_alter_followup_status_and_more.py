@@ -1,19 +1,19 @@
-"""职责：为销售状态队列和到期跟进建立查询索引。
-实现：通过 AlterField 为现有状态及 due_at 字段增加索引，不改变数据值或默认状态。
-关联：sales_worker 和业务列表查询使用这些字段。
-目录：
-- Migration：状态与时间索引迁移。
-变量索引：
-- Migration.dependencies：依赖销售连接迁移。
-- Migration.operations：索引字段变更清单。
+"""Responsibility: Add query indexes for sales status queues and due follow-ups.
+Implementation: Use AlterField to index existing status and due_at fields without changing values or default states.
+Relationships: sales_worker and business list queries use these fields.
+Directory:
+- Migration: Status and time index migration.
+Variable index:
+- Migration.dependencies: Depend on the sales connection migration.
+- Migration.operations: List of indexed-field changes.
 """
 
 from django.db import migrations, models
 
 
-# 功能：为状态和到期时间添加数据库索引。
-# 逻辑：由 Django 创建索引，字段取值和默认值保持不变。
-# 约束：大表建索引的部署耗时需由实际数据库规模评估。
+# Function: Add database indexes for status and due time.
+# Logic: Django creates indexes while preserving field values and defaults.
+# Constraints: Assess index creation time for large tables against actual database size.
 class Migration(migrations.Migration):
     dependencies = [
         ("sales", "0002_alter_draft_recipients_connection"),

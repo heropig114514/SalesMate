@@ -1,12 +1,12 @@
-"""职责：显式导入员工已确认的内部知识版本。
-实现：读取 UTF-8 JSON 数组，在员工事务锁下保证同版本正文不可覆盖。
-关联：KnowledgeEntry 供 chat.context 查询；无内置示例制度。
-目录：
-- Command：知识维护命令。
-- Command.add_arguments：声明员工与文件。
-- Command.handle：验证全部条目后原子导入。
-变量索引：
-- Command.help：导入用途说明。
+"""Responsibility: Explicitly import an employee's confirmed internal-knowledge versions.
+Implementation: Read UTF-8 JSON array and ensure same-version content cannot be overwritten under an employee transaction lock.
+Relationships: ``KnowledgeEntry`` supports ``chat.context`` queries; no built-in example policy exists.
+Directory:
+- Command: Knowledge-maintenance command.
+- Command.add_arguments: Declare employee and file.
+- Command.handle: Atomically import after validating every entry.
+Variable index:
+- Command.help: Import purpose.
 """
 
 import json
@@ -21,26 +21,26 @@ from apps.chat import contracts, services
 from apps.chat.models import KnowledgeEntry
 
 
-# 功能：导入具有明确版本的知识。
-# 逻辑：同标识新版本停用旧版本；active=false 可明确停用当前版本。
-# 约束：相同版本不同内容报错并回滚整批。
+# Function: Import knowledge with explicit versions.
+# Logic: A new version for the same identifier deactivates the old version; ``active=false`` can explicitly deactivate the current version.
+# Constraints: Same version with different content errors and rolls back the whole batch.
 class Command(BaseCommand):
     help = "导入已确认的内部知识 JSON，不预置或生成业务制度。"
 
-    # 功能：声明知识导入输入。
-    # 输入：`parser` 参数解析器。
-    # 输出：无，注册 owner/file。
-    # 逻辑：两个参数均必需。
-    # 约束：文件路径不会发送到外部服务。
+    # Function: Declare knowledge-import input.
+    # Inputs: Argument parser ``parser``.
+    # Outputs: None; registers owner and file.
+    # Logic: Both arguments are required.
+    # Constraints: File path is never sent to an external service.
     def add_arguments(self, parser):
         parser.add_argument("--owner", required=True)
         parser.add_argument("--file", required=True)
 
-    # 功能：验证并导入完整知识批次。
-    # 输入：`args` 位置参数，`options` 员工和本地 UTF-8 JSON 路径。
-    # 输出：条目数量；失败为 CommandError。
-    # 逻辑：字段、长度和身份先验证，员工锁内写入并更新 active 标志。
-    # 约束：不输出正文；JSON/文件错误和契约错误显式报告，数据库异常不吞掉。
+    # Function: Validate and import a complete knowledge batch.
+    # Inputs: Positional ``args`` and ``options`` containing employee and local UTF-8 JSON path.
+    # Outputs: Entry count; failure raises ``CommandError``.
+    # Logic: Validate fields, lengths, and identity first, then write and update active flags under employee lock.
+    # Constraints: Does not output content; JSON, file, and contract errors report explicitly and database exceptions are not swallowed.
     def handle(self, *args, **options):
         owner = (
             get_user_model()

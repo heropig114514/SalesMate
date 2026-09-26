@@ -1,21 +1,21 @@
-"""职责：管理员工 Gmail OAuth 与一次性同步请求。
-实现：后端交换 Google 授权码；邮箱状态追加 QQ 标志，旧 Agent 领取接口仅处理 Gmail 批次。
-关联：views 暴露浏览器与 Agent 路由，models.GmailCredential 保存授权，Agent 负责读取邮件。
-目录：
-- _client_config：构造 Google Web application 客户端配置。
-- begin_authorization：创建员工授权地址并保存 state 与 PKCE verifier。
-- _fetch_token：交换授权码并接受包含 Gmail 只读权限的 scope 超集。
-- finish_authorization：交换 code、验证账号，等待用户选择同步范围。
-- mailbox_status：生成不含凭证的浏览器邮箱状态。
-- request_mailbox_sync：把已授权邮箱标记为等待同步。
-- disconnect_mailbox：移除本地授权并保留历史业务数据。
-- claim_mailbox_syncs：为一次性 Agent 领取同步请求。
-- report_mailbox_sync：保存 Agent 同步结果与刷新凭证。
-变量索引：
-- GMAIL_SCOPES：Google Gmail 只读 OAuth scope。
-- SESSION_STATE_KEY：当前浏览器会话保存 OAuth state 的键。
-- SESSION_CODE_VERIFIER_KEY：当前浏览器会话保存 PKCE code_verifier 的键。
-- __all__：本模块公开服务函数。
+"""Responsibility: Manage employee Gmail OAuth and one-shot synchronization requests.
+Implementation: Backend exchanges Google authorization codes; mailbox status adds QQ flags and legacy Agent claim interfaces process Gmail batches only.
+Relationships: views exposes browser and Agent routes, models.GmailCredential stores authorization, and Agent reads messages.
+Directory:
+- _client_config: Construct Google Web application client configuration.
+- begin_authorization: Create an employee authorization URL and save state and PKCE verifier.
+- _fetch_token: Exchange an authorization code and accept a scope superset containing Gmail read-only permission.
+- finish_authorization: Exchange code, verify account, and await user selection of synchronization scope.
+- mailbox_status: Generate browser mailbox status without credentials.
+- request_mailbox_sync: Mark an authorized mailbox as awaiting synchronization.
+- disconnect_mailbox: Remove local authorization while retaining historical business data.
+- claim_mailbox_syncs: Claim synchronization requests for a one-shot Agent.
+- report_mailbox_sync: Save Agent synchronization result and refreshed credential.
+Variable index:
+- GMAIL_SCOPES: Google Gmail read-only OAuth scope.
+- SESSION_STATE_KEY: Key saving OAuth state in the current browser session.
+- SESSION_CODE_VERIFIER_KEY: Key saving the PKCE code_verifier in the current browser session.
+- __all__: Public service functions of this module.
 """
 
 from __future__ import annotations
@@ -38,11 +38,11 @@ SESSION_STATE_KEY = "salesmate_gmail_oauth_state"
 SESSION_CODE_VERIFIER_KEY = "salesmate_gmail_oauth_code_verifier"
 
 
-# 功能：构造 google-auth-oauthlib 所需的 Web application 配置。
-# 输入：无显式参数，读取 Django settings。
-# 输出：Google OAuth web 客户端字典。
-# 逻辑：仅在发起授权时要求客户端 ID 和密钥非空。
-# 约束：错误消息不包含密钥值。
+# Function: Construct the Web application configuration required by google-auth-oauthlib.
+# Inputs: No explicit parameters; reads Django settings.
+# Outputs: Google OAuth web client dictionary.
+# Logic: Require nonempty client ID and secret only when authorization begins.
+# Constraints: Error messages contain no secret values.
 def _client_config() -> dict[str, Any]:
     """Build the Google web-client document expected by google-auth-oauthlib."""
     client_id = settings.GOOGLE_OAUTH_CLIENT_ID.strip()
@@ -59,11 +59,11 @@ def _client_config() -> dict[str, Any]:
     }
 
 
-# 功能：创建当前员工的 Google 授权地址并保存 state。
-# 输入：`request` 为已认证浏览器请求。
-# 输出：Google authorization URL 字符串。
-# 逻辑：请求 offline access、consent 和 gmail.readonly，并保存本次 PKCE verifier。
-# 约束：不在响应中返回客户端密钥或 Gmail 令牌。
+# Function: Create the current employee's Google authorization URL and save state.
+# Inputs: `request` is an authenticated browser request.
+# Outputs: Google authorization URL string.
+# Logic: Request offline access, consent, and gmail.readonly, and save this PKCE verifier.
+# Constraints: Does not return client secret or Gmail token in the response.
 def begin_authorization(request) -> str:
     """Create the employee-specific Google authorization URL and remember state."""
     flow = Flow.from_client_config(
@@ -80,11 +80,11 @@ def begin_authorization(request) -> str:
     return authorization_url
 
 
-# 功能：交换授权码，并兼容 Google 返回已授权 scope 超集的情况。
-# 输入：`flow` 为已恢复 PKCE verifier 的 Flow；`code` 为一次性授权码。
-# 输出：无；成功后 Flow 持有可供 credentials 属性读取的 token。
-# 逻辑：oauthlib 会把 scope 变化抛为 Warning；只在返回权限仍包含 Gmail 只读权限时接受 token。
-# 约束：缺少请求权限或 Warning 不含有效 token 时继续抛错。
+# Function: Exchange an authorization code while supporting Google returning an authorized scope superset.
+# Inputs: `flow` is Flow with restored PKCE verifier; `code` is a one-time authorization code.
+# Outputs: None; on success Flow holds a token readable through credentials.
+# Logic: oauthlib raises scope change as Warning; accept the token only when returned permissions still include Gmail read-only.
+# Constraints: Continue raising when requested permission is missing or Warning has no valid token.
 def _fetch_token(flow, code: str) -> None:
     try:
         flow.fetch_token(code=code)
@@ -96,11 +96,11 @@ def _fetch_token(flow, code: str) -> None:
         flow.oauth2session.token = token
 
 
-# 功能：完成 Google 回调并建立当前员工邮箱连接。
-# 输入：`request` 含员工会话、code 和 state。
-# 输出：已验证地址对应的 Mailbox。
-# 逻辑：恢复 PKCE verifier，交换 code、读取 Gmail profile 并保存凭证；首次同步由用户选择范围后请求。
-# 约束：state、PKCE verifier 不匹配或地址无效时不建立绑定；不覆盖已有 QQ 连接。
+# Function: Complete the Google callback and establish the current employee mailbox connection.
+# Inputs: `request` contains employee session, code, and state.
+# Outputs: Mailbox for the verified address.
+# Logic: Restore PKCE verifier, exchange code, read Gmail profile, and save credentials; the user requests initial synchronization after selecting scope.
+# Constraints: Does not establish a binding for mismatched state or PKCE verifier or invalid address, and does not overwrite an existing QQ connection.
 def finish_authorization(request) -> Mailbox:
     """Exchange Google callback code and verify the account without queueing mail reads."""
     expected_state = request.session.pop(SESSION_STATE_KEY, "")
@@ -154,11 +154,11 @@ def finish_authorization(request) -> Mailbox:
     return mailbox
 
 
-# 功能：生成一条浏览器安全的员工邮箱状态。
-# 输入：`mailbox` 为当前员工可访问的 Mailbox。
-# 输出：邮箱标识、地址、授权布尔值和 sync_state。
-# 逻辑：独立展示 Gmail 和 QQ 连接标志，不改变原有 Gmail 字段语义。
-# 约束：输出不包含 Google 令牌、QQ 授权码或任何密文。
+# Function: Generate browser-safe status for one employee mailbox.
+# Inputs: `mailbox` is a Mailbox accessible to the current employee.
+# Outputs: Mailbox identifier, address, authorization booleans, and sync_state.
+# Logic: Display Gmail and QQ connection flags independently without changing existing Gmail field semantics.
+# Constraints: Output contains no Google tokens, QQ authorization codes, or ciphertext.
 def mailbox_status(mailbox: Mailbox) -> dict[str, Any]:
     """Return one browser-safe mailbox row for the owning employee."""
     return {
@@ -170,11 +170,11 @@ def mailbox_status(mailbox: Mailbox) -> dict[str, Any]:
     }
 
 
-# 功能：请求一次员工 Gmail 或 QQ 同步。
-# 输入：`owner` 为当前员工，`mailbox_id` 为其邮箱 UUID，`sync_options` 为本次显式限制。
-# 输出：更新后的浏览器安全邮箱状态。
-# 逻辑：复用 processing 创建持久批次，返回旧邮箱表示与新增 run_id/queued 状态。
-# 约束：拒绝其他员工邮箱和未授权邮箱。
+# Function: Request one employee Gmail or QQ synchronization.
+# Inputs: `owner` is the current employee, `mailbox_id` is its mailbox UUID, and `sync_options` explicitly limits this run.
+# Outputs: Updated browser-safe mailbox status.
+# Logic: Reuse processing to create a durable batch and return prior mailbox representation with new run_id and queued state.
+# Constraints: Rejects other employees' mailboxes and unauthorized mailboxes.
 def request_mailbox_sync(owner, mailbox_id, sync_options=None) -> dict[str, Any]:
     """Queue one authorized mailbox for the next one-shot Agent execution."""
     from .processing import request_run, run_data
@@ -183,11 +183,11 @@ def request_mailbox_sync(owner, mailbox_id, sync_options=None) -> dict[str, Any]
     return {**mailbox_status(mailbox), **run_data(run)}
 
 
-# 功能：移除员工 Gmail 的本地授权。
-# 输入：`owner` 为当前员工，`mailbox_id` 为其邮箱 UUID。
-# 输出：authorization_required 浏览器状态。
-# 逻辑：删除一对一 Google 凭证并递增邮箱版本；拒绝作用于 QQ 连接。
-# 约束：保留历史邮件、公司和分析记录。
+# Function: Remove an employee's local Gmail authorization.
+# Inputs: `owner` is the current employee and `mailbox_id` is its mailbox UUID.
+# Outputs: Browser status authorization_required.
+# Logic: Delete the one-to-one Google credential and increment mailbox version; reject operations on QQ connections.
+# Constraints: Retains historical messages, companies, and analysis records.
 def disconnect_mailbox(owner, mailbox_id) -> dict[str, Any]:
     """Delete the local Gmail grant and mark the mailbox disconnected."""
     with transaction.atomic():
@@ -201,11 +201,11 @@ def disconnect_mailbox(owner, mailbox_id) -> dict[str, Any]:
     return mailbox_status(mailbox)
 
 
-# 功能：为一次性 Agent 领取员工邮箱同步请求。
-# 输入：`owner` 为 Agent 凭证所属员工，`limit` 为本次领取上限。
-# 输出：含邮箱地址、授权、冻结范围及显式重试 ID 的同步请求数组。
-# 逻辑：复用持久批次原子领取并限定 Gmail，避免旧 CLI 误领 QQ 任务；保留单页大小并透传 sync_options/message_ids，旧客户端不得忽略范围。
-# 约束：只返回 owner 自己的已授权邮箱；精确逐封进度请使用 crm_worker。
+# Function: Claim employee mailbox synchronization requests for a one-shot Agent.
+# Inputs: `owner` is the employee belonging to the Agent credential and `limit` is this claim maximum.
+# Outputs: Synchronization request array containing mailbox address, authorization, frozen scope, and explicit retry IDs.
+# Logic: Reuse durable batch atomic claim and restrict it to Gmail so legacy CLI cannot claim QQ work; retain page size and forward sync_options and message_ids, which legacy clients must not ignore.
+# Constraints: Returns only the owner's authorized mailboxes; use crm_worker for exact per-message progress.
 def claim_mailbox_syncs(owner, limit: int) -> list[dict[str, Any]]:
     """Claim up to limit employee mailbox requests for one Agent process."""
     from .processing import claim_run
@@ -220,11 +220,11 @@ def claim_mailbox_syncs(owner, limit: int) -> list[dict[str, Any]]:
     return claimed
 
 
-# 功能：保存 Agent 对员工邮箱同步的最终回报。
-# 输入：`owner` 为 Agent 凭证所属员工，`data` 为已校验同步报告。
-# 输出：更新后的浏览器安全邮箱状态。
-# 逻辑：兼容旧回报载荷，完成当前运行批次并保存安全汇总；新 Worker 直接使用租约身份回报。
-# 约束：失败不自动重试，授权已移除时拒绝回报。
+# Function: Save an Agent's terminal report for employee mailbox synchronization.
+# Inputs: `owner` is the employee belonging to the Agent credential and `data` is a validated synchronization report.
+# Outputs: Updated browser-safe mailbox status.
+# Logic: Supports legacy report payloads, completes the current running batch, and saves safe summary; new Worker reports directly through lease identity.
+# Constraints: Failure does not retry automatically and reports are rejected after authorization removal.
 def report_mailbox_sync(owner, data: dict[str, Any]) -> dict[str, Any]:
     """Save the final sync state and optionally a refreshed Google credential."""
     from .models import MailboxSyncRun

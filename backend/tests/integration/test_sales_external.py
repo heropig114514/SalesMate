@@ -1,20 +1,20 @@
-"""职责：验证外部工具的真实适配器载荷与授权失败边界。
-实现：使用隔离数据库和模拟 Google SDK，检查 MIME、时间、通知、令牌加密及核对。
-关联：apps.sales.actions/calendar/integrations；模拟成功不代表外部账号已完成授权。
-目录：
-- ExternalTests：外部工具及连接测试。
-- ExternalTests.setUp：建立合成身份和连接。
-- ExternalTests.test_gmail_adapter_exact_content：校验 MIME 与单次执行。
-- ExternalTests.test_calendar_adapter_explicit_notifications：校验事件 ID、时间与通知。
-- ExternalTests.test_calendar_validation_requires_timezone_and_notification：拒绝隐式会议参数。
-- ExternalTests.test_credentials_encrypted_and_scopes_verified：校验加密和真实保存 scope。
-- ExternalTests.test_oauth_pkce_reuses_verifier：校验 OAuth 往返的 PKCE。
-- ExternalTests.test_calendar_reads_are_owner_scoped：验证只读日历授权范围。
-- ExternalTests.test_verification_cannot_create_or_send：核对仅查询已有事件。
-- ExternalTests.test_bad_preflight_never_calls_provider：校验执行前失败无外部业务调用。
-- ExternalTests.test_authenticated_write_requires_csrf：验证实际 Session 的 CSRF。
-变量索引：
-- 无
+"""Responsibility: Verifies real adapter payloads and authorization-failure boundaries for external tools.
+Implementation: Uses isolated database and mocked Google SDK, checking MIME, time, notifications, token encryption, and reconciliation.
+Relationships: `apps.sales.actions/calendar/integrations`; mock success does not establish that an external account completed authorization.
+Directory:
+- ExternalTests: External tools and connection tests.
+- ExternalTests.setUp: Creates synthetic identity and connection.
+- ExternalTests.test_gmail_adapter_exact_content: Checks MIME and single execution.
+- ExternalTests.test_calendar_adapter_explicit_notifications: Checks event ID, time, and notifications.
+- ExternalTests.test_calendar_validation_requires_timezone_and_notification: Rejects implicit conferencing parameters.
+- ExternalTests.test_credentials_encrypted_and_scopes_verified: Checks encryption and real persisted scope.
+- ExternalTests.test_oauth_pkce_reuses_verifier: Checks OAuth round-trip PKCE.
+- ExternalTests.test_calendar_reads_are_owner_scoped: Verifies read-only calendar authorization scope.
+- ExternalTests.test_verification_cannot_create_or_send: Verify only existing events are queried.
+- ExternalTests.test_bad_preflight_never_calls_provider: Verify preflight failures prevent external business calls.
+- ExternalTests.test_authenticated_write_requires_csrf: Verify CSRF through actual Sessions.
+Variable index:
+- None
 """
 
 import base64
@@ -30,15 +30,15 @@ from apps.crm.access import InvalidState
 from apps.sales import actions, calendar, grouping, integrations, models
 
 
-# 功能：验证工具适配器的授权与载荷不变量。
-# 逻辑：用 Mock 替代 SDK 网络，数据库仍真实隔离；业务任务可入队，但不运行独立分析 Worker。
-# 约束：测试不得向任何真实收件人或日历写入。
+# Function: Verify tool-adapter authorization and payload invariants.
+# Logic: Mock SDK networking while retaining an isolated real database; business tasks may queue, but no independent analysis Worker runs.
+# Constraints: Never write to real recipients or calendars.
 class ExternalTests(TestCase):
-    # 功能：建立测试用连接和会话。
-    # 输入：无外部参数。
-    # 输出：user、company、connection 和 client 实例状态。
-    # 逻辑：连接使用显式无效密文，测试须模拟凭证边界才能执行。
-    # 约束：不会读取开发环境现有凭证。
+    # Function: Create test connections and conversations.
+    # Inputs: No external arguments.
+    # Outputs: Instance user, company, connection, and client state.
+    # Logic: Connections use explicitly invalid ciphertext; tests must mock credential boundaries to execute.
+    # Constraints: Do not read existing development credentials.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="external-tester")
         self.company = grouping.create_company(self.user, "外部工具测试客户")
@@ -51,11 +51,11 @@ class ExternalTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.user)
 
-    # 功能：验证 Gmail 适配器发送确切的冻结正文。
-    # 输入：合成 ToolAction 和 Mock Gmail SDK。
-    # 输出：解码 MIME 的收件人、主题、正文和确定 Message-ID 均匹配。
-    # 逻辑：检查真实 execute_provider 构造载荷及 num_retries=0。
-    # 约束：不执行网络请求。
+    # Function: Verify the Gmail adapter sends the exact frozen body.
+    # Inputs: Synthetic ToolAction and mocked Gmail SDK.
+    # Outputs: Decoded MIME recipient, subject, body, and deterministic Message-ID all match.
+    # Logic: Inspect payloads built by real execute_provider and num_retries=0.
+    # Constraints: No network requests.
     def test_gmail_adapter_exact_content(self):
         action = models.ToolAction(
             id=uuid.uuid4(),
@@ -86,11 +86,11 @@ class ExternalTests(TestCase):
         sender.return_value.execute.assert_called_once_with(num_retries=0)
         self.assertEqual(result["message_id"], "sent-id")
 
-    # 功能：验证日历创建不猜测通知方式。
-    # 输入：明确时区、参会人和 send_updates 的动作。
-    # 输出：稳定事件 ID、原时间字符串和通知选项进入 SDK。
-    # 逻辑：直接检查 insert 参数与单次 execute。
-    # 约束：不创建真实会议。
+    # Function: Verify calendar creation does not guess notification behavior.
+    # Inputs: An action with explicit timezone, attendees, and send_updates.
+    # Outputs: Stable event ID, original time strings, and notification options reach the SDK.
+    # Logic: Inspect insert arguments and a single execute call directly.
+    # Constraints: Do not create real meetings.
     def test_calendar_adapter_explicit_notifications(self):
         action = models.ToolAction(
             id=uuid.uuid4(),
@@ -121,11 +121,11 @@ class ExternalTests(TestCase):
             num_retries=0
         )
 
-    # 功能：验证缺时区和缺通知选项都明确失败。
-    # 输入：部分不完整的会议准备请求。
-    # 输出：400 且未创建动作。
-    # 逻辑：逐个修复参数，最终完整计划可以保存但仍待确认。
-    # 约束：不调用 provider。
+    # Function: Verify missing timezone and notification options both fail explicitly.
+    # Inputs: Partially incomplete meeting-preparation requests.
+    # Outputs: 400 without action creation.
+    # Logic: Correct arguments individually; the complete plan saves but still awaits confirmation.
+    # Constraints: Do not call the provider.
     def test_calendar_validation_requires_timezone_and_notification(self):
         parameters = {
             "connection_id": str(self.connection.pk),
@@ -164,11 +164,11 @@ class ExternalTests(TestCase):
         self.assertEqual(result.status_code, 201, result.data)
         self.assertEqual(result.data["status"], "pending_confirmation")
 
-    # 功能：验证数据库仅保存密文且不能凭目标 scope 伪造授权。
-    # 输入：合成 token JSON 与一次性测试 Fernet 密钥。
-    # 输出：解密后可构造未过期凭证；实际 scope 不足时明确拒绝。
-    # 逻辑：检查原 JSON scopes，不把构造器入参当授权证据。
-    # 约束：不会刷新或使用这些合成令牌访问外部。
+    # Function: Verify only ciphertext is stored and requested scopes cannot fabricate authorization.
+    # Inputs: Synthetic token JSON and a one-use test Fernet key.
+    # Outputs: Decryption produces usable unexpired credentials; insufficient actual scopes are explicitly rejected.
+    # Logic: Inspect original JSON scopes, not constructor arguments as authorization evidence.
+    # Constraints: Do not refresh or use synthetic tokens externally.
     def test_credentials_encrypted_and_scopes_verified(self):
         document = {
             "token": "fake-access",
@@ -194,11 +194,11 @@ class ExternalTests(TestCase):
             with self.assertRaises(InvalidState):
                 integrations.credentials_for(self.connection)
 
-    # 功能：验证 OAuth 发起和回调使用同一 PKCE verifier。
-    # 输入：模拟 Flow、Google profile 和普通 Session 字典。
-    # 输出：发起要求自动生成 verifier，回调传回同一 verifier 并保存密文。
-    # 逻辑：真实 integrations.begin/finish 执行，只有外部边界被替换。
-    # 约束：不会执行真实 OAuth 交换。
+    # Function: Verify OAuth initiation and callback share one PKCE verifier.
+    # Inputs: Mock Flow, Google profile, and an ordinary Session dictionary.
+    # Outputs: Initiation requests automatic verifier generation; callback reuses it and stores ciphertext.
+    # Logic: Run real integrations.begin/finish, replacing only external boundaries.
+    # Constraints: No real OAuth exchange.
     @override_settings(
         GOOGLE_OAUTH_CLIENT_ID="fake-client", GOOGLE_OAUTH_CLIENT_SECRET="fake-secret"
     )
@@ -234,11 +234,11 @@ class ExternalTests(TestCase):
             self.assertNotIn("fake", connection.encrypted_credentials)
             self.assertNotIn(integrations.SESSION_KEY, request.session)
 
-    # 功能：验证日历读取身份和只读 SDK 方法。
-    # 输入：owner 连接、明确日期窗口和另一用户。
-    # 输出：owner 读取空事件页，另一用户 404。
-    # 逻辑：模拟 events.list，禁止创建调用。
-    # 约束：不读取真实日程。
+    # Function: Verify calendar-read identity and read-only SDK methods.
+    # Inputs: An owner's connection, explicit date window, and another user.
+    # Outputs: Owner reads an empty event page; another user receives 404.
+    # Logic: Mock events.list and forbid creation calls.
+    # Constraints: Do not read real schedules.
     def test_calendar_reads_are_owner_scoped(self):
         parameters = {
             "connection_id": str(self.connection.pk),
@@ -264,11 +264,11 @@ class ExternalTests(TestCase):
             404,
         )
 
-    # 功能：验证未知结果核对只查询外部已有事件。
-    # 输入：uncertain 日历动作和模拟同 ID 事件。
-    # 输出：标记 succeeded，insert 从未调用。
-    # 逻辑：核对后版本递增，后续 worker 不执行。
-    # 约束：此测试不证明外部事件实际存在。
+    # Function: Verify uncertain-result reconciliation only queries existing external events.
+    # Inputs: An uncertain calendar action and a mocked event with the same ID.
+    # Outputs: Mark succeeded without ever calling insert.
+    # Logic: Reconciliation increments the revision and prevents later Worker execution.
+    # Constraints: This test does not establish that the external event actually exists.
     def test_verification_cannot_create_or_send(self):
         action = models.ToolAction.objects.create(
             owner=self.user,
@@ -296,11 +296,11 @@ class ExternalTests(TestCase):
         api.events.return_value.insert.assert_not_called()
         self.assertEqual(actions.run_action(action.pk), "succeeded")
 
-    # 功能：验证连接已停用时不会调用业务 provider。
-    # 输入：approved 动作和已归档连接。
-    # 输出：failed，execute_provider 未调用。
-    # 逻辑：真实 preflight 在外部业务调用前拒绝连接。
-    # 约束：没有隐式重新授权或重试。
+    # Function: Verify inactive connections prevent business-provider calls.
+    # Inputs: An approved action and archived connection.
+    # Outputs: failed without calling execute_provider.
+    # Logic: Real preflight rejects the connection before external business calls.
+    # Constraints: No implicit reauthorization or retry.
     def test_bad_preflight_never_calls_provider(self):
         self.connection.archived = True
         self.connection.save()
@@ -319,11 +319,11 @@ class ExternalTests(TestCase):
             self.assertEqual(actions.run_action(action.pk), "failed")
             execute.assert_not_called()
 
-    # 功能：验证真实会话写请求必须带 CSRF。
-    # 输入：强制登录 Session 的 APIClient，未使用 force_authenticate。
-    # 输出：无令牌 403，有合法 cookie/header 后创建成功。
-    # 逻辑：测试浏览器实际使用的认证与 CSRF 路径。
-    # 约束：不使用测试绕过认证来证明 CSRF 有效。
+    # Function: Verify real session writes require CSRF.
+    # Inputs: APIClient with a force-logged-in Session, without force_authenticate.
+    # Outputs: 403 without a token; creation succeeds with valid cookie/header.
+    # Logic: Exercise the authentication and CSRF paths actually used by browsers.
+    # Constraints: Do not use authentication bypasses to demonstrate CSRF effectiveness.
     def test_authenticated_write_requires_csrf(self):
         browser = APIClient(enforce_csrf_checks=True)
         browser.force_login(self.user)

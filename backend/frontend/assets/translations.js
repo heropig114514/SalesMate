@@ -1,9 +1,9 @@
 /**
- * 职责：保存简体中文界面文案对应的英文目录。
- * 实现：包含 Channel 来源预览、活动/引导文案及简化密码提示；精确源文案键和编号占位符，不包含运行时客户数据；修改文案时同步更新两端，移除已失效的旧邮箱授权提示。
- * 关联：共享语言/API 资源随需求界面统一版本；i18n.js 的 t/h 读取；静态页面 data-i18n 及显式标记的 JS 字面量调用。
- * 目录：无函数或类。
- * 变量索引：EN 为中文源文案到英文翻译的只读映射。
+ * Responsibility: Store the English catalog for Simplified Chinese interface source text.
+ * Implementation: Includes Channel source previews, activity/onboarding text, and simplified password guidance. Exact source keys and numbered placeholders contain no runtime customer data; update both languages together and remove obsolete mailbox-authorization text.
+ * Relationships: Shared language/API resources follow the interface cache version; i18n.js t/h reads this catalog for static data-i18n markers and explicitly marked JavaScript literals.
+ * Directory: No functions or classes.
+ * Variable index: EN is the read-only map from Chinese source text to English translations.
  */
 export const EN = Object.freeze({
   "预览引用来源": "Preview evidence source",

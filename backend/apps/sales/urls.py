@@ -1,10 +1,10 @@
-"""职责：声明销售业务 API 路由。
-实现：新增全球洞察、销售方统一资料和商机上下文/评分查询；业务写接口保持原权限；browse 只读入口合并获准实验记录；固定操作优先，资源名由各视图白名单验证。
-关联：config.urls 挂载于 /api/v1/sales/，视图沿用正式登录或实验公开身份。
-目录：
-- 无
-变量索引：
-- urlpatterns：记录、目录、文件、授权与审计的路径映射。
+"""Responsibility: Declare sales business API routes.
+Implementation: Register global insights, seller profiles, and opportunity queries; preserve write permissions. Read-only browse merges approved experiment records. Fixed operations take precedence and views validate resource allowlists.
+Relationships: config.urls mounts under /api/v1/sales/; views use production login or public experiment identity.
+Directory:
+- None
+Variable index:
+- urlpatterns: Path mappings for records, catalogs, files, authorization, and audits.
 """
 
 from django.urls import path

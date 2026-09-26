@@ -1,4 +1,53 @@
-"""工作空间聊天的离线只读查询与证据闭包测试。"""
+"""Responsibility: Offline read-only query and evidence-closure tests for workspace chat.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- conversation_request: Build a workspace request fixture.
+- context_item: Build a four-field source fixture.
+- answer_context: Build a frozen context response fixture.
+- citation: Build citation metadata for a fixture source.
+- InMemoryChatBackend: Group offline assertions and fixture behavior for InMemoryChatBackend.
+- InMemoryChatBackend.__init__: Initialize isolated fixture state and configured simulated responses.
+- InMemoryChatBackend.claim_answer_request: Claim one workspace chat answer request.
+- InMemoryChatBackend.get_answer_context: Read customer and knowledge context bound to a request.
+- InMemoryChatBackend.report_answer: Report a chat result with its prompt version.
+- detail_read_id: Build a deterministic detail-read identifier.
+- detail_evidence: Build detail evidence with source identity.
+- ToolBackend: Group offline assertions and fixture behavior for ToolBackend.
+- ToolBackend.__init__: Initialize isolated fixture state and configured simulated responses.
+- ToolBackend.get_chat_tools: Discover this request's read and experiment maintenance tools.
+- ToolBackend.read_chat_tool: Execute a customer or shared experiment query and validate the response.
+- QueueProvider: Group offline assertions and fixture behavior for QueueProvider.
+- QueueProvider.__init__: Initialize isolated fixture state and configured simulated responses.
+- QueueProvider.__call__: Record a mocked provider call and return the configured fixture output.
+- search_result: Build a mocked company search receipt.
+- detail_result: Build a mocked company detail receipt.
+- WorkspaceChatTests: Group offline assertions and fixture behavior for WorkspaceChatTests.
+- WorkspaceChatTests.test_company_bound_request_does_not_enter_legacy_chat: Verify company bound request does not enter legacy chat.
+- WorkspaceChatTests.test_general_question_needs_no_customer_query: Verify general question needs no customer query.
+- WorkspaceChatTests.test_direct_write_request_is_not_executed: Verify direct write request is not executed.
+- WorkspaceChatTests.test_unused_citation_is_removed_and_markers_are_reordered: Verify unused citation is removed and markers are reordered.
+- WorkspaceChatTests.test_search_then_context_then_evidence_based_answer: Verify search then context then evidence based answer.
+- WorkspaceChatTests.test_two_companies_keep_sources_separate: Verify two companies keep sources separate.
+- WorkspaceChatTests.test_context_not_found_is_answerable_without_fabrication: Verify context not found is answerable without fabrication.
+- WorkspaceChatTests.test_unauthorized_source_or_write_tool_fails_closed: Verify unauthorized source or write tool fails closed.
+- WorkspaceChatTests.test_tool_result_must_match_request: Verify tool result must match request.
+- WorkspaceChatTests.test_request_level_not_found_is_not_treated_as_missing_customer: Verify request level not found is not treated as missing customer.
+- WorkspaceChatTests.test_tool_argument_error_can_be_corrected_in_same_request: Verify tool argument error can be corrected in same request.
+- WorkspaceChatTests.test_long_customer_context_is_excerpted_around_question: Verify long customer context is excerpted around question.
+- WorkspaceChatTests.test_search_page_evidence_survives_many_results: Verify search page evidence survives many results.
+- WorkspaceChatTests.test_full_agent_http_mapping_matches_backend_contract: Verify full agent http mapping matches backend contract.
+- WorkspaceChatTests.test_lost_report_response_is_confirmed_from_authoritative_state: Verify lost report response is confirmed from authoritative state.
+- WorkspaceChatTests.test_lost_report_response_is_confirmed_from_authoritative_state.LostResponseBackend: Group offline assertions and fixture behavior for LostResponseBackend.
+- WorkspaceChatTests.test_lost_report_response_is_confirmed_from_authoritative_state.LostResponseBackend.report_answer: Report a chat result with its prompt version.
+- WorkspaceChatTests.test_lost_report_response_is_confirmed_from_authoritative_state.LostResponseBackend.get_chat_request_status: Read the current employee's request status.
+
+Variable index:
+- COMPANY_ID: Fixed company UUID used by fixtures.
+- SEARCH_READ_ID: Fixed tool-read UUID for search receipts.
+- SECOND_ID: Second fixed company UUID used to distinguish sources.
+"""
 
 import copy
 import json

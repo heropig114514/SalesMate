@@ -1,12 +1,12 @@
-"""职责：保存和下载员工私有客户附件。
-实现：随机存储键、流式摘要、显式大小限制；正式模式下载经过登录及 owner 校验，实验模式公开业务附件。
-关联：views 处理 multipart，Attachment 只保存元数据；目录不挂载公共静态路由。
-目录：
-- store_file：写入已授权附件并保存审计。
-- open_file：打开已授权且完整的附件。
-变量索引：
-- logger：文件边界诊断日志，不记录文件内容。
-- MAX_BYTES：单附件 20 MiB 上限。
+"""Responsibility: Store and download employees' private customer attachments.
+Implementation: Use random storage keys, streaming digests, and explicit size limits. Production downloads require login and owner checks; experiment mode exposes business attachments publicly.
+Relationships: views handles multipart uploads; Attachment stores metadata only; no public static route mounts the storage directory.
+Directory:
+- store_file: Write an authorized attachment and save its audit entry.
+- open_file: Open an authorized, intact attachment.
+Variable index:
+- logger: File-boundary diagnostic logs without file content.
+- MAX_BYTES: 20 MiB limit per attachment.
 """
 
 from common.laboratory import enabled
@@ -28,11 +28,11 @@ logger = logging.getLogger("salesmate.files")
 MAX_BYTES = 20 * 1024 * 1024
 
 
-# 功能：保存私有附件与元数据。
-# 输入：`actor` 为用户，`company` 为公司，`upload` 为 Django 上传对象。
-# 输出：Attachment；失败时清理本次生成的文件并传播错误。
-# 逻辑：随机 UUID 路径隔离文件名，流式统计大小和 SHA-256，事务写入元数据及审计。
-# 约束：上限 20 MiB；附件仅存储，不解析或执行；异常不会静默转成成功。
+# Function: Save a private attachment and metadata.
+# Inputs: `actor`: user; `company`: company; `upload`: Django upload object.
+# Outputs: Attachment; on failure remove the newly generated file and propagate the error.
+# Logic: Isolate filenames with random UUID paths, stream size and SHA-256 calculations, and write metadata/audit within a transaction.
+# Constraints: 20 MiB maximum; attachments are stored without parsing or execution; exceptions never silently become success.
 def store_file(actor, company, upload):
     company_access(actor, company)
     if CompanySettings.objects.filter(company=company, archived=True).exists():
@@ -74,11 +74,11 @@ def store_file(actor, company, upload):
         raise
 
 
-# 功能：打开私有文件供附件下载。
-# 输入：`actor`、`record` 为已经按 ID 查询的附件。
-# 输出：只读二进制文件句柄；缺失、越界或权限错误返回 404。
-# 逻辑：正式模式复核 owner；所有模式检查归档和目录边界，记录下载审计；浏览器以 attachment 方式接收。
-# 约束：不提供任意路径读取；文件内容不会以内联 HTML 方式执行。
+# Function: Open a private file for attachment download.
+# Inputs: `actor`; `record`: attachment already queried by ID.
+# Outputs: Read-only binary file handle; missing files, path escape, or permission failures return 404.
+# Logic: Recheck owner in production; all modes check archival state and directory boundaries and record download audits. Browsers receive attachment responses.
+# Constraints: No arbitrary path reads; file content never executes as inline HTML.
 def open_file(actor, record):
     if (not enabled() and record.owner_id != actor.pk) or record.archived:
         raise NotFound("附件不存在。")

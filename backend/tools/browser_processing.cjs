@@ -1,11 +1,11 @@
 /**
- * 职责：验证移入邮箱设置的复核入口；隔离验证 QQ/Gmail 共存、邮箱设置与授权分离、来源标识、原文入口、同步进度、人工复核及移动端布局。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：验证 QQ 关闭时隐藏入口，再启用原场景；本地静态服务提供真实页面，模拟 API 验证 Gmail/QQ 范围选择、账号原文隔离、来源标签与补抽取重试。
- * 关联：processing.js、app.js 和共享 workspace 概览；需要显式 Playwright 模块与 Chromium 路径。
- * 目录：main 运行浏览器场景；静态服务及路由回调属于 main 的测试夹具。
- * 变量索引：FRONTEND 为页面目录，OUTPUT 为被忽略的截图目录；其余导入无业务状态。
- * 约束：不访问实际业务数据库、Gmail 或模型；模拟通过只证明界面契约。
+ * Responsibility: Verify the review entry relocated into mail settings; independently cover QQ/Gmail coexistence, settings/authorization separation, provenance, source viewing, sync progress, manual review, and mobile layout.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so existing Chinese assertions do not depend on host language.
+ * Implementation: First verify hidden QQ entries while disabled, then enable original scenarios. Local serving loads real pages with mocked APIs for Gmail/QQ scope, per-account source isolation, labels, and extraction retries.
+ * Relationships: processing.js, app.js, shared workspace summaries; explicit Playwright/Chromium paths required.
+ * Directory: main runs browser scenarios; static-server/route callbacks are main's fixtures.
+ * Variable index: FRONTEND is the page directory; OUTPUT is the ignored screenshot directory; imports carry no business state.
+ * Constraints: No real business database, Gmail, or model access; mock success verifies UI contracts only.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -15,9 +15,9 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：验证真实浏览器交互与文本安全。输入：显式模块/浏览器环境变量。输出：成功说明与截图。
- * 逻辑：先验证关闭入口，再模拟 QQ 验证失败与成功，检查范围必填、每次空白、取消无请求、授权码清空；验证已连接邮箱设置、刷新和同步失败不触发授权，仅显式确认调用 OAuth；验证 Gmail 首次授权不自动排队、默认 50 封、超量警告拒绝/批准及批准不复用、刷新及移动布局，再回归进度和人工复核。
- * 约束：拒绝非本地网络，测试独立静态服务在 finally 关闭，不写实际业务记录。 */
+/** Function: Verify real browser interactions and text safety. Inputs: Explicit module/browser environment variables. Outputs: Success information/screenshots.
+ * Logic: Verify disabled entries, then QQ validation failures/success, required fresh scope, cancellation without requests, and cleared authorization codes. Check connected-mailbox settings and that refresh/sync failures do not authorize; only explicit confirmation calls OAuth. Cover Gmail initial authorization without automatic queuing, default 50-message limits, oversized warning rejection/approval without reuse, refresh/mobile layout, then progress/manual review.
+ * Constraints: Reject nonlocal networks; close the isolated server in finally and never write actual business records. */
 async function main() {
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url, 'http://localhost').pathname;

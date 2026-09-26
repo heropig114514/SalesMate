@@ -1,8 +1,8 @@
-/** 职责：商机列表和评分说明的响应式布局。
- * 实现：沿用共享导航宽度；本页无语言栏，顶栏高 64px；桌面双栏、窄屏单栏且列表限高滚动，证据正文换行。
- * 关联：priorities.html、workspace.css 和 design-system.css。
- * 目录：无函数或类。
- * 变量索引：本页 --language-height 为零；--header-height 为顶栏高度，其余消费共享主题变量。
+/** Responsibility: Provide responsive opportunity-list and score-explanation layouts.
+ * Implementation: Use shared navigation width; this page has no language bar and a 64px top bar. Two columns on desktop, one on narrow screens, with bounded list scrolling and wrapping evidence text.
+ * Relationships: priorities.html, workspace.css, and design-system.css.
+ * Directory: No functions or classes.
+ * Variable index: --language-height is zero on this page; --header-height is top-bar height; other values consume shared theme variables.
  */
 .priority-workspace { --language-height: 0px; --header-height: 64px; }
 .priority-main { margin-left: var(--sidebar-width); padding: 40px 30px 50px; max-width: 1600px; }

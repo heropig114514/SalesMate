@@ -1,8 +1,8 @@
-/** 职责：验证金额气泡、共享活动日期展示和全天日历。
- * 实现：验证缺金额气泡固定 18px、白色透明及鼠标/键盘选择，保持已知金额比例；额外以模拟 API 验证新闻公共线索、精确金额、事实/推断及移动布局；隔离静态服务器加载实际页面，以模拟接口检查地图几何、币种、日期精度和 ICS；不访问真实业务接口。
- * 关联：world-map.js、world-news.js/css、world.html；Playwright/Chrome 路径由环境显式提供。
- * 目录：geometry、checkGeometry、checkCurrencies、checkDates、checkNewsSignals、main。
- * 变量索引：ASSETS 为静态资源根目录；OUTPUT 为忽略的截图目录。
+/** Responsibility: Verify amount bubbles, shared-event dates, and all-day calendars.
+ * Implementation: Check fixed 18px translucent-white missing-amount bubbles and mouse/keyboard selection while preserving known-value proportions. Mock APIs also cover public news leads, exact amounts, fact/inference separation, and mobile layout. Isolated serving loads real pages to test geometry, currencies, date precision, and ICS without real business endpoints.
+ * Relationships: world-map.js, world-news.js/css, world.html; explicit environment Playwright/Chrome paths.
+ * Directory: geometry, checkGeometry, checkCurrencies, checkDates, checkNewsSignals, main.
+ * Variable index: ASSETS is the static-resource root; OUTPUT is the ignored screenshot directory.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -12,8 +12,8 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const ASSETS = path.resolve(__dirname, '../frontend/assets');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：读取投影点和可见圆心。输入：page 浏览器页。输出：各标记的坐标误差与直径。
- * 逻辑：用 Leaflet 的经纬度投影独立比对 DOM 圆心，涵盖标签布局造成的偏移。约束：仅用于隔离夹具，不暴露业务页面内部状态。 */
+/** Function: Read projected points and visible circle centers. Inputs: page is the browser page. Outputs: Coordinate errors and diameters for each marker.
+ * Logic: Independently compare Leaflet geographic projections against DOM centers, including label-induced displacement. Constraints: Isolated fixtures only; do not expose internal business-page state. */
 async function geometry(page) {
   return page.evaluate(() => [...document.querySelectorAll('.event-pin')].map(button => {
     const item = window.fixture.find(row => row.id === button.dataset.eventId);
@@ -24,8 +24,8 @@ async function geometry(page) {
   }));
 }
 
-/** 功能：断言圆心与金额比例。输入：page 页面。输出：无，失败抛错。
- * 逻辑：坐标误差最多一像素，400 对 100 的面积比为四；同坐标重复记录不能重复累计金额，缺值气泡固定 18px。约束：允许浏览器子像素舍入，不更改业务阈值。 */
+/** Function: Assert center alignment and amount proportions. Inputs: page. Outputs: None; throw on failure.
+ * Logic: Allow at most one pixel of coordinate error; values 400 and 100 have a four-to-one area ratio. Duplicate colocated records must not double-count amounts; missing bubbles remain 18px. Constraints: Allow browser subpixel rounding without changing business thresholds. */
 async function checkGeometry(page) {
   const rows = await geometry(page);
   for (const row of rows) assert.ok(Math.abs(row.dx) <= 1 && Math.abs(row.dy) <= 1, `${row.id} center offset: ${JSON.stringify(row)}`);
@@ -36,9 +36,9 @@ async function checkGeometry(page) {
   assert.equal(rows.length, 4);
 }
 
-/** 功能：验证完整页面的币种来源和金额语义。输入：browser、base 为隔离浏览器和静态服务地址。输出：无，失败抛错。
- * 逻辑：模拟只有 SGD、混合币种、零与未知金额及空活动；检查无关币种不进入选择框，URL 与切换保留已知金额，缺所选币种时使用 18px 位置气泡，标签不伪造汇率。
- * 约束：所有接口为显式只读夹具；未知接口或写入使测试失败，不触及线上记录。 */
+/** Function: Verify currency sources and amount semantics in the complete page. Inputs: browser and base identify the isolated browser/static server. Outputs: None; throw on failure.
+ * Logic: Mock SGD-only, mixed currencies, zero/unknown amounts, and no events. Exclude unrelated currencies, preserve known amounts across URL/selection changes, and use 18px location bubbles for missing selected currencies without fabricated exchange rates.
+ * Constraints: All endpoints are explicit read-only fixtures; unknown endpoints/writes fail tests, with no production-record access. */
 async function checkCurrencies(browser, base) {
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } });
   const errors = [];
@@ -94,9 +94,9 @@ async function checkCurrencies(browser, base) {
   await page.close();
 }
 
-/** 功能：验证日期型活动不显示占位钟点或错误末日。输入：browser 浏览器、base 静态服务器地址。输出：无，断言失败抛错。
- * 逻辑：真实页面加载 Agent 兼容响应，在两个极端时区检查末日、导出全天 ICS、邀请和手机布局并留截图；普通时间型仍导出 UTC 时刻。
- * 约束：API 为明确夹具，所有非本地请求和写入均拒绝，不证明真实采集已运行。 */
+/** Function: Verify date-only events show neither placeholder times nor incorrect final days. Inputs: browser and base static-server address. Outputs: None; assertions throw.
+ * Logic: Load Agent-compatible responses in the actual page; verify final days, downloaded all-day ICS, invitations, and mobile layouts across two extreme time zones, retaining screenshots. Timestamp events still export UTC instants.
+ * Constraints: Explicit API fixtures only; reject nonlocal requests/writes. This does not prove real collection has run. */
 async function checkDates(browser, base) {
   for (const timezoneId of ['Pacific/Kiritimati', 'America/Los_Angeles']) {
     const context = await browser.newContext({ locale: 'en-US', timezoneId, acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
@@ -142,9 +142,9 @@ async function checkDates(browser, base) {
   }
 }
 
-/** 功能：验证真实新闻页面的结构化公开线索。输入：browser、base 为浏览器和隔离静态服务地址。输出：断言与截图。
- * 逻辑：模拟新/旧新闻 API，检查全部字段、金额类型和精确字符、推断标记、XSS 转义以及手机无横向溢出。
- * 约束：不使用真实 Agent 或业务数据库，来源金额不能进入活动地图币种或商机汇总。 */
+/** Function: Verify structured public leads in the actual news page. Inputs: browser and base isolated-server address. Outputs: Assertions/screenshots.
+ * Logic: Mock new/legacy news APIs and check all fields, amount types/exact characters, inference labels, XSS escaping, and no horizontal mobile overflow.
+ * Constraints: No real Agent/database; source amounts cannot enter event-map currencies or opportunity aggregates. */
 async function checkNewsSignals(browser, base) {
   const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
   const errors = [];
@@ -192,9 +192,9 @@ async function checkNewsSignals(browser, base) {
   await page.close();
 }
 
-/** 功能：运行隔离地图回归。输入：Playwright/Chrome 环境。输出：检查摘要和截图。
- * 逻辑：验证地图投影、币种及交互；共享日期在多时区/手机展示，实际下载全天 ICS；捕获脚本错误。
- * 约束：仅本机静态网络；金额为浏览器测试夹具，不写入数据库或调用 Agent。 */
+/** Function: Run isolated map regression checks. Inputs: Playwright/Chrome environment. Outputs: Summary/screenshots.
+ * Logic: Verify projections, currencies, and interactions; display shared dates across time zones/mobile and download actual all-day ICS; capture script errors.
+ * Constraints: Local static network only; amounts are browser fixtures, without database writes or Agent calls. */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;

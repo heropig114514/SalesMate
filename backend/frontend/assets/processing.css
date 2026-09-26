@@ -1,8 +1,8 @@
-/* 职责：定义同步进度与人工复核的响应式布局。
-实现：沿用工作台字体、按钮和色彩，长邮件换行且不横向溢出。
-关联：processing.js 渲染内容，index.html 声明容器。
-目录：无函数或类；sync-progress、sync-run、review-card、review-actions 为布局选择器。
-变量索引：消费 design-system.css 的语义色与边界变量，无本地变量。 */
+/* Responsibility: Define responsive synchronization-progress and manual-review layouts.
+Implementation: Use workspace fonts, buttons, and colors; long emails wrap without horizontal overflow.
+Relationships: processing.js renders content; index.html declares containers.
+Directory: No functions or classes; sync-progress, sync-run, review-card, and review-actions are layout selectors.
+Variable index: Consumes design-system.css semantic color/border variables; no local variables. */
 #sync-progress {
   margin: 16px 0;
   display: grid;

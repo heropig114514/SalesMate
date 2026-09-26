@@ -1,14 +1,14 @@
-"""职责：隔离账户清空与 HTTP 读写，防止旧页面写回和业务响应缓存。
-实现：视图执行前按 Session/Agent/Tool 身份取得共享锁，覆盖 SessionMiddleware 保存阶段。
-关联：MIDDLEWARE 在 SessionMiddleware 之前注册；真正认证仍由原 DRF 认证器执行。
-目录：
-- request_owner：只解析锁所需的账号主键。
-- AccountDataMiddleware：账号请求生命周期保护。
-- AccountDataMiddleware.__init__：保存下游处理器。
-- AccountDataMiddleware.__call__：释放锁并设置缓存及版本头。
-- AccountDataMiddleware.process_view：锁定账号并拒绝旧版本写入。
-变量索引：
-- 无
+"""Responsibility: Isolate account clearing from HTTP reads and writes to prevent stale-page writes and caching of business responses.
+Implementation: Acquire a shared lock by Session, Agent, or Tool identity before a view runs, spanning the ``SessionMiddleware`` save stage.
+Relationships: ``MIDDLEWARE`` registers this before ``SessionMiddleware``; the original DRF authenticators still perform actual authentication.
+Directory:
+- request_owner: Resolve only the account primary key needed for locking.
+- AccountDataMiddleware: Protect the account-request lifecycle.
+- AccountDataMiddleware.__init__: Store the downstream handler.
+- AccountDataMiddleware.__call__: Release the lock and set cache and version headers.
+- AccountDataMiddleware.process_view: Lock the account and reject stale-version writes.
+Variable index:
+- None
 """
 import hashlib
 
@@ -18,11 +18,11 @@ from .reset_locks import account_lock
 from .reset_models import AccountReset
 
 
-# 功能：找到请求应锁定的账号，不代替认证授权。
-# 输入：`request` 的 Authorization 和 Django session user。
-# 输出：账号主键或 None。
-# 逻辑：服务令牌只按摘要查询 owner；浏览器从现有认证会话解析。
-# 约束：不输出令牌，不接受客户端 owner 参数；DRF 随后重新核验失效及权限。
+# Function: Find the account that a request should lock without replacing authentication or authorization.
+# Inputs: ``request`` Authorization and Django session user.
+# Outputs: Account primary key or ``None``.
+# Logic: Service tokens query the owner only by digest; browsers resolve the owner from an existing authenticated session.
+# Constraints: Does not emit tokens or accept a client-supplied owner parameter; DRF subsequently revalidates expiry and permissions.
 def request_owner(request):
     header = request.headers.get("Authorization", "").split()
     if header:
@@ -37,23 +37,23 @@ def request_owner(request):
     return request.user.pk if request.user.is_authenticated else None
 
 
-# 功能：让 HTTP 请求和账号重置互斥。
-# 逻辑：process_view 已有 Django 会话，外层 __call__ 等会话保存后释放锁。
-# 约束：ResetView 自行取得独占锁；数据库健康探针不依赖此状态表。
+# Function: Make HTTP requests mutually exclusive with account reset.
+# Logic: ``process_view`` has the Django session, while outer ``__call__`` releases the lock after the session is saved.
+# Constraints: ``ResetView`` acquires its own exclusive lock; database health probes do not depend on this state table.
 class AccountDataMiddleware:
-    # 功能：保存处理链。
-    # 输入：`get_response` 下游处理器。
-    # 输出：无。
-    # 逻辑：不在启动时连接数据库。
-    # 约束：实例不存储单次请求状态，避免线程混用。
+    # Function: Store the processing chain.
+    # Inputs: ``get_response`` is the downstream handler.
+    # Outputs: None.
+    # Logic: Does not connect to the database at startup.
+    # Constraints: The instance stores no per-request state, preventing cross-thread reuse.
     def __init__(self, get_response):
         self.get_response = get_response
 
-    # 功能：设置响应缓存策略并释放请求锁。
-    # 输入：`request`。
-    # 输出：下游响应，API 禁止缓存；已识别账号附带数据版本。
-    # 逻辑：finally 关闭当前请求独立锁连接，覆盖渲染和会话保存。
-    # 约束：不读取流式文件内容；重置不改变身份或 cookie。
+    # Function: Set the response caching policy and release the request lock.
+    # Inputs: ``request``.
+    # Outputs: Downstream response; API responses prohibit caching and identified accounts include a data version.
+    # Logic: ``finally`` closes the current request's dedicated lock connection, covering rendering and session saving.
+    # Constraints: Does not read streaming-file content; reset does not change identity or cookies.
     def __call__(self, request):
         try:
             response = self.get_response(request)
@@ -69,11 +69,11 @@ class AccountDataMiddleware:
             if guard is not None:
                 guard.__exit__(None, None, None)
 
-    # 功能：保护 API 与后台管理视图中的账号操作。
-    # 输入：`request`、`view_func`、`view_args`、`view_kwargs` 为 Django 视图调度参数。
-    # 输出：继续执行的 None，或清理期间/旧页面写入的 409。
-    # 逻辑：重置入口自行独占；共享锁下读取版本，清理后重新加载 session；未完成时允许身份 GET 以恢复清理。
-    # 约束：缺少版本头的既有客户端保持兼容；新版浏览器所有写操作带版本头。
+    # Function: Protect account operations in API and administration views.
+    # Inputs: ``request``, ``view_func``, ``view_args``, and ``view_kwargs`` are Django view-dispatch parameters.
+    # Outputs: ``None`` to continue, or HTTP 409 for writes during cleanup or from a stale page.
+    # Logic: The reset entry point is independently exclusive; read the version under a shared lock, reload the session after cleanup, and permit identity GET requests to recover incomplete cleanup.
+    # Constraints: Existing clients without a version header remain compatible; all writes by the new browser carry a version header.
     def process_view(self, request, view_func, view_args, view_kwargs):
         if not request.path.startswith(("/api/", "/admin/")) or request.path.startswith("/api/v1/health/"):
             return None
@@ -97,6 +97,6 @@ class AccountDataMiddleware:
         if request.method not in {"GET", "HEAD", "OPTIONS"} and expected is not None and expected != str(generation):
             return JsonResponse({"error": {"code": "account_data_reset", "detail": "账号数据已清空，请刷新页面后重新操作。"}, "request_id": getattr(request, "request_id", None)}, status=409)
         if not request.headers.get("Authorization") and generation > request.session.get("account_data_generation", 0):
-            # user 解析可能在等待共享锁之前读取了旧 session；清理后重新加载已脱敏的持久会话。
+            # User resolution may have read a stale session before waiting for the shared lock; reload the redacted persistent session after cleanup.
             request.session = request.session.__class__(session_key=request.session.session_key)
         return None

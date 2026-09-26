@@ -1,12 +1,12 @@
-"""职责：为分析保存及租约冲突提供可区分的安全原因。
-实现：保留 HTTP 409 和失败语义，生成固定错误码与操作提示，记录公司、任务和版本关联。
-关联：results 的 L2/L3/L4 保存入口及 jobs 的租约校验；现有 Agent 可原样记录 backend_code。
-目录：
-- analysis_conflict：构造并记录冲突。
-- check_analysis_version：保留版本规则并细化分析错误。
-变量索引：
-- MESSAGES：允许的原因与固定提示。
-- logger：不含正文和令牌的诊断日志。
+"""Responsibility: Provide distinguishable, safe reasons for analysis saves and lease conflicts.
+Implementation: Retain HTTP 409 and failure semantics, generate fixed error codes and action guidance, and log company, job, and version linkage.
+Relationships: Used by L2/L3/L4 save entry points in results and by job lease validation; existing Agents can record backend_code unchanged.
+Directory:
+- analysis_conflict: Construct and log a conflict.
+- check_analysis_version: Retain version rules and refine analysis errors.
+Variable index:
+- MESSAGES: Allowed reasons and fixed guidance.
+- logger: Diagnostic logger without bodies or tokens.
 """
 import hashlib
 import logging
@@ -28,12 +28,12 @@ MESSAGES = {
 }
 
 
-# 功能：构造带固定原因的 409 错误并记录安全关联信息。
-# 输入：`reason` 为 MESSAGES 中的代码，`company` 为已授权公司，`job_id` 为可空任务 ID，
-# `stage` 为调用方固定阶段，`expected` 为可空输入 revision，`input_version` 为可空输入标识。
-# 输出：Conflict 实例，供调用方抛出；无数据库写入。
-# 逻辑：任务 ID 规范为 UUID，版本仅记录非负整数，输入标识仅记录 SHA-256；错误码同时供 DRF 与客户端识别。
-# 约束：不记录 lease token、业务正文或原始异常，不新增任务状态或自动重试。
+# Function: Construct a 409 error with a fixed reason and log safe linkage information.
+# Inputs: `reason` is a MESSAGES code; `company` is an authorized company; `job_id` is an optional job ID;
+# `stage` is the caller's fixed stage; `expected` is an optional input revision; and `input_version` is an optional input identifier.
+# Outputs: A Conflict instance for the caller to raise; does not write to the database.
+# Logic: Normalize job IDs as UUIDs, log only non-negative integer versions, and retain only an input SHA-256; error codes identify failures to both DRF and clients.
+# Constraints: Does not log lease tokens, business bodies, or original exceptions, and does not add job states or automatic retries.
 def analysis_conflict(reason, company, job_id, stage, expected=None, input_version=None):
     try:
         identifier = str(uuid.UUID(str(job_id)))
@@ -48,11 +48,11 @@ def analysis_conflict(reason, company, job_id, stage, expected=None, input_versi
     return error
 
 
-# 功能：沿用版本约束，仅细化不匹配时的分析错误。
-# 输入：`expected` 为客户端版本，`company` 为锁定公司，`job_id` 为任务 ID，`stage` 为保存阶段，`input_version` 为输入标识。
-# 输出：无；格式错误仍为原 400，版本不匹配为具有原因的 409。
-# 逻辑：调用既有 check_version，保留实验模式及版本格式语义，仅包装 Conflict。
-# 约束：不放宽校验、不跳过租约、不重取新版本后重试旧结果。
+# Function: Retain version constraints while refining the analysis error on mismatch.
+# Inputs: `expected` is the client version; `company` is the locked company; `job_id` is the job ID; `stage` is the save stage; and `input_version` is the input identifier.
+# Outputs: None; format errors remain the original 400, while version mismatches become a reasoned 409.
+# Logic: Call existing check_version and preserve experiment-mode and version-format semantics while wrapping only Conflict.
+# Constraints: Does not relax validation, bypass leases, or retry old results after fetching a new version.
 def check_analysis_version(expected, company, job_id, stage, input_version):
     try:
         check_version(expected, company.revision)

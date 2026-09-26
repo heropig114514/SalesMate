@@ -1,83 +1,84 @@
-# 当前 API 契约
+# Current API contract
 
-更新：2026-09-13。字段的唯一机器可读定义是由 Django 生成的 [OpenAPI](../contracts/openapi.yaml)。Agent 业务对象语义见 [Agent README](../../agent/README.md)。
+Updated: 2026-09-13. The sole machine-readable field definition is Django-generated [OpenAPI](../contracts/openapi.yaml). See the [Agent README](../../agent/README.md) for Agent business-object semantics.
 
-## 身份
+## Identity
 
-账户内部数据清空使用 `POST /api/v1/accounts/me/reset/`，保留登录身份和密码；幂等键、缓存、多标签页及后台互斥约定见[账号清空接口](account-reset.md)。
+Clear account-internal data with `POST /api/v1/accounts/me/reset/`, retaining login identity/password. See [account reset](account-reset.md) for idempotency keys, caching, multiple tabs, and background mutual exclusion.
 
-浏览器先用 `GET /api/v1/session/` 获取 CSRF Cookie，再用 `POST /api/v1/accounts/register/` 提交 `{"username":"...","password":"..."}`。注册仅接受这两个字段，不要求邮箱、手机号或验证码；用户名遵守现有模型规则，密码长度为 8–128 字符，不限制纯数字、常见值或用户名相似性；仍采用 Django 密码哈希。成功返回 201、`authenticated`、`username` 和轮换后的 `csrf_token`，同时建立普通用户 Session。输入错误或重名返回 400，缺少有效 CSRF 返回 403，已登录时再次注册返回 409。密码以哈希存储，不回传。
+Browsers first call `GET /api/v1/session/` for a CSRF cookie, then submit `{"username":"...","password":"..."}` to `POST /api/v1/accounts/register/`. Registration accepts only these fields and requires no email, phone, or verification code. Usernames follow existing model rules; passwords are 8–128 characters without restrictions on numeric-only, common, or username-similar values, and still use Django password hashing. Success returns 201, `authenticated`, `username`, and a rotated `csrf_token`, establishing an ordinary-user Session. Invalid inputs/duplicate names return 400, invalid/missing CSRF returns 403, and registration while authenticated returns 409. Passwords are stored as hashes and never returned.
 
-新账号拥有独立的空工作空间及未完成的引导状态，不复制 demo 数据，也不自动创建 Gmail 授权或 Agent 服务令牌。退出后继续使用 `POST /api/v1/session/` 登录；`DELETE /api/v1/session/` 注销。注册页面中的确认密码仅用于浏览器一致性检查，不作为后端字段发送。
+New accounts receive independent empty workspaces and incomplete onboarding, without copied demo data, automatic Gmail authorization, or Agent service tokens. After logout, use `POST /api/v1/session/` to log in; `DELETE /api/v1/session/` logs out. Password confirmation is a browser consistency check only and is not sent as a backend field.
 
-浏览器使用 Django Session 和 CSRF。Agent 路由只接受：
+Browsers use Django Session and CSRF. Agent routes accept only:
 
 ```http
 Authorization: Agent <service-token>
 ```
 
-服务令牌绑定一个后端用户，不能用浏览器 Session 或 Gmail access token 替代。`mailbox_id` 和 `company_id` 由后端创建，均为 UUID。错误响应保留 `error.code`、`error.detail` 和 `request_id`。
+A service token binds one backend user and cannot be replaced by browser Sessions or Gmail access tokens. Backend-created `mailbox_id` and `company_id` are UUIDs. Errors retain `error.code`, `error.detail`, and `request_id`.
 
-## 基础信息与首次引导
+## Basic profiles and initial onboarding
 
-`GET session/` 增加 `onboarding_required`；四步资料、公司规模及私有附件接口见 [onboarding.md](onboarding.md)。请求编号仍保留在 API 错误响应中，前端只将其作为诊断元数据。
+`GET session/` adds `onboarding_required`; see [onboarding.md](onboarding.md) for four-step profiles, company size, and private attachments. API errors retain request IDs, which frontends treat only as diagnostic metadata.
 
-## Agent 路由
+## Agent routes
 
-以下路径以 `/api/v1/agent/` 开头：
+The following paths start with `/api/v1/agent/`:
 
-| Agent 操作 | HTTP | 主要交换数据 |
+| Agent operation | HTTP | Main exchanged data |
 |---|---|---|
-| 提交邮件 | `POST emails/` | 接口仍接受 `EmailSubmission[]`；当前 Agent 每次传一封，返回该邮件的 `dedupe_key`、`company_id`、`created/updated/duplicate` |
-| 读取公司归组 | `GET grouping/?company_id=...` | 公司、域名、联系人、成员邮件键；响应含 ETag |
-| 读取公司上下文 | `GET context/?company_id=...` | 邮件、客户、工单、报价、订单；请求携带 Grouping 的 If-Match |
-| 保存 L2 | `POST analysis-inputs/` | 完整 `AnalysisInput` |
-| 读取最新 L2 | `GET latest-analysis-input/?company_id=...` | `AnalysisInput`，不存在返回 404 |
-| 查询 L3 缓存 | `GET cached-analysis/?company_id=...&input_version=...&analysis_prompt_version=...` | 命中时返回完整 `Analysis`，否则 `analysis=null` |
-| 保存 L3 | `POST analyses/` | 完整 `Analysis` |
-| 保存 L4 | `POST scores/` | 完整 `Score` |
-| 领取任务 | `POST jobs/claim/` | `limit`、`lease_seconds` → 顶层含 `company_id` 的 `Job[]` |
-| 回报任务 | `POST jobs/report/` | `JobReport`，请求携带领取凭证 |
-| 领取员工邮箱同步 | `POST mailbox-syncs/claim/` | `limit` → 邮箱地址、Google 授权信息和读取上限 |
-| 回报员工邮箱同步 | `POST mailbox-syncs/report/` | 同步汇总、错误及可选刷新凭证 → 浏览器安全状态 |
+| Submit emails | `POST emails/` | Still accepts `EmailSubmission[]`; the current Agent sends one email per call, returning its `dedupe_key`, `company_id`, and `created/updated/duplicate` |
+| Read company grouping | `GET grouping/?company_id=...` | Company, domains, contacts, member email keys; response includes ETag |
+| Read company context | `GET context/?company_id=...` | Emails, customer, tickets, quotes, orders; send Grouping's If-Match |
+| Save L2 | `POST analysis-inputs/` | Complete `AnalysisInput` |
+| Read latest L2 | `GET latest-analysis-input/?company_id=...` | `AnalysisInput`, or 404 when absent |
+| Query L3 cache | `GET cached-analysis/?company_id=...&input_version=...&analysis_prompt_version=...` | Complete `Analysis` on hit, otherwise `analysis=null` |
+| Save L3 | `POST analyses/` | Complete `Analysis` |
+| Save L4 | `POST scores/` | Complete `Score` |
+| Claim jobs | `POST jobs/claim/` | `limit`, `lease_seconds` → `Job[]` with top-level `company_id` |
+| Report jobs | `POST jobs/report/` | `JobReport` with claim credentials |
+| Claim employee mailbox sync | `POST mailbox-syncs/claim/` | `limit` → mailbox address, Google authorization, and read limit |
+| Report employee mailbox sync | `POST mailbox-syncs/report/` | Sync summary, errors, optional refreshed credentials → browser-safe state |
 
-兼容接口还包括 `POST facts/`、`GET failed-extractions/`、`GET sync-state/` 和 `POST sync-state-save/`。产品 Gmail 同步必须提供 `sync_options`（`recent_days` 或 `max_messages` 至少一项），普通 Gmail 批次默认最多 50 封，超量必须明确提供 `max_messages` 和 `allow_large_sync=true`；由 Worker 在冻结范围内先限量再去重；StoredMessage 保存原文和 L1 输出，SyncCheckpoint 仅保留 Worker 接管标记及旧审计状态；失败明确重试，按阶段复用缓存。Worker 接管邮箱后拒绝旧 CLI 游标双写。旧 CLI 的已配置游标读写异常向上报告。
+Compatibility APIs also include `POST facts/`, `GET failed-extractions/`, `GET sync-state/`, and `POST sync-state-save/`. Product Gmail synchronization requires `sync_options` (at least one of `recent_days` or `max_messages`). Ordinary Gmail batches default to at most 50 emails; larger batches require explicit `max_messages` and `allow_large_sync=true`. Workers limit before deduplication within the frozen scope. StoredMessage stores source text/L1 output; SyncCheckpoint retains only worker takeover markers and old audit state. Retries are explicit and reuse stage caches. After worker takeover, legacy CLI cursor dual-writes are rejected. Configured legacy CLI cursor read/write errors propagate.
 
-## 写入一致性
+## Write consistency
 
-领取 Job 后，后端返回 `job_id`、顶层 `company_id`、`trigger`、`expected_version`、`lease_token` 和 `lease_until`。
+Claimed jobs return `job_id`, top-level `company_id`, `trigger`, `expected_version`, `lease_token`, and `lease_until`.
 
-保存 L2、L3 和 L4 时，HTTP 适配器发送 `If-Match`、`X-Job-ID` 和 `X-Lease-Token`。上下文 revision 已变化、任务不是运行中、凭证错误或租约过期时，后端拒绝写入。MVP 不自动续租或重试过期任务。
+When saving L2/L3/L4, HTTP adapters send `If-Match`, `X-Job-ID`, and `X-Lease-Token`. Changed context revisions, nonrunning jobs, invalid credentials, or expired leases reject writes. MVP does not automatically renew leases or retry expired jobs.
 
-邮件天然键必须为 `mailbox_address.casefold():gmail_message_id`。相同载荷返回 `duplicate`；原记录抽取失败、下一次同邮件抽取成功时返回 `updated`。Agent 逐封调用提交接口，因此单封冲突不会回滚其他邮件。非业务邮件或无实质变化邮件会保存，但不会创建分析 Job；默认公司列表、统计与 Agent 上下文已排除非业务和待复核邮件。
+Email natural keys must be `mailbox_address.casefold():gmail_message_id`. Identical payloads return `duplicate`; a previously failed extraction later succeeding for the same email returns `updated`. Agent submits one email per call, so conflicts do not roll back other emails. Nonbusiness emails or emails without substantive changes are saved without analysis Jobs; default company lists/statistics and Agent context exclude nonbusiness and review-pending emails.
 
-L2、L3 和 L4 的核心约束：
+Core L2/L3/L4 constraints:
 
-- L2 必须保留当前公司的所有邮件事实、来源、时间和后端业务快照。
-- L3 的事实与推断引用必须属于当前 L2 输入，详情中的缺失项和完整度位于 `detail_view`。
-- 评分特征只能是 0–3 整数或 JSON `null`。
-- 信号未知、任一评分特征为 `null` 或缺少最近入站时间时，Score 为 `null`。
-- 缓存要求公司、当前 revision、`input_version` 和 `analysis_prompt_version` 全部匹配。
-- 失效血缘对应的 L2/L3/L4 不参与展示和缓存；同一 `input_version` 可在不同 revision 保存独立快照。人工补抽取沿用真实提示词版本，以内部 `repair_generation` 保留原抽取历史，不改变 Agent 的 EmailSubmission 字段。
+- L2 preserves all current-company email facts, sources, timestamps, and backend business snapshots.
+- L3 fact/inference references belong to current L2 inputs; missing fields and completeness reside in `detail_view`.
+- Scoring features are integers 0–3 or JSON `null` only.
+- Unknown signals, any `null` scoring feature, or absent latest inbound time produce a `null` Score.
+- Cache hits require matching company, current revision, `input_version`, and `analysis_prompt_version`.
+- Invalidated L2/L3/L4 lineage is excluded from display/cache. The same `input_version` may have independent snapshots at different revisions. Manual re-extraction retains actual prompt versions and uses internal `repair_generation` to preserve extraction history without changing Agent EmailSubmission fields.
 
-## 浏览器路由
+## Browser routes
 
-浏览器使用 `/api/v1/` 下的 Session、mailboxes、companies 和 demo 路由。页面可以查看当前员工的 Gmail 连接和公司列表/详情、完成 Google OAuth、请求邮箱同步、建档、请求更新分析，以及在 `rules` 模式导入样例和模拟来信。浏览器不会收到 Google 凭证。
+Browsers use Session, mailboxes, companies, and demo routes under `/api/v1/`. Pages view the current employee's Gmail connection/company lists/details, complete Google OAuth, request synchronization, create profiles, request analysis updates, and import examples/simulate incoming mail in `rules` mode. Browsers never receive Google credentials.
 
-员工 Gmail 路由：
+Employee Gmail routes:
 
-- `POST mailboxes/gmail-authorize/`：生成 Google 授权地址。
-- `GET mailboxes/gmail-callback/`：交换授权码、验证 Gmail 地址、绑定当前员工并请求首次同步。
-- `POST mailboxes/{mailbox_id}/request-sync/`：持久排队并返回 HTTP 202、run_id 和 queued；重复请求复用活动批次。
-- `DELETE mailboxes/{mailbox_id}/gmail-authorization/`：移除授权，保留历史业务数据。
+- `POST mailboxes/gmail-authorize/`: generate a Google authorization URL.
+- `GET mailboxes/gmail-callback/`: exchange authorization code, verify Gmail address, bind the current employee, and request initial synchronization.
+- `POST mailboxes/{mailbox_id}/request-sync/`: persistently enqueue and return HTTP 202, run_id, and queued; duplicate requests reuse active batches.
+- `DELETE mailboxes/{mailbox_id}/gmail-authorization/`: remove authorization while retaining historical business data.
 
-独立 `crm_worker` 处理同步批次和公司任务。新增批次进度、明确重试、复核查询和 If-Match 确认接口见 [邮件处理适配](processing-integration.md)。Web 不启动后台线程。
+Independent `crm_worker` processes sync batches/company jobs. See [email processing integration](processing-integration.md) for batch progress, explicit retries, review queries, and If-Match confirmation. Web starts no background threads.
 
-生成并校验契约：
+Generate and validate the contract:
 
 ```powershell
 python backend/manage.py spectacular --file backend/contracts/openapi.yaml --validate --fail-on-warn
 ```
-## QQ 邮箱增量接口
 
-新增 QQ 连接与删除接口，复用现有邮箱同步、进度和明确重试 API。邮箱响应追加 `qq_authorized`，邮件来源追加 `qq_real`；Gmail 路由和 `gmail_authorized` 语义不变。请求格式、认证及兼容字段详见 [QQ 邮箱接入](qq-mailbox.md#api-与兼容边界)，机器可读定义见 `../contracts/openapi.yaml`。
+## Incremental QQ mailbox APIs
+
+QQ connection/removal APIs reuse existing synchronization, progress, and explicit-retry APIs. Mailbox responses add `qq_authorized`; email sources add `qq_real`. Gmail routes and `gmail_authorized` semantics remain unchanged. See [QQ mailbox integration](qq-mailbox.md#api-and-compatibility-boundaries) for request formats, authentication, and compatibility fields; machine-readable definitions remain in `../contracts/openapi.yaml`.

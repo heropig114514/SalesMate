@@ -1,8 +1,8 @@
-/* 职责：布局实验数据表目录、记录列表与维护表单与详情。
- * 实现：宽屏双栏、窄屏单栏，长 JSON 与主键在容器内换行。
- * 关联：experiments.html；复用 design-system.css 的色彩与顶栏。
- * 目录：无函数或类声明；选择器按页面、表格、弹窗、移动端组织。
- * 变量索引：无新增 CSS 变量。 */
+/* Responsibility: Lay out experiment table catalogs, record lists, maintenance forms, and details.
+ * Implementation: Two columns on wide screens, one on narrow screens; long JSON and primary keys wrap inside containers.
+ * Relationships: experiments.html; reuse design-system.css colors and top bar.
+ * Directory: No functions or classes; selectors cover page, tables, dialogs, and mobile layout.
+ * Variable index: No additional CSS variables. */
 body { margin: 0; background: #101218; color: #e5e7ed; font: 14px/1.6 system-ui, sans-serif; }
 a { color: #a6bcff; } button, input { font: inherit; }
 button, #export-batch, #record-download { padding: 8px 14px; border: 1px solid #414859; border-radius: 8px; background: #222736; color: #edf0ff; cursor: pointer; text-decoration: none; }

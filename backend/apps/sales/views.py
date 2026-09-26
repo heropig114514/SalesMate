@@ -1,48 +1,48 @@
-"""职责：提供销售关系记录、客户归组、附件及外部动作的会话认证 API。
-实现：商机信号/评分通过通用 CRUD 接收算法结果；实验模式默认认证提供公开身份，通知命令允许跨账号维护；活动资讯沿用版本化记录接口，新增地区与时间筛选；资源白名单选择严格序列化器；写入委托授权事务，异常统一输出且不暴露凭证。
-关联：catalog 为管理页提供字段契约，services/grouping/actions/files 实现业务边界。
-目录：
-- ResourceDetailView：单条资源查询路由。
-- ResourceDetailView.get：读取单条记录。
-- SalesView：统一认证和安全错误边界。
-- SalesView.handle_exception：转换数据库及参数错误。
-- ResourceView：记录集合和单条查询写入。
-- ResourceView.serializer_type：解析白名单资源。
-- ResourceView.get：授权查询并分页。
-- ResourceView.post：创建关系记录或待确认动作。
-- ResourceView.patch：版本化修改记录。
-- CommandView：显式状态、归档、审批和通知已读。
-- CommandView.post：执行已授权命令。
-- DirectoryView：不含邮件的客户目录。
-- DirectoryView.get：分页查询客户和联系人。
-- DirectoryView.post：新增客户。
-- ContactView：人工联系人写入。
-- ContactView.post：新增或修改联系人身份。
-- GroupingView：显式公司合并和邮件搬移。
-- GroupingView.post：校验版本后执行归组。
-- FileView：附件上传下载。
-- FileView.post：处理 multipart 上传。
-- FileView.get：认证下载附件。
-- OAuthView：独立 Google 写权限授权流程。
-- OAuthView.post：生成授权跳转链接。
-- OAuthView.get：处理单次授权回调。
-- AuditView：授权审计读取。
-- AuditView.get：分页读取脱敏审计。
-- CatalogView：管理页面的字段及状态元数据。
-- CatalogView.get：生成业务表单契约。
-- OverviewView：按币种的销售汇总。
-- OverviewView.get：统计授权业务及个人待办。
-- PeopleView：团队邀请所需账号查找。
-- PeopleView.get：按完整用户名查找有效账号。
-- CalendarView：受保护的日历只读查询。
-- CalendarView.get：读取事件或忙闲。
-- paged：执行受限分页。
-- record_response：生成记录及 ETag。
-变量索引：
-- logger：脱敏接口异常日志。
-- LABELS：资源对应中文源文案；响应时按请求语言翻译，不改变资源键。
-- SalesView.permission_classes：必须登录。
-- FileView.parser_classes：附件 multipart 及表单解析器。
+"""Responsibility: Provide session-authenticated APIs for sales records, company grouping, attachments, and external actions.
+Implementation: Generic CRUD accepts opportunity signals/scores from algorithms. Experiment-mode default authentication supplies a public identity and notification commands allow cross-account maintenance. Events/news retain versioned record APIs with region/time filters. Resource allowlists select strict serializers; authorized transactions perform writes and unified errors hide credentials.
+Relationships: catalog provides management-page field contracts; services/grouping/actions/files implement business boundaries.
+Directory:
+- ResourceDetailView: Single-resource query route.
+- ResourceDetailView.get: Read one record.
+- SalesView: Shared authentication and safe error boundary.
+- SalesView.handle_exception: Convert database and parameter errors.
+- ResourceView: Query/write record collections and individual records.
+- ResourceView.serializer_type: Resolve allowlisted resources.
+- ResourceView.get: Authorize queries and paginate.
+- ResourceView.post: Create related records or actions awaiting confirmation.
+- ResourceView.patch: Version-update records.
+- CommandView: Explicit state, archival, approval, and notification-read operations.
+- CommandView.post: Execute authorized commands.
+- DirectoryView: Company directory without emails.
+- DirectoryView.get: Paginate companies and contacts.
+- DirectoryView.post: Create a company.
+- ContactView: Manual contact writes.
+- ContactView.post: Create or update contact identity.
+- GroupingView: Explicit company merging and email moves.
+- GroupingView.post: Validate versions before grouping.
+- FileView: Attachment upload/download.
+- FileView.post: Handle multipart uploads.
+- FileView.get: Authenticated attachment downloads.
+- OAuthView: Separate Google write-permission authorization flow.
+- OAuthView.post: Generate authorization redirect links.
+- OAuthView.get: Handle one-time authorization callbacks.
+- AuditView: Authorized audit reads.
+- AuditView.get: Paginate redacted audits.
+- CatalogView: Field/state metadata for management pages.
+- CatalogView.get: Generate business form contracts.
+- OverviewView: Sales summaries by currency.
+- OverviewView.get: Count authorized business data and personal pending items.
+- PeopleView: Account lookup for team invitations.
+- PeopleView.get: Find active accounts by complete username.
+- CalendarView: Protected read-only calendar queries.
+- CalendarView.get: Read events or free/busy.
+- paged: Apply bounded pagination.
+- record_response: Generate records and ETags.
+Variable index:
+- logger: Redacted API exception logs.
+- LABELS: Chinese source labels for resources; translate responses by request language without changing resource keys.
+- SalesView.permission_classes: Authentication required.
+- FileView.parser_classes: Multipart and form parsers for attachments.
 """
 
 from common.laboratory import owner_scope
@@ -107,11 +107,11 @@ LABELS = {
 }
 
 
-# 功能：执行受限分页。
-# 输入：`query` 为已授权查询集，`request` 提供 page 和 page_size。
-# 输出：本页记录与 count/page/page_size。
-# 逻辑：页码从 1 开始，默认每页 30 条，上限 100 条。
-# 约束：无效页码显式报错，不静默截断或遍历全部记录。
+# Function: Apply bounded pagination.
+# Inputs: `query`: authorized queryset; `request`: page and page_size.
+# Outputs: Current-page records and count/page/page_size.
+# Logic: Pages start at 1; default page size is 30, maximum 100.
+# Constraints: Reject invalid pages explicitly without silent clamping or full-record traversal.
 def paged(query, request):
     page, size = (
         int(request.query_params.get("page", 1)),
@@ -126,11 +126,11 @@ def paged(query, request):
     }
 
 
-# 功能：生成版本化记录响应。
-# 输入：`record`、`serializer` 类、`request`、`status` 默认 200。
-# 输出：Response，其 ETag 为十进制 revision。
-# 逻辑：沿用严格序列化字段白名单；写入时客户端回传 If-Match。
-# 约束：不输出模型内部存储键或凭证。
+# Function: Generate a versioned record response.
+# Inputs: `record`, `serializer` class, `request`, and `status` defaulting to 200.
+# Outputs: Response with decimal revision as ETag.
+# Logic: Retain strict serialized field allowlists; clients return If-Match on writes.
+# Constraints: Do not expose internal model storage keys or credentials.
 def record_response(record, serializer, request, status=200):
     return Response(
         serializer(record, context={"request": request}).data,
@@ -139,17 +139,17 @@ def record_response(record, serializer, request, status=200):
     )
 
 
-# 功能：统一销售 API 的认证和可诊断错误。
-# 逻辑：DRF 会话认证保留 CSRF，数据库冲突映射为 409。
-# 约束：未知运行异常仍按框架处理并记录类型，不以成功响应吞掉异常。
+# Function: Unify sales API authentication and diagnosable errors.
+# Logic: DRF session authentication retains CSRF; database conflicts map to 409.
+# Constraints: Unknown runtime exceptions remain framework-handled and log their type, never becoming successful responses.
 class SalesView(APIView):
     permission_classes = [IsAuthenticated]
 
-    # 功能：转换可预期的查询及参数异常。
-    # 输入：`exc` 为视图执行异常。
-    # 输出：DRF 错误响应或向框架传播未知错误。
-    # 逻辑：不存在统一 404，约束竞争 409，无效类型 400；日志仅含异常类型与视图。
-    # 约束：不返回 SQL、令牌或 provider 异常原文。
+    # Function: Convert expected query and argument exceptions.
+    # Inputs: `exc`: view execution exception.
+    # Outputs: DRF error response or propagation of unknown errors to the framework.
+    # Logic: Missing records uniformly return 404, constraint races 409, and invalid types 400; logs contain only exception type and view.
+    # Constraints: Never return SQL, tokens, or raw provider exception text.
     def handle_exception(self, exc):
         logger.warning(
             "sales_request_failed view=%s error_type=%s",
@@ -169,25 +169,25 @@ class SalesView(APIView):
         return super().handle_exception(exc)
 
 
-# 功能：提供白名单资源的查询和严格写入。
-# 逻辑：所有请求基于当前用户 scope，创建及修改交给事务服务。
-# 约束：不提供硬删除或任意模型访问；外部执行只能由已批准任务触发。
+# Function: Provide queries and strict writes for allowlisted resources.
+# Logic: Every request uses current-user scope; transactional services handle creation/updates.
+# Constraints: No hard deletion or arbitrary model access; only approved tasks may trigger external execution.
 class ResourceView(SalesView):
-    # 功能：解析资源对应的序列化器。
-    # 输入：`resource` 为 URL 中的资源标识。
-    # 输出：具体 ModelSerializer 类；未知资源 404。
-    # 逻辑：使用静态白名单，不动态导入客户端指定模型。
-    # 约束：同一映射用于目录和实际校验。
+    # Function: Resolve a resource's serializer.
+    # Inputs: `resource`: resource identifier in the URL.
+    # Outputs: Concrete ModelSerializer class; unknown resources return 404.
+    # Logic: Use a static allowlist without dynamically importing client-selected models.
+    # Constraints: Catalog and actual validation use the same mapping.
     def serializer_type(self, resource):
         if resource not in SERIALIZERS:
             raise NotFound("业务资源不存在。")
         return SERIALIZERS[resource]
 
-    # 功能：读取单条或分页列表。
-    # 输入：`request`、`resource`、可选 `record_id`。
-    # 输出：单条记录或含 results 的分页响应；不支持的字段筛选按请求语言报错，保留原字段名。
-    # 逻辑：信号及评分可按 opportunity 筛选；活动资讯支持地区、类型与带时区窗口；其他资源支持实际关系、status、archived 过滤；会话可按 conversation_scope 分离通用和客户记录，默认排除归档。
-    # 约束：关联过滤仍经过 scope；不支持 arbitrary ORM 查询表达式。
+    # Function: Read one record or a paginated list.
+    # Inputs: `request`, `resource`, and optional `record_id`.
+    # Outputs: One record or a paginated response with results; unsupported filters produce request-language errors retaining original field names.
+    # Logic: Signals/scores filter by opportunity; events/news support region, type, and timezone-aware windows. Other resources support actual relations, status, and archived filters. conversation_scope separates general/company conversations; archived records are excluded by default.
+    # Constraints: Relation filters still pass through scope; arbitrary ORM query expressions are unsupported.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_records_read")
     def get(self, request, resource, record_id=None):
         serializer = self.serializer_type(resource)
@@ -236,11 +236,11 @@ class ResourceView(SalesView):
             }
         )
 
-    # 功能：创建记录或冻结待确认动作。
-    # 输入：`request` JSON，`resource`；`record_id` 仅用于拒绝向详情创建。
-    # 输出：201 及记录；动作仍为 pending_confirmation。
-    # 逻辑：普通资源校验严格字段后保存，动作专用服务校验完整计划。
-    # 约束：连接、文件和提醒不能通过普通创建伪造。
+    # Function: Create a record or freeze an action awaiting confirmation.
+    # Inputs: `request` JSON and `resource`; `record_id` only rejects creation on detail routes.
+    # Outputs: 201 and the record; actions remain pending_confirmation.
+    # Logic: Validate strict fields before ordinary saves; the dedicated action service validates the complete plan.
+    # Constraints: Ordinary creation cannot fabricate connections, files, or reminders.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses={201: OpenApiTypes.OBJECT},
@@ -260,11 +260,11 @@ class ResourceView(SalesView):
             record = services.save_record(serializer, request.user)
         return record_response(record, serializer_type, request, 201)
 
-    # 功能：按旧版本修改业务记录。
-    # 输入：`request` 的 JSON/If-Match，`resource`、`record_id`。
-    # 输出：新记录和新 ETag。
-    # 逻辑：先按可见范围定位再执行授权事务及版本检查。
-    # 约束：归属、状态、角色伪造和冻结单据修改均被服务拒绝。
+    # Function: Update business records against their old version.
+    # Inputs: JSON/If-Match from `request`, plus `resource` and `record_id`.
+    # Outputs: New record and ETag.
+    # Logic: Locate within visible scope, then perform an authorized transaction and version check.
+    # Constraints: Services reject fabricated ownership, states, roles, and frozen-document edits.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -286,29 +286,29 @@ class ResourceView(SalesView):
         )
 
 
-# 功能：区分详情查询的 API 契约。
-# 逻辑：沿用同一授权查询，独立声明详情 operationId。
-# 约束：此路由不接受创建请求。
+# Function: Distinguish the detail-query API contract.
+# Logic: Reuse the same authorized query and declare a separate detail operationId.
+# Constraints: This route rejects creation requests.
 class ResourceDetailView(ResourceView):
-    # 功能：读取一个已授权资源。
-    # 输入：`request`、`resource`、`record_id`。
-    # 输出：单条记录和 ETag。
-    # 逻辑：委托 ResourceView 进行范围和类型检查。
-    # 约束：详情的响应不包装分页。
+    # Function: Read one authorized resource.
+    # Inputs: `request`、`resource`、`record_id`.
+    # Outputs: One record and ETag.
+    # Logic: Delegate scope/type checks to ResourceView.
+    # Constraints: Detail responses have no pagination wrapper.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="sales_record_detail")
     def get(self, request, resource, record_id):
         return super().get(request, resource, record_id)
 
 
-# 功能：将业务状态变化与一般字段编辑分开。
-# 逻辑：命令白名单显式选择服务，所有写入携带旧版本。
-# 约束：批准动作只入队；本接口不会发送 Gmail 或创建事件。
+# Function: Separate business state changes from ordinary field editing.
+# Logic: A command allowlist explicitly selects services; all writes carry the old version.
+# Constraints: Approval only enqueues actions; this endpoint neither sends Gmail nor creates events.
 class CommandView(SalesView):
-    # 功能：执行状态、归档、审批或通知已读命令。
-    # 输入：`request` 含 command/value 和 If-Match，`resource`、`record_id`。
-    # 输出：版本更新后的记录。
-    # 逻辑：按模型和命令分派；通知已读通过模式对应的归属查询并锁行，实验模式可跨账号，修改版本并写审计。
-    # 约束：未知命令或多余字段明确拒绝。
+    # Function: Execute state, archival, approval, or notification-read commands.
+    # Inputs: `request`: command/value and If-Match; `resource`; `record_id`.
+    # Outputs: Record with updated version.
+    # Logic: Dispatch by model/command. Notification reads use mode-specific ownership queries and row locks; experiment mode permits cross-account maintenance, then updates version and audit.
+    # Constraints: Explicitly reject unknown commands or extra fields.
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, resource, record_id):
         serializer = ResourceView().serializer_type(resource)
@@ -347,15 +347,15 @@ class CommandView(SalesView):
         return record_response(record, serializer, request)
 
 
-# 功能：共享客户目录与人工建档。
-# 逻辑：与私人邮件列表分离，仅查询明确授权公司。
-# 约束：不复用 Agent 私有上下文输出。
+# Function: Shared company directory and manual record creation.
+# Logic: Separate from private email lists; query explicitly authorized companies only.
+# Constraints: Do not reuse Agent private-context output.
 class DirectoryView(SalesView):
-    # 功能：分页返回客户基础信息。
-    # 输入：`request` 含可选 q、archived 和分页参数。
-    # 输出：客户及联系人目录。
-    # 逻辑：名称/域名/联系人邮箱搜索，默认隐藏已归档客户。
-    # 约束：搜索始终在当前用户可见范围内执行。
+    # Function: Paginate basic company information.
+    # Inputs: `request`: optional q, archived, and pagination parameters.
+    # Outputs: Company/contact directory.
+    # Logic: Search names, domains, and contact emails; hide archived companies by default.
+    # Constraints: Always search within current-user visible scope.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         query = Company.objects.filter(
@@ -377,11 +377,11 @@ class DirectoryView(SalesView):
             {**pagination, "results": [grouping.directory_row(row) for row in rows]}
         )
 
-    # 功能：人工创建客户。
-    # 输入：`request` 仅含 name。
-    # 输出：201 客户目录项。
-    # 逻辑：新建独立人工分组和生命周期设置。
-    # 约束：不根据姓名推断域名或合并已有客户。
+    # Function: Manually create a company.
+    # Inputs: `request`: name only.
+    # Outputs: 201 company directory entry.
+    # Logic: Create independent manual grouping and lifecycle settings.
+    # Constraints: Do not infer domains from names or merge existing companies.
     @extend_schema(request=OpenApiTypes.OBJECT, responses={201: OpenApiTypes.OBJECT})
     def post(self, request):
         if set(request.data) != {"name"}:
@@ -394,15 +394,15 @@ class DirectoryView(SalesView):
         )
 
 
-# 功能：提供人工联系人身份修改。
-# 逻辑：使用公司版本保护联系人集合。
-# 约束：私人历史邮箱身份不被覆盖。
+# Function: Provide manual contact identity editing.
+# Logic: Protect the contact collection using the company version.
+# Constraints: Never overwrite private historical email identity.
 class ContactView(SalesView):
-    # 功能：保存客户的联系人。
-    # 输入：`request` 含联系人字段及 If-Match，`company_id`。
-    # 输出：联系人及公司新版本。
-    # 逻辑：委托归组事务验证公司编辑权及历史身份。
-    # 约束：补充职位电话另由 contact-profiles 接口维护。
+    # Function: Save a company contact.
+    # Inputs: `request`: contact fields and If-Match; `company_id`.
+    # Outputs: Contact and new company version.
+    # Logic: Delegate company edit-permission and historical-identity checks to grouping transactions.
+    # Constraints: contact-profiles separately maintains supplemental titles/phone numbers.
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, company_id):
         return Response(
@@ -412,15 +412,15 @@ class ContactView(SalesView):
         )
 
 
-# 功能：接收完整且版本化的人工归组计划。
-# 逻辑：源和目标都必须为同一所有者。
-# 约束：只有明确选择的邮件被移动，合并保留历史分析。
+# Function: Accept complete versioned manual grouping plans.
+# Logic: Source and target must have the same owner.
+# Constraints: Move explicitly selected emails only; merges preserve historical analyses.
 class GroupingView(SalesView):
-    # 功能：执行邮件移动或公司合并。
-    # 输入：`request` 包含源目标 ID、两版本，移动时另需 keys；`operation` 为 move/merge。
-    # 输出：公司新版本或合并后目录。
-    # 逻辑：精确字段白名单后委托事务服务。
-    # 约束：失败时整次操作回滚，不进行猜测性合并。
+    # Function: Move emails or merge companies.
+    # Inputs: `request`: source/target IDs and both versions, plus keys for moves; `operation`: move/merge.
+    # Outputs: New company versions or merged directory entry.
+    # Logic: Apply the exact field allowlist, then delegate to transactional services.
+    # Constraints: Failures roll back the entire operation; no speculative merges.
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, operation):
         required = {"source_id", "target_id", "source_revision", "target_revision"}
@@ -434,17 +434,17 @@ class GroupingView(SalesView):
         return Response(function(request.user, **request.data))
 
 
-# 功能：私有附件上传和强制下载。
-# 逻辑：元数据与内容路径分离，任何下载都验证 owner。
-# 约束：无公共媒体 URL，无内联执行。
+# Function: Private attachment upload and forced download.
+# Logic: Separate metadata from content paths; validate owner on every download.
+# Constraints: No public media URLs or inline execution.
 class FileView(SalesView):
     parser_classes = [MultiPartParser, FormParser]
 
-    # 功能：接收 multipart 文件。
-    # 输入：`request` 含 company、file，`record_id` 创建时须为空。
-    # 输出：201 附件元数据。
-    # 逻辑：检查客户可见性后流式保存并审计。
-    # 约束：单文件大小上限由 files.MAX_BYTES 控制。
+    # Function: Receive multipart files.
+    # Inputs: `request`: company and file; `record_id` must be absent on creation.
+    # Outputs: 201 attachment metadata.
+    # Logic: Check company visibility, then stream-save and audit.
+    # Constraints: files.MAX_BYTES controls the per-file size limit.
     @extend_schema(request=OpenApiTypes.OBJECT, responses={201: OpenApiTypes.OBJECT})
     def post(self, request, record_id=None):
         if record_id or set(request.data) != {"company", "file"}:
@@ -455,11 +455,11 @@ class FileView(SalesView):
         record = files.store_file(request.user, company, request.FILES.get("file"))
         return record_response(record, SERIALIZERS["files"], request, 201)
 
-    # 功能：认证下载指定附件。
-    # 输入：`request`、`record_id`。
-    # 输出：attachment FileResponse。
-    # 逻辑：限定 owner 后打开随机存储文件，并设置 nosniff。
-    # 约束：附件下载不暴露内部目录。
+    # Function: Authenticated download of a selected attachment.
+    # Inputs: `request`、`record_id`.
+    # Outputs: attachment FileResponse.
+    # Logic: Restrict by owner, open the randomly stored file, and set nosniff.
+    # Constraints: Attachment downloads never expose internal directories.
     @extend_schema(responses=OpenApiTypes.BINARY)
     def get(self, request, record_id=None):
         record = scope(models.Attachment, request.user).get(pk=record_id)
@@ -473,15 +473,15 @@ class FileView(SalesView):
         return response
 
 
-# 功能：公开显式的外部连接授权入口。
-# 逻辑：服务器固定回调，Session 保存单次 state。
-# 约束：授权成功不会触发任何待发消息。
+# Function: Expose explicit external-connection authorization entry points.
+# Logic: The server fixes callback URLs; Session stores one-time state.
+# Constraints: Successful authorization triggers no pending messages.
 class OAuthView(SalesView):
-    # 功能：生成 Google 授权地址。
-    # 输入：`request` 只接受 provider。
-    # 输出：authorization_url。
-    # 逻辑：使用当前服务器的命名回调构造完整 URI。
-    # 约束：用户必须在 Google 页面完成授权。
+    # Function: Generate a Google authorization URL.
+    # Inputs: `request`: provider only.
+    # Outputs: authorization_url.
+    # Logic: Build the complete URI from the current server's named callback.
+    # Constraints: Users must complete authorization on Google's page.
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request):
         if set(request.data) != {"provider"}:
@@ -496,26 +496,26 @@ class OAuthView(SalesView):
             }
         )
 
-    # 功能：保存 Google OAuth 回调连接。
-    # 输入：`request` 的 code/state 与已登录会话。
-    # 输出：重定向至业务管理页。
-    # 逻辑：严格验证 state、交换并加密凭证。
-    # 约束：失败明确返回错误，不将令牌放入 URL。
+    # Function: Save Google OAuth callback connections.
+    # Inputs: code/state from `request` and the authenticated session.
+    # Outputs: Redirect to the business management page.
+    # Logic: Strictly validate state, exchange credentials, and encrypt them.
+    # Constraints: Return explicit errors on failure; never put tokens in URLs.
     @extend_schema(responses={302: None})
     def get(self, request):
         integrations.finish(request)
         return redirect("/business/#connections")
 
 
-# 功能：按业务权限读取追加式审计。
-# 逻辑：私人会话审计仅对 owner 可见。
-# 约束：没有修改或删除入口。
+# Function: Read append-only audits according to business permissions.
+# Logic: Private-conversation audits are owner-visible only.
+# Constraints: No modification or deletion endpoints.
 class AuditView(SalesView):
-    # 功能：分页输出脱敏审计元数据。
-    # 输入：`request` 可选 company 与分页参数。
-    # 输出：事件名、对象 ID、操作者及字段名/状态变更。
-    # 逻辑：按时间倒序，所有过滤建立在 scope 上。
-    # 约束：不输出业务正文、收件人或密钥。
+    # Function: Paginate redacted audit metadata.
+    # Inputs: `request`: optional company and pagination parameters.
+    # Outputs: Event names, object IDs, actors, and field-name/state changes.
+    # Logic: Reverse chronological order; every filter builds on scope.
+    # Constraints: Never expose business bodies, recipients, or keys.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         query = scope(models.AuditEvent, request.user).order_by("-created_at", "-id")
@@ -537,15 +537,15 @@ class AuditView(SalesView):
         return Response({**pagination, "results": rows})
 
 
-# 功能：为管理页提供同源字段契约。
-# 逻辑：从实际 DRF 字段生成名称、类型、关系和状态边；仅显示标签使用请求语言。
-# 约束：只发布白名单字段，不把凭证或内部存储参数暴露为表单。
+# Function: Provide management pages with field contracts from the same source.
+# Logic: Derive names, types, relations, and state edges from actual DRF fields; only display labels use request language.
+# Constraints: Publish allowlisted fields only; never expose credentials/internal storage parameters as form fields.
 class CatalogView(SalesView):
-    # 功能：生成资源表单元数据。
-    # 输入：`request` 提供当前用户以限制关系字段。
-    # 输出：资源、按请求语言翻译的业务名称、字段说明与状态转换；资源键及选项值不变。
-    # 逻辑：区分文本、数值、布尔、关系、JSON 和时间；必填和只读与实际校验一致。
-    # 约束：关系选项从授权接口单独读取；业务规则继续由事务执行。
+    # Function: Generate resource form metadata.
+    # Inputs: `request`: current user for relation-field restrictions.
+    # Outputs: Resources, request-language business names, field descriptions, and transitions; resource keys/choice values remain unchanged.
+    # Logic: Distinguish text, numbers, booleans, relations, JSON, and time; required/read-only flags match actual validation.
+    # Constraints: Fetch relation options separately through authorized APIs; transactions continue enforcing business rules.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         resources = []
@@ -602,15 +602,15 @@ class CatalogView(SalesView):
         return Response({"resources": resources})
 
 
-# 功能：计算当前授权范围的业务概况。
-# 逻辑：按币种汇总订单及商机，保持金额语义明确。
-# 约束：不跨币种求和，不把草稿订单当收入。
+# Function: Compute the business overview within current authorization scope.
+# Logic: Aggregate orders/opportunities by currency with explicit monetary semantics.
+# Constraints: Never sum across currencies or treat draft orders as revenue.
 class OverviewView(SalesView):
-    # 功能：输出单据和待办汇总。
-    # 输入：`request` 的当前用户。
-    # 输出：客户数、开放工单、跟进数、未读提醒及币种金额列表。
-    # 逻辑：确认/履约订单求净额，未赢单未丢单商机单独汇总。
-    # 约束：统计不是会计收入确认，库存不随订单自动扣减。
+    # Function: Output document and pending-item summaries.
+    # Inputs: Current user from `request`.
+    # Outputs: Company, open-ticket, follow-up, and unread-reminder counts, plus currency amount lists.
+    # Logic: Sum confirmed/fulfilled order net amounts; aggregate opportunities neither won nor lost separately.
+    # Constraints: Statistics are not accounting revenue recognition; orders do not automatically reduce inventory.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         totals, pipeline = {}, {}
@@ -656,15 +656,15 @@ class OverviewView(SalesView):
         )
 
 
-# 功能：支持团队邀请所需的精确账号查找。
-# 逻辑：默认返回本人及共同团队成员；邀请时只接受完整用户名，不提供全体用户枚举。
-# 约束：实际添加成员仍由团队管理权限检查。
+# Function: Support exact account lookup for team invitations.
+# Logic: Default to the current user/common team members; invitations require complete usernames, without enumerating all users.
+# Constraints: Adding members still requires team-management permission checks.
 class PeopleView(SalesView):
-    # 功能：按用户名定位可邀请账号。
-    # 输入：`request` 的 username 查询参数。
-    # 输出：授权协作账号或精确匹配的账号 ID、用户名，不含邮箱或管理状态。
-    # 逻辑：默认列出本人和共同团队成员；用户名参数采用精确匹配。
-    # 约束：不创建账号，不发送邀请消息。
+    # Function: Locate invitable accounts by username.
+    # Inputs: username query parameter from `request`.
+    # Outputs: IDs/usernames of authorized collaborators or exact matches, excluding email addresses and administrative status.
+    # Logic: Default to the current user/common team members; supplied usernames match exactly.
+    # Constraints: Do not create accounts or send invitations.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
         query = get_user_model().objects.filter(is_active=True)
@@ -682,15 +682,15 @@ class PeopleView(SalesView):
         return Response({"results": list(query.values("id", "username"))})
 
 
-# 功能：公开受登录保护的日历读取接口。
-# 逻辑：连接 ID 始终限定当前 owner，查询不经过动作执行队列。
-# 约束：创建事件只能使用 ToolAction。
+# Function: Expose authenticated calendar read APIs.
+# Logic: Always restrict connection IDs to the current owner; queries bypass the action execution queue.
+# Constraints: Event creation must use ToolAction.
 class CalendarView(SalesView):
-    # 功能：按明确时间范围读取事件或忙闲。
-    # 输入：`request` 查询参数和 `operation` 路径选择。
-    # 输出：日历只读结果或受控错误。
-    # 逻辑：委托 calendar 模块验证时间和连接再执行单次查询。
-    # 约束：不发送日历邀请，不自动翻页。
+    # Function: Read events or free/busy within explicit time ranges.
+    # Inputs: Query parameters from `request` and the `operation` path selection.
+    # Outputs: Read-only calendar results or controlled errors.
+    # Logic: Delegate time/connection validation and a single query to the calendar module.
+    # Constraints: No calendar invitations or automatic pagination.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request, operation):
         return Response(

@@ -1,8 +1,8 @@
-"""职责：标记聊天管理命令包。
-实现：无初始化副作用。
-关联：Django 命令发现。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Mark the chat management-command package.
+Implementation: Initialization has no side effects.
+Relationships: Used by Django command discovery.
+Directory:
+- None
+Variable index:
+- None
 """

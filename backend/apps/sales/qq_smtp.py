@@ -1,19 +1,19 @@
-"""职责：通过固定 QQ SMTP TLS 服务发送已确认的邮件并核对发送副本。
-实现：QQ 能力启用且全部收件人获准后提交 DATA；区分明确拒绝与结果未知，不自动重发。
-关联：qq_connection 验证账号；actions 提供冻结快照；agent.tools.qq_mail 仅用于只读查询发送目录。
-目录：
-- QQSMTPError：携带受控失败阶段与不确定性。
-- QQSMTPError.__init__：初始化可持久化的安全错误。
-- validate_credentials：检查 QQ 地址及授权码格式。
-- connect：验证 TLS 和 SMTP 登录，不发送邮件。
-- close：关闭会话而不覆盖发送结果。
-- send：发送冻结的收件人、主题和正文。
-- verify_sent：只读核对唯一已发送副本。
-变量索引：
-- SMTP_HOST：固定 smtp.qq.com，禁止请求指定服务器。
-- SMTP_PORT：固定 TLS 端口 465。
-- TIMEOUT：单次网络等待上限 30 秒。
-- logger：只记录阶段、错误类型和动作 ID。
+"""Responsibility: Send confirmed emails through the fixed QQ SMTP TLS service and verify sent copies.
+Implementation: Submit DATA only when QQ capabilities are enabled and every recipient is accepted. Distinguish explicit rejection from unknown outcome; never resend automatically.
+Relationships: qq_connection validates accounts; actions supplies frozen snapshots; agent.tools.qq_mail is used only for read-only sent-folder queries.
+Directory:
+- QQSMTPError: Carry controlled failure stages and uncertainty.
+- QQSMTPError.__init__: Initialize a safe, persistable error.
+- validate_credentials: Check QQ address and authorization-code format.
+- connect: Validate TLS and SMTP login without sending email.
+- close: Close the session without overwriting the sending outcome.
+- send: Send frozen recipients, subject, and body.
+- verify_sent: Read-only verification of a unique sent copy.
+Variable index:
+- SMTP_HOST: Fixed smtp.qq.com host; requests cannot select servers.
+- SMTP_PORT: Fixed TLS port 465.
+- TIMEOUT: Maximum network wait of 30 seconds per operation.
+- logger: Log only stage, error type, and action ID.
 """
 import logging
 import re
@@ -36,25 +36,25 @@ TIMEOUT = 30
 logger = logging.getLogger("salesmate.qq_smtp")
 
 
-# 功能：表达可安全展示的 SMTP 失败。
-# 逻辑：uncertain 仅在正文提交结果无法确认时为真。
-# 约束：不保存服务端原文、收件人或授权码。
+# Function: Represent SMTP failures safe for display.
+# Logic: uncertain is true only when body submission cannot be confirmed.
+# Constraints: Do not retain raw server text, recipients, or authorization codes.
 class QQSMTPError(RuntimeError):
-    # 功能：固定错误的业务含义。
-    # 输入：`stage` 为失败阶段；`uncertain` 为是否可能已接受正文。
-    # 输出：初始化错误实例。
-    # 逻辑：构造受控说明，供动作状态机与连接入口消费。
-    # 约束：不接受外部错误正文。
+    # Function: Fix the business meaning of the error.
+    # Inputs: `stage`: failure stage; `uncertain`: whether the body may have been accepted.
+    # Outputs: Initialized error instance.
+    # Logic: Construct a controlled description consumed by the action state machine and connection endpoint.
+    # Constraints: Do not accept external error bodies.
     def __init__(self, stage, uncertain=False):
         self.stage, self.uncertain = stage, uncertain
         super().__init__("QQ 发送结果未知，请核对已发送邮件，勿直接重发。" if uncertain else f"QQ SMTP 在 {stage} 阶段失败，请检查授权、收件地址或邮箱服务状态。")
 
 
-# 功能：校验固定服务的账号和授权码。
-# 输入：`address` 为完整 QQ/foxmail 地址；`code` 为客户端授权码。
-# 输出：无；非法输入抛 InvalidState。
-# 逻辑：检查 QQ 能力并限制 ASCII 地址与 16 位字母，防止协议注入。
-# 约束：格式通过不代表服务器已认证。
+# Function: Validate the fixed service's account and authorization code.
+# Inputs: `address`: complete QQ/foxmail address; `code`: client authorization code.
+# Outputs: None; invalid input raises InvalidState.
+# Logic: Check QQ capabilities and require ASCII addresses and 16 letters to prevent protocol injection.
+# Constraints: Valid format does not imply server authentication.
 @sensitive_variables("code")
 def validate_credentials(address, code):
     require_qq_enabled("smtp_credentials")
@@ -64,11 +64,11 @@ def validate_credentials(address, code):
         raise InvalidState("请输入 QQ 客户端的 16 位授权码。")
 
 
-# 功能：建立只做认证的 SMTP 会话。
-# 输入：`address` 为发件账号；`code` 为授权码。
-# 输出：已登录 SMTP_SSL；失败抛受控 QQSMTPError。
-# 逻辑：固定主机、证书验证与超时，EHLO 成功后执行认证。
-# 约束：不调用 MAIL、RCPT、DATA；连接失败关闭传输，不重试。
+# Function: Establish an authentication-only SMTP session.
+# Inputs: `address`: sender account; `code`: authorization code.
+# Outputs: Authenticated SMTP_SSL; failures raise controlled QQSMTPError.
+# Logic: Use a fixed host, certificate verification, and timeout; authenticate after successful EHLO.
+# Constraints: Never call MAIL, RCPT, or DATA; close transport on connection failure without retries.
 @sensitive_variables("code", "client")
 def connect(address, code):
     validate_credentials(address, code)
@@ -86,11 +86,11 @@ def connect(address, code):
         raise QQSMTPError("authentication") from None
 
 
-# 功能：释放 SMTP 连接并保持已确认的提交结果。
-# 输入：`client` 为已创建 SMTP 对象。
-# 输出：无；清理错误只记录类型。
-# 逻辑：QUIT 后关闭传输，失败不重发、不推翻服务器已接受的 DATA。
-# 约束：不记录服务端错误正文。
+# Function: Release the SMTP connection while preserving confirmed submission results.
+# Inputs: `client`: created SMTP object.
+# Outputs: None; cleanup errors log types only.
+# Logic: Close transport after QUIT; failures never resend or invalidate already accepted DATA.
+# Constraints: Do not log raw server error text.
 def close(client):
     try:
         client.quit()
@@ -103,11 +103,11 @@ def close(client):
             logger.warning("qq_smtp_close_failed error_type=%s", type(error).__name__)
 
 
-# 功能：执行一次已批准的 QQ 发信。
-# 输入：`action` 含冻结发件账号、收件人、主题、正文；`credentials` 含解密授权码。
-# 输出：稳定 Message-ID 及 smtp_accepted 状态；不代表最终送达收件箱。
-# 逻辑：UTF-8 MIME 使用 SMTP CRLF 与 base64 正文；全部 RCPT 接受后才 DATA，最终 250 才成功。
-# 约束：任一收件人拒绝则不发正文；DATA 中断为 uncertain；不自行追加发送副本或自动重试。
+# Function: Execute one approved QQ send.
+# Inputs: `action`: frozen sender, recipients, subject, and body; `credentials`: decrypted authorization code.
+# Outputs: Stable Message-ID and smtp_accepted state, which does not imply final inbox delivery.
+# Logic: UTF-8 MIME uses SMTP CRLF and base64 bodies; submit DATA only after all RCPT responses accept, and succeed only on final 250.
+# Constraints: If any recipient rejects, do not send the body; DATA interruption is uncertain. No automatic sent-copy append or retry.
 @sensitive_variables("credentials", "client")
 def send(action, credentials):
     data = action.parameters
@@ -143,11 +143,11 @@ def send(action, credentials):
         close(client)
 
 
-# 功能：只读核对结果未知的 QQ 发信是否有唯一发送副本。
-# 输入：`action` 为冻结动作；`credentials` 为独立发信连接授权码。
-# 输出：确认副本的 Message-ID 与 QQ 持久标识。
-# 逻辑：IMAP 已发送目录按稳定 Message-ID 查询，复查 UID、头部标识、发件人、收件人与主题。
-# 约束：未找到不能证明未发送；不读正文、不 APPEND、不重发；需要账号开启 IMAP 并保留发送副本。
+# Function: Read-only verification of a unique sent copy for an uncertain QQ send.
+# Inputs: `action`: frozen action; `credentials`: independent sending-connection authorization code.
+# Outputs: Confirmed copy's Message-ID and persistent QQ identifier.
+# Logic: Query the IMAP sent folder by stable Message-ID and recheck UID, header identifiers, sender, recipients, and subject.
+# Constraints: Absence does not prove the email was unsent; no body reads, APPEND, or resending. The account must enable IMAP and retain sent copies.
 @sensitive_variables("credentials", "client")
 def verify_sent(action, credentials):
     client = qq_mail.connect(action.parameters["account"], credentials["authorization_code"])

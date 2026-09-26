@@ -1,10 +1,10 @@
 /**
- * 职责：管理 QQ 邮箱连接、同步、按账号查看原文和移除交互。
- * 实现：每次要求显式选择天数或封数，无预填；只在提交时读取授权码并立即清空，复用批次轮询。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 注入共享回调，index.html 提供 QQ 独立弹窗，api.js 处理 Session/CSRF。
- * 目录：readQQScope（校验选择）、chooseQQScope（每次选择范围）、renderQQAccounts（渲染安全状态）、initQQ（注册连接及账号操作）。
- * 变量索引：statusLabels 为同步状态的当前语言映射。
+ * Responsibility: Manage QQ mailbox connection, synchronization, per-account source viewing, and removal.
+ * Implementation: Require an explicit day/message scope each time without prefilling; read the authorization code only on submission and clear it immediately; reuse batch polling.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; app.js injects shared callbacks, index.html supplies separate QQ dialogs, and api.js handles Session/CSRF.
+ * Directory: readQQScope validates selections; chooseQQScope asks for scope each time; renderQQAccounts renders safe state; initQQ registers connection/account actions.
+ * Variable index: statusLabels maps sync states to current-language labels.
  */
 import { t, h } from './i18n.js?v=20260921-product';
 
@@ -12,8 +12,8 @@ import { request, escapeHtml as e } from './api.js?v=20260921-product';
 
 const statusLabels = { authorization_required: t('未连接'), sync_requested: t('等待同步'), sync_running: t('正在同步'), completed: t('同步完成'), partial: t('部分完成'), failed: t('同步失败') };
 
-/** 功能：读取一次明确的同步限制。输入：form 为本次表单。输出：天数和封数对象。
- * 逻辑：空项转 null，至少一项为正安全整数。约束：不读取历史值，不用默认值替代空选择。 */
+/** Function: Read one explicit sync-limit selection. Inputs: form is the current form. Outputs: A day/message-limit object.
+ * Logic: Convert blank entries to null and require at least one positive safe integer. Constraints: Never read historical values or replace empty selections with defaults. */
 function readQQScope(form) {
   const options = Object.fromEntries(['recent_days', 'max_messages'].map(name => [name, form.elements[name].value === '' ? null : Number(form.elements[name].value)]));
   if (!Object.values(options).some(value => value !== null)) throw new Error(t('请填写最近 N 天或最多 N 封，至少一项。'));
@@ -21,8 +21,8 @@ function readQQScope(form) {
   return options;
 }
 
-/** 功能：同步前等待用户选择空白范围。输入：address 为展示用邮箱地址。输出：所选范围，取消返回 null。
- * 逻辑：每次重置表单，通过提交或关闭完成 Promise。约束：取消不发请求，不缓存选择，避免无界同步。 */
+/** Function: Wait for selection from a blank scope form before syncing. Inputs: address is the displayed email address. Outputs: Selected scope, or null on cancellation.
+ * Logic: Reset each time and settle the Promise on submission/closing. Constraints: Cancellation sends no request; never cache choices or allow unbounded sync. */
 export function chooseQQScope(address) {
   const dialog = document.getElementById('qq-scope-dialog');
   const form = document.getElementById('qq-scope-form');
@@ -42,8 +42,8 @@ export function chooseQQScope(address) {
   });
 }
 
-/** 功能：渲染当前员工 QQ 账号。输入：mailboxes 为安全邮箱状态数组。输出：无。
- * 逻辑：展示 qq_authorized 账号及同步/查看原文/移除按钮。约束：所有外部文本转义，活动批次只允许只读查看。 */
+/** Function: Render the current employee's QQ accounts. Inputs: mailboxes is an array of safe mailbox states. Outputs: None.
+ * Logic: Display qq_authorized accounts with sync/source-view/remove buttons. Constraints: Escape all external text; active batches allow read-only viewing only. */
 export function renderQQAccounts(mailboxes) {
   document.getElementById('qq-accounts').innerHTML = mailboxes.filter(item => item.qq_authorized).map(item => {
     const status = item.sync_state?.status || 'authorization_required';
@@ -52,8 +52,8 @@ export function renderQQAccounts(mailboxes) {
   }).join('') || h('<div class="gmail-empty"><strong>尚未连接 QQ 邮箱</strong><p>在下方填写邮箱和客户端授权码。</p></div>');
 }
 
-/** 功能：绑定 QQ 连接与同步入口。输入：refresh 刷新邮箱状态，sync 请求同步，track 跟踪已排队邮箱，view 查看指定邮箱原文。输出：无。
- * 逻辑：先校验范围再连接，成功后清空范围并轮询；已有账号交给共享 sync 回调询问范围。约束：授权码不进 URL、日志或浏览器存储。 */
+/** Function: Bind QQ connection and synchronization entries. Inputs: refresh updates mailbox state; sync requests synchronization; track follows queued mailboxes; view opens mailbox source text. Outputs: None.
+ * Logic: Validate scope before connecting, then clear scope and poll after success; existing accounts use the shared sync callback to select scope. Constraints: Authorization codes never enter URLs, logs, or browser storage. */
 export function initQQ({ refresh, sync, track, view }) {
   const dialog = document.getElementById('qq-dialog');
   const form = document.getElementById('qq-form');

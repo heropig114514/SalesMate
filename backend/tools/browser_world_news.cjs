@@ -1,8 +1,8 @@
-/** 职责：验收全球洞察与商机评分的真实本地页面/API。
- * 实现：使用已显式导入的数据库虚拟批次；测试活动币种选择、筛选、详情、ICS、模板、证据、移动布局和请求失败。
- * 关联：运行中的本地 Django；不调用外部新闻、Agent 或发信。
- * 目录：main。
- * 变量索引：BASE 为显式本地测试地址；OUTPUT 为截图目录。
+/** Responsibility: Verify actual local global-insight and opportunity-score pages/APIs.
+ * Implementation: Use explicitly imported synthetic database batches; test event currency selection, filters, details, ICS, templates, evidence, mobile layout, and request failures.
+ * Relationships: Running local Django; no external news, Agent, or sending calls.
+ * Directory: main.
+ * Variable index: BASE is the explicit local test address; OUTPUT is the screenshot directory.
  */
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const BASE = process.env.SALESMATE_TEST_URL;
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
-/** 功能：运行真实浏览器检查。输入：显式本地 URL、Playwright 和浏览器路径环境。输出：检查摘要与截图。逻辑：使用实验身份读虚拟数据，确认默认活动币种和错误态。约束：只读业务数据库，不发送邮件或请求第三方站点。 */
+/** Function: Run actual browser checks. Inputs: Explicit local URL and Playwright/browser environment paths. Outputs: Summary/screenshots. Logic: Read synthetic data with an experiment identity and verify default event currencies/error states. Constraints: Database reads only; no sending or third-party requests. */
 async function main() {
   if (!BASE || new URL(BASE).hostname !== '127.0.0.1') throw new Error('Set an explicit loopback SALESMATE_TEST_URL.');
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });

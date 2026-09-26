@@ -1,4 +1,17 @@
-"""把 L2、L3、L4 串成可供后端或 CLI 调用的一次性流程。"""
+"""Responsibility: Combine L2, L3, and L4 into a one-shot workflow callable by the backend or CLI.
+Implementation: Build L2, reuse or generate L3, compute L4, and report claimed company jobs through the backend protocol.
+Relationships: Connects analysis_input, customer_analysis, and lead_score to CLI and worker callers.
+
+Directory:
+- analyze_company: Build L2 once, reuse or generate L3, and compute L4.
+- process_jobs_once: Claim a batch of demo jobs, analyze each company at most once, and return immediately.
+- _job_report: Construct a company job report from analysis and scoring state.
+
+Variable index:
+- SUPPORTED_TRIGGERS: Company job triggers accepted by orchestration.
+- __all__: Public exports of this module.
+- logger: Stage and failure diagnostics without credentials.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +44,7 @@ def analyze_company(
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     merge_version: str = "merge-v2",
 ) -> dict[str, Any]:
-    """一次构建 L2，复用或生成 L3，并计算 L4。"""
+    """Build L2 once, reuse or generate L3, and compute L4."""
     total_started = perf_counter()
     logger.info("company_analysis_started company_id=%s merge_version=%s", company_id, merge_version)
     l2_started = perf_counter()
@@ -160,7 +173,7 @@ def process_jobs_once(
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     merge_version: str = "merge-v2",
 ) -> list[dict[str, Any]]:
-    """领取一批 Demo 任务，每家公司最多分析一次，然后立即返回。"""
+    """Claim a batch of demo jobs, analyze each company at most once, and return immediately."""
     jobs = backend.claim_jobs(limit)
     logger.info("analysis_jobs_claimed count=%s limit=%s", len(jobs), limit)
     reports: list[dict[str, Any]] = []

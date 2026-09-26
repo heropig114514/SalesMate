@@ -1,8 +1,8 @@
-"""职责：声明本地初始化命令目录。
-实现：导入无副作用。
-关联：provision_local 负责显式创建本地开发用户。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the local-initialization command directory.
+Implementation: Importing has no side effects.
+Relationships: ``provision_local`` explicitly creates local development users.
+Directory:
+- None
+Variable index:
+- None
 """

@@ -1,17 +1,17 @@
-"""职责：构建正式 L4 的权威公司级上下文并传播共享评分依赖变化。
-实现：按业务 owner 隔离商机、订单和销售方画像；同币种活跃商机汇总，历史订单逐单计入均值。
-关联：crm.selectors 读取上下文；销售事务和销售方资料接口在 owner 锁内调用版本传播。
-目录：
-- canonical_names：去重并稳定排序规范名称。
-- historical_orders：读取已确认成交的历史订单及规范产品与金额。
-- company_deal：汇总当前客户的活跃商机。
-- similar_won：按行业和产品重叠判断历史赢单，资料不足保持未知。
-- priority_context：构造不含重复邮件的 customer、deal、seller。
-- refresh_owner_priority：更新受影响公司的业务版本并排入现有分析任务。
-变量索引：
-- ACTIVE_STAGES：经用户确认的活跃商机状态。
-- WON_STATUSES：经用户确认纳入历史均值的订单状态。
-- logger：只记录依赖传播数量和身份的诊断日志。
+"""Responsibility: Build authoritative company-level L4 context and propagate shared scoring-dependency changes.
+Implementation: Isolate opportunities, orders, and seller profiles by business owner; aggregate same-currency active opportunities and include historical orders individually in averages.
+Relationships: crm.selectors reads context; sales transactions and seller-profile APIs invoke version propagation under the owner lock.
+Directory:
+- canonical_names: Deduplicate and stably sort canonical names.
+- historical_orders: Read confirmed historical orders with canonical products and amounts.
+- company_deal: Aggregate the current company's active opportunities.
+- similar_won: Identify similar historical wins by industry/product overlap, retaining unknown when information is insufficient.
+- priority_context: Build customer, deal, and seller without duplicate emails.
+- refresh_owner_priority: Update affected company business versions and enqueue existing analysis tasks.
+Variable index:
+- ACTIVE_STAGES: User-confirmed active opportunity states.
+- WON_STATUSES: User-confirmed order states included in historical averages.
+- logger: Diagnostic logs limited to dependency propagation counts and identities.
 """
 
 import logging
@@ -24,11 +24,11 @@ WON_STATUSES = ("confirmed", "fulfilled")
 logger = logging.getLogger("salesmate.priority")
 
 
-# 功能：去重并稳定排序规范名称。
-# 输入：`values` 为权威字符串名称序列。
-# 输出：去首尾空白、忽略大小写去重的字符串列表。
-# 逻辑：同一规范名称仅保留一个展示值，避免数据库顺序影响快照。
-# 约束：不翻译、不推断同义词；上游负责名称和字段类型校验。
+# Function: Deduplicate and stably sort canonical names.
+# Inputs: `values`: authoritative string-name sequence.
+# Outputs: Trimmed strings deduplicated case-insensitively.
+# Logic: Retain one display value per canonical name so database ordering does not affect snapshots.
+# Constraints: No translation or synonym inference; upstream validates names and field types.
 def canonical_names(values):
     names = {}
     for value in sorted(values):
@@ -37,11 +37,11 @@ def canonical_names(values):
     return [names[key] for key in sorted(names)]
 
 
-# 功能：读取已确认成交的历史订单及规范产品与金额。
-# 输入：`owner_id` 为业务所有者主键。
-# 输出：每张订单一个字典，包含币种、可空金额、行业和可空产品数组。
-# 逻辑：只读同 owner 未归档 confirmed/fulfilled 订单，复用金额计算，无明细或缺少产品关系时保留未知。
-# 约束：不把商机 won 或邮件提及当作成交订单；无历史日期窗口，不跨员工取样。
+# Function: Read confirmed historical orders with canonical products and amounts.
+# Inputs: `owner_id`: business owner primary key.
+# Outputs: One dictionary per order, containing currency, nullable amount, industry, and nullable product list.
+# Logic: Read only the owner's unarchived confirmed/fulfilled orders and reuse amount calculations; retain unknown when lines or product relations are missing.
+# Constraints: Neither won opportunities nor email mentions count as completed orders; no historical date window or cross-employee sampling.
 def historical_orders(owner_id):
     from .serializers import DocumentSerializer
 
@@ -61,11 +61,11 @@ def historical_orders(owner_id):
     return history
 
 
-# 功能：汇总当前客户的活跃商机。
-# 输入：`company` 为已授权客户。
-# 输出：公司级 deal 字典；无活跃记录返回空字典。
-# 逻辑：同币种且金额全部已知时求和；产品也须全部已知，多币种不合并金额。
-# 约束：仅使用显式商机，不重复叠加报价；零总额不输出 deal_value，不隐式选择其中一条商机。
+# Function: Aggregate the current company's active opportunities.
+# Inputs: `company`: authorized company.
+# Outputs: Company-level deal dictionary; empty when no active records exist.
+# Logic: Sum only when currencies match and all amounts are known; products must also all be known. Never combine multicurrency amounts.
+# Constraints: Use explicit opportunities only, without double-counting quotes; omit deal_value for zero totals and never implicitly select one opportunity.
 def company_deal(company):
     opportunities = list(Opportunity.objects.filter(company=company, owner_id=company.owner_id,
                                                     archived=False, status__in=ACTIVE_STAGES).order_by("id"))
@@ -87,11 +87,11 @@ def company_deal(company):
     return deal
 
 
-# 功能：按行业和产品重叠判断历史赢单，资料不足保持未知。
-# 输入：`customer` 为权威客户字段，`deal` 为公司级商机，`history` 为当前 owner 的可靠成交订单。
-# 输出：证实相似返回 True，样本资料完整且无匹配返回 False，否则返回 None。
-# 逻辑：同一规范行业且至少一个相同产品即有正证据；未找到时需所有样本资料完整才能否定。
-# 约束：空历史不等于不匹配；不增加相似度阈值，不调用模型。
+# Function: Identify similar historical wins by industry/product overlap, retaining unknown when information is insufficient.
+# Inputs: `customer`: authoritative company fields; `deal`: company-level opportunity; `history`: reliable completed orders for the current owner.
+# Outputs: True for verified similarity, False for complete samples with no match, otherwise None.
+# Logic: Matching canonical industry and at least one product provide positive evidence; a negative conclusion requires complete information in every sample.
+# Constraints: Empty history does not mean no match; no added similarity thresholds or model calls.
 def similar_won(customer, deal, history):
     industry, products = customer.get("industry"), deal.get("product")
     if not industry or not products or not history:
@@ -107,11 +107,11 @@ def similar_won(customer, deal, history):
     return False if complete else None
 
 
-# 功能：构造不含重复邮件的 customer、deal、seller。
-# 输入：`company` 为已授权客户；`history` 可提供同 owner 已读取订单以复用一次统计。
-# 输出：priority_context 字典，未知业务字段保持缺失。
-# 逻辑：映射 CRM 权威字段，按商机币种计算逐单平均额，合并目标画像和产品目录。
-# 约束：Agent 输入调用者须在公司锁内读取；写方在提交共享依赖前更新所有受影响公司的版本。
+# Function: Build customer, deal, and seller without duplicate emails.
+# Inputs: `company`: authorized company; `history`: optional previously read same-owner orders for statistical reuse.
+# Outputs: priority_context dictionary, with unknown business fields absent.
+# Logic: Map authoritative CRM fields, calculate per-order averages by opportunity currency, and merge target profiles/product catalogs.
+# Constraints: Agent input callers must read under the company lock; writers update every affected company's version before committing shared dependencies.
 def priority_context(company, history=None):
     source = company.customer
     customer = {"customer_id": source.get("customer_id") or str(company.pk), "company_name": company.name}
@@ -138,11 +138,11 @@ def priority_context(company, history=None):
     return {"customer": customer, "deal": deal, "seller": seller}
 
 
-# 功能：更新受影响公司的业务版本并排入现有分析任务。
-# 输入：`owner_id` 为持有行锁的业务所有者，`exclude` 为本事务已经同步更新的公司主键序列。
-# 输出：更新的公司数量。
-# 逻辑：按主键顺序锁定同 owner 公司，两个版本同步递增，使用 external_updated 合并待办。
-# 约束：必须在已持有 owner 锁的原业务事务内调用；不跨员工、不启动模型、不自动重试。
+# Function: Update affected company business versions and enqueue existing analysis tasks.
+# Inputs: `owner_id`: business owner whose row is locked; `exclude`: company primary keys already synchronized in this transaction.
+# Outputs: Number of updated companies.
+# Logic: Lock same-owner companies in primary-key order, increment both versions together, and merge pending work using external_updated.
+# Constraints: Call within the original business transaction while holding the owner lock; no cross-employee work, model starts, or automatic retries.
 def refresh_owner_priority(owner_id, exclude=()):
     from apps.crm.models import Company
     from .services import enqueue_analysis

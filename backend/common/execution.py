@@ -1,51 +1,51 @@
-"""职责：提供本地线程与服务器 Celery 的显式工作执行边界。
-实现：调度器保留公平轮转、并发上限和排空逻辑；Celery 只执行有界工作单元。
-关联：crm_worker 使用 work_executor，sales_worker 使用 execute_sales；TASK_EXECUTION_MODE 显式选型。
-目录：
-- RemoteFuture：将 Celery 结果适配为调度器使用的 Future 接口。
-- RemoteFuture.__init__：保存异步结果。
-- RemoteFuture.done：读取完成状态。
-- RemoteFuture.result：等待结果并传播失败。
-- CeleryExecutor：提供受限任务提交及排空上下文。
-- CeleryExecutor.__init__：保存当前提交的 Future。
-- CeleryExecutor.__enter__：返回执行器。
-- CeleryExecutor.submit：提交 CRM 工作标识。
-- CeleryExecutor.__exit__：等待尚未读取的结果。
-- work_executor：按显式配置构建执行器。
-- execute_sales：在显式选定的执行方式中运行已批准动作。
-变量索引：
-- 无
+"""Responsibility: Provide explicit execution boundaries for local threads and server-side Celery.
+Implementation: Schedulers retain fair rotation, concurrency limits, and draining logic; Celery executes bounded work units only.
+Relationships: crm_worker uses work_executor and sales_worker uses execute_sales; TASK_EXECUTION_MODE makes the selection explicit.
+Directory:
+- RemoteFuture: Adapts a Celery result to the Future interface used by schedulers.
+- RemoteFuture.__init__: Stores the asynchronous result.
+- RemoteFuture.done: Reads completion state.
+- RemoteFuture.result: Waits for the result and propagates failure.
+- CeleryExecutor: Provides constrained task submission and a draining context.
+- CeleryExecutor.__init__: Stores submitted Futures.
+- CeleryExecutor.__enter__: Returns the executor.
+- CeleryExecutor.submit: Submits a CRM work identifier.
+- CeleryExecutor.__exit__: Waits for unread results.
+- work_executor: Builds an executor from explicit configuration.
+- execute_sales: Runs an approved action in the explicitly selected execution mode.
+Variable index:
+- None
 """
 from concurrent.futures import ThreadPoolExecutor
 from django.conf import settings
 
 
-# 功能：将远程结果映射到调度器的最小 Future 协议。
-# 逻辑：只在读取完成结果后清理 Redis 记录；失败也向调用方传播。
-# 约束：无自动重试、超时取消或隐式本地回退。
+# Function: Map a remote result to the minimal Future protocol used by schedulers.
+# Logic: Clears Redis records only after their completed result is read; failures also propagate to the caller.
+# Constraints: No automatic retry, timeout cancellation, or implicit local fallback.
 class RemoteFuture:
-    # 功能：保存远程结果对象。
-    # 输入：`result` 为 Celery AsyncResult。
-    # 输出：初始化实例，无返回值。
-    # 逻辑：保存 handle 与 consumed 状态。
-    # 约束：不发起消息或查询。
+    # Function: Store the remote result object.
+    # Inputs: `result` is a Celery AsyncResult.
+    # Outputs: Initializes the instance and returns no value.
+    # Logic: Stores handle and consumed state.
+    # Constraints: Does not send messages or issue queries.
     def __init__(self, result):
         self.handle = result
         self.consumed = False
 
-    # 功能：查询任务是否结束。
-    # 输入：实例保存的 handle。
-    # 输出：布尔值。
-    # 逻辑：通过结果后端查询 ready。
-    # 约束：连接错误直接传播。
+    # Function: Check whether the task has completed.
+    # Inputs: The handle stored on the instance.
+    # Outputs: Boolean.
+    # Logic: Queries ready through the result backend.
+    # Constraints: Connection errors propagate directly.
     def done(self):
         return self.handle.ready()
 
-    # 功能：等待任务结束并返回结果。
-    # 输入：实例保存的 handle 和 consumed 状态。
-    # 输出：任务结果；业务或基础设施异常传播。
-    # 逻辑：成功或已结束失败后清理结果；连接失败时保留记录供排查。
-    # 约束：仅调度器调用，部署不能强杀仍有副作用的任务。
+    # Function: Wait for task completion and return its result.
+    # Inputs: The instance's handle and consumed state.
+    # Outputs: Task result; business or infrastructure exceptions propagate.
+    # Logic: Clears the result after success or completed failure; retains the record for diagnosis if the connection fails.
+    # Constraints: Called only by schedulers; deployment must not forcibly kill tasks that may still have side effects.
     def result(self):
         try:
             return self.handle.get()
@@ -55,31 +55,31 @@ class RemoteFuture:
                 self.handle.forget()
 
 
-# 功能：提供有界 CRM 提交适配器。
-# 逻辑：只支持现有同步和分析函数，并仅发送员工主键。
-# 约束：上限由调用调度器控制，退出等待工作结束。
+# Function: Provide a bounded CRM-submission adapter.
+# Logic: Supports existing sync and analysis functions only and sends only employee primary keys.
+# Constraints: The calling scheduler controls limits; exit waits for work completion.
 class CeleryExecutor:
-    # 功能：初始化提交记录。
-    # 输入：无外部参数。
-    # 输出：空 Future 列表。
-    # 逻辑：实例对应一次命令生命周期。
-    # 约束：不建立 broker 连接。
+    # Function: Initialize submission tracking.
+    # Inputs: No external parameters.
+    # Outputs: Empty Future list.
+    # Logic: The instance represents one command lifecycle.
+    # Constraints: Does not establish a broker connection.
     def __init__(self):
         self.pending = []
 
-    # 功能：进入执行上下文。
-    # 输入：实例状态。
-    # 输出：当前实例。
-    # 逻辑：由调度器管理生命周期。
-    # 约束：不启动独立进程。
+    # Function: Enter the execution context.
+    # Inputs: Instance state.
+    # Outputs: The current instance.
+    # Logic: The scheduler manages the lifecycle.
+    # Constraints: Does not start a separate process.
     def __enter__(self):
         return self
 
-    # 功能：提交一个 CRM 工作单元。
-    # 输入：`function` 为 run_sync/run_analysis；`owner` 为数据库员工。
-    # 输出：RemoteFuture；未知函数抛 ValueError。
-    # 逻辑：严格映射函数身份到消息类型，只发送 owner.pk；清理已消费的 Future。
-    # 约束：消息发送失败直接传播，不切换执行模式或重发。
+    # Function: Submit one CRM work unit.
+    # Inputs: `function` is run_sync or run_analysis; `owner` is the database employee.
+    # Outputs: RemoteFuture; raises ValueError for an unknown function.
+    # Logic: Strictly maps function identity to message type, sends only owner.pk, and removes consumed Futures.
+    # Constraints: Message-send failures propagate directly without switching execution mode or resending.
     def submit(self, function, owner):
         from apps.crm.worker import run_analysis, run_sync
         from common.tasks import execute
@@ -91,11 +91,11 @@ class CeleryExecutor:
         self.pending.append(future)
         return future
 
-    # 功能：排空未消费的远程任务。
-    # 输入：`exc_type`/`exc`/`traceback` 为上下文异常；读取 pending。
-    # 输出：False，保留异常传播。
-    # 逻辑：等待每个未消费 Future；记录首个异常，其他任务仍完成排空。
-    # 约束：不取消任务或重复提交，原上下文异常优先。
+    # Function: Drain unconsumed remote tasks.
+    # Inputs: `exc_type`, `exc`, and `traceback` are context exceptions; reads pending.
+    # Outputs: False, preserving exception propagation.
+    # Logic: Waits for every unconsumed Future, records the first failure, and still drains remaining tasks.
+    # Constraints: Does not cancel tasks or submit them again; the original context exception takes precedence.
     def __exit__(self, exc_type, exc, traceback):
         failure = None
         for future in self.pending:
@@ -109,11 +109,11 @@ class CeleryExecutor:
         return False
 
 
-# 功能：按明确配置创建 CRM 执行器。
-# 输入：`max_workers`/`thread_name_prefix` 为原线程配置。
-# 输出：本地 ThreadPoolExecutor 或 CeleryExecutor。
-# 逻辑：local 保持原行为；celery 由服务器独立消费者执行。
-# 约束：非法配置明确失败，不按连接可用性回退。
+# Function: Create a CRM executor from explicit configuration.
+# Inputs: `max_workers` and `thread_name_prefix` are the existing thread configuration.
+# Outputs: Local ThreadPoolExecutor or CeleryExecutor.
+# Logic: local preserves existing behavior; an independent server consumer executes celery work.
+# Constraints: Invalid configuration fails explicitly and never falls back based on connection availability.
 def work_executor(max_workers, thread_name_prefix):
     if settings.TASK_EXECUTION_MODE == "local":
         return ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=thread_name_prefix)
@@ -122,11 +122,11 @@ def work_executor(max_workers, thread_name_prefix):
     raise ValueError("Invalid TASK_EXECUTION_MODE")
 
 
-# 功能：执行一项已批准销售动作。
-# 输入：`key` 为动作主键，`local_execute` 为现有领域函数。
-# 输出：本地结果或远程完成标志。
-# 逻辑：服务器提交至独立 sales 队列并等待，保留逐项停止边界。
-# 约束：不更改批准规则，不自动重发邮件，连接失败向上传播。
+# Function: Execute one approved sales action.
+# Inputs: `key` is the action primary key; `local_execute` is the existing domain function.
+# Outputs: Local result or remote-completion indicator.
+# Logic: Server mode submits to the separate sales queue and waits, preserving the per-item stop boundary.
+# Constraints: Does not change approval rules or automatically resend mail; connection failures propagate.
 def execute_sales(key, local_execute):
     if settings.TASK_EXECUTION_MODE == "local":
         return local_execute(key)

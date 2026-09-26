@@ -1,15 +1,15 @@
-"""职责：从既有序列化器生成工具输入契约。
-实现：可空枚举显式接受空字符串、非负 Decimal 使用非负字符串语法；递归投影嵌套资料和可写字段，JSON Schema 预检与原 DRF/业务校验共同生效。
-关联：registry 发布 Schema；services 调用前验证，避免通用 ORM 或任意字段入口。
-目录：
-- object_schema：构造封闭对象。
-- field_schema：投影 DRF 字段。
-- record_schema：生成创建或更新载荷。
-- validate：严格验证输入。
-变量索引：
-- UUID：UUID 文本结构。
-- REVISION：既有乐观锁版本结构。
-- PAGE：有限分页字段。
+"""Responsibility: Generate tool-input contracts from existing serializers.
+Implementation: Nullable enums explicitly accept empty strings and nonnegative Decimal uses nonnegative string syntax; recursively project nested information and writable fields, and JSON Schema prevalidation works with original DRF and business validation.
+Relationships: ``registry`` publishes Schema; ``services`` validates before invocation, avoiding generic ORM or arbitrary-field entry points.
+Directory:
+- object_schema: Construct a closed object.
+- field_schema: Project a DRF field.
+- record_schema: Generate create or update payload.
+- validate: Strictly validate input.
+Variable index:
+- UUID: UUID text structure.
+- REVISION: Existing optimistic-lock version structure.
+- PAGE: Bounded pagination fields.
 """
 
 from django.db import models
@@ -25,11 +25,11 @@ PAGE = {
 }
 
 
-# 功能：构造对象契约。
-# 输入：`properties` 字段、`required` 必需名称。
-# 输出：JSON Schema。
-# 逻辑：默认拒绝额外字段。
-# 约束：不补写业务默认值。
+# Function: Construct an object contract.
+# Inputs: Fields ``properties`` and required names ``required``.
+# Outputs: JSON Schema.
+# Logic: Reject additional fields by default.
+# Constraints: Does not populate business defaults.
 def object_schema(properties, required=()):
     return {
         "type": "object",
@@ -39,11 +39,11 @@ def object_schema(properties, required=()):
     }
 
 
-# 功能：投影字段类型。
-# 输入：`field` 为 DRF 字段。
-# 输出：JSON Schema。
-# 逻辑：递归声明嵌套对象及数组；枚举保留 allow_blank，decimal 保留字符串及非负限制，关系类型与 null 独立表达。
-# 约束：未支持字段显式失败；动态关系权限仍由原序列化器执行。
+# Function: Project a field type.
+# Inputs: DRF ``field``.
+# Outputs: JSON Schema.
+# Logic: Recursively declare nested objects and arrays; preserve ``allow_blank`` for enums, strings and nonnegative bounds for decimal, and express relation type independently from null.
+# Constraints: Unsupported fields fail explicitly; original serializers still enforce dynamic relation permissions.
 def field_schema(field):
     if isinstance(field, s.ListSerializer):
         result = {"type": "array", "items": record_schema(type(field.child))}
@@ -103,11 +103,11 @@ def field_schema(field):
     return {"anyOf": [result, {"type": "null"}]} if field.allow_null else result
 
 
-# 功能：生成记录写入契约。
-# 输入：`serializer` 类、`partial` 是否更新。
-# 输出：封闭 JSON Schema。
-# 逻辑：原字段标识必填，更新不得为空。
-# 约束：只读字段不发布，状态变更另走专用工具。
+# Function: Generate a record-write contract.
+# Inputs: Serializer class ``serializer`` and update flag ``partial``.
+# Outputs: Closed JSON Schema.
+# Logic: Original field identifiers are required and updates cannot be empty.
+# Constraints: Does not publish read-only fields; state changes use dedicated tools.
 def record_schema(serializer, partial=False):
     fields = {
         name: field
@@ -123,11 +123,11 @@ def record_schema(serializer, partial=False):
     return result
 
 
-# 功能：严格校验工具载荷。
-# 输入：`value` 原始 JSON、`schema` 契约。
-# 输出：无；失败抛 400。
-# 逻辑：同时检查格式、字段和数值类型。
-# 约束：错误只报告路径与规则，不回显客户内容。
+# Function: Strictly validate a tool payload.
+# Inputs: Raw JSON ``value`` and contract ``schema``.
+# Outputs: None; failure raises HTTP 400.
+# Logic: Check format, fields, and numeric types together.
+# Constraints: Errors report only path and rule and never echo customer content.
 def validate(value, schema):
     error = next(
         Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value),

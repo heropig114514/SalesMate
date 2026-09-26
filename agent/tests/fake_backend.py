@@ -1,4 +1,39 @@
-"""仅供 Agent 自动测试使用的进程内 BackendClient 假实现。"""
+"""Responsibility: In-process BackendClient fake used only by automated agent tests.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- FakeBackend: Provide deterministic offline fixtures with plain dictionaries; excluded from production execution.
+- FakeBackend.__init__: Initialize isolated fixture state and configured simulated responses.
+- FakeBackend.submit_emails: Declare the standard L1 email submission interface.
+- FakeBackend.get_company_grouping: Read company grouping.
+- FakeBackend.get_company_context: Read company business context.
+- FakeBackend.save_analysis_input: Save L2 input and track its version.
+- FakeBackend.get_latest_analysis_input: Read the latest L2 snapshot.
+- FakeBackend.get_cached_analysis: Look up the L3 cache for an input and prompt version.
+- FakeBackend.save_analysis: Submit L3 analysis.
+- FakeBackend.save_score: Submit L4 scores.
+- FakeBackend.claim_jobs: Claim and cache company leases.
+- FakeBackend.report_job: Report a company job result.
+- FakeBackend.job_reports: Return an independent copy of recorded fixture job reports.
+- FakeBackend._enqueue_job: Queue a fixture company job.
+- FakeBackend._dynamic_grouping: Build grouping from submitted in-memory emails.
+- FakeBackend._dynamic_context: Build context from in-memory company state.
+- FakeBackend._static_snapshot: Read a fixture snapshot or simulated retrieval failure.
+- FakeBackend._build_static_snapshot: Build the selected deterministic company fixture.
+- _sample_email: Build a synthetic email fixture.
+- _sample_facts: Build synthetic extract-v7 facts.
+- _company_id: Derive a deterministic fixture company identifier.
+- _is_substantive_business_email: Check completed substantive business facts in the test fixture.
+- _empty_customer: Build empty customer context for a fixture.
+
+Variable index:
+- RETRIEVAL_SCENARIO_NAMES: Explicit simulated retrieval failure scenarios.
+- VALID_SCENARIO_NAMES: Supported successful and boundary fixture scenarios.
+- _FACT_FIELDS: Multi-value fixture fact field names.
+- _PUBLIC_EMAIL_DOMAINS: Public domains excluded from fixture company-domain grouping.
+- __all__: Public exports of this module.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +76,7 @@ _FACT_FIELDS = (
 
 
 class FakeBackend:
-    """用普通字典提供确定性的离线测试数据，不参与实际运行。"""
+    """Provide deterministic offline fixtures with plain dictionaries; excluded from production execution."""
 
     def __init__(self, *, scenario: str = "normal", seed: str | int | None = None):
         allowed = VALID_SCENARIO_NAMES + RETRIEVAL_SCENARIO_NAMES

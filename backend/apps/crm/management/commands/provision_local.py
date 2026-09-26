@@ -1,12 +1,12 @@
-"""职责：一次性创建本地开发用户和独立 Agent 凭证。
-实现：创建用户、业务邮箱和服务凭证，并把本地运行所需 ID 与令牌写入根目录 .env。
-关联：SessionView 使用用户密码，AgentAuthentication 使用服务凭证。
-目录：
-- Command：创建无管理员权限的本地联调身份。
-- Command.add_arguments：注册本地账号参数。
-- Command.handle：执行显式本地账号创建。
-变量索引：
-- Command.help：本地初始化命令帮助文本
+"""Responsibility: Create a local development user and independent Agent credential once.
+Implementation: Create a user, business mailbox, and service credential, then write IDs and tokens required for local execution to the root .env.
+Relationships: SessionView uses the user password and AgentAuthentication uses the service credential.
+Directory:
+- Command: Create a local integration identity without administrator rights.
+- Command.add_arguments: Register local-account arguments.
+- Command.handle: Perform explicit local-account creation.
+Variable index:
+- Command.help: Help text for the local-initialization command.
 """
 import hashlib
 import json
@@ -20,31 +20,31 @@ from django.db import transaction
 from apps.crm.models import AgentCredential, Mailbox
 
 
-# 功能：创建无管理员权限的本地联调身份。
-# 逻辑：用户名与凭证文件均必须不存在，避免覆盖已有账号或凭证。
-# 约束：仅 DEBUG 环境允许；输出文件含秘密，不得提交或分享。
+# Function: Create a local integration identity without administrator rights.
+# Logic: Require both the username and credential file to be absent to avoid overwriting an existing account or credentials.
+# Constraints: Allowed only in DEBUG environments; the output file contains secrets and must not be committed or shared.
 class Command(BaseCommand):
     help = "Create local user and Agent credential; write secrets to ignored .local-access.json."
 
-    # 功能：注册本地账号参数。
-    # 输入：`parser` 为 Django 命令解析器。
-    # 输出：无；注册必需 username 和 mailbox-address。
-    # 逻辑：凭证输出位置固定在 backend，避免误写可公开目录。
-    # 约束：不在命令行接收密码。
+    # Function: Register local-account arguments.
+    # Inputs: `parser` is the Django command parser.
+    # Outputs: None; registers required username and mailbox-address arguments.
+    # Logic: Fixes credential output under backend to avoid accidentally writing to a public directory.
+    # Constraints: Does not accept a password on the command line.
     def add_arguments(self, parser):
         parser.add_argument("--username", required=True)
         parser.add_argument("--mailbox-address", required=True)
 
-    # 功能：执行显式本地账号创建。
-    # 输入：`args` 为未使用的位置参数；`options` 含 username 和 mailbox_address。
-    # 输出：仅打印凭证文件路径，不打印秘密。
-    # 逻辑：检查配置和文件，事务创建用户与服务凭证，排他创建本地 JSON。
-    # 约束：文件写入失败回滚数据库；不重设已有用户密码。
+    # Function: Perform explicit local-account creation.
+    # Inputs: `args` are unused positional arguments; `options` contains username and mailbox_address.
+    # Outputs: Prints only the credential-file path, never secrets.
+    # Logic: Check configuration and files, transactionally create a user and service credential, then exclusively create local JSON.
+    # Constraints: Roll back the database if file writing fails; does not reset an existing user's password.
     @transaction.atomic
     def handle(self, *args, **options):
         path = settings.BASE_DIR / ".local-access.json"
         if not settings.DEBUG or path.exists() or get_user_model().objects.filter(username=options["username"]).exists():
-            raise CommandError("仅允许 DEBUG 环境中新建账号，且 .local-access.json 与用户名不得存在。")
+            raise CommandError("New accounts are allowed only in DEBUG, and both .local-access.json and the username must be absent.")
         password, token = secrets.token_urlsafe(20), secrets.token_urlsafe(40)
         user = get_user_model().objects.create_user(username=options["username"], password=password)
         AgentCredential.objects.create(owner=user, digest=hashlib.sha256(token.encode()).hexdigest(), name="local-development")

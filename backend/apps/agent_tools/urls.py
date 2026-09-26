@@ -1,10 +1,10 @@
-"""职责：声明工具、用户授权和提案确认的独立路径。
-实现：固定路由，权限模板供一次性授权审阅，调用名称通过 JSON 白名单解析。
-关联：config.urls 挂载 /api/v1/agent-tools/。
-目录：
-- 无
-变量索引：
-- urlpatterns：工具发现、调用及 Session-only 控制接口。
+"""Responsibility: Declare independent paths for tools, user authorization, and proposal confirmation.
+Implementation: Routes are fixed, permission templates support one-time authorization review, and call names resolve through a JSON allowlist.
+Relationships: ``config.urls`` mounts ``/api/v1/agent-tools/``.
+Directory:
+- None
+Variable index:
+- urlpatterns: Tool discovery, invocation, and Session-only control endpoints.
 """
 
 from django.urls import path

@@ -1,4 +1,23 @@
-"""检查 Gmail 只读读取、History 增量接口和百炼客户端边界。"""
+"""Responsibility: Check Gmail read-only access, incremental History endpoints, and Bailian client boundaries.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- _gmail_raw: Encode a raw Gmail MIME fixture.
+- GmailReadOnlyIntegrationTests: Use a mocked Google service to verify Gmail read boundaries entirely offline.
+- GmailReadOnlyIntegrationTests.setUp: Initialize independent fixed fixtures for each test.
+- GmailReadOnlyIntegrationTests.assert_fully_offline_and_read_only: Assert mocked read-only transport boundaries without external access.
+- GmailReadOnlyIntegrationTests.test_profile_address_uses_mocked_authorized_profile: Verify profile address uses mocked authorized profile.
+- GmailReadOnlyIntegrationTests.test_profile_history_id_uses_read_only_profile: Verify profile history id uses read only profile.
+- GmailReadOnlyIntegrationTests.test_history_lists_added_inbox_and_sent_ids_across_pages: Verify history lists added inbox and sent ids across pages.
+- GmailReadOnlyIntegrationTests.test_expired_history_cursor_has_distinct_fallback_error: Verify expired history cursor has distinct fallback error.
+- GmailReadOnlyIntegrationTests.test_specified_message_gets_only_target_id_as_raw: Verify specified message gets only target id as raw.
+- IntegrationTests: Group offline assertions and fixture behavior for IntegrationTests.
+- IntegrationTests.test_llm_client_accepts_arbitrary_json_task: Verify llm client accepts arbitrary json task.
+
+Variable index:
+- BAILIAN_CONFIG: Fake model connection settings for mocked transport tests.
+"""
 
 import base64
 import json
@@ -38,7 +57,7 @@ def _gmail_raw(message_id, *, subject=None, body=None, headers=None):
 
 
 class GmailReadOnlyIntegrationTests(unittest.TestCase):
-    """使用 mocked Google service 验证 Gmail 读取边界，全程离线。"""
+    """Use a mocked Google service to verify Gmail read boundaries entirely offline."""
 
     def setUp(self):
         self.service = Mock(name="mock_gmail_service")

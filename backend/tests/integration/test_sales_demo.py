@@ -1,14 +1,14 @@
-"""职责：验证验收夹具的幂等性、事务边界和外部副作用隔离。
-实现：在隔离测试数据库创建普通员工及原有客户，检查生成内容与重复导入行为。
-关联：覆盖 seed_sales_demo 管理命令的核心函数；不访问真实 Gmail、日历或模型服务。
-目录：
-- SalesDemoTests：验收批次集成测试。
-- SalesDemoTests.setUp：创建隔离员工及原有客户。
-- SalesDemoTests.test_seed_is_idempotent_and_preserves_existing_data：检查数据量、金额及无任务副作用。
-- SalesDemoTests.test_conflict_rolls_back_whole_batch：检查唯一约束失败时整批回滚。
-- SalesDemoTests.test_requires_debug：检查非开发环境拒绝导入。
-变量索引：
-- 无
+"""Responsibility: Verify acceptance-fixture idempotency, transaction boundaries, and isolation of external side effects.
+Implementation: Create an ordinary worker and existing customer in an isolated test database, then check generated content and repeated-import behavior.
+Relationships: Covers the core function of the `seed_sales_demo` management command; does not access real Gmail, calendar, or model services.
+Directory:
+- SalesDemoTests: Acceptance-batch integration tests.
+- SalesDemoTests.setUp: Create an isolated worker and existing customer.
+- SalesDemoTests.test_seed_is_idempotent_and_preserves_existing_data: Check record counts, amounts, and absent task side effects.
+- SalesDemoTests.test_conflict_rolls_back_whole_batch: Check whole-batch rollback when a unique constraint fails.
+- SalesDemoTests.test_requires_debug: Check that import is rejected outside development environments.
+Variable index:
+- None
 """
 
 from decimal import Decimal
@@ -24,27 +24,27 @@ from apps.sales.management.commands.seed_sales_demo import seed_demo
 from apps.sales.serializers import SalesOrderSerializer
 
 
-# 功能：验证虚构数据导入的隔离性与事务一致性。
-# 逻辑：使用 Django 测试数据库；仅开启本测试的 DEBUG，保持生产配置不变。
-# 约束：不把夹具情景状态当成真实外部交易已验证。
+# Function: Verify isolation and transaction consistency of fictional-data import.
+# Logic: Use the Django test database and enable DEBUG for this test only, preserving production configuration.
+# Constraints: Do not treat fixture scenario state as verified real external transactions.
 @override_settings(DEBUG=True)
 class SalesDemoTests(TestCase):
-    # 功能：创建已有数据作为不可覆盖的基线。
-    # 输入：无外部参数；读取隔离测试数据库。
-    # 输出：初始化 actor 和 original 实例状态。
-    # 逻辑：创建一个普通员工和一个原有客户。
-    # 约束：事务由 TestCase 管理，测试不使用本机业务账号。
+    # Function: Create existing data as a baseline that cannot be overwritten.
+    # Inputs: No external parameters; reads the isolated test database.
+    # Outputs: Initializes `actor` and `original` instance state.
+    # Logic: Create one ordinary worker and one existing customer.
+    # Constraints: `TestCase` manages transactions and the test does not use a local business account.
     def setUp(self):
         self.actor = get_user_model().objects.create_user(username="demo-fixture-test")
         self.original = Company.objects.create(
             owner=self.actor, group_key="original", name="原有客户"
         )
 
-    # 功能：检查批次关系、金额和重复导入不会覆盖验收编辑。
-    # 输入：无外部参数；使用 setUp 创建的员工和客户。
-    # 输出：断言数据量、金额、审计与零外部动作/任务。
-    # 逻辑：首次导入后修改一个示例商品，再次导入必须返回原清单并保留修改。
-    # 约束：只验证夹具数据及调度边界，不调用真实外部服务。
+    # Function: Check that batch relationships, amounts, and repeated import do not overwrite acceptance edits.
+    # Inputs: No external parameters; uses worker and customer created by setup.
+    # Outputs: Asserts record counts, amounts, audit, and zero external actions or jobs.
+    # Logic: Modify one example product after initial import; the second import must return the original report and retain the edit.
+    # Constraints: Verify fixture data and scheduling boundaries only and do not call real external services.
     def test_seed_is_idempotent_and_preserves_existing_data(self):
         report = seed_demo(self.actor)
         self.assertEqual(report["counts"]["company"], 4)
@@ -73,11 +73,11 @@ class SalesDemoTests(TestCase):
             1,
         )
 
-    # 功能：检查导入中途发生唯一键冲突时不留下部分示例。
-    # 输入：无外部参数；预先创建第六个示例 SKU 作为冲突边界。
-    # 输出：断言校验异常、先前商品回滚及原有商品仍在。
-    # 逻辑：前五个商品已尝试写入，第六个失败必须回滚整个事务。
-    # 约束：不删除冲突记录或通过重命名隐式绕过冲突。
+    # Function: Check that a unique-key conflict during import leaves no partial examples.
+    # Inputs: No external parameters; pre-creates the sixth example SKU as the conflict boundary.
+    # Outputs: Asserts validation exception, rollback of prior products, and retained existing product.
+    # Logic: The first five products have attempted writes; failure on the sixth must roll back the entire transaction.
+    # Constraints: Do not delete the conflicting record or silently bypass the conflict by renaming.
     def test_conflict_rolls_back_whole_batch(self):
         models.Product.objects.create(
             owner=self.actor,
@@ -92,11 +92,11 @@ class SalesDemoTests(TestCase):
         self.assertEqual(Company.objects.count(), 1)
         self.assertFalse(models.AuditEvent.objects.exists())
 
-    # 功能：检查非开发环境的命令保护。
-    # 输入：无外部参数；本用例将 DEBUG 显式设为 False。
-    # 输出：断言 CommandError 且无商品写入。
-    # 逻辑：在任何导入之前拒绝非 DEBUG 环境。
-    # 约束：仅测试设置覆盖，不修改本机 .env。
+    # Function: Check command protection outside development environments.
+    # Inputs: No external parameters; this case explicitly sets DEBUG to False.
+    # Outputs: Asserts `CommandError` and no product write.
+    # Logic: Reject non-DEBUG environments before any import.
+    # Constraints: Override test settings only and do not modify local `.env`.
     @override_settings(DEBUG=False)
     def test_requires_debug(self):
         with self.assertRaises(CommandError):

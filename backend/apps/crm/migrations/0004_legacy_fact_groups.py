@@ -1,15 +1,15 @@
-"""职责：将旧规则抽取转换为新协议的多值事实格式，同时保留原始审计记录。
-实现：只为仍是当前版本的 rules-extract-v1 成功记录追加格式转换版本，并递增公司 revision。
-关联：0001 的单值 JSON 不兼容新 L2；本迁移不重提取、不改原邮件、不调用模型。
-目录：
-- migrate_facts：追加格式转换记录并使旧分析过期。
-- Migration：声明一次性历史事实升级。
-变量索引：
-- FACT_FIELDS：旧协议中需要从单值对象转换为数组的十三个字段。
-- CONVERTED_VERSION：明确标记格式迁移而非新模型抽取的版本。
-- logger：仅记录转换数量的迁移日志。
-- Migration.dependencies：依赖员工 Gmail 授权表迁移。
-- Migration.operations：事务执行历史数据转换，不提供自动删除审计记录的逆操作。
+"""Responsibility: Convert legacy rule extractions to the new multi-value fact format while preserving original audit records.
+Implementation: Append a format-conversion version only for current successful rules-extract-v1 records and increment company revision.
+Relationships: The single-value JSON in 0001 is incompatible with the new L2; this migration does not re-extract, alter source emails, or call a model.
+Directory:
+- migrate_facts: Append format-conversion records and invalidate prior analyses.
+- Migration: Declares the one-time historical fact upgrade.
+Variable index:
+- FACT_FIELDS: Thirteen legacy-protocol fields that must change from single-value objects to arrays.
+- CONVERTED_VERSION: Version that explicitly identifies a format migration rather than a new model extraction.
+- logger: Migration logger that records conversion counts only.
+- Migration.dependencies: Dependency on the employee Gmail authorization-table migration.
+- Migration.operations: Runs the historical-data conversion transactionally, with no reverse operation that deletes audit records.
 """
 import logging
 
@@ -23,11 +23,11 @@ CONVERTED_VERSION = "rules-extract-v1+multivalue-v1"
 logger = logging.getLogger("salesmate.migrations")
 
 
-# 功能：追加格式转换记录并使旧分析过期。
-# 输入：`apps` 为迁移历史模型注册表；`schema_editor` 提供当前数据库连接别名。
-# 输出：无；新增 Extraction、递增受影响公司 revision 并记录数量。
-# 逻辑：只转换没有更新抽取的旧规则成功记录；空事实变为空数组，原证据逐字保留。
-# 约束：未知字段或畸形对象明确失败，事务回滚；原记录与快照不修改，不覆盖更新版本。
+# Function: Append format-conversion records and invalidate prior analyses.
+# Inputs: `apps` is the migration historical-model registry; `schema_editor` supplies the current database connection alias.
+# Outputs: None; creates Extraction records, increments affected company revisions, and logs the count.
+# Logic: Convert only legacy successful rule records with no newer extraction; turn empty facts into empty arrays and preserve source evidence verbatim.
+# Constraints: Unknown fields or malformed objects fail explicitly and roll back the transaction; original records and snapshots remain unchanged and newer versions are not overwritten.
 def migrate_facts(apps, schema_editor):
     extraction_model = apps.get_model("crm", "Extraction")
     company_model = apps.get_model("crm", "Company")
@@ -65,9 +65,9 @@ def migrate_facts(apps, schema_editor):
     logger.info("legacy_fact_groups_migrated extractions=%s companies=%s", converted_count, len(affected))
 
 
-# 功能：声明一次性历史事实升级。
-# 逻辑：0003 后在迁移事务中追加新格式版本，不重复处理已有更新抽取的邮件。
-# 约束：为保留审计记录，不自动逆转此数据迁移；数据库回退须另行制定数据方案。
+# Function: Declare the one-time historical fact upgrade.
+# Logic: Append a new-format version in the migration transaction after 0003 without reprocessing emails that already have a newer extraction.
+# Constraints: This data migration is not automatically reversed to preserve audit records; database rollback requires a separate data plan.
 class Migration(migrations.Migration):
     dependencies = [("crm", "0003_gmailcredential")]
     operations = [migrations.RunPython(migrate_facts)]

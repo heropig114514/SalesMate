@@ -1,13 +1,13 @@
-"""职责：协调账户重置与 HTTP、服务器后台工作单元。
-实现：PostgreSQL 独立连接持有账号共享/独占 advisory lock，连接关闭自动释放。
-关联：reset_middleware、reset、crm.worker、crm.dispatch 与 sales.actions。
-目录：
-- ResetBusy：清理或工作互斥状态。
-- account_lock：持有跨进程账号锁。
-- account_work：后台工作函数的共享锁装饰器。
-- account_work.guarded：执行一个受保护工作单元。
-变量索引：
-- logger：锁竞争日志，不输出业务正文。
+"""Responsibility: Coordinate account reset with HTTP and server background work units.
+Implementation: A dedicated PostgreSQL connection holds a shared or exclusive account advisory lock and releases it automatically when the connection closes.
+Relationships: ``reset_middleware``, ``reset``, ``crm.worker``, ``crm.dispatch``, and ``sales.actions``.
+Directory:
+- ResetBusy: Mutual-exclusion state for cleanup or work.
+- account_lock: Hold a cross-process account lock.
+- account_work: Shared-lock decorator for background work functions.
+- account_work.guarded: Execute one protected work unit.
+Variable index:
+- logger: Lock-contention logger that never emits business content.
 """
 from contextlib import contextmanager
 from functools import wraps
@@ -18,18 +18,18 @@ from django.db import connection
 logger = logging.getLogger("salesmate.account_reset")
 
 
-# 功能：表示账号正在执行互斥操作。
-# 逻辑：调用方明确报告忙碌，不静默重试或声称清理完成。
-# 约束：不携带敏感数据。
+# Function: Represent an account performing a mutually exclusive operation.
+# Logic: The caller explicitly reports that it is busy, without silently retrying or claiming that cleanup completed.
+# Constraints: Carries no sensitive data.
 class ResetBusy(Exception):
     pass
 
 
-# 功能：为一个账号取得跨进程共享或独占锁。
-# 输入：`owner_id` 为内部账号主键；`exclusive` 为重置模式。
-# 输出：上下文无值；独占锁竞争或未完成文件清理抛 ResetBusy。
-# 逻辑：共享锁等待短暂的重置；独占锁不等待正在运行的工作；独立连接不受业务 close_all 影响。
-# 约束：SQLite 仅允许既有预览操作，拒绝不具备跨进程保护的重置；连接异常保持失败。
+# Function: Acquire a cross-process shared or exclusive lock for an account.
+# Inputs: ``owner_id`` is the internal account primary key; ``exclusive`` selects reset mode.
+# Outputs: A context with no value; exclusive-lock contention or incomplete file cleanup raises ``ResetBusy``.
+# Logic: A shared lock waits briefly for reset; an exclusive lock does not wait for running work; the dedicated connection is unaffected by business ``close_all`` calls.
+# Constraints: SQLite permits only existing preview operations and rejects resets without cross-process protection; connection errors remain failures.
 @contextmanager
 def account_lock(owner_id, *, exclusive=False):
     if connection.vendor != "postgresql":
@@ -42,7 +42,7 @@ def account_lock(owner_id, *, exclusive=False):
         guard.ensure_connection()
         guard.set_autocommit(True)
         with guard.cursor() as cursor:
-            # 单 bigint 的负数键与现有业务行锁及双 int advisory key 空间隔离。
+            # A negative single-bigint key is isolated from existing business row locks and the two-int advisory-key space.
             key = -int(owner_id)
             if exclusive:
                 cursor.execute("SELECT pg_try_advisory_lock(%s)", [key])
@@ -55,17 +55,17 @@ def account_lock(owner_id, *, exclusive=False):
         guard.close()
 
 
-# 功能：保护直接访问数据库的后台工作入口。
-# 输入：`function` 为首参数是 owner 的函数。
-# 输出：同签名包装函数；文件清理未完成时返回 False，保持队列不执行。
-# 逻辑：工作完整生命周期持有共享锁，清空只能在工作单元之间执行。
-# 约束：不增加任务重试；异常仍由原工作函数处理。
+# Function: Protect background-work entry points that access the database directly.
+# Inputs: ``function`` is a background callable whose first argument represents the account owner.
+# Outputs: A wrapper with the same signature; it returns ``False`` while file cleanup is incomplete, leaving the queue unexecuted.
+# Logic: Hold a shared lock for the full work lifecycle so clearing can run only between work units.
+# Constraints: Does not add job retries; exceptions remain handled by the original work function.
 def account_work(function):
-    # 功能：在账号共享锁下运行后台单元。
-    # 输入：`owner`、`args`、`kwargs` 原样传递。
-    # 输出：原函数结果或未执行时 False。
-    # 逻辑：取得锁后检查持久清理状态，避免文件失败期间重新生成业务内容。
-    # 约束：锁使用独立连接，原函数关闭默认连接不会提前释放。
+    # Function: Run a background unit under the account shared lock.
+    # Inputs: ``owner``, ``args``, and ``kwargs`` are passed through unchanged to the wrapped function.
+    # Outputs: The original function result, or ``False`` when it is not run.
+    # Logic: Check persistent cleanup state after acquiring the lock to avoid regenerating business content while file cleanup has failed.
+    # Constraints: The lock uses a dedicated connection, so closing the default connection in the original function cannot release it early.
     @wraps(function)
     def guarded(owner, *args, **kwargs):
         from .reset_models import AccountReset

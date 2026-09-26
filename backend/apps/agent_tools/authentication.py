@@ -1,16 +1,16 @@
-"""职责：验证限定业务工具权限的独立凭证。
-实现：实验模式提供免登录身份；正式模式只接受 Tool，验证撤销、期限和工具范围。
-关联：工具入口允许此认证与浏览器 Session；正式模式授权创建和提案确认仅允许 Session。
-目录：
-- ToolAuthentication：独立工具认证。
-- ToolAuthentication.authenticate：校验摘要及授权状态。
-- ToolAuthentication.authenticate_header：声明认证方案。
-- check_credential：验证凭证当前可用性及具体工具权限。
-- ToolAuthenticationSchema：OpenAPI 认证说明。
-- ToolAuthenticationSchema.get_security_definition：发布认证头契约。
-变量索引：
-- ToolAuthenticationSchema.target_class：认证实现路径。
-- ToolAuthenticationSchema.name：安全方案名称。
+"""Responsibility: Validate independent credentials with limited business-tool permissions.
+Implementation: Experiment mode provides a login-free identity; production mode accepts only Tool credentials and validates revocation, expiry, and tool scope.
+Relationships: Tool endpoints allow this authentication and browser Session; production-mode authorization creation and proposal confirmation permit only Session.
+Directory:
+- ToolAuthentication: Independent tool authentication.
+- ToolAuthentication.authenticate: Validate digest and authorization state.
+- ToolAuthentication.authenticate_header: Declare the authentication scheme.
+- check_credential: Validate current credential usability and a specific tool permission.
+- ToolAuthenticationSchema: OpenAPI authentication declaration.
+- ToolAuthenticationSchema.get_security_definition: Publish the authentication-header contract.
+Variable index:
+- ToolAuthenticationSchema.target_class: Authentication implementation path.
+- ToolAuthenticationSchema.name: Security-scheme name.
 """
 
 import hashlib
@@ -22,11 +22,11 @@ from .models import ToolCredential
 from common.laboratory import enabled, identity
 
 
-# 功能：核验有效委托。
-# 输入：`credential` 授权记录、`name` 可选工具名。
-# 输出：无，失效或越权抛认证/权限异常。
-# 逻辑：实验模式免授权检查；正式模式逐项检查到期、撤销、停用和白名单。
-# 约束：不接受通配符，不从模型输入读取员工身份。
+# Function: Verify a valid delegation.
+# Inputs: Authorization record ``credential`` and optional tool name ``name``.
+# Outputs: None; an expired or unauthorized credential raises an authentication or permission exception.
+# Logic: Experiment mode skips authorization checks; production mode checks expiry, revocation, inactivity, and allowlist item by item.
+# Constraints: Does not accept wildcards or read employee identity from model input.
 def check_credential(credential, name=None):
     if enabled():
         return
@@ -40,15 +40,15 @@ def check_credential(credential, name=None):
         raise PermissionDenied("该授权不包含此工具。")
 
 
-# 功能：区分业务委托与既有 Worker 身份。
-# 逻辑：实验模式提供公开身份，正式模式仅接受独立 Tool token。
-# 约束：令牌不进入日志或查询参数。
+# Function: Distinguish business delegation from existing Worker identity.
+# Logic: Experiment mode provides a public identity; production mode accepts only an independent Tool token.
+# Constraints: Tokens never enter logs or query parameters.
 class ToolAuthentication(BaseAuthentication):
-    # 功能：认证工具请求。
-    # 输入：`request` HTTP 请求。
-    # 输出：用户与授权记录，或 None。
-    # 逻辑：实验模式使用公开身份；正式模式摘要查询后核验当前状态。
-    # 约束：正式模式其他 Authorization 方案明确拒绝；实验模式该头仅用于可识别身份归属。
+    # Function: Authenticate a tool request.
+    # Inputs: HTTP ``request``.
+    # Outputs: User and authorization record, or ``None``.
+    # Logic: Experiment mode uses public identity; production mode validates current state after a digest lookup.
+    # Constraints: Production mode explicitly rejects other Authorization schemes; in experiment mode this header serves only identifiable ownership.
     def authenticate(self, request):
         actor = identity(request)
         if actor is not None:
@@ -67,27 +67,27 @@ class ToolAuthentication(BaseAuthentication):
         check_credential(credential)
         return credential.owner, credential
 
-    # 功能：声明认证方案。
-    # 输入：`request`。
-    # 输出：Tool。
-    # 逻辑：固定响应。
-    # 约束：无副作用。
+    # Function: Declare the authentication scheme.
+    # Inputs: ``request``.
+    # Outputs: ``Tool``.
+    # Logic: Returns a fixed value.
+    # Constraints: No side effects.
     def authenticate_header(self, request):
         return "Tool"
 
 
-# 功能：声明工具认证契约。
-# 逻辑：独立 Authorization 方案。
-# 约束：不执行认证或包含真实 token。
+# Function: Declare the tool-authentication contract.
+# Logic: Independent Authorization scheme.
+# Constraints: Does not authenticate or contain a real token.
 class ToolAuthenticationSchema(OpenApiAuthenticationExtension):
     target_class = "apps.agent_tools.authentication.ToolAuthentication"
     name = "businessToolCredential"
 
-    # 功能：描述认证头。
-    # 输入：`auto_schema` 上下文。
-    # 输出：OpenAPI 对象。
-    # 逻辑：要求 Tool 前缀。
-    # 约束：Session-only 授权与确认接口不采用此方案。
+    # Function: Describe the authentication header.
+    # Inputs: ``auto_schema`` context.
+    # Outputs: OpenAPI object.
+    # Logic: Requires the ``Tool`` prefix.
+    # Constraints: Session-only authorization and confirmation endpoints do not use this scheme.
     def get_security_definition(self, auto_schema):
         return {
             "type": "apiKey",

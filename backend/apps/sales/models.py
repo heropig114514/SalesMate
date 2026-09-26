@@ -1,228 +1,228 @@
-"""职责：定义销售业务、团队共享和助手操作的关系 Schema。
-实现：新闻保存单组公开线索、精确金额和证据，不自动关联 CRM；活动和资讯共享事实、保留 owner 写入归属；Agent 来源按 URL（活动另含开始时间）约束重复；活动显式保存日期精度；其他业务采用 UUID、revision 与归档。
-关联：sales.services 负责事务与校验，crm 保持私人邮件和 Agent 分析协议。
-目录：
-- WorldNews：行业资讯事实、单组公共销售线索、来源金额与证据。
-- WorldEvent：活动事实与显式商机关联。
-- WorldEvent.Meta：约束同源同期开场的 Agent 活动唯一。
-- WorldNews.Meta：约束来源唯一和金额组合一致性。
-- Record：可归档的版本化业务记录基类。
-- Record.Meta：声明抽象性或数据库唯一及数值约束。
-- CompanyRecord：关联客户和负责人的业务记录基类。
-- CompanyRecord.Meta：声明抽象性或数据库唯一及数值约束。
-- CompanySettings：客户生命周期和人工主要联系人设置。
-- CompanyAlias：人工确认的域名或联系人归组映射。
-- CompanyAlias.Meta：声明抽象性或数据库唯一及数值约束。
-- ContactProfile：人工联系人补充资料。
-- Team：拥有明确管理者的业务团队。
-- Membership：团队成员及角色。
-- Membership.Meta：声明抽象性或数据库唯一及数值约束。
-- CompanyGrant：公司业务记录共享授权。
-- CompanyGrant.Meta：声明抽象性或数据库唯一及数值约束。
-- Product：商品目录与人工库存记录。
-- Product.Meta：声明抽象性或数据库唯一及数值约束。
-- Ticket：客户服务工单。
-- Opportunity：销售商机与管线。
-- SellerProfile：保存 owner 隔离的销售方目标画像。
-- Quote：有审核与真实外发证据的报价单。
-- Quote.Meta：声明抽象性或数据库唯一及数值约束。
-- QuoteLine：报价明细快照。
-- QuoteLine.Meta：声明抽象性或数据库唯一及数值约束。
-- SalesOrder：客户订单及确认状态。
-- SalesOrder.Meta：声明抽象性或数据库唯一及数值约束。
-- OrderLine：订单明细快照。
-- OrderLine.Meta：声明抽象性或数据库唯一及数值约束。
-- FollowUp：客户跟进与到期提醒。
-- Conversation：员工自己的通用或客户助手会话。
-- Message：不可变会话消息。
-- Message.Meta：声明抽象性或数据库唯一及数值约束。
-- Draft：私有会话中的可编辑草稿。
-- ToolAction：明确确认的外部工具动作与执行状态。
-- ToolAction.Meta：声明抽象性或数据库唯一及数值约束。
-- Attachment：员工私有文件及客户关联。
-- AuditEvent：仅追加的业务操作记录。
-- Notification：应用内到期提醒。
-- Notification.Meta：声明抽象性或数据库唯一及数值约束。
-- Connection：保存单独授权的外部服务加密凭证。
-- Connection.Meta：限制员工每个提供方和账号只有一份连接。
-变量索引：
-- NEWS_SIGNAL_TYPES：公开新闻事件类型。
-- NEWS_CURRENCIES：协作契约支持的币种。
-- NEWS_AMOUNT_TYPES：来源金额的业务口径。
-- NEWS_AMOUNT_SCOPES：来源金额覆盖范围。
-- WorldEvent.time_precision：datetime 为确切时刻，date 为 UTC 日期边界且结束日排除。
-- WorldEvent.Meta.constraints：非空 Agent 来源 URL 与开始时间联合唯一，包含归档记录。
-- WorldNews.Meta.constraints：Agent 来源唯一；金额非负且与币种、类型、范围、证据同时有值或同时为空。
-- WorldEvent.data_source：活动来源标签，synthetic 表示占位。
-- WorldNews.data_source：资讯来源标签，synthetic 表示占位。
-- WorldNews.title：资讯标题。
-- WorldNews.category：资讯类别。
-- WorldNews.industry：来源明确提供的行业。
-- WorldNews.country：可空 ISO 国家地区代码。
-- WorldNews.published_at：真实发布时间。
-- WorldNews.source_url：原始报道来源。
-- WorldNews.summary：上游提供摘要。
-- WorldNews.content：纯文本正文。
-- WorldNews.company_name：公司或机构原文名称。
-- WorldNews.signal_type：原文事件类型，可空。
-- WorldNews.project_name：原文项目名。
-- WorldNews.demand_description：新闻明确披露的需求。
-- WorldNews.potential_sales_need：与新闻事实分开的潜在采购推断。
-- WorldNews.opportunity_reason：潜在需求与产品的相关性解释，不是确认采购。
-- WorldNews.time_window：来源给出的项目或采购时间节点。
-- WorldNews.evidence：公共来源原文片段。
-- WorldNews.amount：最多 24 位整数及 6 位小数的来源金额，未知为 null。
-- WorldNews.currency：来源金额币种，不换汇。
-- WorldNews.amount_type：投资、预算、招标或合同等金额口径。
-- WorldNews.amount_scope：整项目、设备采购或其他覆盖范围。
-- WorldNews.amount_evidence：包含于 evidence 的金额原文。
-- WorldEvent.title：活动名称。
-- WorldEvent.event_type：活动类型。
-- WorldEvent.country：ISO 国家地区代码。
-- WorldEvent.city：城市。
-- WorldEvent.latitude：真实纬度。
-- WorldEvent.longitude：真实经度。
-- WorldEvent.starts_at：带时区开始时间。
-- WorldEvent.ends_at：带时区结束时间。
-- WorldEvent.registration_deadline：可空报名截止时间。
-- WorldEvent.source_url：可核对的来源链接。
-- WorldEvent.description：活动原始说明。
-- WorldEvent.onsite：现场情况原始要点。
-- WorldEvent.suggested_actions：上游提供的建议文本，不由后端生成。
-- WorldEvent.opportunity_ids：本人商机显式关联列表，不推断相关性。
-- SellerProfile.owner：销售方资料的唯一业务所有者，不能跨 owner 共享统计。
-- SellerProfile.revision：销售方资料的乐观锁版本。
-- SellerProfile.profile：可缺失的目标行业、规模、地区和 IANA 时区，不存模型猜测。
-- SellerProfile.updated_at：最后一次显式更新的时间。
-- Opportunity.product_names：显式录入的规范产品名称列表，null 或空数组表示资料缺失。
-- Connection.provider：gmail、qq 或 calendar 服务提供方。
-- Connection.account：外部账号或日历连接名称。
-- Connection.encrypted_credentials：Fernet 加密的 Google 授权 JSON 或 QQ 授权码，浏览器不可读取。
-- Connection.Meta.constraints：连接身份联合唯一约束。
-- Record.id：实体 UUID。
-- Record.owner：权威业务归属，禁止客户端指定。
-- Record.revision：乐观锁版本。
-- Record.archived：软归档状态。
-- Record.created_at：创建时间。
-- Record.updated_at：最后修改时间。
-- Record.Meta.abstract：不生成基类数据表。
-- CompanyRecord.company：关联客户。
-- CompanyRecord.assigned_to：已授权的业务负责人。
-- CompanyRecord.Meta.abstract：不生成基类数据表。
-- CompanySettings.company：对应原客户。
-- CompanySettings.primary_contact：人工选定的同公司联系人。
-- CompanySettings.notes：人工客户备注。
-- CompanyAlias.company：归组目标。
-- CompanyAlias.group_key：domain:域名或contact:邮箱的精确归组键。
-- CompanyAlias.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- ContactProfile.contact：原联系人。
-- ContactProfile.title：人工确认职位。
-- ContactProfile.phone：联系电话。
-- ContactProfile.notes：联系人备注。
-- Team.name：团队名称。
-- Membership.team：所属团队。
-- Membership.user：成员账号。
-- Membership.role：成员角色。
-- Membership.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- CompanyGrant.company：被授权公司。
-- CompanyGrant.team：获授权团队。
-- CompanyGrant.role：团队在该公司的权限上限。
-- CompanyGrant.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- Product.sku：员工目录内商品编码。
-- Product.name：商品名称。
-- Product.description：商品说明。
-- Product.currency：明确 ISO 三字母币种。
-- Product.unit_price：目录单价。
-- Product.stock_quantity：人工记录库存，未知为 null。
-- Product.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- Ticket.title：工单主题。
-- Ticket.description：问题描述。
-- Ticket.status：open/in_progress/resolved/closed。
-- Ticket.priority：人工处理优先级。
-- Ticket.due_at：约定截止时间。
-- Opportunity.title：商机名称。
-- Opportunity.description：商机说明。
-- Opportunity.status：new/qualified/proposal/won/lost。
-- Opportunity.amount：预估商机额，未知为 null。
-- Opportunity.currency：金额币种。
-- Opportunity.expected_close：预计关闭日期。
-- Quote.number：归属员工范围内报价编号。
-- Quote.status：draft/approved/sent/accepted/rejected。
-- Quote.currency：整张报价币种。
-- Quote.valid_until：报价有效期。
-- Quote.notes：报价条款说明。
-- Quote.sent_at：实际外发成功时间。
-- Quote.external_message_id：真实发送服务返回的邮件标识。
-- Quote.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- QuoteLine.quote：所属报价。
-- QuoteLine.product：可选目录商品。
-- QuoteLine.description：冻结的商品或服务描述。
-- QuoteLine.quantity：报价数量。
-- QuoteLine.unit_price：本行明确单价。
-- QuoteLine.discount：整行折扣金额。
-- QuoteLine.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- SalesOrder.number：归属员工范围内订单编号。
-- SalesOrder.quote：可选来源报价。
-- SalesOrder.currency：整张订单币种。
-- SalesOrder.status：draft/confirmed/fulfilled/cancelled。
-- SalesOrder.notes：订单说明。
-- SalesOrder.confirmed_at：人工确认订单时间。
-- SalesOrder.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- OrderLine.order：所属订单。
-- OrderLine.product：可选来源商品。
-- OrderLine.description：订单商品描述。
-- OrderLine.quantity：订单数量。
-- OrderLine.unit_price：确认单价。
-- OrderLine.discount：整行折扣金额。
-- OrderLine.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- FollowUp.title：跟进事项。
-- FollowUp.description：跟进说明。
-- FollowUp.due_at：到期时间。
-- FollowUp.status：open/completed/cancelled。
-- Conversation.company：可空客户；空值表示通用会话。
-- Conversation.title：会话显示标题。
-- Message.conversation：所属会话。
-- Message.role：消息来源角色。
-- Message.content：消息正文。
-- Message.client_key：客户端幂等键。
-- Message.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- Draft.conversation：所属会话。
-- Draft.kind：草稿用途。
-- Draft.subject：邮件主题。
-- Draft.content：草稿正文。
-- Draft.recipients：经接口校验的收件人邮箱数组。
-- ToolAction.company：操作客户。
-- ToolAction.conversation：可选会话来源。
-- ToolAction.tool：允许的外部工具。
-- ToolAction.parameters：确认时冻结的完整参数。
-- ToolAction.status：待确认/approved/running/succeeded/failed/uncertain/cancelled。
-- ToolAction.idempotency_key：员工范围的动作幂等键。
-- ToolAction.approved_at：明确确认时间。
-- ToolAction.started_at：开始执行时间。
-- ToolAction.finished_at：终止时间。
-- ToolAction.result：外部服务返回的安全结果。
-- ToolAction.error：错误码与可操作诊断。
-- ToolAction.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
-- Attachment.company：关联客户。
-- Attachment.name：上传时文件名，下载使用安全名称。
-- Attachment.storage_key：私有相对存储键。
-- Attachment.content_type：上传方声明的媒体类型，仅作元数据。
-- Attachment.size：实际字节数。
-- Attachment.sha256：内容校验摘要。
-- AuditEvent.id：审计标识。
-- AuditEvent.owner：记录所属业务空间。
-- AuditEvent.actor：实际操作者。
-- AuditEvent.company：可选业务客户。
-- AuditEvent.event：事件类型。
-- AuditEvent.object_type：对象模型名。
-- AuditEvent.object_id：对象标识。
-- AuditEvent.changes：受控的状态或字段名变化，不含正文。
-- AuditEvent.created_at：事件发生时间。
-- Notification.follow_up：来源跟进任务。
-- Notification.source_revision：产生提醒的跟进版本。
-- Notification.title：提醒显示文本。
-- Notification.read_at：已读时间。
-- Notification.Meta.constraints：数据库并发下执行唯一性或金额边界校验。
+"""Responsibility: Define relational schemas for sales business, team sharing, and assistant operations.
+Implementation: News stores one set of public leads, exact amounts, and evidence without automatic CRM links. Events/news share facts while retaining owner write attribution. Agent sources deduplicate by URL, plus event start time. Events explicitly store date precision; other records use UUIDs, revisions, and archival state.
+Relationships: sales.services handles transactions and validation; CRM retains private email and Agent analysis contracts.
+Directory:
+- WorldNews: Industry news facts, one set of public sales leads, source amounts, and evidence.
+- WorldEvent: Event facts and explicit opportunity links.
+- WorldEvent.Meta: Enforce uniqueness of Agent events with the same source and start time.
+- WorldNews.Meta: Enforce source uniqueness and monetary-field consistency.
+- Record: Base class for archivable, versioned business records.
+- Record.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- CompanyRecord: Base class for business records linked to companies and assignees.
+- CompanyRecord.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- CompanySettings: Company lifecycle and manually selected primary-contact settings.
+- CompanyAlias: Manually confirmed domain/contact grouping mappings.
+- CompanyAlias.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- ContactProfile: Supplemental manual contact details.
+- Team: Business team with an explicit manager.
+- Membership: Team membership and roles.
+- Membership.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- CompanyGrant: Company business-record sharing grants.
+- CompanyGrant.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- Product: Product catalog and manual inventory records.
+- Product.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- Ticket: Customer service tickets.
+- Opportunity: Sales opportunities and pipeline.
+- SellerProfile: Owner-isolated seller target profiles.
+- Quote: Quotes with review and genuine external-send evidence.
+- Quote.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- QuoteLine: Quote line snapshots.
+- QuoteLine.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- SalesOrder: Customer orders and confirmation state.
+- SalesOrder.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- OrderLine: Order line snapshots.
+- OrderLine.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- FollowUp: Customer follow-ups and due reminders.
+- Conversation: Employees' own general or company assistant conversations.
+- Message: Immutable conversation messages.
+- Message.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- Draft: Editable drafts in private conversations.
+- ToolAction: Explicitly confirmed external-tool actions and execution states.
+- ToolAction.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- Attachment: Employee-private files and company links.
+- AuditEvent: Append-only business operation records.
+- Notification: In-app due reminders.
+- Notification.Meta: Declare abstraction or database uniqueness/numeric constraints.
+- Connection: Encrypted credentials for separately authorized external services.
+- Connection.Meta: Restrict each employee to one connection per provider/account.
+Variable index:
+- NEWS_SIGNAL_TYPES: Public news event types.
+- NEWS_CURRENCIES: Currencies supported by the collaboration contract.
+- NEWS_AMOUNT_TYPES: Business meaning of source amounts.
+- NEWS_AMOUNT_SCOPES: Coverage of source amounts.
+- WorldEvent.time_precision: datetime denotes an exact instant; date denotes UTC date boundaries with an exclusive end date.
+- WorldEvent.Meta.constraints: Unique nonempty Agent source URL/start-time pairs, including archived records.
+- WorldNews.Meta.constraints: Unique Agent sources; amounts are nonnegative and jointly present or absent with currency, type, scope, and evidence.
+- WorldEvent.data_source: Event source label; synthetic denotes a placeholder.
+- WorldNews.data_source: News source label; synthetic denotes a placeholder.
+- WorldNews.title: News title.
+- WorldNews.category: News category.
+- WorldNews.industry: Industry explicitly supplied by the source.
+- WorldNews.country: Nullable ISO country/region code.
+- WorldNews.published_at: Actual publication time.
+- WorldNews.source_url: Original report source.
+- WorldNews.summary: Upstream-provided summary.
+- WorldNews.content: Plain-text body.
+- WorldNews.company_name: Original company or institution name.
+- WorldNews.signal_type: Original event type, optionally empty.
+- WorldNews.project_name: Original project name.
+- WorldNews.demand_description: Demand explicitly disclosed by the news.
+- WorldNews.potential_sales_need: Potential procurement inference separated from news facts.
+- WorldNews.opportunity_reason: Explanation linking potential demand and products, not confirmed procurement.
+- WorldNews.time_window: Project/procurement milestones supplied by the source.
+- WorldNews.evidence: Original excerpt from the public source.
+- WorldNews.amount: Source amount with up to 24 integer and 6 fractional digits; null when unknown.
+- WorldNews.currency: Source currency without conversion.
+- WorldNews.amount_type: Amount meaning, such as investment, budget, tender, or contract.
+- WorldNews.amount_scope: Coverage such as the entire project, equipment procurement, or another scope.
+- WorldNews.amount_evidence: Original amount excerpt included in evidence.
+- WorldEvent.title: Event name.
+- WorldEvent.event_type: Event type.
+- WorldEvent.country: ISO country/region code.
+- WorldEvent.city: City.
+- WorldEvent.latitude: Actual latitude.
+- WorldEvent.longitude: Actual longitude.
+- WorldEvent.starts_at: Timezone-aware start time.
+- WorldEvent.ends_at: Timezone-aware end time.
+- WorldEvent.registration_deadline: Nullable registration deadline.
+- WorldEvent.source_url: Verifiable source link.
+- WorldEvent.description: Original event description.
+- WorldEvent.onsite: Original on-site situation highlights.
+- WorldEvent.suggested_actions: Upstream advice text, not generated by the backend.
+- WorldEvent.opportunity_ids: Explicit links to the user's own opportunities, without inferred relevance.
+- SellerProfile.owner: Unique business owner of the seller profile; statistics cannot be shared across owners.
+- SellerProfile.revision: Seller profile optimistic-lock version.
+- SellerProfile.profile: Optional target industry, size, region, and IANA timezone; no model guesses.
+- SellerProfile.updated_at: Timestamp of the last explicit update.
+- Opportunity.product_names: Explicitly entered canonical product-name list; null or an empty array denotes missing information.
+- Connection.provider: Service provider: gmail, qq, or calendar.
+- Connection.account: External account or calendar connection name.
+- Connection.encrypted_credentials: Fernet-encrypted Google authorization JSON or QQ authorization code, inaccessible to browsers.
+- Connection.Meta.constraints: Composite connection-identity uniqueness constraint.
+- Record.id: Entity UUID.
+- Record.owner: Authoritative business owner; clients cannot supply it.
+- Record.revision: Optimistic-lock version.
+- Record.archived: Soft-archive state.
+- Record.created_at: Creation time.
+- Record.updated_at: Last modification time.
+- Record.Meta.abstract: Do not create a table for the base class.
+- CompanyRecord.company: Related company.
+- CompanyRecord.assigned_to: Authorized business assignee.
+- CompanyRecord.Meta.abstract: Do not create a table for the base class.
+- CompanySettings.company: Corresponding original company.
+- CompanySettings.primary_contact: Manually selected contact from the same company.
+- CompanySettings.notes: Manual company notes.
+- CompanyAlias.company: Grouping target.
+- CompanyAlias.group_key: Exact grouping key: domain:<domain> or contact:<email>.
+- CompanyAlias.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- ContactProfile.contact: Original contact.
+- ContactProfile.title: Manually confirmed job title.
+- ContactProfile.phone: Contact phone number.
+- ContactProfile.notes: Contact notes.
+- Team.name: Team name.
+- Membership.team: Parent team.
+- Membership.user: Member account.
+- Membership.role: Member role.
+- Membership.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- CompanyGrant.company: Company covered by the grant.
+- CompanyGrant.team: Authorized team.
+- CompanyGrant.role: Maximum team permissions for this company.
+- CompanyGrant.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- Product.sku: Product code within the employee's catalog.
+- Product.name: Product name.
+- Product.description: Product description.
+- Product.currency: Explicit three-letter ISO currency.
+- Product.unit_price: Catalog unit price.
+- Product.stock_quantity: Manually recorded inventory; null when unknown.
+- Product.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- Ticket.title: Ticket subject.
+- Ticket.description: Issue description.
+- Ticket.status: open/in_progress/resolved/closed.
+- Ticket.priority: Manual handling priority.
+- Ticket.due_at: Agreed deadline.
+- Opportunity.title: Opportunity name.
+- Opportunity.description: Opportunity description.
+- Opportunity.status: new/qualified/proposal/won/lost.
+- Opportunity.amount: Estimated opportunity amount; null when unknown.
+- Opportunity.currency: Amount currency.
+- Opportunity.expected_close: Expected closing date.
+- Quote.number: Quote number within the owning employee's scope.
+- Quote.status: draft/approved/sent/accepted/rejected.
+- Quote.currency: Currency for the entire quote.
+- Quote.valid_until: Quote validity period.
+- Quote.notes: Quote terms.
+- Quote.sent_at: Actual successful external-send time.
+- Quote.external_message_id: Email identifier returned by the real sending service.
+- Quote.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- QuoteLine.quote: Parent quote.
+- QuoteLine.product: Optional catalog product.
+- QuoteLine.description: Frozen product/service description.
+- QuoteLine.quantity: Quoted quantity.
+- QuoteLine.unit_price: Explicit unit price for this line.
+- QuoteLine.discount: Total discount amount for the line.
+- QuoteLine.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- SalesOrder.number: Order number within the owning employee's scope.
+- SalesOrder.quote: Optional source quote.
+- SalesOrder.currency: Currency for the entire order.
+- SalesOrder.status: draft/confirmed/fulfilled/cancelled.
+- SalesOrder.notes: Order description.
+- SalesOrder.confirmed_at: Manual order-confirmation time.
+- SalesOrder.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- OrderLine.order: Parent order.
+- OrderLine.product: Optional source product.
+- OrderLine.description: Order product description.
+- OrderLine.quantity: Ordered quantity.
+- OrderLine.unit_price: Confirmed unit price.
+- OrderLine.discount: Total discount amount for the line.
+- OrderLine.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- FollowUp.title: Follow-up item.
+- FollowUp.description: Follow-up description.
+- FollowUp.due_at: Due time.
+- FollowUp.status: open/completed/cancelled.
+- Conversation.company: Nullable company; empty denotes a general conversation.
+- Conversation.title: Conversation display title.
+- Message.conversation: Parent conversation.
+- Message.role: Message source role.
+- Message.content: Message body.
+- Message.client_key: Client idempotency key.
+- Message.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- Draft.conversation: Parent conversation.
+- Draft.kind: Draft purpose.
+- Draft.subject: Email subject.
+- Draft.content: Draft body.
+- Draft.recipients: Recipient email array validated by the API.
+- ToolAction.company: Action company.
+- ToolAction.conversation: Optional source conversation.
+- ToolAction.tool: Allowed external tool.
+- ToolAction.parameters: Complete parameters frozen upon confirmation.
+- ToolAction.status: pending confirmation/approved/running/succeeded/failed/uncertain/cancelled.
+- ToolAction.idempotency_key: Action idempotency key scoped to the employee.
+- ToolAction.approved_at: Explicit confirmation time.
+- ToolAction.started_at: Execution start time.
+- ToolAction.finished_at: Termination time.
+- ToolAction.result: Safe result returned by the external service.
+- ToolAction.error: Error code and actionable diagnostics.
+- ToolAction.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
+- Attachment.company: Related company.
+- Attachment.name: Original upload filename; downloads use a safe name.
+- Attachment.storage_key: Private relative storage key.
+- Attachment.content_type: Uploader-declared media type, used as metadata only.
+- Attachment.size: Actual byte count.
+- Attachment.sha256: Content verification digest.
+- AuditEvent.id: Audit identifier.
+- AuditEvent.owner: Business workspace owning the record.
+- AuditEvent.actor: Actual actor.
+- AuditEvent.company: Optional business company.
+- AuditEvent.event: Event type.
+- AuditEvent.object_type: Object model name.
+- AuditEvent.object_id: Object identifier.
+- AuditEvent.changes: Controlled changes to states or field names, excluding bodies.
+- AuditEvent.created_at: Event timestamp.
+- Notification.follow_up: Source follow-up task.
+- Notification.source_revision: Follow-up version that generated the reminder.
+- Notification.title: Reminder display text.
+- Notification.read_at: Read timestamp.
+- Notification.Meta.constraints: Enforce uniqueness or monetary bounds under database concurrency.
 """
 
 import uuid
@@ -236,9 +236,9 @@ NEWS_AMOUNT_TYPES = [(value, value) for value in ("total_investment", "procureme
 NEWS_AMOUNT_SCOPES = [(value, value) for value in ("whole_project", "equipment_procurement", "other")]
 
 
-# 功能：可归档的版本化业务记录基类。
-# 逻辑：抽象字段统一身份、归属、版本和时间；状态变更由事务服务校验。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Base class for archivable, versioned business records.
+# Logic: Abstract fields unify identity, ownership, versions, and timestamps; transactional services validate state transitions.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Record(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(
@@ -249,16 +249,16 @@ class Record(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         abstract = True
 
 
-# 功能：关联客户和负责人的业务记录基类。
-# 逻辑：所属员工取公司 owner，负责人必须拥有公司业务编辑权限。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Base class for business records linked to companies and assignees.
+# Logic: The employee owner comes from the company owner; assignees require company business-edit permissions.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class CompanyRecord(Record):
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, related_name="%(class)s_records"
@@ -271,16 +271,16 @@ class CompanyRecord(Record):
         related_name="+",
     )
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         abstract = True
 
 
-# 功能：客户生命周期和人工主要联系人设置。
-# 逻辑：原公司及邮件继续保留，归档不删除证据。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Company lifecycle and manually selected primary-contact settings.
+# Logic: Retain original companies and emails; archival does not delete evidence.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class CompanySettings(Record):
     company = models.OneToOneField(
         "crm.Company", on_delete=models.PROTECT, related_name="business_settings"
@@ -295,18 +295,18 @@ class CompanySettings(Record):
     notes = models.TextField(blank=True)
 
 
-# 功能：人工确认的域名或联系人归组映射。
-# 逻辑：按原 owner 和 group_key 精确命中；不推断集团关系。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Manually confirmed domain/contact grouping mappings.
+# Logic: Match original owner and group_key exactly without inferring corporate-group relations.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class CompanyAlias(Record):
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, related_name="group_aliases"
     )
     group_key = models.CharField(max_length=320)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -315,9 +315,9 @@ class CompanyAlias(Record):
         ]
 
 
-# 功能：人工联系人补充资料。
-# 逻辑：补充信息与邮件抽取事实分别保存，原姓名由显式联系人编辑管理。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Supplemental manual contact details.
+# Logic: Store supplemental details separately from email-extracted facts; explicit contact editing manages the original name.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class ContactProfile(Record):
     contact = models.OneToOneField(
         "crm.Contact", on_delete=models.PROTECT, related_name="business_profile"
@@ -327,16 +327,16 @@ class ContactProfile(Record):
     notes = models.TextField(blank=True)
 
 
-# 功能：拥有明确管理者的业务团队。
-# 逻辑：创建者为 owner，团队不会自动获得任何邮箱权限。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Business team with an explicit manager.
+# Logic: The creator is owner; teams receive no mailbox permissions automatically.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Team(Record):
     name = models.CharField(max_length=160)
 
 
-# 功能：团队成员及角色。
-# 逻辑：manager 管理成员，editor 编辑授权业务，viewer 只读。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Team membership and roles.
+# Logic: Managers manage members, editors edit authorized business records, and viewers have read-only access.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Membership(Record):
     team = models.ForeignKey(Team, on_delete=models.PROTECT, related_name="memberships")
     user = models.ForeignKey(
@@ -349,18 +349,18 @@ class Membership(Record):
         choices=[("viewer", "只读"), ("editor", "编辑"), ("manager", "管理")],
     )
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["team", "user"], name="sales_team_member")
         ]
 
 
-# 功能：公司业务记录共享授权。
-# 逻辑：公司所有者显式授权给团队，权限不覆盖私人邮件或 Agent 接口。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Company business-record sharing grants.
+# Logic: Company owners explicitly grant team access; grants cover neither private email nor Agent APIs.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class CompanyGrant(Record):
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, related_name="business_grants"
@@ -372,9 +372,9 @@ class CompanyGrant(Record):
         max_length=16, choices=[("viewer", "只读"), ("editor", "编辑")]
     )
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -383,9 +383,9 @@ class CompanyGrant(Record):
         ]
 
 
-# 功能：商品目录与人工库存记录。
-# 逻辑：价格明确币种，历史单据保存独立快照；库存不自动代表预留或履约。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Product catalog and manual inventory records.
+# Logic: Prices have explicit currencies and historical documents retain independent snapshots; inventory does not imply reservation or fulfillment.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Product(Record):
     sku = models.CharField(max_length=100)
     name = models.CharField(max_length=240)
@@ -396,9 +396,9 @@ class Product(Record):
         max_digits=18, decimal_places=3, null=True, blank=True
     )
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["owner", "sku"], name="sales_owner_sku"),
@@ -408,9 +408,9 @@ class Product(Record):
         ]
 
 
-# 功能：客户服务工单。
-# 逻辑：状态由显式转换接口推进，不从邮件提及推断已处理。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Customer service tickets.
+# Logic: Explicit transition APIs advance state; email mentions do not imply resolution.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Ticket(CompanyRecord):
     title = models.CharField(max_length=240)
     description = models.TextField(blank=True)
@@ -423,9 +423,9 @@ class Ticket(CompanyRecord):
     due_at = models.DateTimeField(null=True, blank=True)
 
 
-# 功能：销售商机与管线。
-# 逻辑：只汇总明确金额，产品名称由用户显式录入，won/lost 为用户显式声明。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Sales opportunities and pipeline.
+# Logic: Aggregate only explicit amounts; users enter product names and explicitly declare won/lost states.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Opportunity(CompanyRecord):
     title = models.CharField(max_length=240)
     description = models.TextField(blank=True)
@@ -436,9 +436,9 @@ class Opportunity(CompanyRecord):
     product_names = models.JSONField(null=True, blank=True)
 
 
-# 功能：保存 owner 隔离的销售方目标画像。
-# 逻辑：一名业务所有者对应一份带版本的配置；JSON 仅接收专门接口验证后的目标条件。
-# 约束：无默认业务画像；均值、产品目录和相似赢单由权威数据计算，不由此表人工填充。
+# Function: Owner-isolated seller target profiles.
+# Logic: One versioned configuration per business owner; JSON accepts only target criteria validated by the dedicated API.
+# Constraints: No default business profile; averages, product catalogs, and similar wins derive from authoritative data rather than manual entries in this table.
 class SellerProfile(models.Model):
     owner = models.OneToOneField(settings.AUTH_USER_MODEL, primary_key=True, on_delete=models.CASCADE)
     revision = models.PositiveIntegerField(default=0)
@@ -446,9 +446,9 @@ class SellerProfile(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
-# 功能：有审核与真实外发证据的报价单。
-# 逻辑：draft 可编辑，审核后内容冻结；sent 只能由真实发送结果写入。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Quotes with review and genuine external-send evidence.
+# Logic: Drafts are editable and reviewed contents are frozen; only genuine sending results may set sent.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Quote(CompanyRecord):
     number = models.CharField(max_length=100)
     status = models.CharField(max_length=20, default="draft", db_index=True)
@@ -458,9 +458,9 @@ class Quote(CompanyRecord):
     sent_at = models.DateTimeField(null=True, blank=True)
     external_message_id = models.CharField(max_length=200, blank=True)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -469,9 +469,9 @@ class Quote(CompanyRecord):
         ]
 
 
-# 功能：报价明细快照。
-# 逻辑：金额按数量乘单价减整行折扣计算，不推断税费或汇率。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Quote line snapshots.
+# Logic: Calculate quantity times unit price minus the whole-line discount; do not infer taxes or exchange rates.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class QuoteLine(Record):
     quote = models.ForeignKey(Quote, on_delete=models.PROTECT, related_name="lines")
     product = models.ForeignKey(
@@ -482,9 +482,9 @@ class QuoteLine(Record):
     unit_price = models.DecimalField(max_digits=18, decimal_places=2)
     discount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.CheckConstraint(
@@ -496,9 +496,9 @@ class QuoteLine(Record):
         ]
 
 
-# 功能：客户订单及确认状态。
-# 逻辑：draft 不进入 Agent 历史订单投影，confirmed 后冻结交易内容。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Customer orders and confirmation state.
+# Logic: Drafts are excluded from Agent historical-order projections; confirmation freezes transaction contents.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class SalesOrder(CompanyRecord):
     number = models.CharField(max_length=100)
     quote = models.ForeignKey(
@@ -509,9 +509,9 @@ class SalesOrder(CompanyRecord):
     notes = models.TextField(blank=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -520,9 +520,9 @@ class SalesOrder(CompanyRecord):
         ]
 
 
-# 功能：订单明细快照。
-# 逻辑：确认后不可编辑，目录变化不追溯修改单据。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Order line snapshots.
+# Logic: Confirmed records are immutable; catalog changes never retroactively modify documents.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class OrderLine(Record):
     order = models.ForeignKey(
         SalesOrder, on_delete=models.PROTECT, related_name="lines"
@@ -535,9 +535,9 @@ class OrderLine(Record):
     unit_price = models.DecimalField(max_digits=18, decimal_places=2)
     discount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.CheckConstraint(
@@ -549,9 +549,9 @@ class OrderLine(Record):
         ]
 
 
-# 功能：客户跟进与到期提醒。
-# 逻辑：后台只创建应用内提醒，不自动发送对外消息。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Customer follow-ups and due reminders.
+# Logic: Background processing creates only in-app reminders, never automatic external messages.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class FollowUp(CompanyRecord):
     title = models.CharField(max_length=240)
     description = models.TextField(blank=True)
@@ -559,9 +559,9 @@ class FollowUp(CompanyRecord):
     status = models.CharField(max_length=20, default="open", db_index=True)
 
 
-# 功能：员工自己的通用或客户助手会话。
-# 逻辑：空公司表示通用聊天；客户会话不随业务共享，消息不可伪造为 Agent 输出。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Employees' own general or company assistant conversations.
+# Logic: A null company denotes general chat; company conversations are not business-shared and messages cannot impersonate Agent output.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Conversation(Record):
     company = models.ForeignKey(
         "crm.Company",
@@ -573,9 +573,9 @@ class Conversation(Record):
     title = models.CharField(max_length=240, default="新对话")
 
 
-# 功能：不可变会话消息。
-# 逻辑：当前浏览器只允许提交用户消息；模型回复由未来受保护集成提供。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Immutable conversation messages.
+# Logic: The current browser may submit only user messages; future protected integration supplies model replies.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Message(Record):
     conversation = models.ForeignKey(
         Conversation, on_delete=models.PROTECT, related_name="messages"
@@ -584,9 +584,9 @@ class Message(Record):
     content = models.TextField()
     client_key = models.UUIDField()
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -595,9 +595,9 @@ class Message(Record):
         ]
 
 
-# 功能：私有会话中的可编辑草稿。
-# 逻辑：浏览器输入与邮件草稿分开，只有显式确认动作可执行外发。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Editable drafts in private conversations.
+# Logic: Separate browser input from email drafts; only explicitly confirmed actions may send externally.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Draft(Record):
     conversation = models.ForeignKey(
         Conversation, on_delete=models.PROTECT, related_name="drafts"
@@ -610,9 +610,9 @@ class Draft(Record):
     recipients = models.JSONField(default=list, blank=True)
 
 
-# 功能：明确确认的外部工具动作与执行状态。
-# 逻辑：支持 Gmail/QQ 发信及日历创建；准备时冻结参数，后台仅执行显式批准记录，未知结果不自动重试。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Explicitly confirmed external-tool actions and execution states.
+# Logic: Support Gmail/QQ sending and calendar creation. Freeze parameters during preparation; workers execute only explicitly approved records and never automatically retry unknown outcomes.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class ToolAction(Record):
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, related_name="tool_actions"
@@ -643,9 +643,9 @@ class ToolAction(Record):
     result = models.JSONField(null=True, blank=True)
     error = models.JSONField(null=True, blank=True)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -654,9 +654,9 @@ class ToolAction(Record):
         ]
 
 
-# 功能：员工私有文件及客户关联。
-# 逻辑：文件经认证接口下载，不暴露本地路径，不执行上传内容。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: Employee-private files and company links.
+# Logic: Download through authenticated APIs without exposing local paths or executing uploaded content.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Attachment(Record):
     company = models.ForeignKey(
         "crm.Company", on_delete=models.PROTECT, related_name="attachments"
@@ -668,9 +668,9 @@ class Attachment(Record):
     sha256 = models.CharField(max_length=64)
 
 
-# 功能：仅追加的业务操作记录。
-# 逻辑：记录操作者、对象标识和状态变化，不复制秘密或正文。
-# 约束：仅经事务追加；API 不提供修改或删除，数据库管理员仍须遵循审计保留策略。
+# Function: Append-only business operation records.
+# Logic: Record actor, object identifier, and state changes without copying secrets or bodies.
+# Constraints: Append only within transactions; APIs expose no modification/deletion, and database administrators must follow audit retention policy.
 class AuditEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(
@@ -689,9 +689,9 @@ class AuditEvent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-# 功能：应用内到期提醒。
-# 逻辑：每个负责人和跟进版本只创建一条提醒，后台轮询不重复创建。
-# 约束：通过授权事务服务修改；字段值不代表外部动作已经完成。
+# Function: In-app due reminders.
+# Logic: Create one reminder per assignee/follow-up version; background polling does not duplicate reminders.
+# Constraints: Modify through authorized transactional services; field values do not imply completion of external actions.
 class Notification(Record):
     follow_up = models.ForeignKey(
         FollowUp, on_delete=models.PROTECT, related_name="notifications"
@@ -700,9 +700,9 @@ class Notification(Record):
     title = models.CharField(max_length=240)
     read_at = models.DateTimeField(null=True, blank=True)
 
-    # 功能：声明模型数据库约束。
-    # 逻辑：由 Django 迁移生成一致表结构。
-    # 约束：不代替服务层权限与跨实体校验。
+    # Function: Declare model database constraints.
+    # Logic: Django migrations generate consistent table structures.
+    # Constraints: Not a replacement for service-layer permissions or cross-entity validation.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -712,9 +712,9 @@ class Notification(Record):
         ]
 
 
-# 功能：保存单独授权的外部服务加密凭证。
-# 逻辑：用 Fernet 加密 Google OAuth 或 QQ 授权码载荷，原只读同步连接不自动扩权。
-# 约束：浏览器只可查看连接状态，缺少密钥时明确失败，不回退为明文。
+# Function: Encrypted credentials for separately authorized external services.
+# Logic: Encrypt Google OAuth or QQ authorization payloads with Fernet; existing read-only synchronization connections gain no permissions automatically.
+# Constraints: Browsers may view connection status only; missing keys fail explicitly without plaintext fallback.
 class Connection(Record):
     provider = models.CharField(
         max_length=16,
@@ -727,9 +727,9 @@ class Connection(Record):
     account = models.CharField(max_length=320)
     encrypted_credentials = models.TextField()
 
-    # 功能：声明外部连接身份唯一性。
-    # 逻辑：员工、提供方、账号联合唯一。
-    # 约束：更新授权替换同身份连接，不产生额外访问主体。
+    # Function: Declare external connection identity uniqueness.
+    # Logic: Employee, provider, and account form a unique combination.
+    # Constraints: Renewed authorization replaces the same-identity connection without creating another access principal.
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -739,9 +739,9 @@ class Connection(Record):
         ]
 
 
-# 功能：保存活动事实与显式商机关联。
-# 逻辑：保留创建者、公开活动事实及日期精度；Agent 同 URL 同开始时间只保留一份记录。
-# 约束：关联商机输出仍按访问者过滤；日期型结束边界排除末日之后的一天，不代表实际钟点。
+# Function: Store event facts and explicit opportunity links.
+# Logic: Retain creator, public event facts, and date precision; keep one Agent record per URL/start time.
+# Constraints: Filter linked opportunities by viewer; date-only end boundaries exclude the day after the final included date and do not denote an actual clock time.
 class WorldEvent(Record):
     time_precision = models.CharField(max_length=8, choices=[("datetime", "确切时间"), ("date", "仅日期")], default="datetime")
     data_source = models.CharField(max_length=30, default="manual")
@@ -760,16 +760,16 @@ class WorldEvent(Record):
     suggested_actions = models.JSONField(default=list, blank=True)
     opportunity_ids = models.JSONField(default=list, blank=True)
 
-    # 功能：禁止跨账号重复采集同一场活动。
-    # 逻辑：仅对有来源的 Agent 记录约束 URL 和开始时间；归档不释放唯一性。
-    # 约束：同 URL 不同届次允许存储；人工记录不受采集去重约束。
+    # Function: Prevent duplicate cross-account collection of the same event.
+    # Logic: Constrain URL/start time only for Agent records with sources; archival does not release uniqueness.
+    # Constraints: Allow different editions at the same URL; manual records are exempt from collection deduplication.
     class Meta:
         constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start")]
 
 
-# 功能：保存行业资讯及单组公开销售线索、来源金额和证据。
-# 逻辑：旧记录新增文本为空、金额为 null；金额单独保留口径，不计入 CRM 商机。
-# 约束：归档后仍阻止重采；不按公司名创建或关联私人记录，不抓取外站、不生成推断。
+# Function: Store industry news, one set of public sales leads, source amounts, and evidence.
+# Logic: New text fields on old records remain empty and amounts null; preserve monetary meaning separately without adding amounts to CRM opportunities.
+# Constraints: Archived records still block recollection; do not create/link private records by company name, fetch external sites, or generate inferences.
 class WorldNews(Record):
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
@@ -794,9 +794,9 @@ class WorldNews(Record):
     amount_scope = models.CharField(max_length=30, choices=NEWS_AMOUNT_SCOPES, blank=True, default="")
     amount_evidence = models.CharField(max_length=400, blank=True, default="")
 
-    # 功能：约束采集新闻身份和金额存储一致性。
-    # 逻辑：非空 Agent 来源全局唯一；金额非负且元数据全有，无金额时元数据全空。
-    # 约束：不合并人工记录，不覆盖既有正文。
+    # Function: Constrain collected news identity and monetary storage consistency.
+    # Logic: Nonempty Agent sources are globally unique; amounts are nonnegative with all metadata present, or absent with all metadata empty.
+    # Constraints: Do not merge manual records or overwrite existing bodies.
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["source_url"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_news_agent_source"),

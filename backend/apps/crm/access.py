@@ -1,24 +1,24 @@
-"""职责：统一业务授权、冲突错误和 JSON 规范化。
-实现：正式模式核验令牌和归属；实验模式免登录，开放跨账号查询并跳过 If-Match。
-关联：浏览器 Session、AgentCredential 与 common.laboratory 的显式实验开关共用。
-目录：
-- Conflict：表示版本、幂等或租约冲突。
-- InvalidState：表示操作与当前状态不兼容。
-- AgentAuthentication：认证仅用于后端业务接口的高熵 Agent 服务令牌。
-- AgentAuthentication.authenticate：校验 Authorization: Agent 令牌。
-- AgentAuthentication.authenticate_header：声明 Agent 认证方案。
-- plain：转换已经校验的数据为 JSON 可存储值。
-- company_for：解析属于当前用户的公司。
-- mailbox_for：解析属于当前用户的业务邮箱。
-- check_version：要求调用方提供与数据库相同的乐观锁版本。
-变量索引：
-- Conflict.default_code：协议错误码，供客户端分支处理。
-- Conflict.default_detail：默认可操作的错误说明。
-- Conflict.status_code：该异常对应的 HTTP 状态码。
-- InvalidState.default_code：协议错误码，供客户端分支处理。
-- InvalidState.default_detail：默认可操作的错误说明。
-- InvalidState.status_code：该异常对应的 HTTP 状态码。
-- logger：当前模块的脱敏诊断日志记录器。
+"""Responsibility: Centralize business authorization, conflict errors, and JSON normalization.
+Implementation: Production mode validates tokens and ownership; experiment mode needs no sign-in, permits cross-account queries, and skips If-Match.
+Relationships: Shared by browser Session, AgentCredential, and the explicit experiment switch in common.laboratory.
+Directory:
+- Conflict: Represent a version, idempotency, or lease conflict.
+- InvalidState: Represent an operation incompatible with current state.
+- AgentAuthentication: Authenticate high-entropy Agent service tokens used only by backend business interfaces.
+- AgentAuthentication.authenticate: Validate an Authorization: Agent token.
+- AgentAuthentication.authenticate_header: Declare the Agent authentication scheme.
+- plain: Convert validated data to JSON-storable values.
+- company_for: Resolve a company that belongs to the current user.
+- mailbox_for: Resolve a business mailbox that belongs to the current user.
+- check_version: Require the caller's optimistic-lock version to match the database.
+Variable index:
+- Conflict.default_code: Protocol error code used by client branches.
+- Conflict.default_detail: Default actionable error description.
+- Conflict.status_code: HTTP status for this exception.
+- InvalidState.default_code: Protocol error code used by client branches.
+- InvalidState.default_detail: Default actionable error description.
+- InvalidState.status_code: HTTP status for this exception.
+- logger: Redacted diagnostic logger for this module.
 """
 import hashlib
 import json
@@ -35,33 +35,33 @@ from common.laboratory import enabled, identity, owner_scope
 logger = logging.getLogger("salesmate.business")
 
 
-# 功能：表示版本、幂等或租约冲突。
-# 逻辑：统一使用 HTTP 409 与协议 conflict 错误码。
-# 约束：不进行隐式重试。
+# Function: Represent a version, idempotency, or lease conflict.
+# Logic: Consistently use HTTP 409 and the protocol conflict error code.
+# Constraints: Does not retry implicitly.
 class Conflict(APIException):
     status_code = 409
     default_code = "conflict"
     default_detail = "数据已变化，请刷新后重试。"
 
 
-# 功能：表示操作与当前状态不兼容。
-# 逻辑：返回可机器处理的 invalid_state。
-# 约束：不掩盖失败为成功。
+# Function: Represent an operation incompatible with current state.
+# Logic: Return machine-actionable invalid_state.
+# Constraints: Does not disguise failure as success.
 class InvalidState(APIException):
     status_code = 409
     default_code = "invalid_state"
     default_detail = "当前状态不允许此操作。"
 
 
-# 功能：认证仅用于后端业务接口的高熵 Agent 服务令牌。
-# 逻辑：实验模式使用公开身份；正式模式及输出 OAuth 凭据的领取端点仍校验 Agent 摘要。
-# 约束：公开模式身份仅标记归属；OAuth 凭据传输保留机器认证，部署使用 HTTPS。
+# Function: Authenticate high-entropy Agent service tokens used only by backend business interfaces.
+# Logic: Experiment mode uses a public identity; production mode and claim endpoints that output OAuth credentials continue validating the Agent digest.
+# Constraints: Public-mode identity only marks ownership; OAuth credential transport retains machine authentication and deployments use HTTPS.
 class AgentAuthentication(BaseAuthentication):
-    # 功能：校验 Authorization: Agent 令牌。
-    # 输入：`request` 为 DRF 请求，读取 Authorization 头。
-    # 输出：已验证用户与凭证元组；无头返回 None，无效头抛 AuthenticationFailed。
-    # 逻辑：实验模式使用公开身份；正式模式查找 SHA-256 摘要并要求 owner 仍启用。
-    # 约束：仅记录失败类型，不记录头或令牌内容。
+    # Function: Validate an Authorization: Agent token.
+    # Inputs: `request` is a DRF request and reads its Authorization header.
+    # Outputs: A validated user and credential tuple; returns None without a header and raises AuthenticationFailed for an invalid header.
+    # Logic: Experiment mode uses public identity; production mode looks up a SHA-256 digest and requires the owner to remain active.
+    # Constraints: Logs only failure type and never header or token content.
     def authenticate(self, request):
         actor = None if request.path.endswith("/mailbox-syncs/claim/") else identity(request)
         if actor is not None:
@@ -78,29 +78,29 @@ class AgentAuthentication(BaseAuthentication):
             raise AuthenticationFailed("Agent 服务凭证无效。")
         return credential.owner, credential
 
-    # 功能：声明 Agent 认证方案。
-    # 输入：`request` 为未认证请求，不读取正文。
-    # 输出：WWW-Authenticate 使用的方案名。
-    # 逻辑：返回固定 Agent 字符串。
-    # 约束：无副作用。
+    # Function: Declare the Agent authentication scheme.
+    # Inputs: `request` is an unauthenticated request and does not read its body.
+    # Outputs: Scheme name used by WWW-Authenticate.
+    # Logic: Return the fixed Agent string.
+    # Constraints: Has no side effects.
     def authenticate_header(self, request):
         return "Agent"
 
 
-# 功能：转换已经校验的数据为 JSON 可存储值。
-# 输入：`value` 为含 UUID、日期或 Decimal 的 DRF 数据。
-# 输出：普通 JSON 数据结构。
-# 逻辑：使用 DRF 渲染器保持 HTTP 表示与数据库快照一致。
-# 约束：不执行网络或数据库操作。
+# Function: Convert validated data to JSON-storable values.
+# Inputs: `value` is DRF data containing UUIDs, dates, or Decimals.
+# Outputs: A plain JSON data structure.
+# Logic: Use the DRF renderer to keep HTTP representation consistent with database snapshots.
+# Constraints: Does not execute network or database operations.
 def plain(value):
     return json.loads(JSONRenderer().render(value))
 
 
-# 功能：解析属于当前用户的公司。
-# 输入：`owner` 为已认证用户；`company_id` 为公司 UUID；`lock` 控制是否取得事务行锁。
-# 输出：Company；UUID 格式错误返回 400，不存在或越权返回相同 404。
-# 逻辑：正式模式按 owner 过滤；实验模式开放所有公司。
-# 约束：lock=True 时调用方必须处于事务中。
+# Function: Resolve a company belonging to the current user.
+# Inputs: `owner` is the authenticated user; `company_id` is the company UUID; `lock` controls transactional row locking.
+# Outputs: Company; invalid UUID format returns 400, while absent and unauthorized records return the same 404.
+# Logic: Production mode filters by owner; experiment mode exposes all companies.
+# Constraints: Callers must be in a transaction when lock=True.
 def company_for(owner, company_id, lock=False):
     try:
         company_id = uuid.UUID(str(company_id))
@@ -115,11 +115,11 @@ def company_for(owner, company_id, lock=False):
         raise NotFound("公司不存在。") from None
 
 
-# 功能：解析属于当前用户的业务邮箱。
-# 输入：`owner` 为认证用户；`mailbox_id` 为后端邮箱 UUID；`lock` 控制行锁。
-# 输出：Mailbox；UUID 格式错误返回 400，不存在或越权返回 404。
-# 逻辑：正式模式使用 owner 与 ID 联合查询；实验模式按 ID 查询所有邮箱。
-# 约束：地址存在不代表 Gmail OAuth 已验证。
+# Function: Resolve a business mailbox belonging to the current user.
+# Inputs: `owner` is the authenticated user; `mailbox_id` is the backend mailbox UUID; `lock` controls row locking.
+# Outputs: Mailbox; invalid UUID format returns 400, while absent and unauthorized records return 404.
+# Logic: Production mode queries by owner and ID together; experiment mode queries every mailbox by ID.
+# Constraints: Address existence does not mean Gmail OAuth is verified.
 def mailbox_for(owner, mailbox_id, lock=False):
     try:
         mailbox_id = uuid.UUID(str(mailbox_id))
@@ -134,11 +134,11 @@ def mailbox_for(owner, mailbox_id, lock=False):
         raise NotFound("邮箱不存在。") from None
 
 
-# 功能：要求调用方提供与数据库相同的乐观锁版本。
-# 输入：`expected` 为 HTTP 版本整数；`actual` 为实体当前版本。
-# 输出：无；缺失或格式错误抛 ValidationError，过期抛 Conflict。
-# 逻辑：实验模式直接通过；正式模式只接受非负整数字符串或整数。
-# 约束：校验时调用方须持有相关行锁。
+# Function: Require the caller to supply an optimistic-lock version equal to the database version.
+# Inputs: `expected` is the HTTP version integer and `actual` is the entity's current version.
+# Outputs: None; missing or malformed values raise ValidationError and stale values raise Conflict.
+# Logic: Experiment mode passes directly; production mode accepts only non-negative integer strings or integers.
+# Constraints: Callers must hold the relevant row lock during validation.
 def check_version(expected, actual):
     if enabled():
         return

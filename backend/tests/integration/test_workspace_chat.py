@@ -1,16 +1,16 @@
-"""职责：验证工作空间升级的创建边界、旧任务退役和历史保留。
-实现：使用真实数据库与 API；仅直接造旧记录模拟升级前状态，调用真实 Worker 启动使用的退役服务。
-关联：chat.services、chat_worker 启动清理、sales 会话创建服务和邮件草稿准备。
-目录：
-- WorkspaceChatTests：升级与安全边界测试。
-- WorkspaceChatTests.setUp：建立员工及新旧会话。
-- WorkspaceChatTests.legacy_request：构造旧版本已存在的请求。
-- WorkspaceChatTests.test_legacy_creation_and_retry_rejected：新建和重试不再进入公司聊天。
-- WorkspaceChatTests.test_claim_retires_legacy_and_continues：旧 pending 不阻挡工作空间领取。
-- WorkspaceChatTests.test_retirement_preserves_history_and_is_idempotent：终止旧活动任务且保留终态历史。
-- WorkspaceChatTests.test_workspace_draft_requires_owner_and_explicit_customer：工作空间草稿可准备动作且不可跨员工或旧客户。
-变量索引：
-- 无
+"""Responsibility: Verify workspace-upgrade creation boundaries, legacy-task retirement, and history retention.
+Implementation: Use real database and API; directly construct legacy records only to simulate pre-upgrade state, then call the retirement service used by real Worker startup.
+Relationships: Covers `chat.services`, chat_worker startup cleanup, sales conversation creation service, and email-draft preparation.
+Directory:
+- WorkspaceChatTests: Upgrade and safety-boundary tests.
+- WorkspaceChatTests.setUp: Establish worker and new and legacy conversations.
+- WorkspaceChatTests.legacy_request: Construct an existing request from the legacy version.
+- WorkspaceChatTests.test_legacy_creation_and_retry_rejected: New creation and retry no longer enter company chat.
+- WorkspaceChatTests.test_claim_retires_legacy_and_continues: Legacy pending does not block workspace claiming.
+- WorkspaceChatTests.test_retirement_preserves_history_and_is_idempotent: End legacy active tasks while retaining terminal history.
+- WorkspaceChatTests.test_workspace_draft_requires_owner_and_explicit_customer: Workspace draft can prepare action but cannot cross worker or legacy customer.
+Variable index:
+- None
 """
 
 import uuid
@@ -27,15 +27,15 @@ from rest_framework.test import APIClient
 from tests.integration.test_chat import fixture
 
 
-# 功能：覆盖旧契约退役和工作空间草稿权限。
-# 逻辑：真实 ORM 与服务执行，旧数据显式构造而非经已停用创建路径。
-# 约束：不访问生产库或发送邮件，TestCase 回滚测试记录。
+# Function: Cover legacy-contract retirement and workspace-draft permissions.
+# Logic: Execute real ORM and services, explicitly constructing legacy data rather than using the disabled creation path.
+# Constraints: Do not access production database or send mail; TestCase rolls back test records.
 class WorkspaceChatTests(TestCase):
-    # 功能：创建员工、工作空间及公司绑定历史会话。
-    # 输入：无参数，使用隔离测试数据库。
-    # 输出：实例夹具和员工认证客户端。
-    # 逻辑：复用公开测试夹具，直接造旧会话模拟升级前数据。
-    # 约束：不改写系统用户或实际外部凭证。
+    # Function: Create worker, workspace, and company-bound historical conversation.
+    # Inputs: No parameters; uses isolated test database.
+    # Outputs: Instance fixtures and worker-authenticated client.
+    # Logic: Reuse public test fixture and directly construct legacy conversation to simulate pre-upgrade data.
+    # Constraints: Do not rewrite system users or actual external credentials.
     def setUp(self):
         self.owner, self.other, self.company, self.workspace = fixture()
         self.legacy = models.Conversation.objects.create(
@@ -44,11 +44,11 @@ class WorkspaceChatTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.owner)
 
-    # 功能：构造升级前的公司绑定请求。
-    # 输入：`status` 为待验证状态，默认 pending。
-    # 输出：持久化 AnswerRequest。
-    # 逻辑：保留原公司、会话及用户消息关系，终态 result 用于比较退役前后。
-    # 约束：只用作历史数据夹具，不绕过生产入口创建新任务。
+    # Function: Construct a pre-upgrade company-bound request.
+    # Inputs: `status` is the state under test and defaults to pending.
+    # Outputs: Persisted AnswerRequest.
+    # Logic: Retain original company, conversation, and user-message relationships; terminal `result` compares before and after retirement.
+    # Constraints: Use only as historical-data fixture and do not bypass production entry point to create new tasks.
     def legacy_request(self, status="pending"):
         message = models.Message.objects.create(
             owner=self.owner,
@@ -66,11 +66,11 @@ class WorkspaceChatTests(TestCase):
             result={"historical": True} if status == "completed" else None,
         )
 
-    # 功能：验证所有新聊天仅能由工作空间会话创建。
-    # 输入：无参数；浏览器创建载荷与旧失败任务。
-    # 输出：公司会话创建为 400，旧会话提交和重试拒绝，历史仍可读。
-    # 逻辑：检查拒绝操作没有创建用户消息或后继任务。
-    # 约束：不删除或重新绑定旧会话，工作空间显式 null 仍可创建。
+    # Function: Verify that every new chat can be created only from a workspace conversation.
+    # Inputs: No parameters; browser creation payload and legacy failed task.
+    # Outputs: Company-conversation creation returns 400, legacy submission and retry reject, and history remains readable.
+    # Logic: Check rejected operations create neither user messages nor successor tasks.
+    # Constraints: Do not delete or rebind legacy conversation; workspace explicit null remains creatable.
     def test_legacy_creation_and_retry_rejected(self):
         created = self.client.post(
             "/api/v1/sales/records/conversations/",
@@ -99,11 +99,11 @@ class WorkspaceChatTests(TestCase):
         self.assertEqual(models.Message.objects.count(), 1)
         self.assertEqual(services.request_for(self.owner, old.pk).pk, old.pk)
 
-    # 功能：验证运行期遗留任务不会阻塞领取队列。
-    # 输入：无参数；旧公司 pending 和新的工作空间请求。
-    # 输出：只返回五字段工作空间请求，旧请求明确失败且不生成助手消息。
-    # 逻辑：同员工锁内跳过旧任务并继续寻找可执行任务。
-    # 约束：不隐式转移问题、不自动重新调用模型。
+    # Function: Verify that legacy runtime tasks do not block the claim queue.
+    # Inputs: No parameters; legacy company pending task and new workspace request.
+    # Outputs: Returns only a five-field workspace request; legacy request explicitly fails without assistant message.
+    # Logic: Skip legacy task under the same worker lock and continue searching for executable task.
+    # Constraints: Do not implicitly transfer question or automatically reinvoke the model.
     def test_claim_retires_legacy_and_continues(self):
         old = self.legacy_request()
         current, _ = services.submit(
@@ -123,11 +123,11 @@ class WorkspaceChatTests(TestCase):
         self.assertIsNotNone(old.finished_at)
         self.assertIsNone(old.assistant_message_id)
 
-    # 功能：验证 Worker 启动的清理只结束旧活动任务。
-    # 输入：无参数；pending、processing、completed 历史和新工作空间任务。
-    # 输出：旧活动任务结束，工作空间及历史结果不变；第二次运行无额外变化。
-    # 逻辑：调用 Worker 使用的退役服务两次，核对终态幂等及工作空间不受影响。
-    # 约束：不改变数据库结构，不调用模型，不把旧任务转为新的 pending。
+    # Function: Verify that Worker-startup cleanup ends only legacy active tasks.
+    # Inputs: No parameters; pending, processing, completed history, and new workspace task.
+    # Outputs: Legacy active tasks end while workspace and historical results remain unchanged; second run makes no additional change.
+    # Logic: Call Worker retirement service twice and check terminal-state idempotency and unaffected workspace.
+    # Constraints: Do not change database structure, call model, or turn legacy tasks into new pending tasks.
     def test_retirement_preserves_history_and_is_idempotent(self):
         pending = self.legacy_request()
         self.legacy = models.Conversation.objects.create(
@@ -158,11 +158,11 @@ class WorkspaceChatTests(TestCase):
         self.assertEqual(current.status, "pending")
         self.assertEqual(models.Message.objects.count(), 4)
 
-    # 功能：验证工作空间草稿用于明确客户的动作，归属限制仍生效。
-    # 输入：无参数；本人连接和邮件草稿、他人会话及其他客户历史会话。
-    # 输出：本人工作空间草稿成功冻结，其他员工或错误客户草稿拒绝。
-    # 逻辑：调用真实参数准备服务，仅改变草稿所在会话作为反例。
-    # 约束：不执行 provider、不批准动作、无真实连接凭证。
+    # Function: Verify that workspace drafts serve actions for an explicit customer while ownership restrictions remain effective.
+    # Inputs: No parameters; owner connection and email draft, another worker conversation, and another-customer legacy conversation.
+    # Outputs: Owner workspace draft freezes successfully; drafts of another worker or wrong customer reject.
+    # Logic: Call real parameter-preparation service and change only the draft conversation as counterexample.
+    # Constraints: Do not execute provider, approve action, or use real connection credentials.
     def test_workspace_draft_requires_owner_and_explicit_customer(self):
         connector = models.Connection.objects.create(
             owner=self.owner,

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 职责：发布当前 main 提交，不以 CI 诊断结果作为前提，使用独立环境和双 Web 实例切换。
-# 实现：保护部署来源与运行文件、构建候选、排空后台、备份及实际迁移、基本就绪后切流，旧请求结束后退役。
-# 关联：root 受限入口、systemd 模板、独立聊天服务及 shared 目录须由管理员初始化。
-# 目录：report_failure 记录失败；phase 记录状态转换；其余为顺序部署。
-# 变量索引：revision/latest/previous 为版本；state/repo 为发布目录；stage/backup 为故障定位；
-# release/app/py 为候选路径；active/target 为端口；source/mode/name 为归档和共享路径处理；
-# attempt/pid/old_nginx 为就绪及排空观察；result 为退出码；FD 9 为互斥发布锁。
+# Responsibility: Release the current main commit independently of CI diagnostics using isolated environments and dual Web-instance cutover.
+# Implementation: Protect deployment source/runtime files, build candidate, drain background work, back up and migrate, cut traffic after basic readiness, and retire old instance after requests end.
+# Relationships: An administrator initializes root restricted entry, systemd templates, standalone chat service, and shared directory.
+# Directory: report_failure records failure; phase records state transition; remaining steps deploy sequentially.
+# Variable index: revision/latest/previous are versions; state/repo are release directories; stage/backup locate failures.
+# release/app/py are candidate paths; active/target are ports; source/mode/name handle archive/shared paths.
+# attempt/pid/old_nginx observe readiness/draining; result is exit code; FD 9 is mutual-exclusion release lock.
 set -euo pipefail
 umask 027
 revision="${1:-}"
@@ -17,11 +17,11 @@ backup=not-created
 exec 9>"$state/deploy.lock"
 flock -n 9 || exit 75
 exec > >(tee -a "$state/deploy.log") 2>&1
-# 功能：记录故障阶段并保留现场。
-# 输入：退出码及 stage/revision/backup。
-# 输出：失败日志和状态文件。
-# 逻辑：不回滚、不重试业务、不强杀在途任务。
-# 约束：失败时后台可能已停止；管理员按阶段决定恢复方式。
+# Function: Record failure stage and preserve the scene.
+# Inputs: Exit code plus stage/revision/backup.
+# Outputs: Failure log and state file.
+# Logic: Does not roll back, retry business work, or force-kill in-flight tasks.
+# Constraints: Background services may already be stopped; administrators choose recovery by stage.
 report_failure() {
     local result=$?
     if [[ "$result" -ne 0 ]]; then
@@ -29,11 +29,11 @@ report_failure() {
         printf 'failed %s %s %s\n' "$revision" "$stage" "$backup" > "$state/status"
     fi
 }
-# 功能：记录部署状态转换。
-# 输入：第一个参数为固定阶段名，读取 revision。
-# 输出：日志及状态文件。
-# 逻辑：在执行阶段动作前写入，便于定位长时间排空或安装。
-# 约束：不记录凭证，不执行重试。
+# Function: Record deployment state transition.
+# Inputs: First parameter is fixed stage name; reads revision.
+# Outputs: Log and state file.
+# Logic: Writes before stage action to locate long draining or installation.
+# Constraints: Does not record credentials or retry.
 phase() {
     stage="$1"
     printf 'PHASE revision=%s stage=%s time=%s\n' "$revision" "$stage" "$(date -u +%FT%TZ)"
@@ -46,7 +46,7 @@ active=$(cat /opt/salesmate/active-port)
 [[ "$active" == 8001 || "$active" == 8002 ]]
 target=8001
 [[ "$active" != 8001 ]] || target=8002
-# 受保护的聊天服务须先由管理员安装；缺失时在排空后台前明确失败。
+# An administrator must install the protected chat service first; absence fails explicitly before background draining.
 systemctl cat salesmate-chat.service > /dev/null 2>&1 || { printf 'Install the reviewed salesmate-chat.service before deployment.\n' >&2; exit 64; }
 phase fetch
 export GIT_SSH_COMMAND='ssh -i /etc/salesmate-deploy/repository_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/salesmate-deploy/github_known_hosts'
@@ -92,13 +92,13 @@ chown -R salesmate:salesmate "$release"
 sudo -u salesmate python3 -m venv "$release/venv"
 sudo -u salesmate "$py" -m pip install -r "$app/backend/requirements/base.txt" -r "$app/agent/requirements.txt" > "$release/dependencies.log" 2>&1
 cd "$app"
-# 文档、契约、依赖一致性和迁移类型只在独立诊断中检查，不作为服务器发布门禁。
+# Documentation, contract, dependency consistency, and migration types are checked only by independent diagnostics, not server-release gates.
 sudo -u salesmate env DJANGO_SETTINGS_MODULE=config.settings.lightsail "$py" backend/manage.py collectstatic --noinput > "$release/static.log" 2>&1
 sudo -u salesmate cp -a backend/frontend/assets/. backend/staticfiles/
 find backend/staticfiles -type d -exec chmod 755 {} +
 find backend/staticfiles -type f -exec chmod 644 {} +
 phase drain
-# 先排空独立聊天，再停调度器并等待结果，最后停 Celery 消费者；旧 Web 继续服务。
+# Drain standalone chat first, then stop schedulers and wait for results, and finally stop Celery consumers; old Web continues serving.
 systemctl stop salesmate-chat
 systemctl stop salesmate-crm salesmate-sales
 systemctl stop salesmate-celery@crm salesmate-celery@sales
@@ -114,7 +114,7 @@ readlink -f /opt/salesmate/venv > "$backup/previous-venv"
 cp /etc/nginx/snippets/salesmate-release.conf "$backup/nginx.conf"
 sha256sum /opt/salesmate/shared/runtime.env > "$backup/environment.sha256"
 phase migrate
-# 不运行 Django 系统预检；实际迁移错误仍终止发布，DDL 锁等待上限保持五秒。
+# Do not run Django system prechecks; actual migration errors still end release and DDL lock wait remains five seconds.
 sudo -u salesmate env PGOPTIONS='-c lock_timeout=5s' "$py" backend/manage.py migrate --noinput --skip-checks
 phase candidate
 systemctl stop "salesmate-web@$target"
@@ -154,7 +154,7 @@ systemctl start salesmate-celery@crm salesmate-celery@sales
 systemctl start salesmate-crm salesmate-sales salesmate-chat
 systemctl is-active "salesmate-web@$target" salesmate-crm salesmate-sales salesmate-chat salesmate-celery@crm salesmate-celery@sales nginx redis-server postgresql
 phase retire
-# 等旧 Nginx 释放请求再停旧 Web；超时保留旧实例供排查。
+# Wait for old Nginx requests to drain before stopping old Web; retain the old instance for investigation on timeout.
 for pid in $old_nginx; do
     for attempt in $(seq 1 120); do
         kill -0 "$pid" 2>/dev/null || break

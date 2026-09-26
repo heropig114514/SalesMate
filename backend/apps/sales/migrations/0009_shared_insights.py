@@ -1,12 +1,12 @@
-"""职责：增加活动时间精度和跨账号 Agent 来源唯一约束。
-实现：先报告既有重复，拒绝自动删改；仅将严格匹配旧 Agent 日期协议的记录标为 date，原时间不变。
-关联：sales.models 的共享资讯存储；迁移冻结兼容协议，不依赖运行时 Agent 或日期辅助代码。
-目录：
-- prepare_insights：检查历史重复并标记明确的日期占位记录。
-- Migration：声明新增字段、数据校验和唯一约束。
-变量索引：
-- Migration.dependencies：依赖现有资讯来源字段。
-- Migration.operations：新增精度、校验和数据库约束。
+"""Responsibility: Add event time precision and cross-account Agent source uniqueness constraints.
+Implementation: Report existing duplicates first and reject automatic edits/deletion; mark only strict legacy Agent date-protocol matches as date, retaining original timestamps.
+Relationships: Shared insight storage in sales.models; freeze the compatibility protocol in the migration without runtime Agent/date-helper dependencies.
+Directory:
+- prepare_insights: Check historical duplicates and mark explicit date-placeholder records.
+- Migration: Declare the new field, data checks, and uniqueness constraints.
+Variable index:
+- Migration.dependencies: Depend on existing insight source fields.
+- Migration.operations: Add precision, validation, and database constraints.
 """
 
 from datetime import time, timezone
@@ -15,11 +15,11 @@ from django.db import migrations, models
 from django.db.models import Count
 
 
-# 功能：为数据库约束准备既有数据。
-# 输入：`apps` 历史模型注册表、`schema_editor` 当前数据库迁移连接。
-# 输出：无；存在重复时抛 RuntimeError 并在原子迁移中回滚。
-# 逻辑：分别检查新闻 URL、活动 URL 与开始时间的重复；匹配完整 Agent 日期标记及 UTC 中午递增边界才设置 date。
-# 约束：不删除/合并/归档记录，不改正文、时间和 revision；重复诊断仅输出模型和组数，不输出来源正文。
+# Function: Prepare existing data for database constraints.
+# Inputs: `apps`: historical model registry; `schema_editor`: current migration database connection.
+# Outputs: None; duplicates raise RuntimeError and roll back the atomic migration.
+# Logic: Check news URL duplicates and event URL/start-time duplicates separately; set date only for complete Agent date markers with increasing UTC-noon boundaries.
+# Constraints: Do not delete, merge, archive, or change content, timestamps, or revisions. Duplicate diagnostics contain only model and group count, never source content.
 def prepare_insights(apps, schema_editor):
     database = schema_editor.connection.alias
     for name, fields in (("WorldNews", ["source_url"]), ("WorldEvent", ["source_url", "starts_at"])):
@@ -38,9 +38,9 @@ def prepare_insights(apps, schema_editor):
             model.objects.using(database).filter(pk=event.pk).update(time_precision="date")
 
 
-# 功能：安装共享资讯必要的存储契约。
-# 逻辑：原子新增字段后检查数据再加约束；反向移除约束与新增字段，原时间未变。
-# 约束：实际应用由部署迁移执行；不安装采集服务或调用外网。
+# Function: Install storage contracts required by shared insights.
+# Logic: Atomically add fields, validate data, then add constraints; reversal removes constraints and new fields, leaving original timestamps unchanged.
+# Constraints: Deployment migrations perform actual application; no collection-service installation or external calls.
 class Migration(migrations.Migration):
     dependencies = [("sales", "0008_development_support")]
     operations = [

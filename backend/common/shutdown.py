@@ -1,30 +1,30 @@
-"""职责：让后台 Worker 在部署停止信号后完成当前工作单元。
-实现：临时 SIGTERM 处理器仅设置标志；调用方在领取新任务前检查，退出时恢复旧处理器。
-关联：crm_worker 等待显式执行器中的本地或 Celery 工作完成，sales_worker 等待当前外部动作持久化。
-目录：
-- graceful_shutdown：提供停止请求状态的上下文。
-- graceful_shutdown.request_shutdown：记录 SIGTERM 停止请求。
-变量索引：
-- 无
+"""Responsibility: Let background workers finish the current work unit after a deployment-stop signal.
+Implementation: A temporary SIGTERM handler only sets a flag; callers check it before claiming new work and restore the original handler on exit.
+Relationships: crm_worker waits for local or Celery work in the explicit executor; sales_worker waits for the current external action to persist.
+Directory:
+- graceful_shutdown: Provides a context carrying shutdown-request state.
+- graceful_shutdown.request_shutdown: Records a SIGTERM shutdown request.
+Variable index:
+- None
 """
 from contextlib import contextmanager
 import signal
 
 
-# 功能：将 SIGTERM 转换为可在业务边界处理的停止请求。
-# 输入：无参数；读取主线程原 SIGTERM 处理器。
-# 输出：包含 requested 布尔值的状态字典。
-# 逻辑：处理器只设置状态，既不抛出中断也不获取锁；finally 恢复原处理器。
-# 约束：仅用于管理命令主线程；不接管 SIGINT，不自动重试或中止当前外部调用。
+# Function: Convert SIGTERM into a stop request handled at a business boundary.
+# Inputs: No arguments; reads the main thread's original SIGTERM handler.
+# Outputs: State dictionary containing the requested boolean.
+# Logic: The handler only sets state, neither raises an interrupt nor acquires a lock; finally restores the original handler.
+# Constraints: Used only by management-command main threads; does not take over SIGINT, retry automatically, or abort the current external call.
 @contextmanager
 def graceful_shutdown():
     state = {"requested": False}
 
-    # 功能：记录部署停止请求。
-    # 输入：`signum` 为 SIGTERM；`frame` 为被打断的 Python 帧。
-    # 输出：无，更新闭包状态。
-    # 逻辑：只赋值，避免信号处理器重入锁或日志系统。
-    # 约束：调用方仍须完成当前单元并主动退出循环。
+# Function: Record a deployment shutdown request.
+# Inputs: `signum` is SIGTERM; `frame` is the interrupted Python frame.
+# Outputs: None; updates closure state.
+# Logic: Only assigns state, avoiding signal-handler reentry into locks or the logging system.
+# Constraints: The caller must still finish the current unit and exit its loop deliberately.
     def request_shutdown(signum, frame):
         state["requested"] = True
 

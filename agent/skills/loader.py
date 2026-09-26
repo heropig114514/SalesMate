@@ -1,4 +1,26 @@
-"""从项目内 SKILL.md 加载可路由的模型能力。"""
+"""Responsibility: Load routable model capabilities from project SKILL.md files.
+Implementation: Validate skill names and required frontmatter, retain instruction text, and cache immutable skill objects per process.
+Relationships: Workflow providers load project SKILL.md files through this module; prompt content is a runtime contract.
+
+Directory:
+- SkillLoadError: A skill file is missing or its metadata violates the runtime contract.
+- AgentSkill: Skill metadata and instructions required by workflows invoking a model.
+- load_skill: Read a project skill by stable name; cache the result within this process.
+- list_skills: List all project skills available for subsequent routing.
+- _split_document: Separate required frontmatter from the instruction body.
+- _parse_frontmatter: Parse the project's simple skill metadata without adding a YAML runtime dependency.
+- _frontmatter_pair: Validate and split one nonempty metadata key/value pair.
+- _unquote: Remove matching outer quote characters from a metadata value.
+
+Variable index:
+- AgentSkill.description: Skill discovery description.
+- AgentSkill.instructions: Runtime instruction body loaded without translation.
+- AgentSkill.max_tokens: Configured model output budget.
+- AgentSkill.name: Stable skill identifier.
+- AgentSkill.version: Prompt version used for cache separation.
+- SKILLS_DIR: Root directory of project runtime skills.
+- _SKILL_NAME: Allowed stable lowercase skill-name syntax.
+"""
 
 from __future__ import annotations
 
@@ -13,12 +35,12 @@ _SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class SkillLoadError(RuntimeError):
-    """Skill 文件缺失或元数据不满足运行时约定。"""
+    """A skill file is missing or its metadata violates the runtime contract."""
 
 
 @dataclass(frozen=True)
 class AgentSkill:
-    """工作流调用模型时需要的 Skill 元数据与指令。"""
+    """Skill metadata and instructions required by workflows invoking a model."""
 
     name: str
     description: str
@@ -29,7 +51,7 @@ class AgentSkill:
 
 @lru_cache(maxsize=None)
 def load_skill(name: str) -> AgentSkill:
-    """按稳定名称读取一个项目 Skill；结果在当前进程内缓存。"""
+    """Read a project skill by stable name; cache the result within this process."""
     if not isinstance(name, str) or _SKILL_NAME.fullmatch(name) is None:
         raise SkillLoadError("Skill names may contain only lowercase letters, digits, and hyphens.")
 
@@ -66,7 +88,7 @@ def load_skill(name: str) -> AgentSkill:
 
 
 def list_skills() -> list[AgentSkill]:
-    """列出当前项目内可供后续路由选择的全部 Skill。"""
+    """List all project skills available for subsequent routing."""
     names = sorted(
         path.parent.name
         for path in SKILLS_DIR.glob("*/SKILL.md")
@@ -87,7 +109,7 @@ def _split_document(text: str, name: str) -> tuple[list[str], str]:
 
 
 def _parse_frontmatter(lines: list[str], name: str) -> dict[str, str]:
-    """解析本项目约定的简单 Skill 元数据，避免增加 YAML 运行依赖。"""
+    """Parse the project's simple skill metadata without adding a YAML runtime dependency."""
     result: dict[str, str] = {}
     section: str | None = None
     for raw_line in lines:

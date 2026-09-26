@@ -1,15 +1,15 @@
 /**
- * 职责：实现员工 Gmail/QQ 收件箱、授权管理和客户工作区的原生浏览器交互。
- * 实现：注册/登录、哈希路由、紧凑邮件组卡片和单客户持续读取；客户详情默认只读，分析与事实升级分别显式提交；共享悬浮入口保留当前会话，邮箱设置使用独立页面，只有显式连接操作打开授权弹窗；邮箱同步每次询问范围，QQ 能力控制入口，旧响应隔离并保留独立草稿。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：v1.2.1 更新复核异步错误隔离模块缓存；侧栏优先级入口移除后更新导航缓存；共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；workspace.js 共享主导航与底部 Profile；assistant-widget.js 管理悬浮聊天入口；api.js 通信，qq.js 管理 QQ，gmail-scope.js 管理 Gmail 范围，运行时 qq_enabled 控制入口、同步及轮询，mail-source.js 标注来源，assistant.js 管理聊天与草稿，notice.js 管理提示。
- * 目录：$、date、companyName、pill、notice、busy、renderStats、renderRow、loadList、
- * renderDimension、renderDetail、renderEmails、revealSource、setDetailLiveStatus、loadDetail、upgradeFacts、navigate、loadMailboxes、renderGmailAccounts、openEmailSettings、showGmailAuthorization、
- * startGmailAuthorization、pollGmailSync、requestGmailSync、refreshInbox、
- * disconnectGmail、openMail、openRegister、showAuthForm、signupSubmit、loginSubmit、
- * mailSubmit、registerSubmit、initialize、bindEvents。
- * 变量索引：$ 为元素定位函数；state.replyDrafts 保存按客户隔离的本页回复草稿；state 保存分页、账号身份、会话能力、当前详情、方向和列表响应签名；
- * closeEvidence 清理来源预览；detailObserver 管理当前客户的只读轮询与失败暂停；signals、sizes、dimensions、gmailStates 为后端枚举的当前语言展示映射；assistant 管理聊天，notices 管理页面提示生命周期；extractionLabels 保存事实升级及样例状态文案；emailSettingsLabels 保存邮箱设置的中英文静态文案。
+ * Responsibility: Implement native browser interactions for employee Gmail/QQ inboxes, authorization management, and customer workspaces.
+ * Implementation: Registration/login, hash routing, compact mail-group cards, and continuous reads for one customer. Details are read-only by default; analysis and fact upgrades require separate explicit submissions. The shared floating entry preserves the current conversation. Mail settings use a separate page, and only explicit connection actions open authorization popups. Each sync asks for scope; QQ capabilities control access, stale responses are isolated, and drafts remain separate.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: v1.2.1 refreshes the review module cache for asynchronous error isolation. Navigation cache versions reflect removal of the sidebar priority and experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, shared language/API, and account-reset navigation resources use coordinated cache versions. workspace.js shares navigation and the bottom Profile entry; assistant-widget.js manages floating chat; api.js handles communication; qq.js manages QQ; gmail-scope.js manages Gmail scope; runtime qq_enabled controls entry points, synchronization, and polling; mail-source.js labels sources; assistant.js manages chat/drafts; notice.js manages notifications.
+ * Directory: $, date, companyName, pill, notice, busy, renderStats, renderRow, loadList,
+ * renderDimension, renderDetail, renderEmails, revealSource, setDetailLiveStatus, loadDetail, upgradeFacts, navigate, loadMailboxes, renderGmailAccounts, openEmailSettings, showGmailAuthorization,
+ * startGmailAuthorization, pollGmailSync, requestGmailSync, refreshInbox,
+ * disconnectGmail, openMail, openRegister, showAuthForm, signupSubmit, loginSubmit,
+ * mailSubmit, registerSubmit, initialize, bindEvents.
+ * Variable index: $ locates elements; state.replyDrafts stores per-customer reply drafts for this page; state holds pagination, account identity, session capabilities, current details, direction, and the list response signature.
+ * closeEvidence cleans up source previews; detailObserver manages read-only customer polling and failure pauses; signals, sizes, dimensions, and gmailStates map backend enums into current-language labels; assistant manages chat; notices manages page notification lifetimes; extractionLabels holds fact-upgrade and sample-status text; emailSettingsLabels holds bilingual static mail-settings text.
  */
 import { mountReplyComposer } from './channel-reply.js?v=20260921-product';
 import { mountEvidencePreview } from './evidence-preview.js?v=20260921-product';
@@ -28,7 +28,7 @@ import { Notice } from './notice.js?v=20260921-product';
 const assistant = getAssistant();
 const closeEvidence = mountEvidencePreview(document.getElementById('detail-content'), () => state.detail, revealSource);
 
-/** 功能：按 ID 定位页面元素。输入：id。输出：Element 或 null。逻辑：原生 DOM 查询。约束：调用方使用已声明 ID。 */
+/** Function: Locate a page element by ID. Inputs: id. Outputs: Element or null. Logic: Native DOM lookup. Constraints: Callers use declared IDs. */
 const $ = id => document.getElementById(id);
 const notices = new Notice($('notice'));
 const state = { replyDrafts: new Map(), account: null, page: 1, count: 0, runtime: null, mailboxes: [], detail: null, direction: 'all', navigation: 0, gmailPolling: 0, listSignature: null };
@@ -67,31 +67,31 @@ const detailObserver = new DetailObserver({
 });
 
 
-/** 功能：按配置时区显示时间。输入：value 为 ISO 时间。输出：日期时间字符串。
- * 逻辑：Intl 使用当前界面语言和后端声明时区。约束：空时间保持未知，不猜测时间。 */
+/** Function: Display time in the configured time zone. Inputs: value is an ISO timestamp. Outputs: A date-time string.
+ * Logic: Intl uses the current UI language and backend-declared time zone. Constraints: Empty timestamps remain unknown rather than being inferred. */
 function date(value) {
   return value ? new Intl.DateTimeFormat(locale, { timeZone: state.runtime?.timezone || 'UTC', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : t('尚无记录');
 }
 
-/** 功能：生成公司显示名称。输入：row 公司投影。输出：已确定姓名或域名/联系人标识。
- * 逻辑：缺少公司名时使用已有身份信息。约束：不推断不存在的公司名。 */
+/** Function: Build a company display name. Inputs: row is a company projection. Outputs: An established name or domain/contact identifier.
+ * Logic: Use existing identity information when the company name is missing. Constraints: Do not infer an unknown company name. */
 function companyName(row) {
   return row.company_name || row.domains[0] || row.contacts[0]?.contact_email || t('待确认公司');
 }
 
-/** 功能：生成安全的标签 HTML。输入：text、kind。输出：span HTML。
- * 逻辑：两项都转义。约束：kind 仅用于 CSS 类，不执行代码。 */
+/** Function: Generate safe label HTML. Inputs: text and kind. Outputs: span HTML.
+ * Logic: Escape both values. Constraints: kind is used only as a CSS class, never executed. */
 function pill(text, kind = '') { return `<span class="pill ${e(kind)}">${e(text)}</span>`; }
 
-/** 功能：展示操作结果或错误。输入：message、error 是否失败。输出：无。
- * 逻辑：交给 Notice 显示纯文本，按类型自动关闭，阅读时暂停并允许手动关闭。
- * 约束：不插入服务器 HTML，不改变业务状态或自动重试失败请求。 */
+/** Function: Display an operation result or error. Inputs: message and the error flag. Outputs: None.
+ * Logic: Delegate plain-text display to Notice, with type-dependent dismissal, reading pauses, and manual dismissal.
+ * Constraints: Never insert server HTML, alter business state, or automatically retry failed requests. */
 function notice(message, error = true) {
   notices.show(message, error);
 }
 
-/** 功能：在异步操作期间禁用触发按钮并展示失败。输入：button、operation 异步函数。输出：无。
- * 逻辑：finally 恢复状态，失败可见。约束：不重复执行、不隐式重试。 */
+/** Function: Disable the triggering button during an asynchronous operation and display failures. Inputs: button and asynchronous operation. Outputs: None.
+ * Logic: Restore state in finally and keep failures visible. Constraints: No duplicate execution or implicit retries. */
 async function busy(button, operation) {
   const original = button?.textContent;
   if (button) { button.disabled = true; button.textContent = t('处理中…'); }
@@ -105,15 +105,15 @@ async function busy(button, operation) {
   }
 }
 
-/** 功能：显示公司及今日新邮件概览。输入：stats。输出：无。
- * 逻辑：首页仅展示邮件客户与今日邮件，Channels 保留待建档统计；展示后端口径与时区。约束：后端总数不受当前分页替代。 */
+/** Function: Display the company and today's new-mail overview. Inputs: stats. Outputs: None.
+ * Logic: The home page shows mail customers and today's mail; Channels retains the count awaiting CRM registration. Display backend definitions and time zone. Constraints: Do not replace global backend totals with the current page's counts. */
 function renderStats(stats) {
   $('stats').innerHTML = [[t('邮件客户'), stats.companies, t('已保存业务邮件的客户'), '▦'], [t('待建档客户'), stats.unregistered, t('补齐档案，积累客户上下文'), '♧'], [t('今日新邮件'), stats.new_emails_today, t`统计时区 ${state.runtime.timezone}`, '✉']].filter((_, index) => index !== 1 || (location.hash && location.hash !== '#home')).map(([label, value, note, icon]) => `<article class="stat-card"><div><span class="stat-label">${e(label)}</span><strong>${e(value)}</strong><p>${e(note)}</p></div><span class="stat-icon">${icon}</span></article>`).join('');
 }
 
-/** 功能：生成公司邮件组卡片。输入：row 为后端的公司、评分与邮件来源投影。输出：转义后的链接 HTML。
- * 逻辑：首行集中展示信号、行业与规模，次行展示已有域名和联系人，右侧保留日期与优先级。
- * 约束：不计算或修改评分；未知信息仍明确标注，演示来源与失败状态保持可见。 */
+/** Function: Generate a company mail-group card. Inputs: row is the backend projection of company, score, and mail sources. Outputs: Escaped link HTML.
+ * Logic: Group signal, industry, and size on the first line; show known domains and contacts below; retain date and priority on the right.
+ * Constraints: Never calculate or modify scores; explicitly mark unknown information and keep demo sources and failure states visible. */
 function renderRow(row) {
   const name = companyName(row);
   const initials = /^[A-Za-z]/.test(name) ? name.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase() : name.slice(0, 1);
@@ -129,8 +129,8 @@ function renderRow(row) {
   </a>`;
 }
 
-/** 功能：加载列表及分页状态。输入：表单、state.page 和是否显示加载占位。输出：列表响应。
- * 逻辑：捕获账号身份拒绝旧账号响应；以查询参数调用后端；后台轮询时保留现有列表，避免每三秒清空并重建造成闪烁。约束：普通加载失败时不保留看似最新的旧列表。 */
+/** Function: Load list data and pagination state. Inputs: The form, state.page, and whether to show a loading placeholder. Outputs: The list response.
+ * Logic: Capture account identity to reject responses for a previous account; call the backend with query parameters. Retain the list during background polling to avoid clearing/rebuilding flicker every three seconds. Constraints: A normal load failure must not leave an old list looking current. */
 async function loadList({ showLoading = true } = {}) {
   const account = state.account;
   if (showLoading) {
@@ -161,15 +161,15 @@ async function loadList({ showLoading = true } = {}) {
   }
 }
 
-/** 功能：生成含来源预览的分析维度。输入：key、value。输出：安全 HTML。
- * 逻辑：事实和推断分开展示，缺失项单独标记。约束：来源通过 data-ref 悬停、聚焦及点击预览，显式操作再定位原文，不执行邮件内容。 */
+/** Function: Generate an analysis dimension with source previews. Inputs: key and value. Outputs: Safe HTML.
+ * Logic: Display facts and inferences separately and mark missing fields. Constraints: Preview data-ref sources on hover, focus, or click; an explicit action locates the original source. Never execute email content. */
 function renderDimension(key, value) {
   return `<article class="dimension" data-live-key="${e(key)}"><h4>${e(dimensions[key] || key)}</h4>${value.facts.map(item => `<p>${e(item.text)} ${item.source_refs.map(ref => h`<button class="source-ref" data-ref="${e(ref)}" aria-haspopup="dialog" aria-expanded="false" aria-label="预览引用来源">↗ 依据</button>`).join('')}</p>`).join('')}${value.inferences.map(item => h`<p class="inference">${pill(t('推断'), 'subtle')} ${e(item.text)}<small>依据：${e(item.basis)} · 置信等级 ${e(item.confidence)}</small></p>`).join('')}${!value.facts.length && !value.inferences.length ? h('<p class="muted">尚无充分依据</p>') : ''}${value.missing_fields.length ? h`<div class="missing">待补充：${value.missing_fields.map(e).join('、')}</div>` : ''}</article>`;
 }
 
-/** 功能：渲染邮件会话、画像分析与助手的客户详情。输入：data 为完整客户响应。输出：无。
- * 逻辑：展示事实升级状态和显式入口，空评分不推断为资料不足；比较完整响应（不只 revision）；复用未变化节点并校正阅读位置，客户身份变化才重建共享上下文，辅助统计收纳在中栏并保留展开状态，回复草稿按客户隔离并只在明确操作时交给助手；聊天始终保留工作空间会话。
- * 约束：独立助手和编辑表单不在局部更新范围，未保存草稿、焦点和邮件方向保留；不等待整批结束。 */
+/** Function: Render customer details with email conversations, profile analysis, and assistant support. Inputs: data is the complete customer response. Outputs: None.
+ * Logic: Display fact-upgrade status and explicit actions; do not interpret an empty score as insufficient information. Compare the full response, not just revision; reuse unchanged nodes and correct the reading position. Rebuild shared context only when customer identity changes. Keep secondary statistics in the middle column with expansion state preserved. Isolate reply drafts by customer and pass them to the assistant only on explicit action; chat retains the workspace conversation.
+ * Constraints: The separate assistant and edit forms are outside partial updates; preserve unsaved drafts, focus, and mail direction without waiting for the whole batch. */
 function renderDetail(data) {
   const previous = state.detail;
   if ($('detail-content').querySelector('.detail-grid') && JSON.stringify(previous) === JSON.stringify(data)) return;
@@ -195,16 +195,16 @@ function renderDetail(data) {
   } catch (error) { state.detail = previous; throw error; }
 }
 
-/** 功能：按方向显示原始邮件。输入：state.detail、state.direction。输出：无。
- * 逻辑：按收发方向排列气泡，显示合成标记、来源、抽取失败和逐字正文。约束：所有正文转义，禁止执行 HTML 或指令。 */
+/** Function: Display original emails by direction. Inputs: state.detail and state.direction. Outputs: None.
+ * Logic: Arrange incoming/outgoing bubbles and show synthetic markers, sources, extraction failures, and verbatim bodies. Constraints: Escape all body text and never execute HTML or instructions. */
 function renderEmails() {
   const emails = state.detail.context.emails.filter(item => state.direction === 'all' || item.direction === state.direction);
   patchHTML($('emails'), emails.map(item => { const sender = item.from || item.mailbox_address || t('未知发件人'); return `<article class="email-card ${item.direction === 'outbound' ? 'email-outbound' : 'email-inbound'}" tabindex="-1" data-email-ref="${e(item.dedupe_key)}"><div class="email-top"><span class="avatar tiny">${e(sender.slice(0, 1).toUpperCase())}</span><div><strong>${e(sender)}</strong><small>${e(date(item.sent_at || item.received_at))} · ${{ inbound: t('收件'), outbound: t('发件'), unknown: t('方向未知') }[item.direction] || t('方向未知')}</small></div></div><h4>${e(item.subject)}</h4><div class="email-source">${pill(mailSourceLabel(item.source), 'subtle')}${item.synthetic_batch ? pill(extractionLabels.synthetic, 'warning') : ''}${item.extract_status !== 'completed' ? pill(t('未解析：') + item.extract_status, 'warning') : ''}</div><pre>${e(item.body_text)}</pre>${item.extract_error ? `<p class="failure">${e(item.extract_error)}</p>` : ''}</article>`; }).join('') || h('<div class="empty">没有此方向的邮件</div>'));
 }
 
-/** 功能：在会话中定位用户明确选择的邮件来源。输入：ref 为当前详情内的原始引用键。输出：无。
- * 逻辑：恢复全部邮件筛选，移除旧高亮并聚焦匹配邮件；缺失时保持明确提示。
- * 约束：只改变前端阅读位置，不请求或重试分析，不假设非邮件引用一定属于 CRM。 */
+/** Function: Locate the email source explicitly selected by the user. Inputs: ref is an original reference key in the current detail. Outputs: None.
+ * Logic: Restore the all-mail filter, remove old highlights, and focus the matching email; show an explicit message when it is missing.
+ * Constraints: Change only the frontend reading position; never request or retry analysis, or assume non-email references necessarily belong to CRM. */
 function revealSource(ref) {
   state.direction = 'all';
   document.querySelectorAll('[data-direction]').forEach(button => button.classList.toggle('selected', button.dataset.direction === 'all'));
@@ -215,16 +215,16 @@ function revealSource(ref) {
   else notice(t('当前详情中没有这条引用的邮件原文。'), false);
 }
 
-/** 功能：显示详情自动更新状态。输入：message、paused 是否需要手动恢复。输出：无。
- * 逻辑：状态区独立于详情渲染；只有失败才显示恢复按钮。约束：不把网络失败显示为分析失败或成功。 */
+/** Function: Display automatic detail-update status. Inputs: message and paused, indicating whether manual recovery is required. Outputs: None.
+ * Logic: Render status independently of details and show recovery only on failure. Constraints: Never present network failures as analysis success or failure. */
 function setDetailLiveStatus(message, paused = false) {
   $('detail-live-message').textContent = message;
   $('detail-live-resume').hidden = !paused;
 }
 
-/** 功能：读取客户详情，只有明确点击才请求分析。输入：id、trigger 默认为 false。
- * 输出：当前读取或分析 Promise。逻辑：先读取并渲染详情、启动只读观察，再执行显式分析；导航代次隔离迟到响应。
- * 约束：分析失败仍保留已读取详情及观察，错误向调用方传播；读取失败暂停，不自动升级或重试。 */
+/** Function: Read customer details, requesting analysis only after an explicit click. Inputs: id and trigger, defaulting to false.
+ * Outputs: The current read or analysis Promise. Logic: Read/render details and start read-only observation before explicit analysis; navigation generations isolate late responses.
+ * Constraints: Preserve loaded details and observation after analysis failure and propagate the error to the caller; pause after read failure without automatic upgrades or retries. */
 async function loadDetail(id, trigger = false) {
   detailObserver.stop();
   const sequence = ++state.navigation;
@@ -243,9 +243,9 @@ async function loadDetail(id, trigger = false) {
   if (trigger) await request(`companies/${encodeURIComponent(id)}/analyze/`, { method: 'POST' });
 }
 
-/** 功能：显式请求升级当前客户的历史邮件事实。输入：data 为当前详情及 revision。
- * 输出：请求及刷新 Promise。逻辑：携带读取版本提交空正文，成功后只读刷新并保留自动观察。
- * 约束：不会重新拉邮箱；请求失败直接显示，不自动重试或修改旧事实。 */
+/** Function: Explicitly request an upgrade of the customer's historical email facts. Inputs: data contains current details and revision.
+ * Outputs: The request/refresh Promise. Logic: Submit an empty body with the observed version; after success refresh by reading and retain automatic observation.
+ * Constraints: Do not fetch the mailbox again; show request failures directly without automatic retries or changes to existing facts. */
 async function upgradeFacts(data) {
   await request(`companies/${encodeURIComponent(data.company_id)}/extraction-upgrade/`, { method: 'POST', data: {}, version: data.revision });
   if (location.hash !== `#company/${data.company_id}`) return;
@@ -253,9 +253,9 @@ async function upgradeFacts(data) {
   notice(extractionLabels.queued, false);
 }
 
-/** 功能：按哈希切换列表与详情，旧聊天链接打开浮窗。输入：location.hash 隐式状态。输出：无。
- * 逻辑：切换时停止详情观察并保留工作空间聊天；邮箱设置显示独立账号管理页面并标记 Profile 当前入口；浮窗保留会话，旧聊天链接在工作台上打开，不触发分析。
- * 约束：所有导航均只读，分析和事实升级只在独立按钮点击时提交。 */
+/** Function: Switch between list/details by hash and open legacy chat links in the floating widget. Inputs: Implicit location.hash. Outputs: None.
+ * Logic: Stop detail observation when navigating while preserving workspace chat; mail settings display a separate account-management page and mark the Profile entry active. The widget preserves its conversation; legacy chat links open over the workspace without triggering analysis.
+ * Constraints: All navigation is read-only; analysis and fact upgrades require their respective button clicks. */
 async function navigate() {
   closeEvidence();
   detailObserver.stop();
@@ -301,8 +301,8 @@ async function navigate() {
 }
 
 
-/** 功能：读取当前员工 Gmail 和 QQ 连接。输入：当前会话。输出：邮箱数组。
- * 逻辑：只使用当前账号邮箱响应，账号切换后丢弃旧响应；顶部展示该账号的已授权 Gmail。约束：不向浏览器提供凭证。 */
+/** Function: Read the current employee's Gmail and QQ connections. Inputs: Current session. Outputs: A mailbox array.
+ * Logic: Accept responses for the current account only and discard stale responses after account changes; show that account's authorized Gmail at the top. Constraints: Never expose credentials to the browser. */
 async function loadMailboxes() {
   const account = state.account;
   const mailboxes = await request('mailboxes/');
@@ -322,8 +322,8 @@ async function loadMailboxes() {
   return state.mailboxes;
 }
 
-/** 功能：渲染邮箱设置页面中的已连接 Gmail 账号。输入：state.mailboxes。输出：无。
- * 逻辑：只给已授权账号显示同步、显式重新授权和移除操作，不按普通同步失败猜测授权失效。约束：令牌不进入 DOM。 */
+/** Function: Render connected Gmail accounts on the mail-settings page. Inputs: state.mailboxes. Outputs: None.
+ * Logic: Show synchronization, explicit reauthorization, and removal only for authorized accounts; do not infer revoked authorization from ordinary sync failures. Constraints: Tokens never enter the DOM. */
 function renderGmailAccounts() {
   const authorized = state.mailboxes.filter(item => item.gmail_authorized);
   $('gmail-accounts').innerHTML = authorized.length
@@ -335,17 +335,17 @@ function renderGmailAccounts() {
     : h`<div class="gmail-empty"><strong>尚未连接 Google 邮箱</strong><p>${e(emailSettingsLabels.empty)}</p></div>`;
 }
 
-/** 功能：打开邮箱设置并读取连接状态。输入：浏览器当前路由和会话。输出：异步完成。
- * 逻辑：其他页面先切换到 #gmail，由路由统一渲染；已在设置时仅刷新邮箱。
- * 约束：不打开授权弹窗，不调用 OAuth，不创建邮箱或自动发起同步。 */
+/** Function: Open mail settings and read connection status. Inputs: Current browser route and session. Outputs: Asynchronous completion.
+ * Logic: Navigate other pages to #gmail for centralized route rendering; when already in settings, refresh mailboxes only.
+ * Constraints: Never open an authorization popup, invoke OAuth, create a mailbox, or start synchronization automatically. */
 async function openEmailSettings() {
   if (location.hash !== '#gmail') { location.hash = '#gmail'; return; }
   await loadMailboxes();
 }
 
-/** 功能：展示显式添加或重新授权的权限说明。输入：address 为可选的现有账号。
- * 输出：无。逻辑：显示目标账号提示，等待用户点击 Google 授权按钮。
- * 约束：本函数不调用授权接口；日志仅记录添加或重新授权类型，不记录邮箱；不把普通同步错误判定为令牌失效。 */
+/** Function: Show permission information for explicitly adding or reauthorizing an account. Inputs: address is an optional existing account.
+ * Outputs: None. Logic: Display the target account and wait for the user to click Google authorization.
+ * Constraints: Do not call the authorization API here; log only the add/reauthorize action type, never the email address; do not interpret ordinary sync errors as invalid tokens. */
 function showGmailAuthorization(address = '') {
   console.info('gmail_authorization_dialog_opened', { reason: address ? 'reconnect' : 'add' });
   $('gmail-authorization-account').textContent = address ? emailSettingsLabels.selectAccount + address : '';
@@ -353,8 +353,8 @@ function showGmailAuthorization(address = '') {
   $('gmail-dialog').showModal();
 }
 
-/** 功能：开始服务端 Google OAuth。输入：当前员工会话。输出：浏览器跳转。
- * 逻辑：记录显式授权请求后，由后端生成带 state 的授权地址。约束：日志不记录地址或令牌，前端不接触 access token。 */
+/** Function: Start server-side Google OAuth. Inputs: Current employee session. Outputs: Browser navigation.
+ * Logic: Record the explicit authorization request, then use the backend-generated authorization URL containing state. Constraints: Logs contain neither URLs nor tokens; the frontend never accesses access tokens. */
 async function startGmailAuthorization() {
   console.info('gmail_authorization_requested');
   const result = await request('mailboxes/gmail-authorize/', { method: 'POST' });
@@ -362,8 +362,8 @@ async function startGmailAuthorization() {
   location.assign(result.authorization_url);
 }
 
-/** 功能：轮询持久批次及整体画像状态。输入：mailboxIds 为本次邮箱集合。输出：无。
- * 逻辑：读取完整批次进度，结束后刷新共享待办；公司分页不参与完成判断。约束：错误可见，新操作停止旧轮询。 */
+/** Function: Poll persisted batch and overall profile status. Inputs: mailboxIds identifies this operation's mailboxes. Outputs: None.
+ * Logic: Read complete batch progress and refresh shared tasks after completion; company pagination does not determine completion. Constraints: Errors remain visible; a new operation stops old polling. */
 async function pollGmailSync(mailboxIds) {
   const polling = ++state.gmailPolling;
   const tracked = new Set(mailboxIds);
@@ -386,8 +386,8 @@ async function pollGmailSync(mailboxIds) {
   notice(t('任务仍未结束，进度已保存，可稍后刷新查看。'), false);
 }
 
-/** 功能：请求同步一个已授权员工邮箱。输入：mailboxId。输出：无。
- * 逻辑：Gmail/QQ 均先询问范围，QQ 关闭时拒绝请求，后端排队后由 Worker 执行，页面轮询批次结果。约束：取消不发同步请求。 */
+/** Function: Request synchronization of one authorized employee mailbox. Inputs: mailboxId. Outputs: None.
+ * Logic: Ask for scope for both Gmail and QQ; reject QQ requests when disabled. The backend queues work for a Worker, and the page polls batch results. Constraints: Cancellation sends no sync request. */
 async function requestGmailSync(mailboxId) {
   const mailbox = state.mailboxes.find(item => item.mailbox_id === mailboxId);
   if (mailbox?.qq_authorized && !state.runtime.qq_enabled) throw new Error(t('QQ 邮箱功能暂时停用。'));
@@ -399,8 +399,8 @@ async function requestGmailSync(mailboxId) {
   void pollGmailSync([mailboxId]).catch(error => notice(error.message));
 }
 
-/** 功能：刷新当前员工收件箱。输入：当前已授权邮箱。输出：无。
- * 逻辑：先排除停用的 QQ，再逐个询问邮箱范围，提交启用邮箱的同步并轮询；活动邮箱沿用当前批次。约束：取消任一范围不提交新请求，未授权时只刷新页面数据。 */
+/** Function: Refresh the current employee's inbox. Inputs: Currently authorized mailboxes. Outputs: None.
+ * Logic: Exclude disabled QQ, ask for each mailbox's scope, submit synchronization for enabled mailboxes, and poll; active mailboxes retain their current batch. Constraints: Cancelling any scope prevents new submissions; without authorization, refresh page data only. */
 async function refreshInbox() {
   await loadMailboxes();
   const authorized = state.mailboxes.filter(item => item.gmail_authorized || (state.runtime?.qq_enabled && item.qq_authorized));
@@ -422,17 +422,17 @@ async function refreshInbox() {
   void pollGmailSync(authorized.map(item => item.mailbox_id)).catch(error => notice(error.message));
 }
 
-/** 功能：移除一个员工 Gmail 授权。输入：mailboxId。输出：无。
- * 逻辑：仅删除后端保存的授权，保留历史客户资料。约束：不能操作其他员工邮箱。 */
+/** Function: Remove an employee's Gmail authorization. Inputs: mailboxId. Outputs: None.
+ * Logic: Delete only backend-stored authorization and retain historical customer data. Constraints: Other employees' mailboxes cannot be changed. */
 async function disconnectGmail(mailboxId) {
   await request(`mailboxes/${encodeURIComponent(mailboxId)}/gmail-authorization/`, { method: 'DELETE' });
   await loadMailboxes();
   notice(t('Gmail 授权已移除，历史邮件和客户分析仍然保留。'), false);
 }
 
-/** 功能：打开模拟来信表单并读取可用业务邮箱。输入：当前会话。输出：无。
- * 逻辑：无邮箱时显式创建仅用于模拟的业务邮箱。
- * 约束：不索取 Gmail 凭证，不创建真实 OAuth 连接。 */
+/** Function: Open the simulated incoming-mail form and read available business mailboxes. Inputs: Current session. Outputs: None.
+ * Logic: Explicitly create a simulation-only business mailbox when none exists.
+ * Constraints: Never request Gmail credentials or create a real OAuth connection. */
 async function openMail() {
   let mailboxes = await request('mailboxes/');
   if (!mailboxes.length) mailboxes = [await request('mailboxes/', { method: 'POST', data: { address: 'sales@salesmate.example' } })];
@@ -440,9 +440,9 @@ async function openMail() {
   $('mail-dialog').showModal();
 }
 
-/** 功能：打开客户建档表单。输入：state.detail。输出：无。
- * 逻辑：从权威 CRM 字段填表，不从 Agent 推断回填人数。
- * 约束：提交时使用读取 revision 做乐观锁。 */
+/** Function: Open the customer registration form. Inputs: state.detail. Outputs: None.
+ * Logic: Populate authoritative CRM fields without using Agent inferences for employee counts.
+ * Constraints: Submit the observed revision for optimistic locking. */
 function openRegister() {
   const form = $('register-form'), data = state.detail;
   form.elements.company_name.value = data.company_name || '';
@@ -452,9 +452,9 @@ function openRegister() {
   $('register-dialog').showModal();
 }
 
-/** 功能：切换登录与账号注册表单。输入：signup 为是否显示注册表单。输出：无。
- * 逻辑：只展示一种表单，清除两个表单的密码并聚焦目标用户名。
- * 约束：不发出 API 请求，不修改已经建立的会话，不清除用户名。 */
+/** Function: Switch between login and account-registration forms. Inputs: signup selects the registration form. Outputs: None.
+ * Logic: Show one form, clear passwords in both, and focus the target username field.
+ * Constraints: No API requests, changes to established sessions, or username clearing. */
 function showAuthForm(signup) {
   $('login-form').hidden = signup;
   $('signup-form').hidden = !signup;
@@ -465,9 +465,9 @@ function showAuthForm(signup) {
   $(signup ? 'signup-form' : 'login-form').elements.username.focus();
 }
 
-/** 功能：提交普通账号注册并进入工作台。输入：event 为注册表单提交事件。输出：无。
- * 逻辑：先比较两次密码，只向后端发送用户名和密码；成功后清除表单、回到首页并读取新会话。
- * 约束：无邮箱或手机验证，无自动重试；失败保留输入以便修改，不保存密码到浏览器存储。 */
+/** Function: Submit ordinary account registration and enter the workspace. Inputs: event is the registration form submission. Outputs: None.
+ * Logic: Compare both passwords first and send only username/password to the backend; on success clear the form, return home, and read the new session.
+ * Constraints: No email/phone verification or automatic retries; preserve failed input for correction and never save passwords in browser storage. */
 async function signupSubmit(event) {
   event.preventDefault();
   const form = event.target;
@@ -488,9 +488,9 @@ async function signupSubmit(event) {
   });
 }
 
-/** 功能：提交会话登录。输入：event 表单事件。输出：无。
- * 逻辑：API 成功后清除密码表单并初始化工作台。
- * 约束：无自动登录重试，不保存密码。 */
+/** Function: Submit session login. Inputs: event is the form event. Outputs: None.
+ * Logic: Clear password fields and initialize the workspace after API success.
+ * Constraints: No automatic login retries or password storage. */
 async function loginSubmit(event) {
   event.preventDefault();
   await busy(event.submitter, async () => {
@@ -500,9 +500,9 @@ async function loginSubmit(event) {
   });
 }
 
-/** 功能：提交一封模拟邮件。输入：event 表单事件。输出：无。
- * 逻辑：保存成功关闭弹窗并跳到对应公司；失败保留填写内容。
- * 约束：不重试以免产生第二封独立模拟邮件。 */
+/** Function: Submit one simulated email. Inputs: event is the form event. Outputs: None.
+ * Logic: Close the dialog and navigate to the company after saving; retain input on failure.
+ * Constraints: Do not retry, which could create a second independent simulated email. */
 async function mailSubmit(event) {
   event.preventDefault();
   await busy(event.submitter, async () => {
@@ -514,9 +514,9 @@ async function mailSubmit(event) {
   });
 }
 
-/** 功能：提交客户档案。输入：event 表单事件。输出：无。
- * 逻辑：空人数映射为 null，使用当前 revision 防止覆盖并发修改。
- * 约束：版本冲突保留表单并显示错误，用户刷新后自行确认。 */
+/** Function: Submit a customer profile. Inputs: event is the form event. Outputs: None.
+ * Logic: Map an empty employee count to null and use the current revision to prevent overwriting concurrent changes.
+ * Constraints: Preserve the form and show version conflicts; the user refreshes and confirms manually. */
 async function registerSubmit(event) {
   event.preventDefault();
   await busy(event.submitter, async () => {
@@ -530,9 +530,9 @@ async function registerSubmit(event) {
   });
 }
 
-/** 功能：初始化会话与服务能力。输入：当前浏览器会话。输出：无。
- * 逻辑：先取消旧详情读取，再核验会话；账号变化时立即清空邮箱标记、搜索、聊天和客户内容，新注册用户进入持久化引导；已登录读取能力开关、隐藏停用入口并挂载工作台，匿名清理浮窗并恢复登录表单。
- * 约束：失败保持可见，未连接 Gmail 不展示假同步成功。 */
+/** Function: Initialize session and service capabilities. Inputs: Current browser session. Outputs: None.
+ * Logic: Cancel old detail reads before checking the session; on account changes immediately clear mailbox markers, search, chat, and customer content. New users enter persisted onboarding. Authenticated users load capabilities, hide disabled entries, and mount the workspace; anonymous users clear the widget and restore login.
+ * Constraints: Keep failures visible and never show false synchronization success when Gmail is disconnected. */
 async function initialize() {
   closeEvidence();
   detailObserver.stop();
@@ -590,9 +590,9 @@ async function initialize() {
   }
 }
 
-/** 功能：注册静态表单与动态内容事件。输入：现有 DOM。输出：无。
- * 逻辑：绑定账号注册和业务表单；退出清理客户路由，账号切换清理客户导航上下文；复核入口位于邮箱设置，邮箱设置导航与显式授权按钮分离；浮窗独立保留当前会话，恢复按钮只读观察，pagehide 取消旧响应。
- * 约束：只绑定一次，不通过 eval 或字符串内联事件执行代码。 */
+/** Function: Register static-form and dynamic-content events. Inputs: Existing DOM. Outputs: None.
+ * Logic: Bind registration and business forms; logout clears the customer route and account changes clear navigation context. Review lives in mail settings, whose navigation is separate from explicit authorization. The widget retains its conversation independently; recovery resumes read-only observation; pagehide cancels stale responses.
+ * Constraints: Bind once; never execute code through eval or string-based inline event handlers. */
 function bindEvents() {
   initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
   initQQ({ refresh: loadMailboxes, sync: requestGmailSync, view: openMailboxEmails, track: mailboxId => pollGmailSync([mailboxId]) });

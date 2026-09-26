@@ -1,15 +1,15 @@
-"""职责：显式创建全球洞察及商机算法联调的虚拟数据库占位。
-实现：同一账号批次只初始化一次；固定业务样例、首次导入相对日期、来源标签与审计清单同时提交。
-关联：世界地图及优先级页面读取普通数据库接口；不修改 Agent、算法或已有真实业务记录。
-目录：
-- seed_support：原子创建虚拟数据。
-- Command：执行联调数据初始化。
-- Command.add_arguments：声明账号参数。
-- Command.handle：解析身份并执行导入。
-变量索引：
-- BATCH：幂等导入批次。
-- PLACES：明确虚构活动所在的真实城市坐标与国家。
-- Command.help：命令说明。
+"""Responsibility: Explicitly create fictional database placeholders for global-insight and opportunity-algorithm integration.
+Implementation: Initialize each account/batch only once; commit fixed business examples, dates relative to initial import, source labels, and audit manifests together.
+Relationships: World-map and priority pages read ordinary database APIs; preserve Agent, algorithms, and existing real business records.
+Directory:
+- seed_support: Atomically create fictional data.
+- Command: Initialize integration data.
+- Command.add_arguments: Declare account arguments.
+- Command.handle: Resolve identity and execute import.
+Variable index:
+- BATCH: Idempotent import batch.
+- PLACES: Real city coordinates and countries for explicitly fictional events.
+- Command.help: Command description.
 """
 
 import json
@@ -29,11 +29,11 @@ BATCH = "development-support-v1"
 PLACES = [("SG", "新加坡", 1.352, 103.819), ("SG", "新加坡", 1.352, 103.819), ("TW", "台北", 25.033, 121.565), ("CN", "上海", 31.23, 121.47), ("DE", "慕尼黑", 48.135, 11.582), ("JP", "东京", 35.676, 139.65), ("US", "旧金山", 37.775, -122.419), ("KR", "首尔", 37.566, 126.978)]
 
 
-# 功能：导入可重复调用的虚拟占位批次。
-# 输入：`actor` 为明确指定的本地业务身份。
-# 输出：记录 ID 清单，已有批次返回原清单。
-# 逻辑：锁账号后创建独立虚拟客户及商机、8 个活动、4 条资讯、信号与人工固定评分；缺失个人资料才补占位。
-# 约束：仅 DEBUG 或实验开放模式；所有内容明确虚构，无外部调用、不触发分析、不覆盖原资料；失败整批回滚。
+# Function: Import a repeatable fictional placeholder batch.
+# Inputs: `actor`: explicitly selected local business identity.
+# Outputs: Record ID manifest; existing batches return the original manifest.
+# Logic: Lock the account, then create independent fictional companies/opportunities, 8 events, 4 news items, signals, and manually fixed scores. Add profile placeholders only when absent.
+# Constraints: DEBUG or open experiment mode only; all content is explicitly fictional. No external calls, analysis, or profile overwrites; failures roll back the whole batch.
 @transaction.atomic
 def seed_support(actor):
     if not settings.DEBUG and not enabled():
@@ -66,25 +66,25 @@ def seed_support(actor):
     return manifest
 
 
-# 功能：提供显式联调初始化入口。
-# 逻辑：只为指定账号创建占位，未指定时使用专用实验账号。
-# 约束：不创建可登录密码，不触发外部动作。
+# Function: Provide explicit integration initialization.
+# Logic: Create placeholders only for the selected account; default to the dedicated experiment account when unspecified.
+# Constraints: Do not create usable login passwords or trigger external actions.
 class Command(BaseCommand):
     help = "创建数据库虚拟占位；重复运行不覆盖已有批次。"
 
-    # 功能：声明归属账号。
-    # 输入：`parser` 命令参数解析器。
-    # 输出：无。
-    # 逻辑：默认使用专用 algorithm-lab 身份。
-    # 约束：不读取或打印凭据。
+    # Function: Declare the owning account.
+    # Inputs: `parser`: command argument parser.
+    # Outputs: Outputs: None.
+    # Logic: Use the dedicated algorithm-lab identity by default.
+    # Constraints: Do not read or print credentials.
     def add_arguments(self, parser):
         parser.add_argument("--username", default="algorithm-lab")
 
-    # 功能：执行显式导入。
-    # 输入：`args`、`options` 来自管理命令。
-    # 输出：标准输出 JSON 清单。
-    # 逻辑：先检查模式，再取得账号；新账号使用不可用密码。
-    # 约束：不修改已有账号权限或已有批次。
+    # Function: Execute explicit import.
+    # Inputs: `args`, `options`: management-command inputs.
+    # Outputs: JSON manifest on standard output.
+    # Logic: Check mode before obtaining the account; new accounts use unusable passwords.
+    # Constraints: Preserve existing account permissions and batches.
     def handle(self, *args, **options):
         if not settings.DEBUG and not enabled():
             raise CommandError("占位导入仅允许开发或实验模式。")

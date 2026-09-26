@@ -1,16 +1,16 @@
-/** 职责：验收 0919 产品界面精简、Channel 会话布局及真实来源预览及加载后追加回复草稿。
- * 实现：使用隔离静态服务及模拟授权 API，真实浏览器检查悬停、键盘、触摸、缺失引用、正文转义及响应式。
- * 关联：app.js、evidence-preview.js、channel-detail.css、processing.js；不访问真实邮箱、模型或线上账号。
- * 目录：main。
- * 变量索引：ROOT 为前端路径；OUTPUT 为忽略的截图目录；其余为工具导入，无业务配置。
+/** Responsibility: Verify 0919 UI simplification, Channel conversations, actual source previews, and appending reply drafts after loading.
+ * Implementation: Isolated static server/mocked authorized APIs with real-browser hover, keyboard, touch, missing-citation, escaping, and responsive checks.
+ * Relationships: app.js, evidence-preview.js, channel-detail.css, processing.js; no real mailbox/model/production-account access.
+ * Directory: main.
+ * Variable index: ROOT is the frontend path; OUTPUT is the ignored screenshot directory; other names are tool imports, with no business configuration.
  */
 const fs = require('node:fs'), path = require('node:path'), http = require('node:http'), assert = require('node:assert/strict');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const ROOT = path.resolve(__dirname, '../frontend'), OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：执行产品增量验收。输入：环境中的 Playwright 模块与浏览器路径。输出：断言、截图及日志。
- * 逻辑：模拟两封往来邮件和一个缺失引用；确认隐藏冗余 UI、引用不写入、显式定位及运行中/失败同步仍可见。
- * 约束：仅客户详情原有分析 POST 可出现；所有邮件内容为测试数据，不代表外部服务已验证。 */
+/** Function: Run incremental product acceptance. Inputs: Environment Playwright/browser paths. Outputs: Assertions, screenshots, logs.
+ * Logic: Mock two exchanged emails and one missing citation; check hidden redundant UI, read-only citations, explicit source location, and visible running/failed sync states.
+ * Constraints: Only the existing customer-detail analysis POST may occur; emails are test data and do not verify external services. */
 async function main() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');

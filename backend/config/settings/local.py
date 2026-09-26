@@ -1,15 +1,15 @@
-"""职责：定义仅用于本地开发的配置覆盖。
-实现：开启 DEBUG 和本机开发会话自动登录，允许匿名访问 Schema；业务接口仍验证 Session。
-关联：由 manage.py、ASGI 和 WSGI 入口默认加载，不用于生产部署。
+"""Responsibility: Define configuration overrides used only for local development.
+Implementation: Enables DEBUG and automatic local development-session login and allows anonymous schema access; business endpoints still validate the Session.
+Relationships: Loaded by default through manage.py, ASGI, and WSGI entry points; never used for production deployment.
 
-目录：
-- 无
+Directory:
+- None
 
-变量索引：
-- DEBUG：本地开发开启调试。
-- LOCAL_DEBUG_AUTO_LOGIN：是否为回环地址的浏览器自动建立开发会话。
-- LOCAL_DEBUG_USER：自动会话所用的既有普通开发用户名。
-- SPECTACULAR_SETTINGS：继承基础 Schema 设置并开放本地匿名文档访问。
+Variable index:
+- DEBUG: Enables debugging for local development.
+- LOCAL_DEBUG_AUTO_LOGIN: Whether browsers from loopback addresses automatically receive a development session.
+- LOCAL_DEBUG_USER: Existing ordinary development username used for the automatic session.
+- SPECTACULAR_SETTINGS: Inherits base schema settings and enables local anonymous documentation access.
 """
 
 

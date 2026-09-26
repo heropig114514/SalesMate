@@ -1,20 +1,20 @@
-"""职责：为公共新闻增加一组销售线索、精确金额及来源证据。
-实现：旧文本填空字符串、金额保持 null；数据库约束金额非负并保证元数据全有或全空。
-关联：WorldNews 与 WorldNewsSerializer；迁移不解析旧文章、不调用 Agent、不创建 CRM 数据。
-目录：
-- Migration：增加十三个可选字段及金额一致性约束。
-变量索引：
-- Migration.dependencies：依赖共享全球资讯迁移及可替换用户模型。
-- Migration.operations：新增字段与金额组合检查，不回填推断内容。
+"""Responsibility: Add public news sales leads, exact monetary amounts, and source evidence.
+Implementation: Existing text fields default to empty strings and amounts remain null; database constraints enforce nonnegative amounts and all-or-none metadata.
+Relationships: WorldNews and WorldNewsSerializer; no old-article parsing, Agent calls, or CRM creation in this migration.
+Directory:
+- Migration: Add thirteen optional fields and monetary consistency constraints.
+Variable index:
+- Migration.dependencies: Depend on the shared global-insight migration and swappable user model.
+- Migration.operations: Add fields and amount-combination checks without inferred backfills.
 """
 
 from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：安装新闻公共线索存储契约。
-# 逻辑：原子增加字段和约束；旧记录自然满足空值组合。
-# 约束：反向迁移会移除新增列；正式执行遵循既有备份发布流程。
+# Function: Install public-news lead storage contracts.
+# Logic: Atomically add fields and constraints; existing records naturally satisfy the empty-value combination.
+# Constraints: Reverse migration removes added columns; production execution follows existing backup/release procedures.
 class Migration(migrations.Migration):
 
     dependencies = [

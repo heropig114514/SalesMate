@@ -1,16 +1,16 @@
 /**
- * 职责：提供工作空间聊天、Markdown 回答、来源引用、持久化会话和可编辑草稿。
- * 实现：assistant-markdown.js 安全渲染助手正文；显式提问入队，先取状态再取消息避免快速回答竞态，有界轮询读取真实回答；账号/会话切换取消旧观察，窄屏保持模态焦点。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；assistant-widget.js 挂载唯一工作空间入口；sales-api.js 通信；assistant-widget.js 提供历史、草稿及保存控件。
- * 目录：AssistantPanel、AssistantPanel.constructor、AssistantPanel.initializeView、AssistantPanel.open、
- * AssistantPanel.close、AssistantPanel.syncLayout、AssistantPanel.handleKeydown、AssistantPanel.reset、
- * AssistantPanel.load、AssistantPanel.ensureConversation、AssistantPanel.save、AssistantPanel.draw、AssistantPanel.run、
- * AssistantPanel.stopPolling、AssistantPanel.watch、AssistantPanel.poll、AssistantPanel.refreshAnswers、AssistantPanel.pausePolling、AssistantPanel.retryAnswer。
- * 变量索引：无模块变量；nodes 保存 DOM，drafts 保存本页尚未提交文本，background 保存窄屏背景原有 inert 状态；
- * conversations 保存工作空间会话，conversation/draft 保存所选记录及版本，epoch 防止旧请求覆盖；
- * busy 控制提交，needsLoad 暂存操作期间新的展开请求；messageKey 是单次消息幂等键，narrow/isOpen 控制布局，opener 记录关闭后的焦点目标；
- * answers 保存当前会话请求；pollTimer/pollController/pollEpoch 管理取消，pollCount 限制每轮最多 120 次、间隔 2 秒。
+ * Responsibility: Provide workspace chat, Markdown answers, source citations, persisted conversations, and editable drafts.
+ * Implementation: assistant-markdown.js safely renders assistant content; explicit questions are queued. Read status before messages to avoid fast-answer races, and use bounded polling for actual answers. Account/conversation changes cancel prior observation; narrow screens retain modal focus.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; assistant-widget.js mounts the single workspace entry and provides history, draft, and save controls; sales-api.js handles communication.
+ * Directory: AssistantPanel, AssistantPanel.constructor, AssistantPanel.initializeView, AssistantPanel.open,
+ * AssistantPanel.close, AssistantPanel.syncLayout, AssistantPanel.handleKeydown, AssistantPanel.reset,
+ * AssistantPanel.load, AssistantPanel.ensureConversation, AssistantPanel.save, AssistantPanel.draw, AssistantPanel.run,
+ * AssistantPanel.stopPolling, AssistantPanel.watch, AssistantPanel.poll, AssistantPanel.refreshAnswers, AssistantPanel.pausePolling, AssistantPanel.retryAnswer.
+ * Variable index: No module variables; nodes holds DOM references; drafts stores unsent page text; background records prior inert state on narrow screens.
+ * conversations holds workspace conversations; conversation/draft holds the selected record and version; epoch prevents stale request updates.
+ * busy controls submission; needsLoad defers new open requests during an operation; messageKey is the message idempotency key; narrow/isOpen controls layout; opener records the focus target after closing.
+ * answers holds current conversation requests; pollTimer/pollController/pollEpoch manages cancellation; pollCount limits each round to 120 polls at two-second intervals.
  */
 import { t, h, locale } from './i18n.js?v=20260921-product';
 
@@ -18,13 +18,13 @@ import { escapeHtml as esc } from "./api.js?v=20260921-product";
 import { salesRequest, allRows } from "./sales-api.js?v=20260921-product";
 import { renderAssistantMarkdown } from './assistant-markdown.js?v=20260921-markdown';
 
-/** 功能：管理工作空间助手的会话和草稿交互。
- * 逻辑：问题显式入队，状态、回答和引用均来自后端；外部工具另经业务管理审阅确认。
- * 约束：不在浏览器推理或伪造回复，失败后只允许明确重试。 */
+/** Function: Manage workspace assistant conversations and drafts.
+ * Logic: Explicit questions enter the queue; status, answers, and citations come from the backend. External tools require separate review/confirmation in business management.
+ * Constraints: Never infer or fabricate replies in the browser; only explicit retries are allowed after failure. */
 export class AssistantPanel {
-  /** 功能：连接共享浮窗并绑定操作。输入：无参数，读取 DOM。
-   * 输出：实例。逻辑：保存、提问、重试和新建为显式请求，文本编辑暂存于本页。
-   * 约束：不会因输入或页面初始化调用模型与外部服务。 */
+  /** Function: Connect the shared widget and bind actions. Inputs: None; reads the DOM.
+   * Outputs: An instance. Logic: Saving, asking, retrying, and creating are explicit requests; text edits remain in page memory.
+   * Constraints: Input and page initialization never invoke models or external services. */
   constructor() {
     this.nodes = Object.fromEntries(
       [
@@ -112,9 +112,9 @@ export class AssistantPanel {
     this.narrow.addEventListener("change", () => this.syncLayout());
   }
 
-  /** 功能：初始化工作空间聊天文案。输入：无参数，读取共享浮窗 DOM。
-   * 输出：无。逻辑：所有页面使用同一会话范围，客户由 Agent 根据问题查询。
-   * 约束：不读取客户资料、不创建会话、不覆盖已保存历史。 */
+  /** Function: Initialize workspace chat text. Inputs: None; reads the shared widget DOM.
+   * Outputs: None. Logic: Every page uses the same conversation scope; the Agent queries customers according to the question.
+   * Constraints: Do not read customer data, create conversations, or overwrite saved history. */
   initializeView() {
     this.nodes.company.textContent = t("通用聊天");
     this.nodes.panel.querySelector('.assistant-development').textContent = t('通用助手');
@@ -132,9 +132,9 @@ export class AssistantPanel {
     this.nodes.shortcuts.innerHTML = prompts.map(([title, prompt]) => h`<button type="button" data-assistant-prompt="${esc(prompt)}"><span class="assistant-task-icon" aria-hidden="true">✧</span><span><strong>${esc(title)}</strong><small>点击填入草稿</small></span><span aria-hidden="true">↗</span></button>`).join('');
   }
 
-  /** 功能：展开或收起当前聊天界面。输入：opener 可选触发元素，默认读取悬浮按钮；隐式当前上下文。
-   * 输出：发起读取时返回读取 Promise，其余返回 undefined。逻辑：展开后读取持久化会话及草稿，焦点移至收起入口，允许回复草稿等待读取结束再填入。
-   * 约束：读取不会新建会话或触发分析。 */
+  /** Function: Open or toggle the current chat interface. Inputs: Optional opener defaults to the floating button; implicit current context.
+   * Outputs: The read Promise when reading starts, otherwise undefined. Logic: On opening, load persisted conversations/drafts and focus the collapse control; allow reply drafts to wait for loading before insertion.
+   * Constraints: Reads never create conversations or trigger analysis. */
   open(opener = null) {
     if (this.isOpen) {
       this.close();
@@ -151,9 +151,9 @@ export class AssistantPanel {
     else return this.run(() => this.load(this.conversation?.id));
   }
 
-  /** 功能：收起并恢复背景交互。输入：restoreFocus 默认 true。
-   * 输出：无。逻辑：保留本页文本，取消状态观察，关闭模态语义；返回仍存在的原触发元素或悬浮入口；背景恢复原 inert 状态。
-   * 约束：路由切换使用 false，避免聚焦即将移除的元素。 */
+  /** Function: Collapse chat and restore background interaction. Inputs: restoreFocus defaults to true.
+   * Outputs: None. Logic: Retain page text, cancel observation, close modal semantics, and return focus to the surviving opener or floating entry; restore original background inert state.
+   * Constraints: Route changes use false to avoid focusing an element about to be removed. */
   close(restoreFocus = true) {
     this.stopPolling();
     const wasOpen = this.isOpen;
@@ -167,9 +167,9 @@ export class AssistantPanel {
     }
   }
 
-  /** 功能：同步响应式模态语义。输入：isOpen/narrow 实例状态。
-   * 输出：无。逻辑：窄屏将面板之外的页面节点设为 inert，收起时恢复原状态；桌面允许继续操作页面。
-   * 约束：不改变业务上下文或数据。 */
+  /** Function: Synchronize responsive modal semantics. Inputs: isOpen/narrow instance state.
+   * Outputs: None. Logic: On narrow screens mark page nodes outside the panel inert and restore them on collapse; desktop pages remain interactive.
+   * Constraints: Do not change business context or data. */
   syncLayout() {
     const modal = this.isOpen && this.narrow.matches;
     if (modal) {
@@ -190,9 +190,9 @@ export class AssistantPanel {
       this.nodes.close.focus();
   }
 
-  /** 功能：处理 Escape 和窄屏焦点循环。输入：event 键盘事件。
-   * 输出：无。逻辑：仅浮动侧栏展开且无其他原生 dialog 时处理。
-   * 约束：不会捕获文本 Enter，不阻止正常输入。 */
+  /** Function: Handle Escape and narrow-screen focus cycling. Inputs: event is a keyboard event.
+   * Outputs: None. Logic: Handle only when the floating panel is open and no other native dialog is active.
+   * Constraints: Never capture text Enter or interfere with ordinary input. */
   handleKeydown(event) {
     if (!this.isOpen || document.querySelector("dialog[open]")) return;
     if (event.key === "Escape") {
@@ -217,9 +217,9 @@ export class AssistantPanel {
     }
   }
 
-  /** 功能：清除当前登录会话的内存状态。输入：无参数。
-   * 输出：无。逻辑：切断旧异步响应的显示资格，清理文本缓存。
-   * 约束：不会删除服务器上的会话或草稿。 */
+  /** Function: Clear memory state for the current login session. Inputs: None.
+   * Outputs: None. Logic: Invalidate old asynchronous display updates and clear text caches.
+   * Constraints: Do not delete server-side conversations or drafts. */
   reset() {
     this.needsLoad = false;
     this.epoch += 1;
@@ -235,9 +235,9 @@ export class AssistantPanel {
     this.initializeView();
   }
 
-  /** 功能：加载指定或最近的工作空间会话。输入：selected 可选会话标识。
-   * 输出：无。逻辑：完整分页读取会话与草稿；先取回答状态再取消息，确保已完成状态对应的消息可见；旧 epoch 响应不更新视图。
-   * 约束：当前页未保存文本优先展示，并明确标记未保存。 */
+  /** Function: Load a specified or most recent workspace conversation. Inputs: selected is an optional conversation identifier.
+   * Outputs: None. Logic: Read all conversation/draft pages; read answer status before messages so completed answers are visible. Responses from an old epoch never update the view.
+   * Constraints: Prefer unsaved current-page text and explicitly mark it unsaved. */
   async load(selected) {
     this.stopPolling();
     this.answers = [];
@@ -268,7 +268,7 @@ export class AssistantPanel {
         allRows(`chat/requests/?conversation=${conversationId}`),
       ]);
       if (epoch !== this.epoch) return;
-      // completed 与助手消息同事务提交；随后读取消息，避免终态停止轮询却漏掉答案。
+      // Completion and assistant messages commit in one transaction; read messages afterward so terminal-state polling does not miss the answer.
       messages = await allRows(`records/messages/?conversation=${conversationId}`);
       if (epoch !== this.epoch) return;
       this.answers = answers;
@@ -294,9 +294,9 @@ export class AssistantPanel {
     this.watch();
   }
 
-  /** 功能：在显式保存或新建操作中建立会话。输入：当前工作空间会话状态。
-   * 输出：当前会话。逻辑：没有选中会话才调用创建接口，保留原输入。
-   * 约束：会话或账号切换导致操作过期时抛错，不覆盖新界面。 */
+  /** Function: Establish a conversation during explicit save/create actions. Inputs: Current workspace conversation state.
+   * Outputs: The current conversation. Logic: Call creation only when no conversation is selected and preserve existing input.
+   * Constraints: Throw when account/conversation changes invalidate the operation; never overwrite the new interface. */
   async ensureConversation() {
     if (this.conversation) return this.conversation;
     const epoch = this.epoch;
@@ -310,9 +310,9 @@ export class AssistantPanel {
     return conversation;
   }
 
-  /** 功能：保存草稿或明确提交问答。输入：asMessage 指定是否请求回答。
-   * 输出：无。逻辑：提问使用稳定幂等键，后端原子保存问题及任务；草稿仍按 revision 保存。
-   * 约束：只有成功提交后才更换幂等键，网络失败保留输入和键供用户明确重传。 */
+  /** Function: Save a draft or explicitly submit a question. Inputs: asMessage determines whether to request an answer.
+   * Outputs: None. Logic: Questions use a stable idempotency key; the backend atomically saves question/task, while drafts use revision-based saves.
+   * Constraints: Replace the idempotency key only after successful submission; network failures retain input and key for explicit user retransmission. */
   async save(asMessage) {
     const content = this.nodes.input.value;
     if (asMessage && !content.trim()) throw new Error(t("请先输入消息内容。"));
@@ -352,9 +352,9 @@ export class AssistantPanel {
     if (!asMessage) this.nodes["draft-note"].textContent = t("草稿已保存到服务器，刷新页面后可以恢复。");
   }
 
-  /** 功能：显示真实持久化的历史消息。输入：messages 数组。
-   * 输出：无。逻辑：仅助手正文经 assistant-markdown.js 渲染；用户正文和来源仍为转义纯文本；消息关联状态、引用及失败重试。
-   * 约束：Markdown 禁用原始 HTML 和危险链接；证据默认收起且不执行 HTML；不改变持久化原文或生成流程。 */
+  /** Function: Display actually persisted message history. Inputs: messages array.
+   * Outputs: None. Logic: Render only assistant content through assistant-markdown.js; user content and sources remain escaped plain text. Associate messages with status, citations, and failure retries.
+   * Constraints: Markdown disables raw HTML and dangerous links; evidence starts collapsed and never executes HTML. Preserve stored source text and generation flow. */
   draw(messages) {
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
     const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
@@ -380,9 +380,9 @@ export class AssistantPanel {
       : h('<p class="fine">尚无消息。可以先保存草稿，或直接发送问题。</p>');
   }
 
-  /** 功能：取消当前状态观察。输入：实例定时器、控制器及观察代次。
-   * 输出：无。逻辑：清除定时器、取消 fetch 并使旧响应失效。
-   * 约束：不取消后端回答任务，也不改变消息。 */
+  /** Function: Cancel current status observation. Inputs: Instance timer, controller, and observation generation.
+   * Outputs: None. Logic: Clear the timer, cancel fetch, and invalidate old responses.
+   * Constraints: Do not cancel backend answer tasks or change messages. */
   stopPolling() {
     clearTimeout(this.pollTimer);
     this.pollController?.abort();
@@ -390,9 +390,9 @@ export class AssistantPanel {
     this.pollEpoch += 1;
   }
 
-  /** 功能：观察当前会话活动请求。输入：answers 和面板状态。
-   * 输出：无。逻辑：每轮最多 120 次，每次响应后间隔 2 秒；同一时刻只有一次读取。
-   * 约束：没有活动任务或已关闭时不发送请求，不创建模型工作。 */
+  /** Function: Observe active requests in the current conversation. Inputs: answers and panel state.
+   * Outputs: None. Logic: Limit each round to 120 reads, spaced two seconds after each response, with only one read in flight.
+   * Constraints: Make no requests when closed or without active tasks, and never create model work. */
   watch() {
     this.stopPolling();
     const active = this.answers.find((row) => ["pending", "processing"].includes(row.status));
@@ -404,9 +404,9 @@ export class AssistantPanel {
     this.pollTimer = setTimeout(() => this.poll(active.request_id, epoch), 2000);
   }
 
-  /** 功能：读取一次生成状态。输入：requestId 绑定任务，epoch 观察代次。
-   * 输出：无。逻辑：终态刷新消息，活动状态继续有界观察；错误暂停并提供手动恢复。
-   * 约束：取消、切换客户和关闭后的响应均不展示；不隐式重试失败 HTTP。 */
+  /** Function: Read generation status once. Inputs: requestId identifies the bound task; epoch is the observation generation.
+   * Outputs: None. Logic: Refresh messages on terminal states and continue bounded observation for active states; errors pause observation and offer manual recovery.
+   * Constraints: Discard responses after cancellation, customer changes, or closing; never implicitly retry failed HTTP requests. */
   async poll(requestId, epoch) {
     if (epoch !== this.pollEpoch || !this.isOpen) return;
     this.pollController = new AbortController();
@@ -428,9 +428,9 @@ export class AssistantPanel {
     }
   }
 
-  /** 功能：刷新答案而保留用户正在编辑的文本。输入：当前客户、会话及 epoch。
-   * 输出：无。逻辑：先读取请求状态再读取消息，避免终态与旧消息快照混用；检查绑定和观察代次；任一读取失败显示明确恢复入口。
-   * 约束：不重新加载草稿、不抢焦点；保留历史区阅读位置，不静默吞掉刷新错误。 */
+  /** Function: Refresh answers while preserving text being edited. Inputs: Current customer, conversation, and epoch.
+   * Outputs: None. Logic: Read request status before messages to avoid mixing terminal states with old message snapshots; check bindings and observation generation, and offer explicit recovery if either read fails.
+   * Constraints: Do not reload drafts or steal focus; preserve history reading position and surface refresh errors. */
   async refreshAnswers() {
     this.stopPolling();
     const conversation = this.conversation?.id, epoch = this.epoch, observation = this.pollEpoch;
@@ -454,27 +454,27 @@ export class AssistantPanel {
     this.watch();
   }
 
-  /** 功能：显示观察暂停原因和明确恢复入口。输入：message 安全提示。
-   * 输出：无。逻辑：取消观察后用转义文本显示错误，不影响后端任务。
-   * 约束：不会因网络错误自动重新提交问题或恢复查询。 */
+  /** Function: Show the observation pause reason and an explicit recovery action. Inputs: message is safe display text.
+   * Outputs: None. Logic: Cancel observation and display escaped error text without affecting backend tasks.
+   * Constraints: Network errors never automatically resubmit questions or resume queries. */
   pausePolling(message) {
     this.stopPolling();
     this.nodes["draft-note"].innerHTML = h`${esc(message)} <button type="button" class="text-btn" data-chat-resume>继续查询</button>`;
     console.warn("assistant_poll_paused");
   }
 
-  /** 功能：明确请求重新回答失败的问题。输入：requestId 原失败请求。
-   * 输出：无。逻辑：后端创建新尝试，前端重新读取状态。
-   * 约束：不覆盖原失败记录，不在错误处理分支自动调用。 */
+  /** Function: Explicitly request another answer to a failed question. Inputs: requestId identifies the original failed request.
+   * Outputs: None. Logic: The backend creates a new attempt; the frontend reads status again.
+   * Constraints: Preserve the original failure record; never invoke automatically from error handling. */
   async retryAnswer(requestId) {
     const epoch = this.epoch;
     await salesRequest(`chat/requests/${requestId}/retry/`, { method: "POST", data: {} });
     if (epoch === this.epoch) await this.refreshAnswers();
   }
 
-  /** 功能：串行化当前侧栏操作并显示错误。输入：task 异步回调。
-   * 输出：无。逻辑：禁用保存、输入及会话切换；完成后活动任务继续禁止新提问，错误进入状态区域。
-   * 约束：不重试；不记录正文。切换会话后仍可关闭面板。 */
+  /** Function: Serialize current panel operations and display errors. Inputs: task is an asynchronous callback.
+   * Outputs: None. Logic: Disable saving, input, and conversation switching; active tasks continue to prevent new questions after completion, and errors appear in the status area.
+   * Constraints: No retries or body logging; the panel can still be closed after changing conversations. */
   async run(task) {
     if (this.busy) return;
     this.busy = true;

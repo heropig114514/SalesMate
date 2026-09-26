@@ -1,10 +1,10 @@
-"""职责：提供结构化业务工具命令行入口。
-实现：list/describe/call；参数从 JSON 文件读取，结果到 stdout，错误到 stderr。
-关联：client 使用独立用户授权；MCP 与 CLI 不维护业务实现。
-目录：
-- main：解析命令并执行一次操作。
-变量索引：
-- 无
+"""Responsibility: Provide a structured business-tool CLI.
+Implementation: list/describe/call read arguments from JSON files, write results to stdout, and errors to stderr.
+Relationships: client uses independent user authorization; neither MCP nor CLI implements business rules.
+Directory:
+- main: Parse commands and perform one operation.
+Variable index:
+- None
 """
 
 import argparse
@@ -14,11 +14,11 @@ import sys
 from .client import ToolClient, ToolError
 
 
-# 功能：执行 CLI。
-# 输入：`argv` 可选命令行和专用环境配置。
-# 输出：退出码及 JSON。
-# 逻辑：写调用要求用户提供 key，目录保留分页。
-# 约束：不从命令行接收 token、不把正文嵌入 shell；文件与协议错误返回非零。
+# Function: Execute the CLI.
+# Inputs: `argv` is an optional argument sequence; reads dedicated environment configuration.
+# Outputs: Exit code and JSON.
+# Logic: Writes require a user-supplied key; catalogs retain pagination.
+# Constraints: Never accept tokens on the command line or embed bodies in shell commands; file/protocol errors return nonzero.
 def main(argv=None):
     parser = argparse.ArgumentParser(description="SalesMate 业务工具")
     commands = parser.add_subparsers(dest="command", required=True)

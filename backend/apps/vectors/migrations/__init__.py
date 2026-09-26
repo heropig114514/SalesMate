@@ -1,8 +1,8 @@
-"""职责：声明向量数据库迁移包。
-实现：由 Django 发现版本化迁移，不在导入时执行 SQL。
-关联：vectors 模型。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Declare the vector database-migration package.
+Implementation: Django discovers versioned migrations; importing does not execute SQL.
+Relationships: Vector models.
+Directory:
+- None
+Variable index:
+- None
 """

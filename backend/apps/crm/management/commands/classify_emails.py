@@ -1,12 +1,12 @@
-"""职责：为历史邮件回填当前非业务分类并保留原始记录。
-实现：默认预览，--apply 按公司事务应用无采购阶段邮件的复核规则并传播血缘失效；人工结果不覆盖。
-关联：classification 提供同一映射，selectors 依据分类隐藏非业务公司。
-目录：
-- Command：历史分类回填入口。
-- Command.add_arguments：声明应用开关。
-- Command.handle：预览或逐公司执行分类及版本更新。
-变量索引：
-- Command.help：命令说明。
+"""Responsibility: Backfill the current non-business classification for historical emails while retaining original records.
+Implementation: Preview by default; --apply transactionally applies review rules to emails without a purchasing stage and propagates lineage invalidation. Human results are never overwritten.
+Relationships: classification supplies the same mapping, and selectors hide non-business companies according to classification.
+Directory:
+- Command: Historical-classification backfill entry point.
+- Command.add_arguments: Declare the apply switch.
+- Command.handle: Preview or execute classification and version updates per company.
+Variable index:
+- Command.help: Command description.
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -15,25 +15,25 @@ from apps.crm.classification import apply_classification, automatic_classificati
 from apps.crm.models import Company
 
 
-# 功能：回填历史邮件分类。
-# 逻辑：以最新抽取计算，非业务仅隐藏，不删除邮件或客户。
-# 约束：默认只读；人工判断优先。
+# Function: Backfill historical email classification.
+# Logic: Calculate from the latest extraction; non-business records are only hidden, never deleting emails or customers.
+# Constraints: Read-only by default; human judgment takes precedence.
 class Command(BaseCommand):
-    help = "预览历史邮件分类变化；使用 --apply 明确应用。"
+    help = "Preview historical email-classification changes; use --apply to apply them explicitly."
 
-    # 功能：声明显式应用开关。
-    # 输入：`parser` 为命令解析器。
-    # 输出：注册 --apply。
-    # 逻辑：默认预览，避免无意重分类现有数据。
-    # 约束：无外部服务调用。
+    # Function: Declare the explicit apply switch.
+    # Inputs: `parser` is the command parser.
+    # Outputs: Registers --apply.
+    # Logic: Preview by default to avoid inadvertently reclassifying existing data.
+    # Constraints: Makes no external service calls.
     def add_arguments(self, parser):
         parser.add_argument("--apply", action="store_true")
 
-    # 功能：按公司原子回填分类。
-    # 输入：`args` 为位置参数，`options` 包含 apply。
-    # 输出：控制台差异数量；应用时更新分类和上下文版本。
-    # 逻辑：仅实际差异才更新；分类变化使来源快照失效，有剩余业务来源时自动排队重算。
-    # 约束：只创建持久任务而不执行模型；不删除历史，不改人工决定或已确认交易。
+    # Function: Atomically backfill classification by company.
+    # Inputs: `args` are positional arguments and `options` includes apply.
+    # Outputs: Writes the difference count; application updates classification and context version.
+    # Logic: Update only actual changes. A classification change invalidates source snapshots and automatically queues recomputation when business sources remain.
+    # Constraints: Creates persistent jobs without executing models; does not delete history or alter human decisions or confirmed transactions.
     def handle(self, *args, **options):
         from apps.crm.lineage import invalidate_email, schedule_analysis
         changed = 0
@@ -58,4 +58,4 @@ class Command(BaseCommand):
                     company.revision += 1
                     company.save(update_fields=["revision"])
                     schedule_analysis(company)
-        self.stdout.write(f"{'已应用' if options['apply'] else '预览'}分类变化：{changed} 封；未删除原始邮件。")
+        self.stdout.write(f"{'Applied' if options['apply'] else 'Preview'} classification changes: {changed} emails; original messages were not deleted.")

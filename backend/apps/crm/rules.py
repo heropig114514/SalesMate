@@ -1,20 +1,20 @@
-"""职责：提供可移除的显式规则占位，帮助前后端在 Agent 未接入时联调。
-实现：只抽取带中文标签的原文行，确定性归并与七维模板输出；按当前 revision 复用结果，通过正式保存服务校验。
-关联：仅 ANALYSIS_PROVIDER=rules 时由页面动作调用；agent 模式只入队，不隐式回退。
-目录：
-- extract_email：将显式模拟邮件转换为 L1 标准提交。
-- build_input：按照 README 的事实时间线规则归并 L2 输入。
-- dimension：将已有事实映射为一个展示维度。
-- generate_analysis：生成可替换的七维规则占位及列表投影。
-- compute_score：生成独立版本的规则占位分数。
-- run_company：执行当前公司的一次规则任务。
-变量索引：
-- ANALYSIS_VERSION：规则占位 L3 版本 rules-analysis-v1
-- EXTRACT_VERSION：与真实 L1 契约一致的 extract-v7
-- LABELS：保守提取的中文行标签与事实字段映射
-- MERGE_VERSION：与真实 L2 契约一致的 merge-v2
-- SCORE_VERSION：独立占位评分版本 rules-score-v1，不修改正式权重
-- logger：模块脱敏诊断日志记录器
+"""Responsibility: Provide removable explicit rules placeholders for frontend/backend integration before Agent is connected.
+Implementation: Extract only source lines with Chinese labels, deterministically merge and produce a seven-dimension template; reuse results at current revision and validate through formal save services.
+Relationships: Page actions call it only when ANALYSIS_PROVIDER=rules; agent mode queues work only and never falls back implicitly.
+Directory:
+- extract_email: Convert an explicit sample email to an L1 standard submission.
+- build_input: Merge L2 input under README fact-timeline rules.
+- dimension: Map existing facts to one display dimension.
+- generate_analysis: Generate replaceable seven-dimension rules placeholder and list projection.
+- compute_score: Generate independently versioned rules placeholder score.
+- run_company: Execute one rules job for the current company.
+Variable index:
+- ANALYSIS_VERSION: Rules placeholder L3 version rules-analysis-v1.
+- EXTRACT_VERSION: extract-v7, consistent with the real L1 contract.
+- LABELS: Mapping of conservatively extracted Chinese line labels to fact fields.
+- MERGE_VERSION: merge-v2, consistent with the real L2 contract.
+- SCORE_VERSION: Independent placeholder scoring version rules-score-v1 that does not change formal weights.
+- logger: Redacted diagnostic logger for this module.
 """
 import hashlib
 import json
@@ -45,11 +45,11 @@ LABELS = {"contact_name": "联系人", "contact_title": "职位", "company_self_
           "concerns": "顾虑", "quote_reference": "报价记录", "order_reference": "订单记录"}
 
 
-# 功能：将显式模拟邮件转换为 L1 标准提交。
-# 输入：`mailbox` 为业务邮箱；`sender`、`subject`、`body` 为人工文本；`message_id` 和 `sent_at` 可指定合成样例身份与时间。
-# 输出：source=synthetic_sample 的 EmailSubmission。
-# 逻辑：仅提取“标签：内容”行，主题或正文中的采购关键词决定单封倾向；未提及事实字段保持空数组。
-# 约束：不读取 Gmail，不解析真实邮箱授权，不推断币种、日期或公司关系。
+# Function: Convert an explicit sample email to an L1 standard submission.
+# Inputs: `mailbox` is a business mailbox; `sender`, `subject`, and `body` are manual text; `message_id` and `sent_at` can specify synthetic-sample identity and time.
+# Outputs: EmailSubmission with source=synthetic_sample.
+# Logic: Extract only label-content lines; purchasing keywords in subject or body determine per-message intent, while unmentioned fact fields remain empty arrays.
+# Constraints: Does not read Gmail, parse real mailbox authorization, or infer currency, dates, or company relationships.
 def extract_email(mailbox, sender, subject, body, message_id=None, sent_at=None):
     facts = {field: [] for field in FACT_FIELDS}
     for field, label in LABELS.items():
@@ -71,11 +71,11 @@ def extract_email(mailbox, sender, subject, body, message_id=None, sent_at=None)
             "extract_prompt_version": EXTRACT_VERSION, "extract_error": None, "facts": facts}
 
 
-# 功能：按照 README 的事实时间线规则归并 L2 输入。
-# 输入：`grouping`、`context` 为同一后端 revision 的两个协议对象。
-# 输出：含 SHA-256 输入版本、事实历史和确定性指标的 AnalysisInput。
-# 逻辑：保留每条已完成事实，按时间和来源稳定排序；响应间隔仅配对同线程先收后发。
-# 约束：不做冲突语义判断，不修改原事实、不丢失被更新的预算。
+# Function: Merge L2 input under README fact-timeline rules.
+# Inputs: `grouping` and `context` are two protocol objects at the same backend revision.
+# Outputs: AnalysisInput containing SHA-256 input version, fact history, and deterministic metrics.
+# Logic: Retain every completed fact in stable time-and-source order; response gap pairs only received then sent messages from the same thread.
+# Constraints: Does not make semantic conflict judgments, modify source facts, or lose superseded budgets.
 def build_input(grouping, context):
     emails = sorted(
         context["emails"],
@@ -137,11 +137,11 @@ def build_input(grouping, context):
                         "response_gap_days": gap, "has_history_order": bool(context["orders"]), "crm_status": grouping["crm_status"]}}
 
 
-# 功能：将已有事实映射为一个展示维度。
-# 输入：`snapshot` 为 L2 快照；`fields` 为要展示的事实字段数组。
-# 输出：Dimension，包含逐条原文引用和缺失标签。
-# 逻辑：保留全部历史值，模板只添加字段标签。
-# 约束：不生成推断或概率，不宣称已完成 Agent 分析。
+# Function: Map existing facts to one display dimension.
+# Inputs: `snapshot` is an L2 snapshot and `fields` is an array of fact fields to display.
+# Outputs: Dimension containing individual source references and missing labels.
+# Logic: Retain all historical values and let the template add only field labels.
+# Constraints: Does not generate inferences or probabilities or claim Agent analysis completed.
 def dimension(snapshot, fields):
     facts = []
     missing = []
@@ -153,11 +153,11 @@ def dimension(snapshot, fields):
     return {"facts": facts, "inferences": [], "missing_fields": missing}
 
 
-# 功能：生成可替换的七维规则占位及列表投影。
-# 输入：`snapshot` 为 L2；`grouping`、`context` 为同版后端数据。
-# 输出：README Analysis，提示词版本显式使用 rules 前缀。
-# 逻辑：仅依据明确采购关键词、权威 CRM 和订单决定信号；未知特征不填零。
-# 约束：不输出冲突推断或新闻；标签模板不能替代真实 Agent 质量验证。
+# Function: Generate replaceable seven-dimension rules placeholder and list projection.
+# Inputs: `snapshot` is L2; `grouping` and `context` are backend data at the same version.
+# Outputs: README Analysis whose prompt version explicitly uses the rules prefix.
+# Logic: Determine signals only from explicit purchasing keywords, authoritative CRM, and orders; unknown features are not set to zero.
+# Constraints: Does not output conflict inferences or news; label templates cannot replace real Agent quality validation.
 def generate_analysis(snapshot, grouping, context):
     emails = context["emails"]
     inquiry = [item for item in emails if item["direction"] == "inbound" and (item.get("facts") or {}).get("intent_hint") in PURCHASE_STAGES]
@@ -212,11 +212,11 @@ def generate_analysis(snapshot, grouping, context):
             "error": None}
 
 
-# 功能：生成独立版本的规则占位分数。
-# 输入：`analysis` 为规则 Analysis。
-# 输出：README Score；资料不足为 null。
-# 逻辑：三个已知特征等权，每项 value/3 归一，贡献取两位小数并让末项吸收舍入差。
-# 约束：使用 rules-score-v1，不修改 README 待校准 score-v1 权重；不可用于正式优先级评测。
+# Function: Generate independently versioned rules placeholder score.
+# Inputs: `analysis` is rules Analysis.
+# Outputs: README Score; null when information is insufficient.
+# Logic: Three known features have equal weights; normalize each as value/3 and round contributions to two decimals, with the last item absorbing rounding difference.
+# Constraints: Uses rules-score-v1 without changing README's calibrating score-v1 weights and cannot evaluate formal priority.
 def compute_score(analysis):
     features = analysis["list_view"]["score_features"]
     insufficient = analysis["list_view"]["signal"] == "unknown" or any(item["value"] is None for item in features.values())
@@ -229,11 +229,11 @@ def compute_score(analysis):
             "score_reasons": reasons, "score_version": SCORE_VERSION, "scored_at": timezone.now().isoformat()}
 
 
-# 功能：执行当前公司的一次规则任务。
-# 输入：`owner` 为会话用户；`company_id` 为已授权公司。
-# 输出：最终 JobReport 简要响应；无待办时返回 None。
-# 逻辑：正式领取任务、构建协议对象、调用共用结果服务；按当前 revision 复用缓存，缺少评分时仅补评分。
-# 约束：异常记录脱敏类型并显式失败后继续抛出；不重试、不调用真实模型、不降级其他模式。
+# Function: Execute one rules job for the current company.
+# Inputs: `owner` is the session user and `company_id` is an authorized company.
+# Outputs: Terminal JobReport summary response, or None without pending work.
+# Logic: Formally claim job, build protocol objects, and call shared result services; reuse cache at current revision and add only a missing score.
+# Constraints: Logs redacted exception type, explicitly reports failure, and then reraises; does not retry, call real models, or degrade other modes.
 def run_company(owner, company_id):
     jobs = claim(owner, 1, 120, company_id)
     if not jobs:

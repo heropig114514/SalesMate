@@ -1,11 +1,11 @@
-"""职责：注册业务、会话、演示及 Agent HTTP 路由。
-实现：DRF Router 提供既有接口，显式路径提供 QQ 连接、同步进度、重试和人工复核。
-关联：由 config.urls 挂载到 /api/v1/。
-目录：
-- 无
-变量索引：
-- router：业务 ViewSet 路由注册表。
-- urlpatterns：会话与业务接口列表。
+"""Responsibility: Register business, session, demonstration, and Agent HTTP routes.
+Implementation: The DRF Router provides existing interfaces, while explicit paths provide QQ connection, synchronization progress, retry, and human review.
+Relationships: Mounted at /api/v1/ by config.urls.
+Directory:
+- None
+Variable index:
+- router: Business ViewSet route registry.
+- urlpatterns: Session and business interface list.
 """
 from django.urls import path
 from rest_framework.routers import SimpleRouter

@@ -1,8 +1,8 @@
-/** 职责：展示新闻中的公开销售线索、来源金额和证据。
- * 实现：事实与推断分区，来源金额保留币种、类型及范围；十进制字符串按文本分组，不经过浮点转换。
- * 关联：world-news.js 在资讯卡片与详情调用；金额不传入活动地图或 CRM 汇总。
- * 目录：text、label、formatSourceAmount、signalSummary、signalDetail。
- * 变量索引：signalLabels 为事件类型文案；amountLabels 为金额口径；scopeLabels 为金额覆盖范围。
+/** Responsibility: Display public sales leads, source amounts, and evidence in news.
+ * Implementation: Separate facts/inferences and retain currency, amount type, and scope; group decimal strings as text without floating-point conversion.
+ * Relationships: world-news.js calls this for cards/details; amounts never enter event maps or CRM aggregates.
+ * Directory: text, label, formatSourceAmount, signalSummary, signalDetail.
+ * Variable index: signalLabels describes event types; amountLabels describes amount definitions; scopeLabels describes amount coverage.
  */
 import { language } from './i18n.js?v=20260921-product';
 import { escapeHtml as e } from './api.js?v=20260921-product';
@@ -11,27 +11,27 @@ const signalLabels = { expansion: ['扩产', 'Expansion'], new_factory: ['新建
 const amountLabels = { total_investment: ['项目总投资', 'Total investment'], procurement_budget: ['采购预算', 'Procurement budget'], tender_amount: ['招标金额', 'Tender amount'], contract_amount: ['合同金额', 'Contract amount'], other: ['其他来源金额', 'Other reported amount'] };
 const scopeLabels = { whole_project: ['整个项目', 'Whole project'], equipment_procurement: ['设备采购', 'Equipment procurement'], other: ['其他范围', 'Other scope'] };
 
-/** 功能：选择界面语言。输入：zh/en 文案。输出：文本。逻辑：沿用共享语言设置。约束：不翻译新闻事实。 */
+/** Function: Select interface language. Inputs: zh/en text. Outputs: Text. Logic: Shared language settings. Constraints: Never translate news facts. */
 function text(zh, en) { return language === 'en' ? en : zh; }
-/** 功能：解释契约枚举。输入：labels 文案表和 value 值。输出：可转义的文本。逻辑：未知值原样显示。约束：不把其他口径归为采购预算。 */
+/** Function: Explain contract enums. Inputs: labels table and value. Outputs: Escapable text. Logic: Preserve unknown values. Constraints: Never classify unrelated amount types as procurement budgets. */
 function label(labels, value) { return labels[value]?.[language === 'en' ? 1 : 0] || value || ''; }
-/** 功能：精确格式化来源金额。输入：amount 为后端非负十进制字符串或 null/undefined。输出：带千位分隔的字符串或未提供提示。
- * 逻辑：只操作字符，去掉小数末尾零而保留有效位和零金额。约束：不换汇、不四舍五入，不把未知转换为零。 */
+/** Function: Format source amounts precisely. Inputs: amount is a backend nonnegative decimal string or null/undefined. Outputs: A thousands-separated string or missing-value message.
+ * Logic: Operate on characters only, removing trailing fractional zeros while retaining significant digits and zero amounts. Constraints: No conversion, rounding, or unknown-to-zero substitution. */
 export function formatSourceAmount(amount) {
   if (amount === null || amount === undefined) return text('未提供', 'Not provided');
   const [integer, fraction = ''] = amount.split('.');
   const digits = fraction.replace(/0+$/, '');
   return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (digits ? '.' + digits : '');
 }
-/** 功能：构造新闻卡片中的线索概览。输入：item 新闻记录。输出：转义后的 HTML 片段。逻辑：显示公司、事件和来源金额口径。约束：没有结构化信息时不伪造线索；不显示订单预估。 */
+/** Function: Build a news-card lead summary. Inputs: item is a news record. Outputs: Escaped HTML. Logic: Show company, event, and source-amount definitions. Constraints: Never fabricate leads without structured data or display estimated orders. */
 export function signalSummary(item) {
   const context = [item.company_name, label(signalLabels, item.signal_type)].filter(Boolean).join(' · ');
   const amount = item.amount !== null && item.amount !== undefined ? `${label(amountLabels, item.amount_type)} · ${item.currency} ${formatSourceAmount(item.amount)} · ${label(scopeLabels, item.amount_scope)}` : '';
   return (context ? `<p class="news-signal-summary">${e(context)}</p>` : '') + (amount ? `<p class="news-source-amount">${e(amount)}</p>` : '');
 }
-/** 功能：呈现公开线索的完整事实、推断和来源证据。输入：item 为新闻 API 记录。输出：安全 HTML。
- * 逻辑：逐项展示可选字段，缺失不补值；金额证据单独展示，潜在需求和相关性明确为推断。
- * 约束：不声明外部事实已被后端核实，不生成或关联系统商机，旧记录保持空态。 */
+/** Function: Present complete public-lead facts, inferences, and source evidence. Inputs: item is a news API record. Outputs: Safe HTML.
+ * Logic: Display optional fields without filling missing values; show amount evidence separately and explicitly label potential demand/relevance as inference.
+ * Constraints: Never claim backend verification of external facts, generate/link system opportunities, or fill empty historical records. */
 export function signalDetail(item) {
   const facts = [
     [text('公司 / 机构', 'Company / organization'), item.company_name],

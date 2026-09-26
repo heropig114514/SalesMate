@@ -1,9 +1,14 @@
-# 职责：持续串行处理全部有效员工的通用及客户聊天请求。
-# 实现：独立 chat_worker；失败不自动重启，SIGTERM 等待当前任务回报。
-# 关联：蓝绿部署在切流后启动聊天、换版前排空聊天；依赖 PostgreSQL，HTTP 就绪由部署脚本检查。
-# 目录：无函数或类。
-# 变量索引：EnvironmentFile 从 shared/runtime.env 提供模型和后端地址，员工身份由工作单元独立生成；ExecStart 为消费者；
-# User/Group 为既有服务账号；TimeoutStopSec 保留在途回报，Restart 禁止隐式恢复。
+# Responsibility: Continuously process general and customer chat requests for all active employees in serial order.
+# Implementation: Use a dedicated chat_worker. It does not restart automatically after failure, and SIGTERM waits for the current task report.
+# Relationships: Blue-green deployment starts chat after traffic cutover and drains it before replacement. It requires PostgreSQL; deployment scripts check HTTP readiness.
+# Directory:
+# - None
+# Variable index:
+# - EnvironmentFile: Supplies model and backend address from shared/runtime.env.
+# - ExecStart: Consumer entry point.
+# - User/Group: Existing service account.
+# - TimeoutStopSec: Retains time for in-flight reports.
+# - Restart: Prevents implicit recovery.
 [Unit]
 Description=SalesMate read-only sales chat worker
 After=network.target postgresql.service

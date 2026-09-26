@@ -1,6 +1,8 @@
-# 职责：锁定可选的注释检查钩子依赖，与业务 Python 环境隔离。
-# 实现：只提供 pre-commit；两个注释检查器本身仅依赖标准库与 Git。
-# 关联：根目录 .pre-commit-config.yaml 和 docs/coding-agent-guidelines.md。
-# 目录：无函数或类。
-# 变量索引：pre-commit 为提交前检查框架，固定版本便于复现。
+# Responsibility: Pin optional documentation-check hook dependencies separately from the business Python environment.
+# Implementation: Provide only pre-commit; both documentation checkers themselves depend only on the standard library and Git.
+# Relationships: Root .pre-commit-config.yaml and docs/coding-agent-guidelines.md.
+# Directory:
+# - None
+# Variable index:
+# - pre-commit: Pre-commit checking framework pinned for reproducibility.
 pre-commit==4.3.0

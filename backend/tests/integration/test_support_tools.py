@@ -1,20 +1,20 @@
-"""职责：验收软件辅助工具的真实 HTTP、权限、事务与持久化契约。
-实现：隔离 PostgreSQL、普通用户 Tool token；资料及文件不依赖浏览器 Session，外部网络不调用。
-关联：agent_tools.support/presets、sales.insights、accounts.onboarding；不验证模型、实时资讯或真实发信。
-目录：
-- SupportToolTests：软件辅助工具集成场景。
-- SupportToolTests.setUp：建立本人、其他用户和限定令牌。
-- SupportToolTests.call：通过 HTTP 调用并核对状态。
-- SupportToolTests.product：返回完整参考产品输入。
-- SupportToolTests.test_profiles_and_legacy_catalog：资料保存和旧条目稳定标识。
-- SupportToolTests.test_catalog_crud_links_and_conflicts：逐条 CRUD、关联隔离和版本冲突。
-- SupportToolTests.test_documents_roundtrip_and_references：无 Session 上传、分块读取与引用删除保护。
-- SupportToolTests.test_existing_attachment_reads：已有业务附件的真实存储读取和完整性校验。
-- SupportToolTests.test_events_news_crud_and_filters：事件资讯存储、筛选、修改和归档。
-- SupportToolTests.test_invalid_insights_and_private_relations：坏数据拒绝、公共资讯读取及跨账号关联隔离。
-- SupportToolTests.test_permission_presets_and_token_boundaries：批量授权和令牌范围固定。
-变量索引：
-- BASE：工具 HTTP 路径。
+"""Responsibility: Validate software-support tools' real HTTP, permission, transaction, and persistence contracts.
+Implementation: Isolated PostgreSQL and ordinary-user Tool tokens; profiles/files do not require browser Sessions, and external networking is not called.
+Relationships: agent_tools.support/presets, sales.insights, and accounts.onboarding; no validation of models, live news, or real sending.
+Directory:
+- SupportToolTests: Software-support tool integration scenarios.
+- SupportToolTests.setUp: Create the owner, another user, and restricted tokens.
+- SupportToolTests.call: Call through HTTP and verify status.
+- SupportToolTests.product: Return complete reference-product input.
+- SupportToolTests.test_profiles_and_legacy_catalog: Profile persistence and stable historical entry identifiers.
+- SupportToolTests.test_catalog_crud_links_and_conflicts: Individual CRUD, link isolation, and revision conflicts.
+- SupportToolTests.test_documents_roundtrip_and_references: Session-free uploads, chunked reads, and referenced-file deletion protection.
+- SupportToolTests.test_existing_attachment_reads: Real storage reads and integrity validation for existing business attachments.
+- SupportToolTests.test_events_news_crud_and_filters: Event/news storage, filtering, editing, and archival.
+- SupportToolTests.test_invalid_insights_and_private_relations: Invalid-data rejection, public-news reads, and cross-account link isolation.
+- SupportToolTests.test_permission_presets_and_token_boundaries: Batch authorization and frozen token scope.
+Variable index:
+- BASE: Tool HTTP path.
 """
 
 import base64
@@ -36,15 +36,15 @@ from apps.sales import models, grouping
 BASE = "/api/v1/agent-tools/"
 
 
-# 功能：验证可调用的数据能力。
-# 逻辑：HTTP 请求经过真实工具认证和业务服务，数据库由 Django 隔离。
-# 约束：测试令牌仅合成；不连接任何外部提供方。
+# Function: Verify callable data capabilities.
+# Logic: HTTP requests traverse real tool authentication and business services; Django isolates the database.
+# Constraints: Tokens are synthetic; no external providers are contacted.
 class SupportToolTests(TestCase):
-    # 功能：建立测试身份。
-    # 输入：无外部参数。
-    # 输出：本人及其他用户、Tool 客户端和仅供授权管理的 Session 客户端。
-    # 逻辑：授权明确包含当前工具名，全部业务调用使用 token。
-    # 约束：不创建生产凭证。
+    # Function: Create test identities.
+    # Inputs: No external arguments.
+    # Outputs: Owner/other users, a Tool client, and a Session client used only for authorization administration.
+    # Logic: Authorization explicitly includes current tool names; all business calls use tokens.
+    # Constraints: Do not create production credentials.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="support-user")
         self.other = get_user_model().objects.create_user(username="support-other")
@@ -54,11 +54,11 @@ class SupportToolTests(TestCase):
         self.human = APIClient()
         self.human.force_login(self.user)
 
-    # 功能：调用真实工具接口。
-    # 输入：`name` 工具、`args` 参数、`expected` HTTP 状态、`key` 可选明确幂等键。
-    # 输出：成功的回执或预期错误响应。
-    # 逻辑：写工具默认生成本次测试操作的键，显式键用于重放验证；非 DRF 错误只报告状态，避免回显上传正文。
-    # 约束：不替换业务处理器或认证。
+    # Function: Call the real tool interface.
+    # Inputs: `name` identifies the tool, `args` contains inputs, `expected` is HTTP status, and `key` is an optional explicit idempotency key.
+    # Outputs: Successful receipt or expected error response.
+    # Logic: Write tools generate a key for this test operation by default; explicit keys verify replay. Non-DRF errors report status only, avoiding uploaded-body echoes.
+    # Constraints: Do not replace business handlers or authentication.
     def call(self, name, args, expected=200, key=None):
         data = {"name": name, "arguments": args}
         if build_registry()[name]["executionMode"] != "read":
@@ -67,19 +67,19 @@ class SupportToolTests(TestCase):
         self.assertEqual(response.status_code, expected, getattr(response, "data", response.status_code))
         return response.data
 
-    # 功能：创建参考产品夹具。
-    # 输入：无外部参数。
-    # 输出：符合现有资料录入契约的字典。
-    # 逻辑：使用明确币种和未知价格，不补正式报价。
-    # 约束：仅返回数据，不创建业务记录。
+    # Function: Create a reference-product fixture.
+    # Inputs: No external arguments.
+    # Outputs: Dictionary satisfying the existing profile-entry contract.
+    # Logic: Use explicit currency and unknown price without inventing a formal quote.
+    # Constraints: Return data only; create no business records.
     def product(self):
         return {"name": "检测设备", "category": "A", "specifications": ["尺寸 10 cm"], "price_min": None, "price_max": None, "currency": "SGD", "scenarios": ["量测"], "document_id": None}
 
-    # 功能：验证原资料接口和历史目录兼容性。
-    # 输入：无 ID 的旧产品列表和修改请求。
-    # 输出：GET 不写数据库，删除首行后其他 ID 保持稳定，旧 revision 明确冲突。
-    # 逻辑：通过 MCP 共用 HTTP 路径先读再写，对比实际持久化记录。
-    # 约束：不触发模型调用。
+    # Function: Verify original profile-interface and historical-catalog compatibility.
+    # Inputs: Legacy product lists without IDs and modification requests.
+    # Outputs: GET writes nothing; deleting the first row preserves other IDs, and stale revisions conflict explicitly.
+    # Logic: Read then write through the HTTP path shared by MCP and compare persisted records.
+    # Constraints: Do not trigger model calls.
     def test_profiles_and_legacy_catalog(self):
         self.assertEqual(self.call("sales_setup.get", {})["data"]["revision"], 0)
         self.assertFalse(SalesSetup.objects.filter(owner=self.user).exists())
@@ -95,11 +95,11 @@ class SupportToolTests(TestCase):
         self.assertEqual(second[0]["id"], first[1]["id"])
         self.assertEqual(self.call("seller_profile.get", {})["data"]["revision"], 0)
 
-    # 功能：验证单条目录操作和链接权限。
-    # 输入：本人及他人的交易产品、重复请求和过期版本。
-    # 输出：条目 CRUD、版本与幂等正确，其他账号链接无法保存。
-    # 逻辑：执行真实调用并检查是否意外创建交易记录或确认提案。
-    # 约束：参考目录只关联显式选择的产品。
+    # Function: Verify individual catalog operations and link permissions.
+    # Inputs: Owned/foreign transaction products, repeated requests, and expired versions.
+    # Outputs: Correct entry CRUD, revisions, and idempotency; links to other accounts cannot save.
+    # Logic: Execute real calls and check for unintended transaction records or confirmation proposals.
+    # Constraints: Reference catalogs link only explicitly selected products.
     def test_catalog_crud_links_and_conflicts(self):
         foreign = models.Product.objects.create(owner=self.other, sku="other", name="其他", currency="SGD", unit_price=1)
         mine = models.Product.objects.create(owner=self.user, sku="mine", name="目录", currency="SGD", unit_price=2)
@@ -119,11 +119,11 @@ class SupportToolTests(TestCase):
         self.assertEqual(models.Product.objects.count(), 2)
         self.assertEqual(ToolProposal.objects.count(), 0)
 
-    # 功能：验证无 Session 的完整文件和方案链路。
-    # 输入：UTF-8、达到 5 MiB 上限的 TXT、PDF、坏编码及外部账号文件。
-    # 输出：分块可还原原文，上限文件可上传，超限或普通工具的大载荷被拒绝；引用文件不可删除，未引用文件可删除且幂等。
-    # 逻辑：真实上传、关联、分块和删除，验证没有浏览器 Cookie。
-    # 约束：PDF 只验证原始字节读取，不声称已解析文本。
+    # Function: Verify the complete file/solution path without Session.
+    # Inputs: UTF-8, TXT at the 5 MiB limit, PDF, invalid encoding, and other accounts' files.
+    # Outputs: Chunks reconstruct original text; limit-sized files upload, while oversized files/ordinary-tool payloads fail. Referenced files cannot be deleted; unreferenced deletion succeeds idempotently.
+    # Logic: Real upload, linking, chunking, and deletion with no browser Cookie.
+    # Constraints: PDF checks cover raw-byte reading only, not text parsing.
     def test_documents_roundtrip_and_references(self):
         content = "第一行\n第二行🙂".encode()
         doc = self.call("setup_documents.upload", {"name": "方案.txt", "content_base64": base64.b64encode(content).decode()})["data"]
@@ -151,11 +151,11 @@ class SupportToolTests(TestCase):
         self.call("setup_documents.upload", {"name": "oversize.txt", "content_base64": base64.b64encode(b"a" * (6 * 1024 * 1024)).decode()}, 400)
         self.call("company_profile.update", {"revision": 0, "data": {"company_name": "a" * (3 * 1024 * 1024)}}, 400)
 
-    # 功能：验证既有附件无需 Session 链接即可读取。
-    # 输入：临时私有存储中的真实文件和篡改后的内容。
-    # 输出：正文可读，完整性错误及越权被拒绝。
-    # 逻辑：仅替换测试存储根目录，保留原读取、权限和 SHA-256 校验。
-    # 约束：临时目录由测试管理，不写生产附件。
+    # Function: Verify existing attachments can be read without Session download links.
+    # Inputs: Real files in temporary private storage and subsequently tampered contents.
+    # Outputs: Readable contents; integrity errors and unauthorized access are rejected.
+    # Logic: Replace only the test storage root while preserving reads, permissions, and SHA-256 checks.
+    # Constraints: Tests manage temporary directories without writing production attachments.
     def test_existing_attachment_reads(self):
         company = grouping.create_company(self.user, "客户")
         with tempfile.TemporaryDirectory() as folder, override_settings(BASE_DIR=Path(folder)):
@@ -168,11 +168,11 @@ class SupportToolTests(TestCase):
             path.write_bytes(b"wrong")
             self.call("files.read", args, 400)
 
-    # 功能：验证活动资讯接口与 MCP 使用同一数据。
-    # 输入：明确来源、时间、分类的合成活动和资讯。
-    # 输出：查询、修改、归档、恢复和时间筛选正确。
-    # 逻辑：写入采用 Tool 身份，再从原业务 API 查询验证持久化。
-    # 约束：无实时资讯抓取；不计算价值或优先级。
+    # Function: Verify event/news interfaces and MCP use the same data.
+    # Inputs: Synthetic events/news with explicit sources, times, and categories.
+    # Outputs: Correct queries, modifications, archival, restoration, and time filtering.
+    # Logic: Write as a Tool identity, then query original business APIs to verify persistence.
+    # Constraints: No live-news collection or value/priority calculation.
     def test_events_news_crud_and_filters(self):
         args = {"title": "行业展会", "event_type": "exhibition", "country": "SG", "city": "Singapore", "latitude": 1.3, "longitude": 103.8, "starts_at": "2026-10-01T09:00:00+08:00", "ends_at": "2026-10-02T18:00:00+08:00", "source_url": "https://example.com/event"}
         created = self.call("world_events.create", {"data": args})["data"]
@@ -188,11 +188,11 @@ class SupportToolTests(TestCase):
         self.assertEqual(response.data["results"][0]["id"], news["id"])
         self.assertEqual(ToolProposal.objects.count(), 0)
 
-    # 功能：验证公共资讯读取及时间、来源和私人商机关联边界。
-    # 输入：无时区时间、危险链接、倒置窗口以及其他员工记录。
-    # 输出：公共资讯可跨账号读取；无效输入和私有商机关联被拒绝且不留成功回执。
-    # 逻辑：真实 JSON Schema、序列化器及 owner 查询联动。
-    # 约束：只共享公共资讯，客户和商机关联维持隔离。
+    # Function: Verify public-news reads and time, source, and private-opportunity-link boundaries.
+    # Inputs: Timezone-free timestamps, unsafe links, reversed windows, and other employees' records.
+    # Outputs: Public news is readable across accounts; invalid inputs/private-opportunity links are rejected without successful receipts.
+    # Logic: Real JSON Schema, serializers, and owner queries operate together.
+    # Constraints: Share public news only; customer/opportunity links remain isolated.
     def test_invalid_insights_and_private_relations(self):
         data = {"title": "消息", "category": "price", "published_at": "2026-09-21T00:00:00Z", "source_url": "https://example.com/news", "content": "内容"}
         for field, value in (("source_url", "javascript:alert(1)"), ("published_at", "2026-09-21T00:00:00"), ("owner", self.other.pk)):
@@ -207,11 +207,11 @@ class SupportToolTests(TestCase):
         event = {"title": "活动", "event_type": "sales", "country": "SG", "city": "SG", "latitude": 1, "longitude": 103, "starts_at": "2026-10-01T00:00:00Z", "ends_at": "2026-10-02T00:00:00Z", "source_url": "https://example.com/event", "opportunity_ids": [str(opportunity.pk)]}
         self.call("world_events.create", {"data": event}, 400)
 
-    # 功能：验证一次授权后直接调用与固定范围。
-    # 输入：明确选定的 read_only/data_management 模板和受限 Tool token。
-    # 输出：读取无需重复确认、写入仅获授权时成功，工具令牌不能自发授权。
-    # 逻辑：通过 Session 创建模板凭证，再用新 Tool token 请求；检查新工具不会扩大已发范围。
-    # 约束：不取消现有提案和真实外部动作确认。
+    # Function: Verify direct calls after one authorization and frozen scope.
+    # Inputs: Explicitly selected read_only/data_management presets and restricted Tool tokens.
+    # Outputs: Reads require no repeated confirmation, writes succeed only when authorized, and tool tokens cannot authorize themselves.
+    # Logic: Create preset credentials through Session, then call with the new Tool token; verify new tools cannot expand issued scope.
+    # Constraints: Do not remove existing proposal or real external-action confirmation.
     def test_permission_presets_and_token_boundaries(self):
         presets = self.client.get(BASE + "permission-presets/").data["presets"]
         self.assertIn("setup_documents.read", presets["read_only"]["allowed_tools"])

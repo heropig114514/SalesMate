@@ -1,8 +1,8 @@
-/* 职责：各页面共享的侧栏、上下文、首页待办卡和响应式外壳。
- * 实现：顶栏下方固定导航，内容区域保留独立滚动；客户下保留四类业务入口，Profile 固定在侧栏内容底部，移动端导航横向排列。
- * 关联：workspace.js、product-header.js 与工作台、业务、世界洞察和设置 HTML；配色全部来自 design-system.css。
- * 目录：无函数或类；区域为主导航、Profile、客户、首页与移动布局。
- * 变量索引：消费共享主题、--header-height 与 --sidebar-width，无本地变量。 */
+/* Responsibility: Provide the shared sidebar, context, home task cards, and responsive shell.
+ * Implementation: Fixed navigation below the header with independently scrolling content; four business entries under customers, Profile at the bottom of sidebar content, and horizontal mobile navigation.
+ * Relationships: workspace.js, product-header.js, and workspace/business/world-insights/settings HTML; all colors come from design-system.css.
+ * Directory: No functions or classes; sections cover navigation, Profile, customers, home, and mobile layout.
+ * Variable index: Consumes shared theme, --header-height, and --sidebar-width; no local variables. */
 [hidden] { display: none!important; }
 .workspace-shell {
   position: fixed; inset: var(--header-height) auto 0 0; width: var(--sidebar-width);
@@ -81,6 +81,6 @@ body.business-workspace main { padding: 0 28px 28px; max-width: none; }
   .topbar-right { flex-wrap: wrap; gap: 8px; }
 }
 
-/* 三张客户统计卡与首页两张邮件统计卡自适应平分可用宽度。 */
+/* Three customer-statistic cards and two home mail-statistic cards evenly share available width responsively. */
 .business-workspace #business-stats, #stats { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 .list-footer { justify-content: flex-end; }

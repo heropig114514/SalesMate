@@ -1,10 +1,10 @@
 /**
- * 职责：验证产品顶栏、主导航、底部 Profile 和无自动授权的邮箱设置、可收起底部聊天条、精简首页、邮箱设置中的复核入口、真实总数展示、跨页客户上下文和表单预填。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：核对三个业务分区及实验数据入口已移除，侧栏不再提供商机优先级入口；真实 HTML/JS 使用隔离静态服务器，全部 API 模拟（共享浏览夹具仅含原账号记录，筛选断言跟随 browse 路由）；检查刷新、筛选、失败、移动布局；视口变化后等待媒体查询监听器完成状态更新。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；product-header.js、workspace.js、app.js、assistant-widget.js、business.js；需显式 Playwright 模块和 Chrome 路径。
- * 目录：main 执行模拟导航场景。
- * 变量索引：FRONTEND 为页面目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
+ * Responsibility: Verify headers, navigation, bottom Profile/mail settings without automatic authorization, collapsible bottom chat, simplified home, mail-settings review entry, real totals, cross-page customer context, and form prefilling.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so existing Chinese assertions do not depend on host language.
+ * Implementation: Check three product sections, removal of experiment navigation and sidebar opportunity priorities. Actual HTML/JS uses isolated serving and fully mocked APIs; shared-browse fixtures contain only original-account records and filter assertions follow browse routes. Cover refresh, filtering, failure, and mobile layout; wait for media-query listeners after viewport changes.
+ * Relationships: Chat Markdown, 0919 interface, and language resources use coordinated versions; product-header.js, workspace.js, app.js, assistant-widget.js, business.js; explicit Playwright/Chrome paths required.
+ * Directory: main runs mocked navigation scenarios.
+ * Variable index: FRONTEND is the page directory; OUTPUT is the ignored screenshot directory; imports carry no business state.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,9 +14,9 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：执行独立浏览器契约验收。输入：运行环境中的 Playwright/Chrome 路径。输出：检查结果及截图；手机焦点断言等待背景 inert 就绪。
- * 逻辑：navLabels 核对侧栏已移除商机优先级，顶栏限定三个业务分区并排除实验入口；产品分区切换、底部条状布局、浮窗开关、草稿保留、旧链接和移动端焦点不产生写入；A 公司详情跳转报价、跟进并刷新；额外检验空邮箱设置、重复导航、刷新不授权及公司设置及引导读取、持久化、冲突保留、重读确认、双语、未知客户、客户页面不预选聊天公司与失败。
- * 约束：所有业务请求均拦截；查看客户按当前只读契约不触发分析，仅允许显式公司资料 PATCH，禁止其余写入和外部网络。 */
+/** Function: Run independent browser contract acceptance. Inputs: Environment Playwright/Chrome paths. Outputs: Results/screenshots; mobile focus assertions wait for background inert state.
+ * Logic: navLabels checks sidebar-priority removal; the header is limited to three sections without experiments. Section changes, bottom layout, widget toggles, retained drafts, legacy links, and mobile focus cause no writes. Navigate customer A to quotes/follow-ups and refresh. Also test empty mail settings, repeated navigation, refresh without authorization, profile/onboarding reads, persistence, conflict retention, reload confirmation, bilingual behavior, unknown customers, chat without preselected customers, and failures.
+ * Constraints: Intercept every business request; read-only customer viewing does not trigger analysis. Allow explicit company-profile PATCH only; reject other writes and external networks. */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -142,7 +142,7 @@ async function main() {
     assert.equal(new URL(page.url()).hash, '#home');
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Floating chat mobile overflow');
-    // 视口变更和媒体查询 change 回调分开调度，先等待实际状态，不依赖机器执行速度。
+    // Viewport changes and media-query callbacks are scheduled separately; wait for actual state instead of relying on machine speed.
     await page.waitForFunction(() => document.getElementById('workspace').inert);
     assert.equal(await page.locator('#workspace').evaluate(node => node.inert), true);
     assert.equal(await page.locator('#assistant-close').isVisible(), true);

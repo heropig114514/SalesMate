@@ -1,21 +1,21 @@
-"""职责：计算实验夹具的持久化行指纹，供导入、只读共享和清理共同验证。
-实现：只使用实际数据库字段；二进制和向量规范化后按键排序计算 SHA-256。
-关联：sales.seed_kg_lab 保存指纹；sales.experiments 在跨账号返回内容前检查指纹。
-目录：
-- fingerprint：计算单行持久化内容的摘要。
-变量索引：
-- 无
+"""Responsibility: Calculate persistent-row fingerprints for experiment fixtures so import, read-only sharing, and cleanup use the same verification.
+Implementation: Uses actual database fields only; normalizes binary values and vectors, sorts keys, and calculates SHA-256.
+Relationships: sales.seed_kg_lab persists fingerprints; sales.experiments validates them before returning cross-account content.
+Directory:
+- fingerprint: Calculates the digest of one persistent row's content.
+Variable index:
+- None
 """
 
 import hashlib
 import json
 
 
-# 功能：计算数据库行内容指纹。
-# 输入：`instance` 已从数据库读取的 ORM 实例。
-# 输出：SHA-256 十六进制字符串。
-# 逻辑：外键用 ID，二进制用 hex，向量用列表，其余非 JSON 类型按字符串规范化。
-# 约束：与既有 kg-business-fixture-v1 清单兼容；摘要检测内容漂移，不证明来源真实性。
+# Function: Calculate a content fingerprint for a database row.
+# Inputs: `instance` is an ORM instance read from the database.
+# Outputs: SHA-256 hexadecimal string.
+# Logic: Uses IDs for foreign keys, hex for binary values, lists for vectors, and string normalization for other non-JSON types.
+# Constraints: Compatible with the existing kg-business-fixture-v1 manifest; the digest detects content drift but does not prove source authenticity.
 def fingerprint(instance):
     values = {}
     for field in instance._meta.concrete_fields:

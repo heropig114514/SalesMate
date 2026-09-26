@@ -1,15 +1,15 @@
-"""职责：管理销售动作专用 Google OAuth 与 QQ SMTP 加密凭证。
-实现：显式 Fernet 密钥加密；按提供方返回 Google 凭证或 QQ 授权码，发信连接独立于只读同步。
-关联：sales API 提供授权回调与安全连接列表；actions 仅在明确批准后使用连接。
-目录：
-- vault：构造必需密钥对应的加密器。
-- encrypt_credentials：加密 Google 或 QQ 授权 JSON。
-- credentials_for：解密 QQ 授权码或刷新 Google 凭证。
-- begin：创建外部服务授权地址。
-- finish：处理 OAuth 回调并保存加密连接。
-变量索引：
-- SCOPES：各提供方明确申请的 Google OAuth 权限。
-- SESSION_KEY：保存单次 OAuth state、PKCE 和提供方的会话键。
+"""Responsibility: Manage encrypted Google OAuth and QQ SMTP credentials dedicated to sales actions.
+Implementation: Encrypt with an explicit Fernet key; return Google credentials or QQ authorization codes by provider. Sending connections remain separate from read-only synchronization.
+Relationships: Sales API provides authorization callbacks and safe connection lists; actions uses connections only after explicit approval.
+Directory:
+- vault: Construct an encryptor from the required key.
+- encrypt_credentials: Encrypt Google or QQ authorization JSON.
+- credentials_for: Decrypt QQ authorization codes or refresh Google credentials.
+- begin: Create an external-service authorization URL.
+- finish: Handle OAuth callbacks and save encrypted connections.
+Variable index:
+- SCOPES: Google OAuth scopes explicitly requested for each provider.
+- SESSION_KEY: Session key holding one-time OAuth state, PKCE, and provider.
 """
 
 import json
@@ -41,11 +41,11 @@ SCOPES = {
 SESSION_KEY = "sales_external_oauth"
 
 
-# 功能：构造必需密钥对应的加密器。
-# 输入：无参数；读取 settings.SALESMATE_VAULT_KEY。
-# 输出：Fernet；缺失或格式错误抛 InvalidState。
-# 逻辑：仅使用专门密钥，不派生自 Django SECRET_KEY。
-# 约束：不自动生成、不输出密钥、不回退为明文。
+# Function: Construct an encryptor from the required key.
+# Inputs: No parameters; read settings.SALESMATE_VAULT_KEY.
+# Outputs: Fernet; missing or malformed keys raise InvalidState.
+# Logic: Use only the dedicated key; never derive it from Django SECRET_KEY.
+# Constraints: Do not generate or log keys automatically or fall back to plaintext.
 def vault():
     key = settings.SALESMATE_VAULT_KEY
     if not key:
@@ -56,20 +56,20 @@ def vault():
         raise InvalidState("SALESMATE_VAULT_KEY 格式无效。") from None
 
 
-# 功能：加密 Google 或 QQ 授权 JSON。
-# 输入：`document` 为 Google OAuth 或 QQ 授权码字典。
-# 输出：可保存的密文字符串。
-# 逻辑：UTF-8 JSON 经 Fernet 认证加密。
-# 约束：不将明文写入日志或业务快照。
+# Function: Encrypt Google or QQ authorization JSON.
+# Inputs: `document`: Google OAuth or QQ authorization-code dictionary.
+# Outputs: Persistable ciphertext string.
+# Logic: Apply Fernet authenticated encryption to UTF-8 JSON.
+# Constraints: Never write plaintext to logs or business snapshots.
 def encrypt_credentials(document):
     return vault().encrypt(json.dumps(document).encode("utf-8")).decode("ascii")
 
 
-# 功能：解密指定连接，按提供方返回执行凭证。
-# 输入：`connection` 为已通过 owner 校验的 Connection。
-# 输出：Google Credentials 或包含 authorization_code 的 QQ 字典。
-# 逻辑：QQ 验证授权码格式直接返回；Google 校验 scope，过期时刷新并重新加密。
-# 约束：任何凭证错误在发送业务内容前失败，不将底层异常或令牌暴露给浏览器。
+# Function: Decrypt a connection and return provider-specific execution credentials.
+# Inputs: `connection`: Connection that has passed owner checks.
+# Outputs: Google Credentials or a QQ dictionary containing authorization_code.
+# Logic: Validate and return QQ authorization-code format directly; validate Google scopes and refresh/re-encrypt expired credentials.
+# Constraints: Credential errors fail before business content is sent; do not expose underlying exceptions or tokens to the browser.
 def credentials_for(connection):
     if connection.archived:
         raise InvalidState("外部连接已停用。")
@@ -101,11 +101,11 @@ def credentials_for(connection):
         raise InvalidState("外部授权刷新失败，请检查连接状态并重新授权。") from None
 
 
-# 功能：创建外部服务授权地址。
-# 输入：`request` 为员工会话，`provider` 为 gmail/calendar，`redirect_uri` 为服务器固定回调。
-# 输出：Google 授权 URL。
-# 逻辑：检查加密配置，创建 PKCE 流程并在 Session 保存一次性校验数据。
-# 约束：原只读邮箱授权不被修改；回调地址须在 Google 控制台登记。
+# Function: Create an external-service authorization URL.
+# Inputs: `request`: employee session; `provider`: gmail/calendar; `redirect_uri`: fixed server callback.
+# Outputs: Google authorization URL.
+# Logic: Check encryption configuration, create a PKCE flow, and save one-time validation data in Session.
+# Constraints: Do not modify existing read-only mailbox authorization; register the callback URL in Google Console.
 def begin(request, provider, redirect_uri):
     if provider not in SCOPES:
         raise ValidationError("不支持的外部服务。")
@@ -135,11 +135,11 @@ def begin(request, provider, redirect_uri):
     return url
 
 
-# 功能：处理 OAuth 回调并保存加密连接。
-# 输入：`request` 含当前员工会话与 Google code/state。
-# 输出：Connection。
-# 逻辑：消耗单次 state，交换 code，查询真实账号，再加密存储。
-# 约束：失败不创建连接；不把 access token 返回浏览器，不自动启动外部动作。
+# Function: Handle OAuth callbacks and save encrypted connections.
+# Inputs: `request`: current employee session and Google code/state.
+# Outputs: Connection.
+# Logic: Consume one-time state, exchange the code, query the real account, and store encrypted credentials.
+# Constraints: Create no connection on failure; never return access tokens to the browser or start external actions automatically.
 def finish(request):
     saved = request.session.pop(SESSION_KEY, None)
     if not saved or not secrets.compare_digest(

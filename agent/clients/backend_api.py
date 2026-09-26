@@ -1,78 +1,78 @@
-"""职责：把 Agent 工作流的最小 BackendClient 协议映射到 Django Agent HTTP API。
-实现：维护身份、ETag 与租约上下文；邮件提交默认 gmail_real，QQ 调用显式指定 qq_real。
-关联：Gmail/QQ Worker 复用此传输；L2–L4 继续使用原协议、参数和提示词版本。
-目录：
-- BackendClient：声明 L1–L4 最小后端协议。
-- BackendClient.submit_emails：声明标准 L1 邮件提交接口。
-- BackendClient.get_stored_email：查询天然键对应的已有抽取。
-- BackendClient.get_company_grouping：读取公司归组。
-- BackendClient.get_company_context：读取公司业务上下文。
-- BackendClient.save_analysis_input：保存 L2 输入并跟踪版本。
-- BackendClient.get_latest_analysis_input：读取最近 L2 快照。
-- BackendClient.get_cached_analysis：查询指定输入和提示词的 L3 缓存。
-- BackendClient.save_analysis：提交 L3 分析。
-- BackendClient.save_score：提交 L4 评分。
-- BackendClient.claim_jobs：领取并缓存公司租约。
-- BackendClient.report_job：回报公司任务。
-- BackendClient.claim_mailbox_syncs：旧 CLI 领取 Gmail 同步。
-- BackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
-- BackendClient.get_sync_state：读取邮箱游标和 ETag。
-- BackendClient.save_sync_state：条件更新邮箱游标。
-- BackendClient.claim_answer_request：领取一条工作空间聊天回答请求。
-- BackendClient.get_answer_context：读取请求绑定的客户和知识上下文。
-- BackendClient.get_chat_tools：发现本请求读取及实验维护工具。
-- BackendClient.get_chat_request_status：读取本人请求状态。
-- BackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
-- BackendClient.report_answer：回报带 Prompt 版本的聊天结果。
-- BackendRetrievalError：表示后端读取失败。
-- BackendConfigurationError：表示配置不满足调用前提。
-- BackendContractError：表示响应违反协议。
-- BackendRequestError：包含 HTTP 状态的安全请求异常。
-- BackendRequestError.__init__：保存 HTTP 状态、错误代码和安全说明。
-- _JobContext：保存公司任务与租约上下文。
-- DjangoBackendClient：把简化工作流调用映射到认证 HTTP 接口。
-- DjangoBackendClient.__init__：验证初始化参数并建立实例状态。
-- DjangoBackendClient.close：释放当前实例的 HTTP 连接池。
-- DjangoBackendClient.submit_emails：提交邮件并统计结果；实现支持默认 Gmail 或显式 QQ 来源。
-- DjangoBackendClient.get_stored_email：查询天然键对应的已有抽取。
-- DjangoBackendClient.get_company_grouping：读取公司归组。
-- DjangoBackendClient.get_company_context：读取公司业务上下文。
-- DjangoBackendClient.save_analysis_input：保存 L2 输入并跟踪版本。
-- DjangoBackendClient.get_latest_analysis_input：读取最近 L2 快照。
-- DjangoBackendClient.get_cached_analysis：查询指定输入和提示词的 L3 缓存。
-- DjangoBackendClient.save_analysis：提交 L3 分析。
-- DjangoBackendClient.save_score：提交 L4 评分。
-- DjangoBackendClient.claim_jobs：领取并缓存公司租约。
-- DjangoBackendClient.report_job：回报公司任务。
-- DjangoBackendClient.claim_mailbox_syncs：旧 CLI 领取 Gmail 同步。
-- DjangoBackendClient.report_mailbox_sync：旧 CLI 回报 Gmail 同步。
-- DjangoBackendClient.get_sync_state：读取邮箱游标和 ETag。
-- DjangoBackendClient.save_sync_state：条件更新邮箱游标。
-- DjangoBackendClient.claim_answer_request：映射工作空间聊天领取接口并移除过渡期空公司字段。
-- DjangoBackendClient.get_answer_context：映射聊天上下文接口。
-- DjangoBackendClient.get_chat_tools：发现本请求读取及实验维护工具。
-- DjangoBackendClient.get_chat_request_status：读取本人请求状态。
-- DjangoBackendClient.read_chat_tool：执行客户或共享实验查询并校验响应。
-- DjangoBackendClient.report_answer：映射聊天回答保存接口。
-- DjangoBackendClient._required_string：读取并校验非空字符串。
-- DjangoBackendClient._object_list：验证对象数组。
-- DjangoBackendClient._retrieval_gaps：验证三字段资料缺口数组。
-- DjangoBackendClient._write_headers：构造写请求所需租约与版本头。
-- DjangoBackendClient._request：发起认证 HTTP 并规范化失败。
-- DjangoBackendClient._company_id：验证并提取公司 ID。
-- DjangoBackendClient._object：要求响应为对象。
-- DjangoBackendClient._etag：提取响应版本头。
-- DjangoBackendClient._error：规范化 API 错误。
-- django_backend_from_environment：读取连接配置，允许任务显式提供独立身份和邮箱。
-变量索引：
-- logger：记录安全请求上下文与耗时。
-- JsonObject：只读 JSON 映射类型别名。
-- _DEFAULT_ANALYSIS_PROMPT_VERSION：从实际分析 Skill 读取的提示词版本。
-- _JobContext.job_id：已领取任务 ID。
-- _JobContext.company_id：任务所属公司 ID。
-- _JobContext.expected_version：领取时的业务版本。
-- _JobContext.lease_token：写入时必须携带的租约，不进入日志。
-- __all__：公开的后端协议、异常、客户端和工厂符号。
+"""Responsibility: Map the minimal BackendClient workflow protocol to the Django Agent HTTP API.
+Implementation: Maintain identity, ETag, and lease context; email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
+Relationships: Gmail/QQ workers share this transport; L2-L4 retain their protocols, parameters, and prompt versions.
+Directory:
+- BackendClient: Declare the minimal L1-L4 backend protocol.
+- BackendClient.submit_emails: Declare the standard L1 email submission interface.
+- BackendClient.get_stored_email: Look up an existing extraction by natural key.
+- BackendClient.get_company_grouping: Read company grouping.
+- BackendClient.get_company_context: Read company business context.
+- BackendClient.save_analysis_input: Save L2 input and track its version.
+- BackendClient.get_latest_analysis_input: Read the latest L2 snapshot.
+- BackendClient.get_cached_analysis: Look up the L3 cache for an input and prompt version.
+- BackendClient.save_analysis: Submit L3 analysis.
+- BackendClient.save_score: Submit L4 scores.
+- BackendClient.claim_jobs: Claim and cache company leases.
+- BackendClient.report_job: Report a company job result.
+- BackendClient.claim_mailbox_syncs: Claim Gmail synchronization through the legacy CLI.
+- BackendClient.report_mailbox_sync: Report Gmail synchronization through the legacy CLI.
+- BackendClient.get_sync_state: Read the mailbox cursor and ETag.
+- BackendClient.save_sync_state: Conditionally update the mailbox cursor.
+- BackendClient.claim_answer_request: Claim one workspace chat answer request.
+- BackendClient.get_answer_context: Read customer and knowledge context bound to a request.
+- BackendClient.get_chat_tools: Discover this request's read and experiment maintenance tools.
+- BackendClient.get_chat_request_status: Read the current employee's request status.
+- BackendClient.read_chat_tool: Execute a customer or shared experiment query and validate the response.
+- BackendClient.report_answer: Report a chat result with its prompt version.
+- BackendRetrievalError: Represent backend retrieval failure.
+- BackendConfigurationError: Represent configuration that does not meet call prerequisites.
+- BackendContractError: Represent a response contract violation.
+- BackendRequestError: Safe request exception containing an HTTP status.
+- BackendRequestError.__init__: Store HTTP status, error code, and safe detail.
+- _JobContext: Store company job and lease context.
+- DjangoBackendClient: Map simplified workflow calls to authenticated HTTP endpoints.
+- DjangoBackendClient.__init__: Validate initialization parameters and establish instance state.
+- DjangoBackendClient.close: Release this instance's HTTP connection pool.
+- DjangoBackendClient.submit_emails: Submit emails and aggregate results, supporting default Gmail or explicitly selected QQ sources.
+- DjangoBackendClient.get_stored_email: Look up an existing extraction by natural key.
+- DjangoBackendClient.get_company_grouping: Read company grouping.
+- DjangoBackendClient.get_company_context: Read company business context.
+- DjangoBackendClient.save_analysis_input: Save L2 input and track its version.
+- DjangoBackendClient.get_latest_analysis_input: Read the latest L2 snapshot.
+- DjangoBackendClient.get_cached_analysis: Look up the L3 cache for an input and prompt version.
+- DjangoBackendClient.save_analysis: Submit L3 analysis.
+- DjangoBackendClient.save_score: Submit L4 scores.
+- DjangoBackendClient.claim_jobs: Claim and cache company leases.
+- DjangoBackendClient.report_job: Report a company job result.
+- DjangoBackendClient.claim_mailbox_syncs: Claim Gmail synchronization through the legacy CLI.
+- DjangoBackendClient.report_mailbox_sync: Report Gmail synchronization through the legacy CLI.
+- DjangoBackendClient.get_sync_state: Read the mailbox cursor and ETag.
+- DjangoBackendClient.save_sync_state: Conditionally update the mailbox cursor.
+- DjangoBackendClient.claim_answer_request: Map workspace chat claims and remove the transitional null company field.
+- DjangoBackendClient.get_answer_context: Map the chat context endpoint.
+- DjangoBackendClient.get_chat_tools: Discover this request's read and experiment maintenance tools.
+- DjangoBackendClient.get_chat_request_status: Read the current employee's request status.
+- DjangoBackendClient.read_chat_tool: Execute a customer or shared experiment query and validate the response.
+- DjangoBackendClient.report_answer: Map the chat answer persistence endpoint.
+- DjangoBackendClient._required_string: Read and validate a nonempty string.
+- DjangoBackendClient._object_list: Validate an array of objects.
+- DjangoBackendClient._retrieval_gaps: Validate an array of three-field retrieval gaps.
+- DjangoBackendClient._write_headers: Build lease and version headers required for writes.
+- DjangoBackendClient._request: Send authenticated HTTP requests and normalize failures.
+- DjangoBackendClient._company_id: Validate and extract the company ID.
+- DjangoBackendClient._object: Require an object response.
+- DjangoBackendClient._etag: Extract the response version header.
+- DjangoBackendClient._error: Normalize API errors.
+- django_backend_from_environment: Read connection settings, allowing an explicit independent task identity and mailbox.
+Variable index:
+- logger: Record safe request context and elapsed time.
+- JsonObject: Type alias for a read-only JSON mapping.
+- _DEFAULT_ANALYSIS_PROMPT_VERSION: Prompt version read from the actual analysis skill.
+- _JobContext.job_id: Claimed job ID.
+- _JobContext.company_id: Company ID associated with the job.
+- _JobContext.expected_version: Business version at claim time.
+- _JobContext.lease_token: Lease required for writes; excluded from logs.
+- __all__: Public backend protocol, exceptions, client, and factory symbols.
 """
 
 from __future__ import annotations
@@ -95,198 +95,198 @@ _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
 logger = logging.getLogger("salesmate.agent.backend_api")
 
 
-# 功能：L1–L4 与只读聊天 workflow 使用的最小真实后端接口。
-# 逻辑：声明 workflow 所需方法，由具体客户端提供传输。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: Minimal real backend interface for L1-L4 and read-only chat workflows.
+# Logic: Declare workflow methods; concrete clients provide transport.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendClient(Protocol):
-    """L1–L4 与只读聊天 workflow 使用的最小真实后端接口。"""
+    """Minimal real backend interface for L1-L4 and read-only chat workflows."""
 
-    # 功能：声明标准 L1 邮件提交接口。
-    # 输入：`submissions` 邮件抽取载荷。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Declare the standard L1 email submission interface.
+    # Inputs: `submissions`: email extraction payloads.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def submit_emails(self, submissions: list[dict[str, Any]]) -> JsonObject: ...
 
-    # 功能：查询天然键对应的已有抽取。
-    # 输入：`mailbox_id` 目标邮箱标识，可空时使用方法的既定配置规则、`dedupe_key` 邮件天然键。
-    # 输出：JsonObject | None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Look up an existing extraction by natural key.
+    # Inputs: `mailbox_id`: target mailbox, using the method's configured rules when optional; `dedupe_key`: email natural key.
+    # Outputs: JsonObject | None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_stored_email(
         self, mailbox_id: str, dedupe_key: str
     ) -> JsonObject | None: ...
 
-    # 功能：读取公司归组。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Read company grouping.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_company_grouping(self, company_id: str) -> JsonObject: ...
 
-    # 功能：读取公司业务上下文。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Read company business context.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_company_context(self, company_id: str) -> JsonObject: ...
 
-    # 功能：保存 L2 输入并跟踪版本。
-    # 输入：`analysis_input` L2 分析输入。
-    # 输出：None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Save L2 input and track its version.
+    # Inputs: `analysis_input`: L2 analysis input.
+    # Outputs: None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def save_analysis_input(self, analysis_input: JsonObject) -> None: ...
 
-    # 功能：读取最近 L2 快照。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：JsonObject | None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Read the latest L2 snapshot.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: JsonObject | None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_latest_analysis_input(self, company_id: str) -> JsonObject | None: ...
 
-    # 功能：查询指定输入和提示词的 L3 缓存。
-    # 输入：`company_id` 明确的客户标识、`input_version` 指定输入版本。
-    # 输出：JsonObject | None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Look up the L3 cache for an input and prompt version.
+    # Inputs: `company_id`: explicit customer identifier; `input_version`: requested input version.
+    # Outputs: JsonObject | None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_cached_analysis(
         self, company_id: str, input_version: str
     ) -> JsonObject | None: ...
 
-    # 功能：提交 L3 分析。
-    # 输入：`analysis` L3 分析结果。
-    # 输出：None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Submit L3 analysis.
+    # Inputs: `analysis`: L3 analysis result.
+    # Outputs: None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def save_analysis(self, analysis: JsonObject) -> None: ...
 
-    # 功能：提交 L4 评分。
-    # 输入：`score` L4 评分。
-    # 输出：None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Submit L4 scores.
+    # Inputs: `score`: L4 score.
+    # Outputs: None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def save_score(self, score: JsonObject) -> None: ...
 
-    # 功能：领取并缓存公司租约。
-    # 输入：`limit` 领取数量上限。
-    # 输出：list[dict[str, Any]]。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Claim and cache company leases.
+    # Inputs: `limit`: maximum number of claims.
+    # Outputs: list[dict[str, Any]].
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def claim_jobs(self, limit: int) -> list[dict[str, Any]]: ...
 
-    # 功能：回报公司任务。
-    # 输入：`report` 任务结果载荷。
-    # 输出：None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Report a company job result.
+    # Inputs: `report`: job result payload.
+    # Outputs: None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def report_job(self, report: JsonObject) -> None: ...
 
-    # 功能：旧 CLI 领取 Gmail 同步。
-    # 输入：`limit` 领取数量上限。
-    # 输出：list[dict[str, Any]]。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Claim Gmail synchronization through the legacy CLI.
+    # Inputs: `limit`: maximum number of claims.
+    # Outputs: list[dict[str, Any]].
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def claim_mailbox_syncs(self, limit: int) -> list[dict[str, Any]]: ...
 
-    # 功能：旧 CLI 回报 Gmail 同步。
-    # 输入：`report` 任务结果载荷。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Report Gmail synchronization through the legacy CLI.
+    # Inputs: `report`: job result payload.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def report_mailbox_sync(self, report: JsonObject) -> JsonObject: ...
 
-    # 功能：读取邮箱游标和 ETag。
-    # 输入：`mailbox_id` 目标邮箱标识，可空时使用方法的既定配置规则。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Read the mailbox cursor and ETag.
+    # Inputs: `mailbox_id`: target mailbox, using the method's configured rules when optional.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_sync_state(self, mailbox_id: str) -> JsonObject: ...
 
-    # 功能：条件更新邮箱游标。
-    # 输入：`sync_state` 邮箱增量游标载荷。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Conditionally update the mailbox cursor.
+    # Inputs: `sync_state`: incremental mailbox cursor payload.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def save_sync_state(self, sync_state: JsonObject) -> JsonObject: ...
 
-    # 功能：领取一条工作空间聊天回答请求。
-    # 输入：无外部参数，读取实例认证与请求状态。
-    # 输出：JsonObject | None。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Claim one workspace chat answer request.
+    # Inputs: No external parameters; read instance authentication and request state.
+    # Outputs: JsonObject | None.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def claim_answer_request(self) -> JsonObject | None: ...
 
-    # 功能：读取请求绑定的客户和知识上下文。
-    # 输入：`request_id` 聊天请求标识、`scope` internal 或 external 知识范围。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Read customer and knowledge context bound to a request.
+    # Inputs: `request_id`: chat request identifier; `scope`: internal or external knowledge scope.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
 
-    # 功能：发现请求实际获准的读取及实验维护工具目录。
-    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：仅声明协议，由具体客户端实现传输。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Discover the read and experiment maintenance tools actually authorized for the request.
+    # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Declare the protocol only; concrete clients implement transport.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def get_chat_tools(self, request_id: str) -> JsonObject: ...
 
-    # 功能：读取本人请求的权威状态。
-    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：仅声明协议，由具体客户端实现传输。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Read the authoritative status of the current employee's request.
+    # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Declare the protocol only; concrete clients implement transport.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
-    # 功能：执行客户读取或共享实验维护并取得登记证据。
-    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定读取及实验维护工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：仅声明协议，由具体客户端实现传输。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
+    # Inputs: `request_id`: current employee's request UUID; `name`: fixed read or experiment maintenance tool name; `arguments`: JSON parameters; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Declare the protocol only; concrete clients implement transport.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def read_chat_tool(
         self, request_id: str, name: str, arguments: JsonObject
     ) -> JsonObject: ...
 
-    # 功能：回报带 Prompt 版本的聊天结果。
-    # 输入：`result` 包含提示版本的聊天结果。
-    # 输出：JsonObject。
-    # 逻辑：仅声明接口，具体传输由实现者提供。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Report a chat result with its prompt version.
+    # Inputs: `result`: chat result including its prompt version.
+    # Outputs: JsonObject.
+    # Logic: Declare the interface only; implementations provide transport.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def report_answer(self, result: JsonObject) -> JsonObject: ...
 
 
-# 功能：后端数据读取失败。
-# 逻辑：封装 HTTP 状态及安全说明。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: Backend data retrieval failed.
+# Logic: Encapsulate HTTP status and safe details.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendRetrievalError(RuntimeError):
-    """后端数据读取失败。"""
+    """Backend data retrieval failed."""
 
 
-# 功能：真实后端适配器缺少必要配置。
-# 逻辑：封装 HTTP 状态及安全说明。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: The real backend adapter lacks required configuration.
+# Logic: Encapsulate HTTP status and safe details.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendConfigurationError(ValueError):
-    """真实后端适配器缺少必要配置。"""
+    """The real backend adapter lacks required configuration."""
 
 
-# 功能：后端响应无法映射为 Agent README 约定的数据。
-# 逻辑：封装 HTTP 状态及安全说明。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: The backend response cannot be mapped to the data contract in the Agent README.
+# Logic: Encapsulate HTTP status and safe details.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendContractError(RuntimeError):
-    """后端响应无法映射为 Agent README 约定的数据。"""
+    """The backend response cannot be mapped to the data contract in the Agent README."""
 
 
-# 功能：后端请求失败，且不暴露服务凭证。
-# 逻辑：封装 HTTP 状态及安全说明。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: Backend request failure without exposing service credentials.
+# Logic: Encapsulate HTTP status and safe details.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendRequestError(RuntimeError):
-    """后端请求失败，且不暴露服务凭证。"""
+    """Backend request failure without exposing service credentials."""
 
-    # 功能：保存 HTTP 状态、错误代码和安全说明。
-    # 输入：`status_code` HTTP 状态或网络失败的零值、`code` 安全错误代码、`detail` 安全错误说明、`scope` 工具或请求错误范围。
-    # 输出：无返回值，初始化实例状态。
-    # 逻辑：保存状态、代码和说明，并构造安全异常消息。
-    # 约束：声明或异常构造不执行 HTTP 请求。
+    # Function: Store HTTP status, error code, and safe detail.
+    # Inputs: `status_code`: HTTP status, or zero for network failures; `code`: safe error code; `detail`: safe error details; `scope`: tool or request error scope.
+    # Outputs: No return value; initialize instance state.
+    # Logic: Store status, code, and details, and construct a safe exception message.
+    # Constraints: Declarations and exception construction do not issue HTTP requests.
     def __init__(
         self, status_code: int, code: str, detail: str, *, scope: str | None = None
     ):
@@ -297,9 +297,9 @@ class BackendRequestError(RuntimeError):
         self.scope = scope
 
 
-# 功能：保存不可变的已领任务身份、版本和租约。
-# 逻辑：使用冻结 dataclass 保存 job_id/company_id/expected_version/lease_token。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: Store immutable claimed job identity, version, and lease.
+# Logic: Use a frozen dataclass for job_id/company_id/expected_version/lease_token.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 @dataclass(frozen=True)
 class _JobContext:
     job_id: str
@@ -308,21 +308,21 @@ class _JobContext:
     lease_token: str
 
 
-# 功能：调用当前 Django 后端，同时向 Agent 暴露简化后的同步协议。
-# 逻辑：在实例内维护任务与版本状态，不共享员工认证。
-# 约束：不记录凭证；身份与权限最终由后端校验。
+# Function: Call the current Django backend while exposing a simplified synchronous protocol to the agent.
+# Logic: Maintain task and version state per instance without sharing employee authentication.
+# Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class DjangoBackendClient:
-    """调用当前 Django 后端，同时向 Agent 暴露简化后的同步协议。
+    """Call the current Django backend while exposing a simplified synchronous protocol to the agent.
 
-    租约、ETag 和嵌套 Job payload 都属于当前 Django HTTP 传输层，
-    由本类吸收；L2-L4 workflow 仍只依赖 ``BackendClient`` 的简单方法。
+    Leases, ETags, and nested job payloads belong to the Django HTTP transport layer
+    and are handled here; L2-L4 workflows depend only on simple ``BackendClient`` methods.
     """
 
-    # 功能：验证初始化参数并建立实例状态。
-    # 输入：`base_url` Agent API 根地址、`service_token` 员工服务凭证，不记录到日志、`mailbox_id` 目标邮箱标识，可空时使用方法的既定配置规则、`analysis_prompt_version` 分析提示版本，默认既有 Skill 版本、`lease_seconds` 租约秒数，默认 120 且限制 10–600、`timeout` HTTP 超时秒数，默认 30 且须大于零、`session` 可选 requests 会话，空时创建独立连接池。
-    # 输出：无返回值，初始化实例状态。
-    # 逻辑：校验地址、凭证和既定超时租约范围；建立私有 HTTP 连接及公司、任务、邮箱版本缓存。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Validate initialization parameters and establish instance state.
+    # Inputs: `base_url`: Agent API root; `service_token`: employee service credential, never logged; `mailbox_id`: target mailbox, following configured rules when optional; `analysis_prompt_version`: analysis prompt version, defaulting to the existing skill version; `lease_seconds`: lease duration, default 120, range 10-600; `timeout`: positive HTTP timeout in seconds, default 30; `session`: optional requests session, otherwise an independent pool is created.
+    # Outputs: No return value; initialize instance state.
+    # Logic: Validate URL, credentials, and existing timeout/lease bounds; create private HTTP transport and company, job, and mailbox version caches.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def __init__(
         self,
         base_url: str,
@@ -360,23 +360,23 @@ class DjangoBackendClient:
         self._company_jobs: dict[str, _JobContext] = {}
         self._mailbox_revisions: dict[str, str] = {}
 
-    # 功能：释放工作单元使用的 HTTP 连接。
-    # 输入：无参数，读取实例 session。
-    # 输出：无返回值。
-    # 逻辑：关闭当前连接池，不影响其他客户端。
-    # 约束：调用者应在所有请求和工作线程结束后调用。
+    # Function: Release the HTTP connection used by the work unit.
+    # Inputs: No parameters; read the instance session.
+    # Outputs: No return value.
+    # Logic: Close this connection pool without affecting other clients.
+    # Constraints: Call after all requests and worker threads have finished.
     def close(self):
         self._session.close()
 
-    # 功能：保存指定邮箱来源的抽取结果并聚合业务统计。
-    # 输入：`submissions` 为 L1 载荷；`source` 为 Gmail 默认来源或显式 QQ 来源。
-    # 输出：创建、更新、重复数量及受影响公司 ID。
-    # 逻辑：复制载荷并绑定当前 mailbox_id，经认证 HTTP 提交后严格校验响应。
-    # 约束：不修改原载荷；仅允许 gmail_real/qq_real；默认 Gmail 调用行为保持不变。
+    # Function: Save extractions for the selected mailbox source and aggregate business statistics.
+    # Inputs: `submissions`: L1 payloads; `source`: default Gmail source or explicitly selected QQ source.
+    # Outputs: Created, updated, and duplicate counts, plus affected company IDs.
+    # Logic: Copy payloads and bind the current mailbox_id; submit through authenticated HTTP and strictly validate the response.
+    # Constraints: Do not mutate original payloads; allow only gmail_real/qq_real; retain default Gmail behavior.
     def submit_emails(
         self, submissions: list[dict[str, Any]], *, source: str = "gmail_real"
     ) -> dict[str, Any]:
-        """补充 HTTP 传输字段，并把逐封结果聚合为 GmailSyncResult 所需统计。"""
+        """Add HTTP transport fields and aggregate per-email results into GmailSyncResult statistics."""
         if source not in {"gmail_real", "qq_real"}:
             raise BackendContractError("Unsupported live mailbox provider.")
         if not isinstance(self.mailbox_id, str) or not self.mailbox_id.strip():
@@ -417,15 +417,15 @@ class DjangoBackendClient:
             "affected_company_ids": affected,
         }
 
-    # 功能：查询天然键对应的已有抽取。
-    # 输入：`mailbox_id` 目标邮箱标识，可空时使用方法的既定配置规则、`dedupe_key` 邮件天然键。
-    # 输出：dict[str, Any] | None。
-    # 逻辑：按邮箱与天然键查询，404 返回 None；验证已有抽取的身份、状态和提示版本。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Look up an existing extraction by natural key.
+    # Inputs: `mailbox_id`: target mailbox, using the method's configured rules when optional; `dedupe_key`: email natural key.
+    # Outputs: dict[str, Any] | None.
+    # Logic: Query by mailbox and natural key; return None on 404; validate extraction identity, status, and prompt version.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_stored_email(
         self, mailbox_id: str, dedupe_key: str
     ) -> dict[str, Any] | None:
-        """按天然键读取已保存邮件，用于在 L1 前复用同版本抽取。"""
+        """Read stored email by natural key to reuse an extraction with the same version before L1."""
         response, _ = self._request(
             "GET",
             "failed-extractions/",
@@ -447,11 +447,11 @@ class DjangoBackendClient:
             raise BackendContractError("Saved email extract_status is invalid.")
         return document
 
-    # 功能：读取公司归组。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：dict[str, Any]。
-    # 逻辑：读取归组及 ETag，拒绝超过已领任务的版本，并缓存该客户 revision。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Read company grouping.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: dict[str, Any].
+    # Logic: Read grouping and ETag, reject versions newer than the claimed job, and cache the customer revision.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_company_grouping(self, company_id: str) -> dict[str, Any]:
         response, headers = self._request(
             "GET", "grouping/", query={"company_id": company_id}
@@ -468,11 +468,11 @@ class DjangoBackendClient:
         self._revisions[company_id] = revision
         return document
 
-    # 功能：读取公司业务上下文。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：dict[str, Any]。
-    # 逻辑：要求先读取归组；携带 If-Match 读取上下文并检查返回版本一致。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Read company business context.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: dict[str, Any].
+    # Logic: Require grouping to be read first; request context with If-Match and verify matching response versions.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_company_context(self, company_id: str) -> dict[str, Any]:
         revision = self._revisions.get(company_id)
         if revision is None:
@@ -488,11 +488,11 @@ class DjangoBackendClient:
             raise BackendContractError("Grouping and CompanyContext ETags do not match.")
         return self._object(response, "CompanyContext")
 
-    # 功能：保存 L2 输入并跟踪版本。
-    # 输入：`analysis_input` L2 分析输入。
-    # 输出：None。
-    # 逻辑：复制输入，通过已领取任务的租约和版本头提交 analysis-inputs。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Save L2 input and track its version.
+    # Inputs: `analysis_input`: L2 analysis input.
+    # Outputs: None.
+    # Logic: Copy input and submit analysis-inputs using the claimed job's lease and version headers.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def save_analysis_input(self, analysis_input: Mapping[str, Any]) -> None:
         document = dict(analysis_input)
         company_id = self._company_id(document)
@@ -503,11 +503,11 @@ class DjangoBackendClient:
             headers=self._write_headers(company_id),
         )
 
-    # 功能：读取最近 L2 快照。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：dict[str, Any] | None。
-    # 逻辑：按客户查询最近输入，404 返回 None，其余成功响应要求对象。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Read the latest L2 snapshot.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: dict[str, Any] | None.
+    # Logic: Query the latest customer input; return None on 404 and require an object for other successful responses.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_latest_analysis_input(self, company_id: str) -> dict[str, Any] | None:
         response, _ = self._request(
             "GET",
@@ -519,11 +519,11 @@ class DjangoBackendClient:
             return None
         return self._object(response, "AnalysisInput")
 
-    # 功能：查询指定输入和提示词的 L3 缓存。
-    # 输入：`company_id` 明确的客户标识、`input_version` 指定输入版本。
-    # 输出：dict[str, Any] | None。
-    # 逻辑：按客户、输入和提示版本查缓存；miss/pending 返回 None，命中必须含完整分析。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Look up the L3 cache for an input and prompt version.
+    # Inputs: `company_id`: explicit customer identifier; `input_version`: requested input version.
+    # Outputs: dict[str, Any] | None.
+    # Logic: Query the cache by customer, input, and prompt version; return None for miss/pending and require complete analysis on a hit.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_cached_analysis(
         self, company_id: str, input_version: str
     ) -> dict[str, Any] | None:
@@ -549,11 +549,11 @@ class DjangoBackendClient:
             "A cached-analysis hit must return the full Analysis; the backend returned metadata only."
         )
 
-    # 功能：提交 L3 分析。
-    # 输入：`analysis` L3 分析结果。
-    # 输出：None。
-    # 逻辑：复制分析数据，附加公司已领任务的租约与版本头后提交 analyses。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Submit L3 analysis.
+    # Inputs: `analysis`: L3 analysis result.
+    # Outputs: None.
+    # Logic: Copy analysis data, attach the company's claimed job lease and version headers, and submit analyses.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def save_analysis(self, analysis: Mapping[str, Any]) -> None:
         document = dict(analysis)
         company_id = self._company_id(document)
@@ -564,11 +564,11 @@ class DjangoBackendClient:
             headers=self._write_headers(company_id),
         )
 
-    # 功能：提交 L4 评分。
-    # 输入：`score` L4 评分。
-    # 输出：None。
-    # 逻辑：复制评分数据，附加公司已领任务的租约与版本头后提交 scores。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Submit L4 scores.
+    # Inputs: `score`: L4 score.
+    # Outputs: None.
+    # Logic: Copy score data, attach the company's claimed job lease and version headers, and submit scores.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def save_score(self, score: Mapping[str, Any]) -> None:
         document = dict(score)
         company_id = self._company_id(document)
@@ -579,11 +579,11 @@ class DjangoBackendClient:
             headers=self._write_headers(company_id),
         )
 
-    # 功能：领取并缓存公司租约。
-    # 输入：`limit` 领取数量上限。
-    # 输出：list[dict[str, Any]]。
-    # 逻辑：发送领取数量和租约时长，验证响应身份并缓存任务租约及公司版本，返回简化任务列表。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Claim and cache company leases.
+    # Inputs: `limit`: maximum number of claims.
+    # Outputs: list[dict[str, Any]].
+    # Logic: Send the claim limit and lease duration; validate response identity, cache job leases and company versions, and return simplified jobs.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def claim_jobs(self, limit: int) -> list[dict[str, Any]]:
         response, _ = self._request(
             "POST",
@@ -631,11 +631,11 @@ class DjangoBackendClient:
             )
         return jobs
 
-    # 功能：回报公司任务。
-    # 输入：`report` 任务结果载荷。
-    # 输出：None。
-    # 逻辑：要求本实例已领取任务，带租约回报，成功后清理对应任务缓存。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Report a company job result.
+    # Inputs: `report`: job result payload.
+    # Outputs: None.
+    # Logic: Require this instance to have claimed the job; report with the lease and clear the corresponding cache on success.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def report_job(self, report: Mapping[str, Any]) -> None:
         document = dict(report)
         job_id = document.get("job_id")
@@ -652,13 +652,13 @@ class DjangoBackendClient:
         if self._company_jobs.get(context.company_id) == context:
             self._company_jobs.pop(context.company_id, None)
 
-    # 功能：旧 CLI 领取 Gmail 同步。
-    # 输入：`limit` 领取数量上限。
-    # 输出：list[dict[str, Any]]。
-    # 逻辑：只领取员工明确请求的 Gmail 同步任务，校验邮箱、授权对象和数量字段。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Claim Gmail synchronization through the legacy CLI.
+    # Inputs: `limit`: maximum number of claims.
+    # Outputs: list[dict[str, Any]].
+    # Logic: Claim only Gmail synchronization explicitly requested by an employee; validate mailbox, authorization object, and count fields.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def claim_mailbox_syncs(self, limit: int) -> list[dict[str, Any]]:
-        """领取当前员工在网页中请求的 Gmail 同步任务。"""
+        """Claim Gmail synchronization requested by the current employee in the web UI."""
         response, _ = self._request(
             "POST", "mailbox-syncs/claim/", json={"limit": limit}
         )
@@ -687,23 +687,23 @@ class DjangoBackendClient:
             claims.append(copy.deepcopy(dict(raw)))
         return claims
 
-    # 功能：旧 CLI 回报 Gmail 同步。
-    # 输入：`report` 任务结果载荷。
-    # 输出：dict[str, Any]。
-    # 逻辑：提交一次同步结果和可能更新的授权，要求返回对象。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Report Gmail synchronization through the legacy CLI.
+    # Inputs: `report`: job result payload.
+    # Outputs: dict[str, Any].
+    # Logic: Submit one synchronization result and any updated authorization; require an object response.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def report_mailbox_sync(self, report: Mapping[str, Any]) -> dict[str, Any]:
-        """向后端回报一次 Gmail 同步，并保存可能刷新的授权。"""
+        """Report one Gmail synchronization to the backend and save any refreshed authorization."""
         response, _ = self._request("POST", "mailbox-syncs/report/", json=dict(report))
         return self._object(response, "Mailbox sync report")
 
-    # 功能：读取邮箱游标和 ETag。
-    # 输入：`mailbox_id` 目标邮箱标识，可空时使用方法的既定配置规则。
-    # 输出：dict[str, Any]。
-    # 逻辑：查询邮箱游标，核验身份、整数版本与 ETag，并缓存乐观锁版本。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Read the mailbox cursor and ETag.
+    # Inputs: `mailbox_id`: target mailbox, using the method's configured rules when optional.
+    # Outputs: dict[str, Any].
+    # Logic: Query the mailbox cursor; validate identity, integer version, and ETag; cache the optimistic lock version.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_sync_state(self, mailbox_id: str) -> dict[str, Any]:
-        """读取邮箱历史游标，并保存后端返回的乐观锁版本。"""
+        """Read the mailbox history cursor and store the optimistic lock version returned by the backend."""
         response, headers = self._request(
             "GET", "sync-state/", query={"mailbox_id": mailbox_id}
         )
@@ -718,13 +718,13 @@ class DjangoBackendClient:
         self._mailbox_revisions[mailbox_id] = revision
         return document
 
-    # 功能：条件更新邮箱游标。
-    # 输入：`sync_state` 邮箱增量游标载荷。
-    # 输出：dict[str, Any]。
-    # 逻辑：要求先读取邮箱状态，以缓存的 If-Match 提交并更新返回版本。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Conditionally update the mailbox cursor.
+    # Inputs: `sync_state`: incremental mailbox cursor payload.
+    # Outputs: dict[str, Any].
+    # Logic: Require a prior mailbox state read; submit with cached If-Match and update the returned version.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def save_sync_state(self, sync_state: Mapping[str, Any]) -> dict[str, Any]:
-        """保存成功邮件批次对应的 Gmail historyId 增量游标。"""
+        """Save the Gmail historyId incremental cursor corresponding to a successful email batch."""
         document = dict(sync_state)
         mailbox_id = document.get("mailbox_id")
         if not isinstance(mailbox_id, str) or not mailbox_id:
@@ -746,11 +746,11 @@ class DjangoBackendClient:
         return saved
 
     def claim_answer_request(self) -> dict[str, Any] | None:
-        """功能：领取零个或一个工作空间聊天请求。
-        输入：无外部参数，使用实例 HTTP 认证与服务地址。
-        输出：请求字典或 None；缺字段、空字符串等非法响应抛 BackendContractError。
-        逻辑：请求一次 claim 并验证稳定标识；过渡期将后端的 company_id:null 归一为无预选公司字段。
-        约束：拒绝非空 company_id，不在传输层重试或改写员工身份。
+        """Function: Claim zero or one workspace chat request.
+        Inputs: No external parameters; use instance HTTP authentication and service URL.
+        Outputs: Request dictionary or None; invalid responses such as missing fields or empty strings raise BackendContractError.
+        Logic: Issue one claim and validate stable identifiers; normalize transitional company_id:null to absence of a preselected company field.
+        Constraints: Reject non-null company_id; do not retry or rewrite employee identity in the transport layer.
         """
         response, _ = self._request("POST", "chat/requests/claim/", json={})
         document = self._object(response, "Answer request claim")
@@ -777,13 +777,13 @@ class DjangoBackendClient:
                 raise BackendContractError("Workspace chat requests must not be bound to a company.")
         return request
 
-    # 功能：映射聊天上下文接口。
-    # 输入：`request_id` 聊天请求标识、`scope` internal 或 external 知识范围。
-    # 输出：dict[str, Any]。
-    # 逻辑：请求已领任务的指定知识范围，验证请求身份、来源数组、检索状态及缺口。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Map the chat context endpoint.
+    # Inputs: `request_id`: chat request identifier; `scope`: internal or external knowledge scope.
+    # Outputs: dict[str, Any].
+    # Logic: Request the claimed task's specified knowledge scope; validate request identity, source arrays, retrieval status, and gaps.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def get_answer_context(self, request_id: str, scope: str) -> dict[str, Any]:
-        """读取当前聊天请求绑定的客户及指定知识范围上下文。"""
+        """Read customer and selected knowledge-scope context bound to the current chat request."""
         self._required_string(
             {"request_id": request_id}, "request_id", "Answer context request"
         )
@@ -834,13 +834,13 @@ class DjangoBackendClient:
             )
         return document
 
-    # 功能：发现请求实际获准的读取及实验维护工具目录。
-    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：一次 GET 并检查协议版本、请求、页码与数量。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Discover the read and experiment maintenance tools actually authorized for the request.
+    # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Issue one GET and validate protocol version, request, page, and count.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def get_chat_tools(self, request_id: str) -> dict[str, Any]:
-        """读取本次 processing 请求可用的工具目录，不从全局注册表猜测权限。"""
+        """Read tools available to this processing request; do not infer permissions from the global registry."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tools request")
         response, _ = self._request(
             "GET", "chat/tools/", query={"request_id": request_id, "page": 1, "page_size": 30}
@@ -862,13 +862,13 @@ class DjangoBackendClient:
             raise BackendContractError("Chat tools catalog count does not match.")
         return document
 
-    # 功能：读取本人请求的权威状态。
-    # 输入：`request_id` 当前员工的请求 UUID；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：一次 GET 并核对请求 ID 及合法状态。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Read the authoritative status of the current employee's request.
+    # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Issue one GET and verify request ID and valid status.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> dict[str, Any]:
-        """只查询本人聊天请求的已保存状态，不重新领取或生成回答。"""
+        """Query only the current employee's saved chat request state without reclaiming or generating an answer."""
         self._required_string({"request_id": request_id}, "request_id", "Chat status request")
         response, _ = self._request(
             "GET", f"chat/requests/{quote(request_id, safe='')}/"
@@ -881,15 +881,15 @@ class DjangoBackendClient:
             raise BackendContractError("Chat request status does not match this request.")
         return document
 
-    # 功能：执行客户读取或共享实验维护并取得登记证据。
-    # 输入：`request_id` 当前员工的请求 UUID、`name` 固定读取及实验维护工具名称、`arguments` JSON 参数；具体实现读取实例认证配置。
-    # 输出：JSON 对象；具体实现失败时抛出请求或契约异常。
-    # 逻辑：核对固定名称与参数对象，一次 POST 并核对响应归属及证据数组。
-    # 约束：只允许当前员工已授权的请求；不接受身份覆盖、写工具或隐式重试。
+    # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
+    # Inputs: `request_id`: current employee's request UUID; `name`: fixed read or experiment maintenance tool name; `arguments`: JSON parameters; concrete implementations read instance authentication settings.
+    # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
+    # Logic: Validate the fixed name and argument object; issue one POST and verify response ownership and evidence arrays.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any]
     ) -> dict[str, Any]:
-        """调用请求绑定的读取及实验维护工具；工具结果和证据由后端共同确认。"""
+        """Invoke request-bound read and experiment maintenance tools; the backend confirms both tool results and evidence."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool request")
         if name not in WORKSPACE_TOOLS:
             raise BackendContractError("Chat tool supports only registered customer reads and experiment maintenance.")
@@ -910,13 +910,13 @@ class DjangoBackendClient:
         self._object_list(document.get("evidence_items"), "Chat tool evidence_items")
         return document
 
-    # 功能：映射聊天回答保存接口。
-    # 输入：`result` 包含提示版本的聊天结果。
-    # 输出：dict[str, Any]。
-    # 逻辑：复制 completed/failed 载荷并提交一次；核对 saved、duplicate 和助手消息标识。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Map the chat answer persistence endpoint.
+    # Inputs: `result`: chat result including its prompt version.
+    # Outputs: dict[str, Any].
+    # Logic: Copy and submit the completed/failed payload once; verify saved, duplicate, and assistant message identifiers.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def report_answer(self, result: Mapping[str, Any]) -> dict[str, Any]:
-        """回报一次稳定的 completed 或 failed 聊天结果。"""
+        """Report one stable completed or failed chat result."""
         if not isinstance(result, Mapping):
             raise BackendContractError("Report answer payload must be an object.")
         payload = copy.deepcopy(dict(result))
@@ -956,11 +956,11 @@ class DjangoBackendClient:
             )
         return document
 
-    # 功能：读取并校验非空字符串。
-    # 输入：`document` 响应映射、`field` 待取字段名、`name` 安全错误定位标签。
-    # 输出：str。
-    # 逻辑：要求指定字段为非空字符串，失败抛 BackendContractError。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Read and validate a nonempty string.
+    # Inputs: `document`: response mapping; `field`: field to read; `name`: safe error location label.
+    # Outputs: str.
+    # Logic: Require the specified field to be a nonempty string; otherwise raise BackendContractError.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _required_string(document: Mapping[str, Any], field: str, name: str) -> str:
         value = document.get(field)
@@ -968,11 +968,11 @@ class DjangoBackendClient:
             raise BackendContractError(f"{name} is missing {field}.")
         return value
 
-    # 功能：验证对象数组。
-    # 输入：`value` 待校验值、`name` 安全错误定位标签。
-    # 输出：None。
-    # 逻辑：要求 list 中每项为映射，不转换非法值。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Validate an array of objects.
+    # Inputs: `value`: value to validate; `name`: safe error location label.
+    # Outputs: None.
+    # Logic: Require each list item to be a mapping; do not coerce invalid values.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _object_list(value: object, name: str) -> None:
         if not isinstance(value, list):
@@ -980,11 +980,11 @@ class DjangoBackendClient:
         if any(not isinstance(item, Mapping) for item in value):
             raise BackendContractError(f"{name} must contain only objects.")
 
-    # 功能：验证三字段资料缺口数组。
-    # 输入：`value` 待校验值。
-    # 输出：None。
-    # 逻辑：要求每项恰好有 scope/code/message，且均为非空字符串。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Validate an array of three-field retrieval gaps.
+    # Inputs: `value`: value to validate.
+    # Outputs: None.
+    # Logic: Require exactly scope/code/message in each item, all nonempty strings.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @classmethod
     def _retrieval_gaps(cls, value: object) -> None:
         if not isinstance(value, list):
@@ -998,11 +998,11 @@ class DjangoBackendClient:
             for field in required_fields:
                 cls._required_string(gap, field, "Answer context retrieval gap")
 
-    # 功能：构造写请求所需租约与版本头。
-    # 输入：`company_id` 明确的客户标识。
-    # 输出：dict[str, str]。
-    # 逻辑：从已领取公司任务取租约和已读版本；未领取任务则拒绝写入。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Build lease and version headers required for writes.
+    # Inputs: `company_id`: explicit customer identifier.
+    # Outputs: dict[str, str].
+    # Logic: Read the lease and observed version from a claimed company job; reject writes without a claim.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def _write_headers(self, company_id: str) -> dict[str, str]:
         context = self._company_jobs.get(company_id)
         if context is None:
@@ -1014,11 +1014,11 @@ class DjangoBackendClient:
             "X-Lease-Token": context.lease_token,
         }
 
-    # 功能：发起认证 HTTP 并规范化失败。
-    # 输入：`method` HTTP 方法、`path` 相对接口路径、`query` 可选查询字段、`json` 可选 JSON 载荷、`headers` HTTP 头映射、`allowed_statuses` 可按无内容处理的显式状态码集合。
-    # 输出：tuple[object, Mapping[str, str]]。
-    # 逻辑：合并员工认证与请求头，发送一次 HTTP；规范网络及非成功响应错误，解析成功 JSON。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Send authenticated HTTP requests and normalize failures.
+    # Inputs: `method`: HTTP method; `path`: relative endpoint path; `query`: optional query fields; `json`: optional JSON payload; `headers`: HTTP header mapping; `allowed_statuses`: explicit statuses that may be treated as no content.
+    # Outputs: tuple[object, Mapping[str, str]].
+    # Logic: Merge employee authentication and request headers; issue one HTTP request, normalize network/non-success errors, and parse successful JSON.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     def _request(
         self,
         method: str,
@@ -1078,11 +1078,11 @@ class DjangoBackendClient:
             )
             raise BackendContractError("Backend success response is not valid JSON.") from None
 
-    # 功能：验证并提取公司 ID。
-    # 输入：`document` 响应映射。
-    # 输出：str。
-    # 逻辑：要求映射含非空字符串 company_id，否则抛契约异常。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Validate and extract the company ID.
+    # Inputs: `document`: response mapping.
+    # Outputs: str.
+    # Logic: Require a mapping with a nonempty company_id string; otherwise raise a contract error.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _company_id(document: Mapping[str, Any]) -> str:
         company_id = document.get("company_id")
@@ -1090,32 +1090,32 @@ class DjangoBackendClient:
             raise BackendContractError("Payload is missing company_id.")
         return company_id
 
-    # 功能：要求响应为对象。
-    # 输入：`value` 待校验值、`name` 安全错误定位标签。
-    # 输出：dict[str, Any]。
-    # 逻辑：要求映射后返回深拷贝字典，避免调用者修改原响应。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Require an object response.
+    # Inputs: `value`: value to validate; `name`: safe error location label.
+    # Outputs: dict[str, Any].
+    # Logic: Require a mapping and return a deep-copied dictionary so callers cannot mutate the original response.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _object(value: object, name: str) -> dict[str, Any]:
         if not isinstance(value, Mapping):
             raise BackendContractError(f"{name} response must be an object.")
         return copy.deepcopy(dict(value))
 
-    # 功能：提取响应版本头。
-    # 输入：`headers` HTTP 头映射。
-    # 输出：str | None。
-    # 逻辑：兼容 ETag 头大小写并去除双引号，缺失返回 None。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Extract the response version header.
+    # Inputs: `headers`: HTTP header mapping.
+    # Outputs: str | None.
+    # Logic: Handle ETag header case variations and strip double quotes; return None when missing.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _etag(headers: Mapping[str, str]) -> str | None:
         value = headers.get("ETag") or headers.get("etag")
         return value.strip('"') if isinstance(value, str) and value else None
 
-    # 功能：规范化 API 错误。
-    # 输入：`response` HTTP 响应。
-    # 输出：tuple[str, str]。
-    # 逻辑：提取统一 error 对象的 code/detail；非法错误体返回明确的通用 HTTP 错误说明。
-    # 约束：不隐式重试；HTTP 错误与契约异常由调用者处理。
+    # Function: Normalize API errors.
+    # Inputs: `response`: HTTP response.
+    # Outputs: tuple[str, str].
+    # Logic: Extract code/detail from the standard error object; return explicit generic HTTP details for malformed error bodies.
+    # Constraints: No implicit retries; callers handle HTTP and contract errors.
     @staticmethod
     def _error(response: Any) -> tuple[str, str, str | None]:
         try:
@@ -1135,15 +1135,15 @@ class DjangoBackendClient:
         )
 
 
-# 功能：构造独立 HTTP 客户端，支持 CLI 环境身份或 Worker 的显式任务身份。
-# 输入：`mailbox_id` 为目标邮箱；`service_token` 为可选任务令牌；其余连接参数读取环境。
-# 输出：无共享可变状态的 DjangoBackendClient；无效配置抛 BackendConfigurationError。
-# 逻辑：显式令牌时只采用传入邮箱，避免继承其他员工的环境邮箱；未提供令牌时保留 CLI 行为。
-# 约束：不写入进程环境，不改变既定超时、租约或分析提示词版本。
+# Function: Construct an independent HTTP client using CLI environment identity or explicit worker task identity.
+# Inputs: `mailbox_id`: target mailbox; `service_token`: optional task token; read remaining connection settings from the environment.
+# Outputs: DjangoBackendClient with no shared mutable state; invalid settings raise BackendConfigurationError.
+# Logic: With an explicit token, use only the supplied mailbox to avoid inheriting another employee's environment mailbox; otherwise retain CLI behavior.
+# Constraints: Do not modify process environment or existing timeout, lease, or analysis prompt version settings.
 def django_backend_from_environment(
     *, mailbox_id: str | None = None, service_token: str | None = None
 ) -> DjangoBackendClient:
-    """从连接配置与可选独立任务身份创建后端适配器。"""
+    """Create a backend adapter from connection settings and an optional independent task identity."""
     base_url = os.getenv(
         "SALESMATE_BACKEND_AGENT_URL",
         "http://127.0.0.1:8000/api/v1/agent/",

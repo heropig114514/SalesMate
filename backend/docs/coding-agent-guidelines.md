@@ -1,123 +1,107 @@
-# 代码注释与一致性检查规范
+# Code Documentation and Consistency Checks
 
-本文落实 [README 中的 Coding Agent 开发原则](../README.md#coding-agent-必须遵循的开发原则)。当前检查覆盖软件根目录 `SalesMate/backend/` 下全部 `.py` 文件（包括 `tools/`），包含测试、迁移和空包初始化文件；仅忽略 `__pycache__` 缓存目录。检查器只使用 Python 标准库，不导入业务模块，不读取 `.env`，不需要数据库。
+This document implements the Coding Agent development principles in the repository README. The checker covers every Python file below SalesMate/backend, including tools, tests, migrations, and empty package initializers. It ignores only __pycache__ directories, uses only the Python standard library, does not import application modules or read .env, and does not require a database.
 
-## 1. 文件顶部说明
+## 1. File-Level Documentation
 
-每个文件的模块 docstring 必须包含非空的 `职责`、`实现`、`关联`、`目录`、`变量索引` 五项。保留必要的 shebang 和编码声明；模块 docstring 是文件的第一个 Python 语句。
+Every module docstring must contain non-empty Responsibility, Implementation, Relationships, Directory, and Variable index sections. Preserve required shebangs and encoding declarations; the module docstring remains the first Python statement.
 
-```python
-"""职责：提供纯函数相加示例。
-实现：直接使用整数加法，返回计算值。
-关联：独立示例，不依赖业务存储。
+    """Responsibility: Provide a pure integer-addition example.
+    Implementation: Add the two integers directly and return the computed value.
+    Relationships: A standalone example with no business-storage dependency.
 
-目录：
-- add：返回两个整数之和。
+    Directory:
+    - add: Return the sum of two integers.
 
-变量索引：
-- 无
-"""
-```
+    Variable index:
+    - None
+    """
 
-目录列出本文件实际声明的函数、异步函数、类、方法和嵌套声明，使用点分限定名，例如 `CurrentUserSerializer.Meta`、`ReadinessView.get`。不列继承而未重写的方法，不将 API 路径或导入的类型列为本文件实现。
+Directory lists every function, async function, class, method, and nested declaration actually defined in the file. Use dotted qualified names such as CurrentUserSerializer.Meta and ReadinessView.get. Do not list inherited methods that are not overridden, API paths, or imported types as declarations in this file.
 
-变量索引列出模块或类作用域中以赋值目标形式声明的名称，包括普通赋值、类型注解赋值、解构赋值、条件或循环中的绑定；类变量使用限定名称。字典配置以顶层变量为索引项，并说明重要配置的用途、来源、默认值与边界。
+Variable index lists names assigned at module or class scope, including ordinary assignments, annotated assignments, unpacking assignments, and bindings in conditional or loop bodies. Qualify class variables. For dictionary configuration, index the top-level variable and explain important configuration purpose, source, default, and boundary.
 
-检查器不索引导入别名、函数局部变量、实例属性、字典键、`except ... as ...` 的异常别名或动态创建的名称；这些内容如影响接口或行为，仍须在相应实现说明或关键代码块注释中解释。推导式的局部迭代变量不进入索引；海象表达式的外层绑定按 AST 赋值目标检查。
+The checker does not index import aliases, function-local variables, instance attributes, dictionary keys, exception aliases, dynamically created names, or local comprehension iteration variables. If they affect an interface or behavior, explain them in the relevant implementation description or a nearby key-block comment. Outer bindings from assignment expressions are indexed as AST assignment targets.
 
-索引条目固定为 `- 名称：用途`，用途不能为空。没有对应符号时写 `- 无`，不能省略标题。新增、重命名或删除符号时同步维护索引，不自动生成没有业务含义的用途文本。
+Index entries use the fixed form - name: purpose, and purpose cannot be empty. Where no symbol exists, write - None; do not omit the heading. Maintain the index whenever a symbol is added, renamed, or removed. Do not generate meaningless purpose text.
 
-## 2. 声明与关键代码块说明
+## 2. Declaration and Key-Block Documentation
 
-函数和方法必须说明 `功能`、`输入`、`输出`、`逻辑`、`约束`；类至少说明 `功能`、`逻辑`、`约束`。声明前注释与声明之间不能留空行；有装饰器时注释放在第一个装饰器之前。
+Functions and methods must explain Function, Inputs, Outputs, Logic, and Constraints; classes must at least explain Function, Logic, and Constraints. A declaration comment must be adjacent to its declaration. When decorators exist, place the comment before the first decorator.
 
-```python
-# 功能：计算两个整数之和。
-# 输入：`left`、`right` 为整数操作数。
-# 输出：返回整数和。
-# 逻辑：直接使用 Python 整数加法，不引入额外状态。
-# 约束：调用方应传入整数；本函数不做运行时类型校验，无外部副作用。
-def add(left: int, right: int) -> int:
-    return left + right
-```
+    # Function: Compute the sum of two integers.
+    # Inputs: left and right are integer operands.
+    # Outputs: Return their integer sum.
+    # Logic: Use Python integer addition directly and introduce no extra state.
+    # Constraints: Callers provide integers. This function performs no runtime type
+    # validation and has no external side effects.
+    def add(left: int, right: int) -> int:
+        return left + right
 
-输入说明用反引号标识实际参数名称，包括位置限定参数、关键字限定参数和变长参数；隐式 `self`、`cls` 可以省略。输入项中的反引号名称仅用于实际参数，避免把类型或环境变量误写为参数。无外部参数时明确写“无外部参数”，并说明读取的环境、实例状态或其他隐式输入。
+Inputs identifies actual parameter names, including positional-only, keyword-only, and variadic parameters. Implicit self and cls may be omitted. Do not identify types or environment variables as parameters. A declaration without external parameters must state No external parameters and explain the environment, instance state, or other implicit input it reads.
 
-结构化 docstring 也可作为声明说明。但 Django REST Framework 和 Schema 工具可能使用类或方法 docstring 生成 API 描述，因此当前后端优先使用声明前注释，保留已有 docstring；修改 docstring 前须核对 API 契约是否变化。声明前有连续注释时，检查器优先检查该注释块。
+A structured docstring may serve as declaration documentation. Django REST Framework and schema tooling can use class or method docstrings to generate API descriptions, so backend declarations normally use preceding comments and retain existing docstrings. Before changing a docstring, verify that the API contract does not change. Where consecutive comments precede a declaration, the checker inspects that block first.
 
-注释须解释处理原因和依赖关系，尤其是数据库读取或写入、状态与版本校验、输入缺失、权限前提、异常捕获范围及日志副作用。对日志不可泄露的字段、测试 mock 边界、配置优先级等关键代码块，就近补充原因说明。不得把未实现功能写成既有能力，也不得将“静态检查通过”写成“业务行为已被证明正确”。
+Documentation must explain rationale and dependencies, particularly database reads and writes, state and version checks, missing input, authorization preconditions, exception-capture scope, and logging side effects. Add nearby rationale for sensitive fields excluded from logs, test mock boundaries, and configuration precedence. Do not describe unimplemented functionality as available or claim that static-check success proves business behavior.
 
-## 3. 检查命令与能力边界
+## 3. Check Commands and Boundaries
 
-在软件根目录 `SalesMate/backend/`、项目 Python 环境中运行：
+From SalesMate/backend in the project Python environment, run:
 
-```powershell
-python tools/check_docs.py
-python tools/test_check_docs.py
-```
+    python tools/check_docs.py
+    python tools/test_check_docs.py
 
-修改检查器时必须运行第二条。检查单个文件也可显式传路径，但交付前仍须运行默认全量检查：
+Run the second command whenever the checker changes. An individual file may be checked explicitly, but the default full check remains required before delivery:
 
-```powershell
-python tools/check_docs.py common/views.py
-```
+    python tools/check_docs.py common/views.py
 
-默认扫描目录由脚本位置确定，不依赖启动目录；显式传入的相对路径按当前工作目录解析。合法检查返回 `0`；发现问题、路径缺失、空扫描目录、源码不可读或语法错误返回 `1`；命令行参数错误沿用 argparse 的 `2`。
+The default scan directory is determined from the script location and does not depend on the startup directory. Explicit relative paths resolve from the current working directory. A valid check returns 0; problems, missing paths, an empty scan directory, unreadable source, or syntax errors return 1; invalid command-line arguments use argparse exit code 2.
 
-自动检查包括：
+Automated checks cover module and declaration section structure and non-empty content; missing, duplicate, stale, or purposeless directory and variable-index entries; coverage of current function parameters and removal of stale names; and placement around decorators, async declarations, and nested declarations. Tests, migrations, and empty packages have no exemption.
 
-- 模块标题及声明说明的结构与非空内容。
-- 声明目录和变量索引是否遗漏、重复、包含失效条目或缺少用途。
-- 函数输入说明是否覆盖现有参数，是否残留已移除的参数名。
-- 装饰器、异步声明和嵌套声明的定位；测试、迁移和空包无豁免。
+Automation cannot establish that prose is true, defaults are correct, return values and exceptions are fully explained, or all key blocks have adequate reasoning. It cannot prove Git commit atomicity. A change to defaults, types, return behavior, or state logic may pass structural checks when names remain unchanged, so reviewers must still synchronize and assess documentation manually.
 
-自动检查不能核验说明是否真实、默认值是否写对、返回值和异常是否解释完整、关键代码块是否都获得充分解释，也不能证明 Git 提交原子性。参数默认值、类型、返回行为或状态逻辑改变但名称未变时，结构检查可能仍通过，必须人工同步审查。
+### 3.1 Code-and-Documentation Change Checks
 
-### 3.1 代码与说明变更检查
+From SalesMate/backend, run:
 
-在 `SalesMate/backend/` 中执行：
+    python tools/check_doc_changes.py
+    python tools/check_doc_changes.py --staged
+    python tools/check_doc_changes.py --base origin/main
+    python tools/test_check_doc_changes.py
 
-```powershell
-python tools/check_doc_changes.py
-python tools/check_doc_changes.py --staged
-python tools/check_doc_changes.py --base origin/main
-python tools/test_check_doc_changes.py
-```
+The default comparison is working tree versus HEAD and includes unignored new Python files. --staged reads complete staged blobs and does not substitute unstaged repairs. Scope is backend Python, including tools, tests, and migrations; it excludes agent, JS/CSS/HTML, and .env. Unlike a diff-only check, every current Python file must pass structural rules.
 
-默认将工作区与 `HEAD` 比较，包含未忽略的新 Python 文件；`--staged` 读取完整暂存 blob，不会用尚未暂存的修正替代提交内容。检查范围仅为 `backend/**/*.py`，包含工具、测试与迁移；不检查 `agent/`、JS/CSS/HTML，不读取 `.env`。与单纯差异检查不同，当前快照中的全部 Python 文件仍须通过现有结构规则。
+The change checker compares function signatures, defaults, annotations, decorators, bodies, class attributes, and module configuration. Whitespace, line endings, or prose-only changes do not trigger an implementation change. Nested declarations are compared independently, avoiding duplicate requirements for an unchanged class when only a method changes. Conditional declarations with the same qualified name are paired by occurrence; renames, additions, and removals remain constrained by current directory structure rather than inferred cross-file moves or call chains.
 
-变更检查会比较函数签名、默认值、类型注解、装饰器、函数体、类属性和模块配置。只改空白、换行或说明不会触发实现变更；嵌套声明独立比较，避免方法修改重复要求修改整个类的说明。限定名称相同的条件声明按出现顺序配对；重命名及新增、删除由当前目录结构检查约束，不推断跨文件移动和调用链影响。
+- ERROR: A deterministic structural, source-reading, or Git error; exit code 1 and repair are required.
+- REVIEW: Implementation changed but corresponding documentation did not; it is reported by default and does not automatically reject a valid refactor.
+- --fail-on-review: Explicitly turns review findings into a gate and returns 2 when any exist. No automatic confirmation or exemption record is provided.
+- With no structural error and no strict-review option, the command returns 0 while reporting review count and the semantic-verification limitation. argparse argument errors also return 2, distinguished by diagnostic text.
 
-- `ERROR`：确定性的结构、读取或 Git 错误，退出码为 `1`，必须修复。
-- `REVIEW`：实现变化而对应说明未变，需重新核对说明；默认仅提示，不将合法重构自动判为违规。
-- `--fail-on-review`：显式把待复核项也作为门槛，存在待复核项时返回 `2`。不提供自动确认或写入豁免记录。
-- 无结构错误且未启用严格复核时返回 `0`，但始终输出待复核数量和语义未验证提示；CLI 参数错误也按 argparse 返回 `2`，以诊断文本区分。
+The base must be an existing commit. An invalid ref, shallow clone without history, decoding failure, unresolved staged conflict, or empty scan fails. A repository without HEAD uses check_docs.py for its first commit and then uses the change entry point. Git calls are read-only, each is limited to 30 seconds, failures are not retried, and the checker never modifies source, index, or commits.
 
-基准必须是已存在的提交；错误 ref、浅克隆缺历史、无法解码、未解决的暂存冲突和空扫描均失败。首次创建尚无 `HEAD` 的仓库先使用 `check_docs.py`，首个提交后才使用差异入口。Git 命令只读、每次最多 30 秒，失败不重试；检查不会修改源码、索引或提交。
+A one-word documentation edit does not demonstrate accuracy. The absence of REVIEW does not prove prose truth, complete exception coverage, or all side effects. Synchronize relevant prose during modification; for behavioral commitments, run existing business tests. This tool supplies focused review evidence and does not replace the guideline.
 
-只改注释一个字并不能证明注释已准确更新；没有 `REVIEW` 也不代表自然语言真实、全部异常被说明或全部副作用被验证。修改时仍须同步核对相应注释，涉及行为承诺时运行已有业务测试。本工具增加可定位的复核线索，不替代本规范的语义要求。
+### 3.2 Commit and CI Automation
 
-### 3.2 提交与 CI 自动触发
+The repository-root .pre-commit-config.yaml provides the backend-docs hook. Developers can install it in an isolated tool environment without modifying Django or Agent dependencies:
 
-仓库根目录的 `.pre-commit-config.yaml` 提供 `backend-docs` 钩子。开发者可用独立工具环境安装，避免修改 Django/Agent 的依赖：
+    python -m venv .docs-tools/.venv
+    .docs-tools/.venv/Scripts/python.exe -m pip install -r backend/requirements/docs.txt
+    .docs-tools/.venv/Scripts/python.exe -m pre_commit install
+    .docs-tools/.venv/Scripts/python.exe -m pre_commit run backend-docs --all-files
 
-```powershell
-python -m venv .docs-tools/.venv
-.docs-tools/.venv/Scripts/python.exe -m pip install -r backend/requirements/docs.txt
-.docs-tools/.venv/Scripts/python.exe -m pre_commit install
-.docs-tools/.venv/Scripts/python.exe -m pre_commit run backend-docs --all-files
-```
+On Linux/macOS use .docs-tools/.venv/bin/python. The environment is Git-ignored and outside backend, preventing third-party packages from entering the full Python-comment scan. Committing the pre-commit configuration does not install hooks for collaborators; each clone must install them. The hook checks the staged snapshot: structural errors block a commit and review findings appear in output. New files must be staged before hook coverage; use the default working-tree command for unstaged changes.
 
-Linux/macOS 使用 `.docs-tools/.venv/bin/python`。环境目录已被 Git 忽略，并放在 backend 外，避免第三方依赖进入全量 Python 注释扫描。pre-commit 配置文件被提交不等于其他协作者已安装钩子；每份克隆都需执行安装。钩子检查暂存区，结构错误阻止提交，待复核项显示在输出中。新增文件必须先 `git add` 才进入暂存检查；检查未暂存内容应使用默认工作区命令。
+The backend-docs GitHub workflow runs the full structural check, both checker tests, and change reporting on pull requests, pushes to main/master, and manual dispatch. Pull requests compare their target-branch base to the tested merge result; pushes compare the preceding commit; initial pushes and manual runs self-compare when no change base exists and therefore guarantee only structural validity. It has no path filters, avoiding a required check that waits indefinitely; checker scope remains backend Python.
 
-`.github/workflows/backend-docs.yml` 在 PR、main/master 推送和手动执行时运行：全量结构检查、两个检查器测试及变更提示。PR 比较目标分支基准与测试合并结果；推送比较推送前提交；首次推送和手动执行无变更基准时自比较，仅保证结构检查。工作流不使用路径过滤，避免必需检查长时间等待；检查内容仍只限 backend Python。
+To enforce it remotely, mark backend-docs as required in GitHub branch rules. Adding the workflow alone does not enable branch protection or prevent privileged bypass. A local hook can be bypassed; CI performs independent verification. The project does not use a model service to upload code for semantic review.
 
-若希望远程强制执行，须在 GitHub 分支规则中将 `backend-docs` 配置为必需检查。仅添加工作流不会自动开启分支保护，也不能阻止有绕过权限的操作。本地钩子可被绕过，CI 是独立的再次校验；当前未接入模型服务，不自动上传代码进行语义审查。
+## 4. Synchronized Modification and Delivery
 
-## 4. 同步修改与交付
+One logical change updates implementation, declaration documentation, the file-level index, and affected interface documentation together. After deletion, search for and remove stale symbol references. Before delivery, verify Function, Inputs, Outputs, implementation rationale, state, and side effects; run documentation checks and business tests appropriate to the change.
 
-一次逻辑修改同时完成实现、声明说明、文件顶部索引及相关接口文档更新。删除实现后搜索旧符号并清理失效说明。交付前逐项核对功能、输入输出、实现依据、状态与副作用，运行文档检查和适用于变更的业务测试。
+A documentation-only cleanup must also verify that API schemas, migrations, configuration, and executable code were not accidentally altered. Changes to the checker must pass violation-sample tests rather than merely accepting current repository samples.
 
-注释整改还应核对 API Schema、迁移、配置及可执行代码未被意外改变。修改检查器时须通过其违规样本测试，不能仅让当前项目样本通过。
-
-如提交 Git，实现、注释与目录必须放在同一次提交；不得仅交付实现后再补说明。检查器不会自动提交，也不会通过检查 Git 暂存区推断原子性。尚未提交时在交付说明中如实标明，不声称已验证提交原子性。
+When committing, implementation, comments, and directory entries must be in the same commit; do not deliver implementation and postpone its explanation. The checker does not commit and cannot infer atomicity from the staged snapshot. If work has not been committed, state that fact accurately and do not claim atomic-commit verification.

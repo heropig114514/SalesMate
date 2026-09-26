@@ -1,26 +1,26 @@
-"""职责：验证持久处理、人工复核和公司调度的业务不变量。
-实现：Gmail 测试批次显式选择最多 20 封（非运行默认值）；隔离 PostgreSQL 数据库与合成邮件，模拟 Gmail 网络读取，真实校验事务和 HTTP 权限。
-关联：processing、classification、jobs 及新增进度 API；不向真实邮箱或模型发起调用。
-目录：
-- ProcessingTests：验证批次和分类服务。
-- ProcessingTests.setUp：创建独立员工和邮箱。
-- ProcessingTests.email：保存可分类的合成邮件。
-- ProcessingTests.test_nonbusiness_hidden_everywhere：验证隐藏、统计、上下文和分析入口一致。
-- ProcessingTests.test_review_is_owned_versioned_and_preserves_source：验证人工优先、原文和权限。
-- ProcessingTests.test_queue_is_durable_and_rejects_duplicate_clicks：验证持久排队与 202。
-- ProcessingTests.test_progress_partial_retry_and_expired_lease：验证逐封计数、明确重试和旧租约拒绝。
-- ProcessingTests.test_same_company_successor_waits_while_other_company_runs：验证公司互斥及跨公司领取。
-- ProcessingTests.test_tracked_gmail_read_failure_keeps_other_messages：验证读取失败逐封隔离。
-- ProcessingTests.test_backfill_preserves_manual_decisions：验证历史回填不改人工判断。
-- ProcessingTests.test_progress_covers_companies_outside_visible_page：验证整体画像进度不依赖分页。
-- ProcessingTests.test_expired_history_preserves_pending_ids：验证过期游标仍保留旧待处理清单。
-- ProcessingTests.test_review_hides_analysis_that_used_removed_email：验证人工隐藏后停止展示污染画像。
-- ProcessingTests.test_saved_mailbox_view_includes_all_classifications：验证按邮箱核对原文、时间排序及权限。
-- ProcessingTests.test_company_row_exposes_actual_email_sources：验证真实邮件与演示样例的来源区分。
-- WorkerPipelineTests：验证跨线程观察事件和真实业务持久化。
-- WorkerPipelineTests.test_worker_persists_stream_and_isolates_read_error：模拟 Gmail 和模型，贯通临时员工身份、Worker 回调及后端落库。
-变量索引：
-- 无
+"""Responsibility: Verify business invariants for durable processing, manual review, and company scheduling.
+Implementation: Gmail test batches explicitly select at most 20 messages, not a runtime default. Use isolated PostgreSQL and synthetic mail with mocked Gmail reads, validating real transactions and HTTP permissions.
+Relationships: processing, classification, jobs, and new progress APIs; no real mailbox or model calls.
+Directory:
+- ProcessingTests: Verify batch and classification services.
+- ProcessingTests.setUp: Create independent employees and mailboxes.
+- ProcessingTests.email: Save classifiable synthetic mail.
+- ProcessingTests.test_nonbusiness_hidden_everywhere: Verify consistency across hiding, statistics, context, and analysis entry points.
+- ProcessingTests.test_review_is_owned_versioned_and_preserves_source: Verify manual precedence, original text, and permissions.
+- ProcessingTests.test_queue_is_durable_and_rejects_duplicate_clicks: Verify durable queuing and 202 responses.
+- ProcessingTests.test_progress_partial_retry_and_expired_lease: Verify per-message counts, explicit retries, and stale-lease rejection.
+- ProcessingTests.test_same_company_successor_waits_while_other_company_runs: Verify company mutual exclusion and cross-company claiming.
+- ProcessingTests.test_tracked_gmail_read_failure_keeps_other_messages: Verify per-message read-failure isolation.
+- ProcessingTests.test_backfill_preserves_manual_decisions: Verify historical backfill preserves manual decisions.
+- ProcessingTests.test_progress_covers_companies_outside_visible_page: Verify overall profile progress is independent of pagination.
+- ProcessingTests.test_expired_history_preserves_pending_ids: Verify expired cursors preserve old pending lists.
+- ProcessingTests.test_review_hides_analysis_that_used_removed_email: Verify manual hiding stops display of contaminated profiles.
+- ProcessingTests.test_saved_mailbox_view_includes_all_classifications: Verify mailbox-scoped original text, chronological ordering, and permissions.
+- ProcessingTests.test_company_row_exposes_actual_email_sources: Verify source distinction between real mail and demonstration samples.
+- WorkerPipelineTests: Verify cross-thread observer events and real business persistence.
+- WorkerPipelineTests.test_worker_persists_stream_and_isolates_read_error: Mock Gmail/models while integrating temporary employee identities, Worker callbacks, and backend persistence.
+Variable index:
+- None
 """
 from datetime import timedelta
 from io import StringIO
@@ -41,16 +41,16 @@ from apps.crm.processing import claim_run, expire_runs, finish_run, record_event
 from apps.crm.worker import run_sync
 
 
-# 功能：校验持久处理和复核契约。
-# 逻辑：数据库为隔离测试库，HTTP 使用已认证合成员工。
-# 约束：外部授权只是占位数据，绝不解释为真实授权有效。
+# Function: Validate durable-processing and review contracts.
+# Logic: Use an isolated test database and HTTP authenticated as synthetic employees.
+# Constraints: External authorizations are placeholders, never evidence of valid real authorization.
 @override_settings(ANALYSIS_PROVIDER="agent")
 class ProcessingTests(TestCase):
-    # 功能：建立两个员工和授权邮箱。
-    # 输入：无外部参数；测试框架调用。
-    # 输出：初始化 owner、other、mailbox 和 browser。
-    # 逻辑：分别保存用户，以测试跨员工拒绝。
-    # 约束：不复用本机业务账号和邮箱。
+    # Function: Create two employees and authorized mailboxes.
+    # Inputs: No external arguments; invoked by the test framework.
+    # Outputs: Initialize owner, other, mailbox, and browser.
+    # Logic: Save users separately to test cross-employee rejection.
+    # Constraints: Do not reuse local business accounts or mailboxes.
     def setUp(self):
         self.owner = get_user_model().objects.create_user(username="processing-owner")
         self.other = get_user_model().objects.create_user(username="processing-other")
@@ -59,11 +59,11 @@ class ProcessingTests(TestCase):
         self.browser = APIClient()
         self.browser.force_authenticate(self.owner)
 
-    # 功能：保存具有明确分类的合成邮件。
-    # 输入：`key` 为消息 ID，`kind` 为 business/non_business/needs_review，`sender` 为合成联系人。
-    # 输出：数据库 Email。
-    # 逻辑：使用既有规则 fixture 构造合法事实，再按测试前提设置分类信号。
-    # 约束：不调用 LLM；该信号只用于验证软件映射，不代表模型分类效果。
+    # Function: Save synthetic mail with explicit classification.
+    # Inputs: `key` is the message ID, `kind` is business/non_business/needs_review, and `sender` is a synthetic contact.
+    # Outputs: Database Email.
+    # Logic: Use existing rule fixtures to construct valid facts, then set classification signals for the test premise.
+    # Constraints: No LLM call; signals verify software mappings, not model classification quality.
     def email(self, key, kind="business", sender="buyer@customer.example"):
         payload = rules.extract_email(self.mailbox, sender, "询价", "需求：设备\n数量：5 台", key)
         if kind == "non_business":
@@ -73,11 +73,11 @@ class ProcessingTests(TestCase):
         ingestion.submit_emails(self.owner, [payload])
         return Email.objects.get(pk=payload["dedupe_key"])
 
-    # 功能：校验非业务邮件在查询与分析入口一致隐藏。
-    # 输入：无外部参数；创建正常公司和仅非业务公司。
-    # 输出：列表、统计、成员键和分析入口断言。
-    # 逻辑：混合公司只投影业务邮件；仅非业务公司不能分析。
-    # 约束：原始邮件保留，不能通过删数据满足断言。
+    # Function: Verify non-business mail is consistently hidden from queries and analysis.
+    # Inputs: No external arguments; create a normal company and a non-business-only company.
+    # Outputs: Assertions for lists, statistics, member keys, and analysis entry points.
+    # Logic: Mixed companies project business mail only; non-business-only companies cannot be analyzed.
+    # Constraints: Keep original mail; do not satisfy assertions by deleting data.
     def test_nonbusiness_hidden_everywhere(self):
         normal = self.email("business")
         hidden = self.email("hidden", "non_business")
@@ -91,11 +91,11 @@ class ProcessingTests(TestCase):
         self.assertTrue(Email.objects.filter(pk=hidden.pk).exists())
         self.assertEqual(self.browser.post(f"/api/v1/companies/{only_hidden.company_id}/analyze/").status_code, 409)
 
-    # 功能：验证邮箱原文入口不会因业务分类遗漏邮件或混入其他邮箱。
-    # 输入：无外部参数；同邮箱三种分类、另一邮箱邮件以及另一员工会话。
-    # 输出：saved 返回三种分类，原 all 语义不变，跨邮箱隔离且越权 404。
-    # 逻辑：真实 HTTP 查询与数据库排序，核对原文、日期、来源和未改变的分类。
-    # 约束：测试使用合成材料，不调用 IMAP 或模型，不自动确认邮件。
+    # Function: Verify mailbox-original endpoints neither omit mail due to classification nor mix other mailboxes.
+    # Inputs: No external arguments; three classifications in one mailbox, another mailbox's mail, and another employee's session.
+    # Outputs: saved returns all three classifications, original all semantics remain unchanged, mailboxes stay isolated, and unauthorized access returns 404.
+    # Logic: Real HTTP/database sorting checks original text, dates, sources, and unchanged classifications.
+    # Constraints: Use synthetic material without IMAP/models or automatic mail confirmation.
     def test_saved_mailbox_view_includes_all_classifications(self):
         items = [self.email("saved-business"), self.email("saved-hidden", "non_business"), self.email("saved-review", "needs_review")]
         original = {item.pk: item.business_classification for item in items}
@@ -119,11 +119,11 @@ class ProcessingTests(TestCase):
         self.browser.force_authenticate(self.other)
         self.assertEqual(self.browser.get(path + "?status=saved").status_code, 404)
 
-    # 功能：验证客户摘要的来源标记来自实际业务邮件。
-    # 输入：无外部参数；同公司两封不同来源的合成夹具。
-    # 输出：邮件来源集合包含两项，且不依据模型 provider 或客户名称推测。
-    # 逻辑：先保存标准夹具，再显式模拟来源混合历史，读取真实 company_row。
-    # 约束：只验证投影，不把测试中的 qq_real 标记当作真实 QQ 授权验证。
+    # Function: Verify customer-summary source labels derive from actual business mail.
+    # Inputs: No external arguments; two synthetic fixtures with different sources in one company.
+    # Outputs: The source set contains both entries without inferring from model provider or customer name.
+    # Logic: Save standard fixtures, explicitly simulate mixed-source history, and read real company_row.
+    # Constraints: Projection-only verification; the test's qq_real label does not verify real QQ authorization.
     def test_company_row_exposes_actual_email_sources(self):
         sample = self.email("sample-source")
         qq = self.email("qq-source")
@@ -132,11 +132,11 @@ class ProcessingTests(TestCase):
         row = selectors.company_row(sample.company)
         self.assertEqual(row["email_sources"], sorted({sample.payload["source"], "qq_real"}))
 
-    # 功能：验证人工复核的权限、版本和来源保留。
-    # 输入：无外部参数；创建待复核合成邮件。
-    # 输出：越权 404、过期 409、人工判断保留及原文不变。
-    # 逻辑：先确认再重复提交同一原文，机器分类不能覆盖人工决定。
-    # 约束：不修改抽取事实，不依赖真实外部服务。
+    # Function: Verify manual-review permissions, revisions, and source preservation.
+    # Inputs: No external arguments; create synthetic mail pending review.
+    # Outputs: Unauthorized access returns 404, stale versions 409, manual decisions persist, and original text is unchanged.
+    # Logic: Confirm first, then resubmit identical original text; machine classification cannot overwrite manual decisions.
+    # Constraints: Do not change extracted facts or depend on real external services.
     def test_review_is_owned_versioned_and_preserves_source(self):
         email = self.email("review", "needs_review")
         original = dict(email.payload)
@@ -156,11 +156,11 @@ class ProcessingTests(TestCase):
         self.assertEqual(email.payload, original)
         self.assertTrue(email.company.jobs.filter(status="pending").exists())
 
-    # 功能：验证重复同步点击拒绝新建批次。
-    # 输入：无外部参数；两次相同邮箱同步请求。
-    # 输出：首次 HTTP 202、重复 HTTP 409 和唯一 queued 记录。
-    # 逻辑：重新查询数据库确认状态，而非检查进程内变量。
-    # 约束：不启动 Worker，也不把排队当成同步完成。
+    # Function: Verify repeated sync clicks reject new batches.
+    # Inputs: No external arguments; two sync requests for the same mailbox.
+    # Outputs: First HTTP 202, duplicate HTTP 409, and one queued record.
+    # Logic: Requery database state instead of checking process-local variables.
+    # Constraints: Do not start Workers or treat queued work as completed synchronization.
     def test_queue_is_durable_and_rejects_duplicate_clicks(self):
         path = f"/api/v1/mailboxes/{self.mailbox.pk}/request-sync/"
         first, second = [self.browser.post(path, {"sync_options": {"max_messages": 20}}, format="json") for _ in range(2)]
@@ -171,11 +171,11 @@ class ProcessingTests(TestCase):
         other.force_authenticate(self.other)
         self.assertEqual(other.get(f"/api/v1/mailbox-sync-runs/{first.data['run_id']}/").status_code, 404)
 
-    # 功能：验证逐封计数、部分完成、明确重试和租约失效。
-    # 输入：无外部参数；一个完成事件和一个读取失败事件。
-    # 输出：partial、正确失败范围，以及旧执行者被拒绝。
-    # 逻辑：重复发现不重复计数，新重试仅包含失败 ID，过期后保留任务。 初始批次显式选择 20 封，后继批次只重试模拟失败 ID。
-    # 约束：模拟阶段事件，不声明真实 Gmail 已读取。
+    # Function: Verify per-message counts, partial completion, explicit retry, and lease invalidation.
+    # Inputs: No external arguments; one completed event and one read-failure event.
+    # Outputs: partial state, correct failed scope, and rejection of old executors.
+    # Logic: Repeated discovery does not duplicate counts; retries contain failed IDs only and tasks survive expiry. The initial batch explicitly selects 20 messages; successors retry only simulated failed IDs.
+    # Constraints: Simulate stage events without claiming real Gmail reads.
     def test_progress_partial_retry_and_expired_lease(self):
         request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         run = claim_run(self.owner)
@@ -194,11 +194,11 @@ class ProcessingTests(TestCase):
         self.assertEqual(expire_runs(self.owner), 1)
         self.assertEqual(MailboxSyncRun.objects.get(pk=active.pk).status, "failed")
 
-    # 功能：验证跨公司可领取，同公司后继必须等待。
-    # 输入：无外部参数；两家公司的邮件和一个运行中的旧 revision。
-    # 输出：第二次领取只有其他公司任务。
-    # 逻辑：运行期间同公司新邮件建立后继，后端原子领取排除该公司。
-    # 约束：使用真实数据库状态，不以线程池数量代替互斥验证。
+    # Function: Verify other companies can be claimed while same-company successors wait.
+    # Inputs: No external arguments; mail for two companies and an old running revision.
+    # Outputs: The second claim includes only the other company's task.
+    # Logic: New mail during execution creates a same-company successor; atomic backend claiming excludes that company.
+    # Constraints: Use real database state; thread-pool size does not substitute for mutual-exclusion checks.
     def test_same_company_successor_waits_while_other_company_runs(self):
         first = self.email("first")
         claimed = jobs.claim(self.owner, 1, 120)
@@ -209,11 +209,11 @@ class ProcessingTests(TestCase):
         self.assertEqual([item["company_id"] for item in next_jobs], [str(other.company_id)])
         self.assertEqual(first.company.jobs.filter(status="pending").count(), 1)
 
-    # 功能：验证观察模式的单封 Gmail 读取失败隔离。
-    # 输入：无外部参数；SDK 读取 mock 在第二封抛错。
-    # 输出：第一和第三封成功，第二封有失败事件。
-    # 逻辑：使用新回调模式，验证真实循环继续执行。
-    # 约束：模拟 SDK，未验证真实授权和网络。
+    # Function: Verify isolation of individual Gmail read failures in observer mode.
+    # Inputs: No external arguments; the SDK read mock raises on the second message.
+    # Outputs: First and third messages succeed; the second has a failure event.
+    # Logic: Use the new callback mode and verify the real loop continues.
+    # Constraints: Mock the SDK; real authorization/networking are not verified.
     def test_tracked_gmail_read_failure_keeps_other_messages(self):
         events = []
         with patch("agent.tools.gmail.read_email", side_effect=[{"id": "one"}, RuntimeError("mock"), {"id": "three"}]) as reader:
@@ -222,11 +222,11 @@ class ProcessingTests(TestCase):
         self.assertEqual(result, [{"id": "one"}, {"id": "three"}])
         self.assertEqual([data["gmail_message_id"] for stage, data in events if stage == "failed"], ["bad"])
 
-    # 功能：验证历史回填保持人工决定。
-    # 输入：无外部参数；人工确认一封规则隐藏邮件。
-    # 输出：回填后仍为人工业务分类，原文存在。
-    # 逻辑：明确应用回填，检查人工优先级。
-    # 约束：命令只访问隔离测试库。
+    # Function: Verify historical backfill preserves manual decisions.
+    # Inputs: No external arguments; manually confirm a rule-hidden message.
+    # Outputs: After backfill, manual business classification and original text remain.
+    # Logic: Explicitly apply backfill and check manual precedence.
+    # Constraints: The command accesses only the isolated test database.
     def test_backfill_preserves_manual_decisions(self):
         email = self.email("manual", "non_business")
         review_email(self.owner, email.pk, "confirmed_business", email.review_revision)
@@ -234,11 +234,11 @@ class ProcessingTests(TestCase):
         email.refresh_from_db()
         self.assertEqual((email.business_classification, email.classification_source), ("business", "human"))
 
-    # 功能：验证批次画像统计涵盖所有关联公司。
-    # 输入：无外部参数；创建超过一页的 21 家公司和完成邮件任务。
-    # 输出：整体进度返回 21 个待处理画像。
-    # 逻辑：进度从批次关系查询，不接收前端公司分页参数。 排队显式提供 20 封测试范围；21 家公司进度为手工任务夹具，用于验证分页无关统计。
-    # 约束：不调模型，邮件任务完成状态为本测试模拟前提。
+    # Function: Verify batch profile statistics include every related company.
+    # Inputs: No external arguments; create 21 companies exceeding one page and completed mail tasks.
+    # Outputs: Overall progress reports 21 pending profiles.
+    # Logic: Progress queries batch relationships without frontend company-pagination arguments. Queuing explicitly uses a 20-message test scope; 21-company progress comes from manual task fixtures verifying pagination-independent statistics.
+    # Constraints: No model calls; completed mail-task states are simulated test premises.
     def test_progress_covers_companies_outside_visible_page(self):
         run = request_run(self.owner, self.mailbox.pk, sync_options={"max_messages": 20})
         for index in range(21):
@@ -247,11 +247,11 @@ class ProcessingTests(TestCase):
         self.assertEqual(run_data(run)["analysis_pending_count"], 21)
 
 
-    # 功能：验证游标过期后不遗失已持久化的失败与待处理 ID。
-    # 输入：无外部参数；History 404、两个旧 ID 和一个新扫描 ID。
-    # 输出：旧 ID 优先读取，超出单轮限制的新 ID 留在 pending。
-    # 逻辑：只模拟 Gmail 查询结果，执行实际恢复选择逻辑。
-    # 约束：保持单轮上限，不把 Mock 的 historyId 当成真实邮箱游标。
+    # Function: Verify cursor expiry preserves persisted failed and pending IDs.
+    # Inputs: No external arguments; History 404, two old IDs, and one newly scanned ID.
+    # Outputs: Old IDs are read first; new IDs beyond the per-round limit remain pending.
+    # Logic: Mock only Gmail query results and execute actual recovery-selection logic.
+    # Constraints: Preserve per-round limits; mocked historyId is not a real mailbox cursor.
     def test_expired_history_preserves_pending_ids(self):
         from agent.tools.gmail import GmailHistoryExpiredError
         from agent.workflows.gmail_sync import _read_email_batch
@@ -266,11 +266,11 @@ class ProcessingTests(TestCase):
         self.assertEqual(reader.call_args.args[1], ["old-pending", "old-failed"])
         self.assertEqual((cursor, pending, mode), ("200", ["recent"], "recovered"))
 
-    # 功能：验证非业务决定使依赖该邮件的旧画像停止展示。
-    # 输入：无外部参数；先生成一封业务邮件的确定性测试画像。
-    # 输出：人工隐藏后 latest_result 返回空，历史分析记录仍存在。
-    # 逻辑：不删除画像历史，通过成员键可见性检查阻止继续展示。
-    # 约束：测试规则只用于离线 fixture，不调用模型且不触发非业务重算。
+    # Function: Verify non-business decisions hide old profiles dependent on that mail.
+    # Inputs: No external arguments; first generate a deterministic test profile from one business message.
+    # Outputs: After manual hiding, latest_result is empty while historical analysis records remain.
+    # Logic: Preserve history and prevent display through member-key visibility checks.
+    # Constraints: Rules are offline fixtures only; no model calls or non-business recomputation.
     def test_review_hides_analysis_that_used_removed_email(self):
         email = self.email("analysis-source")
         rules.run_company(self.owner, email.company_id)
@@ -281,15 +281,15 @@ class ProcessingTests(TestCase):
         self.assertTrue(email.company.inputs.filter(analyses__isnull=False).exists())
 
 
-# 功能：验证 Worker 和多线程 L1 的真实持久化关系。
-# 逻辑：使用可提交的隔离事务库，使抽取线程可看到批次；网络和模型均 Mock。
-# 约束：不访问真实 Gmail 或 HTTP；只验证协议回调与数据库实现之间的集成。
+# Function: Verify real persistence relationships between Worker and multithreaded L1.
+# Logic: Use a committable isolated transactional database so extraction threads see batches; mock network/models.
+# Constraints: No real Gmail or HTTP; verify integration between protocol callbacks and database implementation.
 class WorkerPipelineTests(TransactionTestCase):
-    # 功能：贯通批次领取、逐封读取、并发抽取和持久进度。
-    # 输入：无外部参数；两封合法合成邮件、一封读取失败的消息。
-    # 输出：两个业务邮件保存，批次 partial，失败 ID 保留且公司分析入队。
-    # 逻辑：替换 Gmail、LLM 和临时身份的 HTTP 客户端，执行检查点及真实 ingestion 事务。 在显式 20 封范围内模拟选择三封邮件，实际读取错误隔离与入库路径保持真实。
-    # 约束：模型输出为合成 fixture；测试通过不代表真实邮箱授权或模型质量已验证。
+    # Function: Integrate batch claiming, per-message reads, concurrent extraction, and durable progress.
+    # Inputs: No external arguments; two valid synthetic emails and one read-failure message.
+    # Outputs: Two business messages save, the batch becomes partial, failed IDs persist, and company analysis queues.
+    # Logic: Replace Gmail, LLM, and the temporary-identity HTTP client while executing checkpoints and real ingestion transactions. Simulate three selected messages within the explicit 20-message scope; read-error isolation and ingestion remain real.
+    # Constraints: Model outputs are synthetic fixtures; passing does not verify real mailbox authorization or model quality.
     def test_worker_persists_stream_and_isolates_read_error(self):
         owner = get_user_model().objects.create_user(username="worker-integration")
         mailbox = Mailbox.objects.create(owner=owner, address="worker@processing.example")

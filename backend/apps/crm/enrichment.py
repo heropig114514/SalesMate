@@ -1,13 +1,13 @@
-"""职责：向已授权公司分析提供共享实验资料并判定快照是否仍有效。
-实现：个人隔离不读取共享实验资料；一次批量解析内共享已核验清单，逐公司完成精确匹配；不跨请求缓存。
-关联：selectors 提供上下文，results 保存时重读，Agent 原样归并；不依赖额外 Tool 凭证。
-目录：
-- resolve：解析当前公司对应的获准实验资料。
-- resolve_many：在同一只读事务内核验一次清单并解析多家公司。
-- match_company：使用已核验资料完成单家公司的精确匹配。
-- snapshot_current：检查快照补充资料是否仍与当前来源一致。
-变量索引：
-- logger：只记录公司、批次和状态的诊断日志。
+"""Responsibility: Supply shared experiment data to authorized company analysis and determine whether a snapshot remains valid.
+Implementation: Personal isolation never reads shared experiment data; a batch resolution shares one verified manifest and exactly matches each company, without cross-request caching.
+Relationships: selectors supplies context, results rereads on save, and Agent merges unchanged; no additional Tool credentials are required.
+Directory:
+- resolve: Resolve approved experiment data for the current company.
+- resolve_many: Verify one manifest and resolve multiple companies in the same read-only transaction.
+- match_company: Exactly match a single company with verified data.
+- snapshot_current: Check whether snapshot enrichment still agrees with current sources.
+Variable index:
+- logger: Diagnostic logger that records only company, batch, and status.
 """
 
 import logging
@@ -23,20 +23,20 @@ from .access import Conflict
 logger = logging.getLogger("salesmate.enrichment")
 
 
-# 功能：解析当前公司对应的获准实验资料。
-# 输入：`company` 为调用者已授权读取的 Company。
-# 输出：含 status、match_basis、source、facts、enrichment_version 的独立对象。
-# 逻辑：委托批量解析单元素集合，保留独立读取的只读重复读事务与匹配规则。
-# 约束：只读批准清单；批次缺失或完整性失败显式 unavailable 并记录原因，普通无匹配返回 not_found；不修改 CRM。
+# Function: Resolve approved experiment data for the current company.
+# Inputs: `company` is a Company the caller is authorized to read.
+# Outputs: Independent object containing status, match_basis, source, facts, and enrichment_version.
+# Logic: Delegate to a single-element batch resolution, retaining read-only repeatable-read transactions and matching rules for independent reads.
+# Constraints: Read approved manifests only; missing batches or integrity failures explicitly return unavailable and record a reason, while ordinary no-match returns not_found; does not modify CRM.
 def resolve(company):
     return resolve_many([company])[company.pk]
 
 
-# 功能：一次读取和核验批准清单，解析多家公司的资料。
-# 输入：`companies` 为调用者已授权的公司序列。
-# 输出：以公司主键索引的完整解析结果；空序列返回空字典。
-# 逻辑：最外层事务使用只读重复读；嵌套时沿用调用者事务。清单核验保留原函数，结果按各公司独立匹配。
-# 约束：不跨调用缓存、不省略指纹或批准检查；清单失败使全部结果显式 unavailable，逐公司记录安全日志。
+# Function: Read and verify an approved manifest once and resolve data for multiple companies.
+# Inputs: `companies` is a sequence of companies the caller is authorized to access.
+# Outputs: Complete resolution results indexed by company primary key; an empty sequence returns an empty dictionary.
+# Logic: The outermost transaction uses read-only repeatable read and nested calls retain the caller transaction. Manifest verification retains its original function and results match each company independently.
+# Constraints: Does not cache across calls or omit fingerprint or approval checks; manifest failure makes every result explicitly unavailable and logs safely per company.
 @transaction.atomic
 def resolve_many(companies):
     companies = list(companies)
@@ -57,11 +57,11 @@ def resolve_many(companies):
     return {company.pk: match_company(company, rows, failure) for company in companies}
 
 
-# 功能：从本次核验的资料中生成公司补充信息。
-# 输入：`company` 为目标公司；`rows` 为批准清单的当前投影；`failure` 为清单错误代码或 None。
-# 输出：含来源、事实和摘要版本的独立字典。
-# 逻辑：完整域名优先，受标记限制的全名次之；歧义拒绝唯一匹配；保留人数与行业的类型检查。
-# 约束：仅用于当前解析调用，不读取数据库、不改写源资料；失败不会回退为普通无匹配。
+# Function: Generate company enrichment from data verified in this resolution.
+# Inputs: `company` is the target company; `rows` is the approved manifest's current projection; `failure` is a manifest error code or None.
+# Outputs: Independent dictionary with source, facts, and digest version.
+# Logic: Prefer exact domain, then a batch-marked exact full name; ambiguity rejects a unique match and employee count and industry retain type validation.
+# Constraints: Used only for the current resolution call, does not read the database or alter source data, and failure does not fall back to ordinary no-match.
 def match_company(company, rows, failure):
     domains = {str(value).strip().casefold().rstrip(".") for value in company.domains if value}
     candidates = [row for row in rows if domains.intersection(
@@ -91,11 +91,11 @@ def match_company(company, rows, failure):
     return result
 
 
-# 功能：检查快照补充资料是否仍与当前来源一致。
-# 输入：`snapshot` 为 AnalysisInput；`company` 为对应公司；`current` 可复用本次已解析的资料。
-# 输出：可继续使用返回 True，否则 False。
-# 逻辑：含补充字段的快照比较完整对象，涵盖内容变化、歧义、新匹配和批准撤销。
-# 约束：旧客户端未启用补充字段时保持原协议；不删除历史快照或自动触发模型调用。
+# Function: Check whether snapshot enrichment still agrees with current sources.
+# Inputs: `snapshot` is AnalysisInput, `company` is its company, and `current` can reuse data resolved in this call.
+# Outputs: True when it remains usable, otherwise False.
+# Logic: Snapshots with enrichment compare the complete object, covering content changes, ambiguity, new matches, and approval revocation.
+# Constraints: Retain the original protocol when legacy clients omit enrichment; do not delete historical snapshots or trigger model calls automatically.
 def snapshot_current(snapshot, company, current=None):
     business = snapshot.payload.get("business_context", {})
     if "company_enrichment" not in business:

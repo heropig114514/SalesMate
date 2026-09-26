@@ -1,9 +1,9 @@
-# 当前部署
+# Current Deployment
 
-当前已改用 Redis/Celery、Gunicorn 双实例与 PostgreSQL/pgvector。完整布局、首次初始化、自动发布、验证和失败恢复见 [服务器基础设施与在线发布](../../backend/docs/server-infrastructure.md)；受限 GitHub Actions 入口见 [自动部署](../../backend/deploy/lightsail/README.md)。
+Deployment now uses Redis/Celery, dual Gunicorn instances, and PostgreSQL/pgvector. See [Server Infrastructure and Online Release](../../backend/docs/server-infrastructure.md) for complete layout, first initialization, automatic release, verification, and failure recovery. See [Automatic Deployment](../../backend/deploy/lightsail/README.md) for the restricted GitHub Actions entry point.
 
-公网入口为 https://milkdragon.dev/，Nginx 终止 TLS。服务器运行配置和数据库凭证不提交到仓库。
+The public endpoint is https://milkdragon.dev/, with TLS terminated by Nginx. Server runtime configuration and database credentials are not committed to the repository.
 
-域名证书安装和 IP/域名统一续期见 [域名部署](domain.md)；两个 Nginx 入口共用发布片段，跟随当前蓝绿实例切换。
+See [Domain Deployment](domain.md) for domain certificate installation and unified IP/domain renewal. The two Nginx entry points share a release snippet and follow the current blue-green instance cutover.
 
-只读聊天使用独立 `salesmate-chat.service`；其凭证、首次安装、排空和恢复边界见 [聊天适配](../../backend/docs/chat-integration.md)。服务须在切流后启动，与新版 CRM/Celery 调度相互独立。
+Read-only chat uses standalone salesmate-chat.service. Its credentials, first installation, draining, and recovery boundaries are in [Chat Integration](../../backend/docs/chat-integration.md). Start it after traffic cutover; it remains independent from new CRM/Celery scheduling.

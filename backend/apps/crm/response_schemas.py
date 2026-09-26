@@ -1,77 +1,77 @@
-"""职责：为 Agent 查询和批量响应声明可消费的 OpenAPI 结构。
-实现：独立响应序列化器描述真实数组与对象；CompanyContext 描述独立评分上下文，邮箱领取响应包含必需冻结范围和重试 ID。
-关联：views 用作 Schema 声明，服务的实际字段由契约测试核验。
-目录：
-- SubmissionResultSerializer：描述单封邮件的提交结果。
-- JobResponseSerializer：描述已领取 Job 与并发扩展字段。
-- CachedAnalysisResponseSerializer：描述分析缓存元数据。
-- GroupingResponseSerializer：描述后端公司归组结果。
-- CompanyContextResponseSerializer：描述公司邮件与业务快照。
-- MailboxResponseSerializer：描述浏览器邮箱列表行。
-- MailboxSyncClaimResponseSerializer：描述 Agent 领取的员工邮箱同步请求。
-变量索引：
-- CompanyContextResponseSerializer.company_enrichment：后端匹配的实验资料、状态和来源版本，无需额外 Tool 授权。
-- CompanyContextResponseSerializer.priority_context：公司级 customer、deal、seller 正式评分资料；未知字段保持缺失。
-- SubmissionResultSerializer.dedupe_key：本次提交的邮件天然键。
-- SubmissionResultSerializer.company_id：后端归组分配的公司 UUID。
-- SubmissionResultSerializer.status：created、updated 或 duplicate 提交结果。
-- JobResponseSerializer.job_id：后端任务 UUID。
-- JobResponseSerializer.company_id：待分析公司的后端 UUID。
-- JobResponseSerializer.trigger：创建任务的业务事件。
-- JobResponseSerializer.enqueued_at：任务入队时间。
-- JobResponseSerializer.attempt：已领取次数。
-- JobResponseSerializer.lease_until：领取租约截止时间。
-- JobResponseSerializer.lease_token：领取者写入时须提交的随机凭证。
-- JobResponseSerializer.expected_version：任务固定的后端上下文 revision。
-- CachedAnalysisResponseSerializer.company_id：当前查询的公司 UUID。
-- CachedAnalysisResponseSerializer.input_version：命中或旧分析的输入版本。
-- CachedAnalysisResponseSerializer.analysis_prompt_version：缓存分析的提示词版本，无缓存为 null。
-- CachedAnalysisResponseSerializer.generated_at：分析生成时间，无缓存为 null。
-- CachedAnalysisResponseSerializer.status：缓存元数据中的处理状态。
-- CachedAnalysisResponseSerializer.hit：是否匹配当前 revision、输入和指定提示词。
-- CachedAnalysisResponseSerializer.analysis：命中时返回的完整 L3 Analysis，未命中为 null。
-- GroupingResponseSerializer.company_id：后端公司 UUID。
-- GroupingResponseSerializer.company_name：可空公司展示名。
-- GroupingResponseSerializer.crm_status：公司建档状态。
-- GroupingResponseSerializer.domains：已确认的完整域名数组。
-- GroupingResponseSerializer.contacts：联系人邮箱、姓名、往来次数和主要联系人标记。
-- GroupingResponseSerializer.member_dedupe_keys：公司成员邮件的完整天然键集合。
-- CompanyContextResponseSerializer.company_id：后端公司 UUID。
-- CompanyContextResponseSerializer.external_snapshot_version：CRM 外部业务快照版本。
-- CompanyContextResponseSerializer.emails：当前标准邮件及抽取事实数组。
-- CompanyContextResponseSerializer.customer：权威 CRM 基础字段快照。
-- CompanyContextResponseSerializer.tickets：权威工单数组。
-- CompanyContextResponseSerializer.quotes：权威报价数组。
-- CompanyContextResponseSerializer.orders：权威订单数组。
-- MailboxResponseSerializer.mailbox_id：后端业务邮箱 UUID。
-- MailboxResponseSerializer.address：业务邮箱展示地址。
-- MailboxResponseSerializer.gmail_authorized：当前邮箱是否已经完成 Google OAuth。
-- MailboxResponseSerializer.qq_authorized：当前邮箱是否已验证 QQ IMAP 授权码。
-- MailboxResponseSerializer.sync_state：业务同步游标及状态。
-- MailboxSyncClaimResponseSerializer.authorization：仅向 Agent 返回的 Google authorized user JSON。
-- MailboxSyncClaimResponseSerializer.mailbox_address：已经由 Gmail profile 验证的邮箱地址。
-- MailboxSyncClaimResponseSerializer.mailbox_id：后端员工业务邮箱 UUID。
-- MailboxSyncClaimResponseSerializer.sync_options：用户选择、服务器冻结的时间窗口及本次超量批准。
-- MailboxSyncClaimResponseSerializer.message_ids：明确失败重试 ID，普通范围同步为空数组。
-- MailboxSyncClaimResponseSerializer.max_results：Gmail 单页读取上限，不是本批总封数。
+"""Responsibility: Declare consumable OpenAPI structures for Agent queries and batch responses.
+Implementation: Independent response serializers describe actual arrays and objects; CompanyContext describes separate scoring context and mailbox-claim responses include mandatory frozen scope and retry IDs.
+Relationships: views uses these as Schema declarations, and contract tests validate service fields in practice.
+Directory:
+- SubmissionResultSerializer: Describe submission result for one email.
+- JobResponseSerializer: Describe a claimed Job and concurrency extension fields.
+- CachedAnalysisResponseSerializer: Describe analysis-cache metadata.
+- GroupingResponseSerializer: Describe backend company grouping result.
+- CompanyContextResponseSerializer: Describe company emails and business snapshot.
+- MailboxResponseSerializer: Describe a browser mailbox-list row.
+- MailboxSyncClaimResponseSerializer: Describe employee mailbox synchronization request claimed by Agent.
+Variable index:
+- CompanyContextResponseSerializer.company_enrichment: Backend-matched experiment data, status, and source version without additional Tool authorization.
+- CompanyContextResponseSerializer.priority_context: Formal company-level customer, deal, and seller scoring data; unknown fields remain absent.
+- SubmissionResultSerializer.dedupe_key: Natural key of email submitted this time.
+- SubmissionResultSerializer.company_id: Company UUID assigned by backend grouping.
+- SubmissionResultSerializer.status: created, updated, or duplicate submission result.
+- JobResponseSerializer.job_id: Backend job UUID.
+- JobResponseSerializer.company_id: Backend UUID of company awaiting analysis.
+- JobResponseSerializer.trigger: Business event that created the job.
+- JobResponseSerializer.enqueued_at: Job queue time.
+- JobResponseSerializer.attempt: Number of claims.
+- JobResponseSerializer.lease_until: Claim-lease expiration time.
+- JobResponseSerializer.lease_token: Random credential the claimant must submit on write.
+- JobResponseSerializer.expected_version: Backend context revision frozen by job.
+- CachedAnalysisResponseSerializer.company_id: UUID of the company currently queried.
+- CachedAnalysisResponseSerializer.input_version: Input version of a hit or legacy analysis.
+- CachedAnalysisResponseSerializer.analysis_prompt_version: Prompt version of cached analysis, null without cache.
+- CachedAnalysisResponseSerializer.generated_at: Analysis generation time, null without cache.
+- CachedAnalysisResponseSerializer.status: Processing state in cache metadata.
+- CachedAnalysisResponseSerializer.hit: Whether current revision, input, and requested prompt match.
+- CachedAnalysisResponseSerializer.analysis: Complete L3 Analysis returned on hit, null on miss.
+- GroupingResponseSerializer.company_id: Backend company UUID.
+- GroupingResponseSerializer.company_name: Nullable company display name.
+- GroupingResponseSerializer.crm_status: Company record status.
+- GroupingResponseSerializer.domains: Array of confirmed full domains.
+- GroupingResponseSerializer.contacts: Contact email, name, interaction count, and primary-contact flag.
+- GroupingResponseSerializer.member_dedupe_keys: Complete natural-key set of company member emails.
+- CompanyContextResponseSerializer.company_id: Backend company UUID.
+- CompanyContextResponseSerializer.external_snapshot_version: CRM external business snapshot version.
+- CompanyContextResponseSerializer.emails: Array of current standard emails and extraction facts.
+- CompanyContextResponseSerializer.customer: Authoritative CRM base-field snapshot.
+- CompanyContextResponseSerializer.tickets: Authoritative ticket array.
+- CompanyContextResponseSerializer.quotes: Authoritative quote array.
+- CompanyContextResponseSerializer.orders: Authoritative order array.
+- MailboxResponseSerializer.mailbox_id: Backend business mailbox UUID.
+- MailboxResponseSerializer.address: Business mailbox display address.
+- MailboxResponseSerializer.gmail_authorized: Whether current mailbox completed Google OAuth.
+- MailboxResponseSerializer.qq_authorized: Whether current mailbox verified a QQ IMAP authorization code.
+- MailboxResponseSerializer.sync_state: Business synchronization cursor and state.
+- MailboxSyncClaimResponseSerializer.authorization: Google authorized-user JSON returned only to Agent.
+- MailboxSyncClaimResponseSerializer.mailbox_address: Mailbox address verified by Gmail profile.
+- MailboxSyncClaimResponseSerializer.mailbox_id: Backend employee business mailbox UUID.
+- MailboxSyncClaimResponseSerializer.sync_options: User selection, server-frozen time window, and this run's over-limit approval.
+- MailboxSyncClaimResponseSerializer.message_ids: Explicit failed retry IDs; empty array for ordinary scoped synchronization.
+- MailboxSyncClaimResponseSerializer.max_results: Gmail single-page read limit, not total batch count.
 """
 from rest_framework import serializers as s
 
 from .serializers import EmailSubmissionSerializer, SyncStateSerializer
 
 
-# 功能：描述单封邮件的提交结果。
-# 逻辑：同一响应数组的每项携带天然键、公司 ID 和创建状态。
-# 约束：此声明不执行入库，实际去重由 ingestion 负责。
+# Function: Describe submission result for one email.
+# Logic: Each item in the same response array carries its natural key, company ID, and creation state.
+# Constraints: This declaration does not persist data; ingestion performs actual deduplication.
 class SubmissionResultSerializer(s.Serializer):
     dedupe_key = s.CharField()
     company_id = s.UUIDField()
     status = s.ChoiceField(choices=["created", "updated", "duplicate"])
 
 
-# 功能：描述已领取 Job 与并发扩展字段。
-# 逻辑：保留 README 原字段并加入 lease_token 和 expected_version。
-# 约束：只向成功认证的领取者返回凭证。
+# Function: Describe a claimed Job and concurrency extension fields.
+# Logic: Retain original README fields and add lease_token and expected_version.
+# Constraints: Return credentials only to successfully authenticated claimants.
 class JobResponseSerializer(s.Serializer):
     job_id = s.UUIDField()
     trigger = s.CharField()
@@ -83,9 +83,9 @@ class JobResponseSerializer(s.Serializer):
     expected_version = s.IntegerField(min_value=0)
 
 
-# 功能：描述分析缓存元数据。
-# 逻辑：保留命中状态和可空旧分析信息。
-# 约束：hit 的实际判定由 results 服务完成。
+# Function: Describe analysis-cache metadata.
+# Logic: Retain hit state and nullable legacy analysis information.
+# Constraints: results service determines actual hit state.
 class CachedAnalysisResponseSerializer(s.Serializer):
     company_id = s.UUIDField()
     input_version = s.CharField()
@@ -96,9 +96,9 @@ class CachedAnalysisResponseSerializer(s.Serializer):
     analysis = s.DictField(allow_null=True)
 
 
-# 功能：描述后端公司归组结果。
-# 逻辑：联系人和邮件成员范围与 CompanyContext 使用同一 ETag。
-# 约束：不让 Agent 根据该结构重新决定归组。
+# Function: Describe backend company grouping result.
+# Logic: Contact and email-member scopes use the same ETag as CompanyContext.
+# Constraints: Does not allow Agent to decide grouping again from this structure.
 class GroupingResponseSerializer(s.Serializer):
     company_id = s.UUIDField()
     company_name = s.CharField(allow_null=True)
@@ -108,9 +108,9 @@ class GroupingResponseSerializer(s.Serializer):
     member_dedupe_keys = s.ListField(child=s.CharField())
 
 
-# 功能：描述公司邮件与业务快照。
-# 逻辑：邮件回显 L1 标准载荷，priority_context 提供权威公司商机与销售方资料，company_enrichment 独立标记实验来源。
-# 约束：评分上下文不重复邮件、不混入已保存的 L2 载荷，不凭空补未知数据。
+# Function: Describe company emails and business snapshot.
+# Logic: Emails echo L1 standard payload, priority_context supplies authoritative company opportunity and seller data, and company_enrichment independently identifies experiment origin.
+# Constraints: Scoring context neither repeats emails nor mixes in persisted L2 payloads and does not invent unknown data.
 class CompanyContextResponseSerializer(s.Serializer):
     company_id = s.UUIDField()
     external_snapshot_version = s.CharField()
@@ -123,9 +123,9 @@ class CompanyContextResponseSerializer(s.Serializer):
     company_enrichment = s.DictField(required=False)
 
 
-# 功能：描述浏览器邮箱列表行。
-# 逻辑：显示业务标识、Gmail/QQ 独立授权标志与不含凭证的同步状态。
-# 约束：返回地址不代表已完成 Gmail OAuth。
+# Function: Describe a browser mailbox-list row.
+# Logic: Display business identity, independent Gmail/QQ authorization flags, and synchronization state without credentials.
+# Constraints: Returned address does not mean Gmail OAuth is complete.
 class MailboxResponseSerializer(s.Serializer):
     mailbox_id = s.UUIDField()
     address = s.EmailField()
@@ -134,9 +134,9 @@ class MailboxResponseSerializer(s.Serializer):
     sync_state = s.DictField()
 
 
-# 功能：描述 Agent 领取到的员工邮箱同步请求。
-# 逻辑：完整授权凭证只在 AgentAuthentication 保护的响应中出现；消费者必须执行 sync_options 或明确 message_ids。
-# 约束：浏览器邮箱接口不得使用该结构。
+# Function: Describe employee mailbox synchronization request claimed by Agent.
+# Logic: Complete authorization credentials appear only in AgentAuthentication-protected responses; consumers must apply sync_options or explicit message_ids.
+# Constraints: Browser mailbox interfaces must not use this structure.
 class MailboxSyncClaimResponseSerializer(s.Serializer):
     mailbox_id = s.UUIDField()
     mailbox_address = s.EmailField()

@@ -1,30 +1,30 @@
-"""职责：提供工具发现、调用、用户委托和人工确认 HTTP 接口。
-实现：显式实验模式下无需登录或单独令牌；正式模式保留原授权。独立 Tool 或 Session 调用，文件 JSON 使用有界解析；凭证支持显式工具清单或模板快照，正式模式管理与提案批准只接受用户 Session/CSRF。
-关联：services 管理幂等和权限；复用 SalesView 的安全错误映射；使用 common.laboratory 统一实验身份。
-目录：
-- ToolView：工具认证边界。
-- CatalogView：工具目录。
-- CatalogView.get：按分类分页发现工具。
-- CallView：工具执行入口。
-- CallView.post：验证信封并调用。
-- CredentialView：用户授权管理。
-- CredentialView.get：列出自己的委托。
-- CredentialView.post：创建限定工具凭证。
-- CredentialDetailView：撤销委托。
-- CredentialDetailView.delete：撤销自己的凭证。
-- ProposalView：用户提案查询。
-- ProposalView.get：查询单条或待处理提案。
-- ProposalDetailView：单条提案路由。
-- ProposalDetailView.get：发布独立详情契约。
-- DecisionView：真人决定入口。
-- DecisionView.post：批准或取消冻结提案。
-变量索引：
-- ToolView.authentication_classes：Tool 与浏览器认证。
-- CallView.parser_classes：文件 JSON 有界解析，保留原表单解析器。
-- CredentialView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
-- CredentialDetailView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
-- ProposalView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
-- DecisionView.authentication_classes：实验模式公开身份，正式模式仅用户 Session。
+"""Responsibility: Provide HTTP endpoints for tool discovery, invocation, user delegation, and human confirmation.
+Implementation: Explicit experiment mode needs no login or separate token while production mode retains original authorization. Calls use independent Tool or Session identity, file JSON uses bounded parsing, credentials support an explicit tool list or preset snapshot, and production management and proposal approval accept only user Session and CSRF.
+Relationships: ``services`` manages idempotency and permissions; reuses ``SalesView`` safe error mapping and ``common.laboratory`` unified experiment identity.
+Directory:
+- ToolView: Tool authentication boundary.
+- CatalogView: Tool catalog.
+- CatalogView.get: Discover tools by category with pagination.
+- CallView: Tool-execution entry point.
+- CallView.post: Validate envelope and invoke.
+- CredentialView: User authorization management.
+- CredentialView.get: List the caller's delegations.
+- CredentialView.post: Create a restricted tool credential.
+- CredentialDetailView: Revoke a delegation.
+- CredentialDetailView.delete: Revoke the caller's credential.
+- ProposalView: Query user proposals.
+- ProposalView.get: Query an individual or pending proposal.
+- ProposalDetailView: Individual-proposal route.
+- ProposalDetailView.get: Publish an independent detail contract.
+- DecisionView: Human-decision entry point.
+- DecisionView.post: Approve or cancel a frozen proposal.
+Variable index:
+- ToolView.authentication_classes: Tool and browser authentication.
+- CallView.parser_classes: Bounded file-JSON parsing while retaining original form parsers.
+- CredentialView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
+- CredentialDetailView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
+- ProposalView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
+- DecisionView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
 """
 
 import hashlib
@@ -47,22 +47,22 @@ from .presets import permission_presets
 from .parsers import ToolJSONParser
 
 
-# 功能：限定工具身份。
-# 逻辑：实验模式由 ToolAuthentication 提供公开身份；正式模式 Tool 凭证优先，浏览器保留 CSRF。
-# 约束：正式模式不复用 Worker 的 Agent 认证。
+# Function: Constrain tool identity.
+# Logic: ``ToolAuthentication`` provides public identity in experiment mode; production mode prefers Tool credentials while browsers retain CSRF.
+# Constraints: Production mode does not reuse Worker Agent authentication.
 class ToolView(SalesView):
     authentication_classes = [ToolAuthentication, SessionAuthentication]
 
 
-# 功能：提供可用工具。
-# 逻辑：白名单与执行一致。
-# 约束：不返回凭证或业务数据。
+# Function: Provide available tools.
+# Logic: The allowlist matches execution.
+# Constraints: Returns no credentials or business data.
 class CatalogView(ToolView):
-    # 功能：分页发现工具。
-    # 输入：`request` 的 category/page/page_size。
-    # 输出：tools/count/page/page_size。
-    # 逻辑：先权限过滤再分页。
-    # 约束：默认 30，上限 100，不隐式全量返回。
+    # Function: Discover tools with pagination.
+    # Inputs: ``request`` supplies category, page, and page_size query fields.
+    # Outputs: tools, count, page, and page_size.
+    # Logic: Filter permissions before pagination.
+    # Constraints: Default is 30, maximum is 100, and does not implicitly return all items.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="agent_tools_catalog")
     def get(self, request):
         args = request.query_params.dict()
@@ -87,17 +87,17 @@ class CatalogView(ToolView):
         )
 
 
-# 功能：接收结构化业务调用。
-# 逻辑：使用文件工具有界 JSON 解析，不执行任意 URL 或函数。
-# 约束：名称来自目录。
+# Function: Receive a structured business invocation.
+# Logic: Uses bounded JSON parsing for file tools and executes no arbitrary URL or function.
+# Constraints: Name must come from the catalog.
 class CallView(ToolView):
     parser_classes = [ToolJSONParser, FormParser, MultiPartParser]
 
-    # 功能：执行一次工具调用。
-    # 输入：`request` 含 name/arguments 和写入幂等键。
-    # 输出：结构化执行或待确认回执。
-    # 逻辑：认证身份传入服务。
-    # 约束：保留真实 HTTP 错误，不自动重试。
+    # Function: Execute one tool invocation.
+    # Inputs: ``request`` contains name and arguments and the idempotency key for a write.
+    # Outputs: Structured execution or pending-confirmation receipt.
+    # Logic: Pass authenticated identity to service.
+    # Constraints: Retains actual HTTP errors and does not retry automatically.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -125,17 +125,17 @@ class CallView(ToolView):
         return Response(result)
 
 
-# 功能：用户委托工具权限。
-# 逻辑：实验模式使用公开选择的身份管理委托；正式模式只接受当前 Session 用户。
-# 约束：Tool token 不能发放新权限。
+# Function: Delegate tool permissions for a user.
+# Logic: Experiment mode manages delegations through publicly selected identity; production mode accepts only the current Session user.
+# Constraints: A Tool token cannot issue new permission.
 class CredentialView(SalesView):
     authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
-    # 功能：查询自己的授权。
-    # 输入：`request` 分页。
-    # 输出：无 token/digest 的元数据。
-    # 逻辑：按创建时间排序。
-    # 约束：不展示原始密钥。
+    # Function: Query the caller's authorizations.
+    # Inputs: Pagination from ``request``.
+    # Outputs: Metadata without token or digest.
+    # Logic: Sort by creation time.
+    # Constraints: Does not reveal the raw secret.
     @extend_schema(
         responses=OpenApiTypes.OBJECT, operation_id="agent_tools_credentials_list"
     )
@@ -150,11 +150,11 @@ class CredentialView(SalesView):
         )
         return Response({**pagination, "results": rows})
 
-    # 功能：创建明确范围的 token。
-    # 输入：`request` 的 name、expires_in_hours，以及 allowed_tools 或 preset 二选一。
-    # 输出：授权 ID、一次性 token、期限。
-    # 逻辑：模板解析为当下确切工具名再冻结，显式清单保持原行为；仅保存 token 摘要。
-    # 约束：有效期须明确为 1..720 小时；不允许星号或自动扩大权限。
+    # Function: Create a token with an explicit scope.
+    # Inputs: ``request`` supplies name and expires_in_hours fields, plus exactly one of the allowed_tools or preset fields.
+    # Outputs: Authorization ID, one-time token, and expiry.
+    # Logic: Resolve a preset to exact current tool names and freeze it; explicit lists retain existing behavior; persist only the token digest.
+    # Constraints: Expiry must be explicitly 1..720 hours; wildcards and automatic permission expansion are forbidden.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -215,17 +215,17 @@ class CredentialView(SalesView):
         return response
 
 
-# 功能：用户撤销委托。
-# 逻辑：实验模式使用公开选择的身份撤销委托；正式模式要求当前用户 Session，归属仍按所选身份定位。
-# 约束：只能撤销自己的授权。
+# Function: Revoke a user's delegation.
+# Logic: Experiment mode revokes through public selected identity; production mode requires current-user Session while ownership remains located by selected identity.
+# Constraints: Can revoke only the caller's own authorization.
 class CredentialDetailView(SalesView):
     authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
-    # 功能：撤销一份 token。
-    # 输入：`request`、`credential_id`。
-    # 输出：204。
-    # 逻辑：标记撤销时间。
-    # 约束：不能停止已经执行的业务或自动撤销外部动作。
+    # Function: Revoke one token.
+    # Inputs: ``request`` and ``credential_id``.
+    # Outputs: HTTP 204.
+    # Logic: Mark revocation time.
+    # Constraints: Cannot stop a business operation already executed or automatically revoke an external action.
     @extend_schema(responses={204: None}, operation_id="agent_tools_credentials_revoke")
     def delete(self, request, credential_id):
         if not ToolCredential.objects.filter(
@@ -240,17 +240,17 @@ class CredentialDetailView(SalesView):
         return Response(status=204)
 
 
-# 功能：向用户展示待确认内容。
-# 逻辑：实验模式按公开选择的身份读取提案；正式模式要求对应用户 Session。
-# 约束：凭证不能通过此接口读取或批准。
+# Function: Present pending-confirmation content to a user.
+# Logic: Experiment mode reads proposals by public selected identity; production mode requires the corresponding user's Session.
+# Constraints: Credentials cannot read or approve through this endpoint.
 class ProposalView(SalesView):
     authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
-    # 功能：读取提案。
-    # 输入：`request` 分页、`proposal_id` 可选路径标识。
-    # 输出：冻结参数及状态。
-    # 逻辑：列表仅列 pending，单条支持核对终态。
-    # 约束：越权与不存在均为 404。
+    # Function: Read a proposal.
+    # Inputs: Pagination from ``request`` and optional path identifier ``proposal_id``.
+    # Outputs: Frozen arguments and status.
+    # Logic: Lists only pending proposals; individual reads support reviewing terminal state.
+    # Constraints: Unauthorized and missing cases both return 404.
     @extend_schema(
         responses=OpenApiTypes.OBJECT, operation_id="agent_tools_proposals_read"
     )
@@ -264,17 +264,17 @@ class ProposalView(SalesView):
         )
 
 
-# 功能：接受独立用户确认。
-# 逻辑：实验模式按公开选择的身份提交决定；正式模式要求用户 Session 和 CSRF，实际执行仍委托 decide。
-# 约束：不注册为 Agent 工具。
+# Function: Accept independent user confirmation.
+# Logic: Experiment mode submits a decision under public selected identity; production mode requires user Session and CSRF, while actual execution still delegates to ``decide``.
+# Constraints: Is not registered as an Agent tool.
 class DecisionView(SalesView):
     authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
 
-    # 功能：确认或取消一次提案。
-    # 输入：`request` 含 decision，`proposal_id`。
-    # 输出：处理后的提案。
-    # 逻辑：事务重验权限及冻结版本。
-    # 约束：需浏览器明确提交，不读取聊天文字推断批准。
+    # Function: Approve or cancel one proposal.
+    # Inputs: ``request`` contains decision and ``proposal_id``.
+    # Outputs: Processed proposal.
+    # Logic: Transaction revalidates permission and frozen version.
+    # Constraints: Requires explicit browser submission and does not infer approval from chat text.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -290,15 +290,15 @@ class DecisionView(SalesView):
         )
 
 
-# 功能：提供提案详情。
-# 逻辑：复用 Session-only 查询实现，独立 OpenAPI 标识。
-# 约束：不额外授予工具凭证权限。
+# Function: Provide proposal detail.
+# Logic: Reuses the Session-only query implementation with an independent OpenAPI identifier.
+# Constraints: Does not grant additional tool-credential permission.
 class ProposalDetailView(ProposalView):
-    # 功能：读取一个提案。
-    # 输入：`request`、`proposal_id`。
-    # 输出：冻结参数及当前状态。
-    # 逻辑：委托父类完成归属查询。
-    # 约束：不存在或越权均为 404。
+    # Function: Read one proposal.
+    # Inputs: ``request`` and ``proposal_id``.
+    # Outputs: Frozen arguments and current status.
+    # Logic: Delegate ownership query to parent class.
+    # Constraints: Missing and unauthorized cases both return 404.
     @extend_schema(
         responses=OpenApiTypes.OBJECT, operation_id="agent_tools_proposal_detail"
     )

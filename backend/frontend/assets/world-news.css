@@ -1,8 +1,8 @@
-/* 职责：全球洞察的活动列表、金额地图、详情面板和行业资讯布局。
- * 实现：无所选币种金额的活动使用白色半透明小气泡，选择态保持白色；新闻线索按事实、来源金额和推断分区，证据与长金额可折行；共享主题变量、桌面三列、窄屏堆叠；气泡填充不透明度为普通 20%、选中 30%，圆心固定在地理锚点；标签分行显示已有币种金额与缺少所选币种的提示。
- * 关联：共享语言/API 资源随需求界面统一版本；world.html、world-news.js、world-map.js；沿用共享导航与 Leaflet 本地资源。
- * 目录：无函数或类；区域为页面头、筛选、活动列、地图、详情、资讯与响应式。
- * 变量索引：--bubble-size 为单个气泡直径，由金额平方根计算；其余使用共享主题变量。 */
+/* Responsibility: Lay out global-insight event lists, amount maps, details, and industry news.
+ * Implementation: Events without selected-currency amounts use small translucent white bubbles, remaining white when selected. News leads separate facts, source-amount definitions, and inferences; evidence/long amounts wrap. Shared theme, three desktop columns, and stacked narrow layout. Bubble fill opacity is 20% normally and 30% selected; centers stay at geographic anchors. Labels separately show known currency amounts and missing selected-currency information.
+ * Relationships: Shared language/API versions follow the interface; world.html, world-news.js, and world-map.js reuse navigation and local Leaflet resources.
+ * Directory: No functions or classes; sections cover header, filters, event column, map, details, news, and responsive layout.
+ * Variable index: --bubble-size is the individual diameter derived from square-root amount scaling; other values use shared theme variables. */
 .world-workspace {
   background: var(--bg);
   color: var(--ink);
@@ -301,7 +301,7 @@
   font-size: 12px;
   pointer-events: auto;
 }
-/* 圆心独立于城市名及金额提示；同坐标多活动以居中的数量代替中心点。 */
+/* Circle centers are independent of city/amount labels; multiple events at one coordinate use a centered count instead of a center dot. */
 .event-pin:not(.multiple)::after {
   content: "";
   position: absolute;
@@ -320,7 +320,7 @@
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   outline: 4px solid color-mix(in srgb, var(--accent) 15%, transparent);
 }
-/* 固定位置气泡不表示金额大小；与已有气泡共用点击、悬停和键盘事件。 */
+/* Fixed location bubbles do not encode amounts; they share click, hover, and keyboard events with existing bubbles. */
 .event-pin.amount-missing .event-bubble {
   border-color: rgb(255 255 255 / 65%);
   background: rgb(255 255 255 / 22%);
@@ -705,7 +705,7 @@
   }
 }
 
-/* 公共新闻线索使用明确分区；金额不截断，移动端保留全部精确数位及证据。 */
+/* Public news leads use explicit sections; amounts remain untruncated, preserving all significant digits and evidence on mobile. */
 .news-signal { margin: 24px 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; }
 .news-signal dl { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
 .news-signal dt { color: var(--muted); }

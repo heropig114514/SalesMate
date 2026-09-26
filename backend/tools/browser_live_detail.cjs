@@ -1,10 +1,10 @@
 /**
- * 职责：验证 LLM 分阶段结果在当前详情及时可见，且不会破坏阅读和未保存内容。
- * 国际化前提：浏览器固定 zh-CN，使既有中文交互断言不依赖运行机器语言。
- * 实现：通过共享工作空间入口打开助手；真实浏览器加载静态前端，模拟邮件、画像、评分的独立完成和慢响应/读取失败。
- * 关联：app.js、live-detail.js、assistant.js；使用显式 Playwright 和 Chrome 路径。
- * 目录：main 执行浏览器验收。
- * 变量索引：FRONTEND 为页面根目录，OUTPUT 为忽略的截图目录；其余导入无业务状态。
+ * Responsibility: Verify prompt visibility of staged LLM results without disrupting reading or unsaved content.
+ * Internationalization prerequisite: Fix browser locale to zh-CN so existing Chinese assertions do not depend on host language.
+ * Implementation: Open the assistant through the shared workspace entry; real browsers load static frontend assets with independent mocked mail/profile/score completions, slow responses, and read failures.
+ * Relationships: app.js, live-detail.js, assistant.js; explicit Playwright/Chrome paths.
+ * Directory: main runs browser acceptance.
+ * Variable index: FRONTEND is the page root; OUTPUT is the ignored screenshot directory; imports carry no business state.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,9 +14,9 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const FRONTEND = path.resolve(__dirname, '../frontend');
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
-/** 功能：验证分阶段更新和交互连续性。输入：环境中的模块与浏览器路径。输出：结果及截图。
- * 逻辑：固定 revision 下分开发布邮件、画像、评分；验证手动重算、失败暂停、恢复和跨客户竞态。
- * 约束：所有 API 拦截，外部网络禁止；POST 仅允许模拟显式/原有打开分析，绝不保存真实数据。 */
+/** Function: Verify staged updates and interaction continuity. Inputs: Environment module/browser paths. Outputs: Results and screenshots.
+ * Logic: Publish emails, profiles, and scores separately under a fixed revision; verify manual recomputation, failure pauses, recovery, and cross-customer races.
+ * Constraints: Intercept all APIs and block external networks; allow only simulated explicit/existing open-analysis POSTs, never real data saves. */
 async function main() {
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;

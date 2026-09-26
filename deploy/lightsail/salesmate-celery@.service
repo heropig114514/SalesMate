@@ -1,8 +1,11 @@
-# 职责：运行 CRM 或销售队列的独立 Celery 消费者。
-# 实现：预派生进程池通过 Redis 接收任务，TERM 仅发主进程以温和排空。
-# 关联：crm/sales 调度器先停止并等待结果，再停止消费者；不自动重启未知外部副作用。
-# 目录：无。
-# 变量索引：%i 为 crm/sales；CELERY_CONCURRENCY 分别为 3/1，保留原业务并发上限。
+# Responsibility: Run an isolated Celery consumer for the CRM or sales queue.
+# Implementation: A prefork pool receives work through Redis; TERM reaches only the main process for graceful draining.
+# Relationships: crm/sales schedulers stop and wait before consumers stop; no automatic restart of unknown external side effects.
+# Directory:
+# - None
+# Variable index:
+# - %i: Selects crm or sales.
+# - CELERY_CONCURRENCY: Retains business concurrency limits of 3 and 1 respectively.
 [Unit]
 Description=SalesMate Celery %i
 After=network.target postgresql.service redis-server.service

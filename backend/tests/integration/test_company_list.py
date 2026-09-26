@@ -1,20 +1,20 @@
-"""职责：验证公司列表批量查询的业务等价性和查询规模。
-实现：隔离 PostgreSQL 合成公司、邮件、版本与评分，比较独立投影和批量结果，并验证规模增长时查询数有界。
-关联：crm.selectors 的列表与详情共用投影；不访问模型、邮箱或线上数据库。
-目录：
-- CompanyListTests：验证批量列表契约。
-- CompanyListTests.setUp：创建两个归属与测试邮箱。
-- CompanyListTests.company：生成有分析和评分的合成公司。
-- CompanyListTests.test_batch_matches_independent_projection：核对完整行与邮件、联系人版本语义。
-- CompanyListTests.test_query_count_does_not_grow_per_company：验证两家公司与三十家公司的查询预算。
-- CompanyListTests.test_filter_page_and_stats_preserve_global_scope：验证筛选、全局排序、分页和筛选前统计。
-- CompanyListTests.test_excludes_archived_hidden_and_foreign_companies：验证归档、分类和身份范围。
-- CompanyListTests.test_invalid_latest_analysis_is_not_replaced_by_older_result：验证不可见分析不回退旧结果。
-- CompanyListTests.test_score_versions_and_repeated_reads：验证版本过滤与请求间变更可见性。
-- CompanyListTests.test_invalid_pagination_still_rejected：验证非法分页仍显式失败。
-- CompanyListTests.test_list_does_not_load_mail_body_or_old_extraction_facts：验证必要字段投影与最新摘要保持一致。
-变量索引：
-- 无
+"""Responsibility: Verify business equivalence and query scale for bulk company-list queries.
+Implementation: Create synthetic companies, emails, versions, and scores in isolated PostgreSQL; compare independent projections with bulk results and verify query count remains bounded as scale grows.
+Relationships: List and detail views share projections from crm.selectors; does not access models, mailboxes, or production databases.
+Directory:
+- CompanyListTests: Verify bulk-list contract.
+- CompanyListTests.setUp: Create two owners and a test mailbox.
+- CompanyListTests.company: Generate a synthetic company with analysis and score.
+- CompanyListTests.test_batch_matches_independent_projection: Compare complete rows and email/contact version semantics.
+- CompanyListTests.test_query_count_does_not_grow_per_company: Verify query budget for two and thirty companies.
+- CompanyListTests.test_filter_page_and_stats_preserve_global_scope: Verify filtering, global ordering, pagination, and pre-filter statistics.
+- CompanyListTests.test_excludes_archived_hidden_and_foreign_companies: Verify archival, classification, and identity scope.
+- CompanyListTests.test_invalid_latest_analysis_is_not_replaced_by_older_result: Verify an invisible analysis does not fall back to an older result.
+- CompanyListTests.test_score_versions_and_repeated_reads: Verify version filtering and visibility of changes between requests.
+- CompanyListTests.test_invalid_pagination_still_rejected: Verify invalid pagination still fails explicitly.
+- CompanyListTests.test_list_does_not_load_mail_body_or_old_extraction_facts: Verify required-field projection and latest-summary consistency.
+Variable index:
+- None
 """
 from datetime import timedelta
 
@@ -30,16 +30,16 @@ from apps.crm.models import Analysis, AnalysisInput, Company, Contact, Email, Ex
 from apps.sales.models import CompanySettings
 
 
-# 功能：验证公司列表的行为和批量查询规模。
-# 逻辑：使用真实 ORM 与已知合成记录，不模拟查询数；正式评分模式作为基准。
-# 约束：只写独立测试库，不调用模型；通过不代表线上负载容量。
+# Function: Verify company-list behavior and bulk-query scale.
+# Logic: Use real ORM and known synthetic records without mocking query counts; use formal scoring mode as the baseline.
+# Constraints: Write only to the isolated test database and do not call models; passing does not establish production load capacity.
 @override_settings(ANALYSIS_PROVIDER="agent", LAB_OPEN_ACCESS=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class CompanyListTests(TestCase):
-    # 功能：验证列表不读取完整邮件正文或历史抽取事实。
-    # 输入：含大正文和两份摘要的真实隔离邮件记录。
-    # 输出：完整列表行与独立读取相等，payload 保持 deferred，构造行无附加查询。
-    # 逻辑：从真实 ORM 投影和 SQL 查询记录验证字段裁剪，避免仅比较合成返回值。
-    # 约束：正文保持数据库原值；详情和 Agent 完整上下文必须仍可读到正文。
+    # Function: Verify the list does not load complete mail bodies or historical extraction facts.
+    # Inputs: Real isolated email record containing a large body and two summaries.
+    # Outputs: Complete list row equals independent read, payload remains deferred, and constructing the row adds no query.
+    # Logic: Verify field trimming through real ORM projection and captured SQL queries rather than comparing synthetic return values only.
+    # Constraints: Body remains its database value; detail views and full Agent context must still read the body.
     def test_list_does_not_load_mail_body_or_old_extraction_facts(self):
         company = self.company(1)
         email = company.emails.get()
@@ -56,21 +56,21 @@ class CompanyListTests(TestCase):
         self.assertEqual(actual["headline_summary"], "Latest summary")
         self.assertEqual(selectors.context_pair(company, include_priority=False)[1]["emails"][0]["body_text"], email.payload["body_text"])
 
-    # 功能：创建测试归属。
-    # 输入：无显式参数，读取隔离测试数据库。
-    # 输出：owner、other、mailbox 实例状态。
-    # 逻辑：不使用实际账号或服务令牌。
-    # 约束：由 TestCase 回滚记录。
+    # Function: Create test ownership.
+    # Inputs: No explicit parameters; reads the isolated test database.
+    # Outputs: Instance state for owner, other, and mailbox.
+    # Logic: Do not use real accounts or service tokens.
+    # Constraints: TestCase rolls records back.
     def setUp(self):
         self.owner = get_user_model().objects.create_user(username="list-owner")
         self.other = get_user_model().objects.create_user(username="list-other")
         self.mailbox = Mailbox.objects.create(owner=self.owner, address="owner@list.example")
 
-    # 功能：创建一家公司及合法邮件、成功分析和正式评分。
-    # 输入：`index` 决定独立域名、分数和信号；`owner` 可指定另一测试归属，默认使用 self.owner。
-    # 输出：Company 对象。
-    # 逻辑：邮件通过真实入库服务，分析与评分采用明确合成载荷，只验证列表投影字段。
-    # 约束：不声称合成分析已通过模型评价，分数仅为测试数据。
+    # Function: Create one company with valid email, successful analysis, and formal score.
+    # Inputs: `index` determines independent domain, score, and signal; `owner` may specify another test owner and defaults to self.owner.
+    # Outputs: A Company object.
+    # Logic: Ingest email through the real service and use explicit synthetic payloads for analysis and scoring, verifying list-projection fields only.
+    # Constraints: Does not claim synthetic analysis passed model evaluation; scores are test data only.
     def company(self, index, owner=None):
         owner = owner or self.owner
         mailbox = self.mailbox if owner == self.owner else Mailbox.objects.create(owner=owner, address=f"other{index}@list.example")
@@ -89,11 +89,11 @@ class CompanyListTests(TestCase):
             payload={"score_reasons": [{"feature": "urgency", "contribution": index}], "scored_at": "2026-09-26T00:00:00Z"})
         return company
 
-    # 功能：验证批量与独立路径返回相同完整行。
-    # 输入：真实邮件、手工主联系人、无邮件联系人、非业务联系人及更新抽取版本。
-    # 输出：完整字典相等，当前摘要、主要联系人与来源一致。
-    # 逻辑：对多公司同时预取后逐行与详情使用的独立 company_row 比较。
-    # 约束：测试不替换 ORM 或结果生成函数。
+    # Function: Verify bulk and independent paths return the same complete row.
+    # Inputs: Real email, manually assigned primary contact, contact without email, non-business contact, and an updated extraction version.
+    # Outputs: Complete dictionaries are equal, with consistent current summary, primary contact, and sources.
+    # Logic: After prefetching multiple companies together, compare each row with the independent company_row used by detail views.
+    # Constraints: Does not replace ORM or result-generation functions.
     def test_batch_matches_independent_projection(self):
         first, second = self.company(1), self.company(2)
         email = first.emails.get()
@@ -112,11 +112,11 @@ class CompanyListTests(TestCase):
         self.assertEqual([c["contact_email"] for c in row["contacts"] if c["is_primary"]], [manual.email])
         self.assertNotIn(hidden_contact.email, [c["contact_email"] for c in row["contacts"]])
 
-    # 功能：验证查询量不会按公司数线性增长。
-    # 输入：先两家、再三十家各有邮件、抽取、任务、分析和评分的公司。
-    # 输出：两次查询数相等，均不超过 8；三十家统计与分页数量正确。
-    # 逻辑：捕获真实数据库执行，不通过 mock 伪造查询预算。
-    # 约束：不含实验补充资料的样本；补充资料核验仍保留独立语义。
+    # Function: Verify query count does not grow linearly with company count.
+    # Inputs: First two, then thirty companies, each with email, extraction, job, analysis, and score.
+    # Outputs: The two query counts are equal and no greater than eight; thirty-company statistics and pagination count are correct.
+    # Logic: Capture real database execution and do not fabricate query budgets through mocks.
+    # Constraints: Samples contain no experimental supplementary material; supplementary-material verification retains independent semantics.
     def test_query_count_does_not_grow_per_company(self):
         self.company(1)
         self.company(2)
@@ -130,11 +130,11 @@ class CompanyListTests(TestCase):
         self.assertLessEqual(len(large), 8)
         self.assertEqual((response["count"], len(response["results"]), response["stats"]["new_emails_today"]), (30, 20, 30))
 
-    # 功能：验证先全局筛选排序、后分页及筛选前统计。
-    # 输入：分值递增且信号交替的六家公司，一封邮件的接收日期设为昨天。
-    # 输出：第二页保留正确分数、筛选总数和全部授权集合的统计。
-    # 逻辑：高信号公司分值为 1、3、5，page=2 且 size=1 必须取 3。
-    # 约束：不改变生产排序权重、时区或默认分页。
+    # Function: Verify global filtering and sorting occur before pagination, and statistics precede filtering.
+    # Inputs: Six companies with increasing scores and alternating signals; one email's received date is set to yesterday.
+    # Outputs: The second page retains the correct score, filtered count, and statistics for the complete authorized set.
+    # Logic: High-signal companies have scores 1, 3, and 5; page 2 with size 1 must return 3.
+    # Constraints: Does not alter production sort weights, timezone, or default pagination.
     def test_filter_page_and_stats_preserve_global_scope(self):
         companies = [self.company(index) for index in range(1, 7)]
         companies[0].emails.update(received_at=timezone.now() - timedelta(days=1))
@@ -144,11 +144,11 @@ class CompanyListTests(TestCase):
         self.assertEqual(response["stats"], {"companies": 6, "unregistered": 6, "new_emails_today": 5})
         self.assertEqual(selectors.list_companies(Company.objects.filter(owner=self.owner), {"q": "BUYER@COMPANY4.EXAMPLE"})["count"], 1)
 
-    # 功能：验证批量查询不会扩展授权或可见集合。
-    # 输入：正常、归档、仅非业务、无邮件及其他 owner 公司。
-    # 输出：只有正常的授权公司可见，统计不包含其他记录。
-    # 逻辑：真实关系过滤进入批量读取前执行；空结果仍返回零统计。
-    # 约束：调用者传入 owner 范围，批量加载不得重新使用全库。
+    # Function: Verify bulk querying does not expand authorization or the visible set.
+    # Inputs: Normal, archived, non-business-only, email-free, and foreign-owner companies.
+    # Outputs: Only the normal authorized company is visible, and statistics exclude other records.
+    # Logic: Real relationship filters run before bulk read; empty results still return zero statistics.
+    # Constraints: Caller supplies owner scope; bulk loading must not reuse the whole database.
     def test_excludes_archived_hidden_and_foreign_companies(self):
         visible, archived, hidden = [self.company(index) for index in range(1, 4)]
         CompanySettings.objects.create(owner=self.owner, company=archived, archived=True)
@@ -160,11 +160,11 @@ class CompanyListTests(TestCase):
         self.assertEqual(result["stats"]["companies"], 1)
         self.assertEqual(selectors.list_companies(Company.objects.none(), {})["count"], 0)
 
-    # 功能：验证不可见的新分析不会显示旧画像。
-    # 输入：一份有效旧分析与引用隐藏来源的新成功分析。
-    # 输出：批量与独立路径均隐藏分析和评分，随后实验资料不匹配也隐藏。
-    # 逻辑：先选择最新成功分析，再验证可见性；保持既有拒绝语义。
-    # 约束：不采用回退，不删除历史记录，不调用真实模型。
+    # Function: Verify an invisible newer analysis does not display an older profile.
+    # Inputs: One valid older analysis and a newer successful analysis referencing a hidden source.
+    # Outputs: Both bulk and independent paths hide analysis and score; later unmatched experimental material is also hidden.
+    # Logic: Select the latest successful analysis first, then validate visibility while retaining established rejection semantics.
+    # Constraints: Does not fall back, delete history, or call a real model.
     def test_invalid_latest_analysis_is_not_replaced_by_older_result(self):
         company = self.company(1)
         snapshot = AnalysisInput.objects.create(company=company, revision=company.revision, input_version="new",
@@ -178,11 +178,11 @@ class CompanyListTests(TestCase):
         with self.settings(WORKSPACE_OWNER_ONLY=True):
             self.assertEqual(selectors.latest_result(company, selectors.list_projection([company])[company.pk]), (None, None))
 
-    # 功能：验证评分版本、最新失败分析及跨请求更新行为。
-    # 输入：正式评分后的旧规则评分，以及其后失败分析和已完成任务。
-    # 输出：agent 显示正式分，rules 显示最新分，下一请求看到最新任务状态。
-    # 逻辑：请求投影不存入持久缓存；分数只属于选中的成功分析。
-    # 约束：只在测试覆盖中切换 provider，不修改运行默认值。
+    # Function: Verify score versions, latest failed analysis, and updates between requests.
+    # Inputs: A formal score followed by an older rules score, a failed analysis, and a completed job.
+    # Outputs: Agent shows the formal score, rules shows the latest score, and the next request sees latest job state.
+    # Logic: Request projections are not stored in persistent cache; scores belong only to the selected successful analysis.
+    # Constraints: Switches provider only within test coverage and does not change runtime defaults.
     def test_score_versions_and_repeated_reads(self):
         company = self.company(1)
         analysis = Analysis.objects.get(snapshot__company=company)
@@ -195,11 +195,11 @@ class CompanyListTests(TestCase):
         Job.objects.filter(company=company).update(status="completed")
         self.assertEqual(selectors.list_companies(query, {})["results"][0]["job_status"], "completed")
 
-    # 功能：验证分页参数约束保留。
-    # 输入：非整数、零页、负大小和超上限大小。
-    # 输出：每种输入均抛 ValidationError。
-    # 逻辑：保持现有整数转换和范围拒绝规则。
-    # 约束：不放宽上限，不静默纠正用户输入。
+    # Function: Verify pagination-parameter constraints remain.
+    # Inputs: Non-integer, zero page, negative size, and size over the upper limit.
+    # Outputs: Each input raises ValidationError.
+    # Logic: Retain existing integer-conversion and range-rejection rules.
+    # Constraints: Do not relax the upper limit or silently correct user input.
     def test_invalid_pagination_still_rejected(self):
         for params in ({"page": "invalid"}, {"page": "0"}, {"page_size": "-1"}, {"page_size": "101"}):
             with self.subTest(params=params), self.assertRaises(ValidationError):

@@ -1,19 +1,19 @@
-"""职责：允许保存无法识别外部联系人的 Gmail 邮件。
-实现：把 Email.contact 改为可空，其他邮件字段和归组关系保持不变。
-关联：对应 apps.crm.models.Email.contact，由 Django migrate 执行。
-目录：
-- Migration：修改邮件联系人外键约束。
-变量索引：
-- Migration.dependencies：依赖 crm 初始迁移。
-- Migration.operations：将 Email.contact 改为可空外键。
+"""Responsibility: Allow Gmail messages without an identified external contact to be stored.
+Implementation: Make Email.contact nullable while keeping all other email fields and grouping relationships unchanged.
+Relationships: Corresponds to apps.crm.models.Email.contact and is executed by Django migrate.
+Directory:
+- Migration: Changes the email-contact foreign-key constraint.
+Variable index:
+- Migration.dependencies: Dependency on the initial crm migration.
+- Migration.operations: Changes Email.contact to a nullable foreign key.
 """
 
 from django.db import migrations, models
 
 
-# 功能：修改邮件联系人外键约束。
-# 逻辑：只把 contact 改为 null=True，已有联系人关系原样保留。
-# 约束：回滚到初始迁移前必须先处理 contact 为空的邮件。
+# Function: Change the email-contact foreign-key constraint.
+# Logic: Set only contact to null=True and retain existing contact relationships unchanged.
+# Constraints: Messages with an empty contact must be handled before rolling back to the initial migration.
 class Migration(migrations.Migration):
     dependencies = [("crm", "0001_initial")]
 

@@ -1,16 +1,16 @@
-"""职责：校验 Gmail/QQ 每次同步的显式范围并冻结时间窗口。
-实现：天数与封数至少提供一项，均为正整数；Gmail 默认最多 50 封，明确批准后才可扩大。
-关联：qq_views、views 校验 HTTP 输入；processing 固定批次范围；durable_sync、qq_sync 执行筛选。
-目录：
-- MailboxSyncOptionsSerializer：声明无预填的同步限制。
-- MailboxSyncOptionsSerializer.validate：拒绝空范围。
-- SyncRequestSerializer：声明通用同步请求的必填邮箱范围。
-- snapshot：将用户选择转为固定 UTC 时间窗口。
-变量索引：
-- MailboxSyncOptionsSerializer.recent_days：可空的最近天数。
-- MailboxSyncOptionsSerializer.max_messages：可空的本批次处理封数。
-- MailboxSyncOptionsSerializer.allow_large_sync：对明确超量封数的本次批准，可省略。
-- SyncRequestSerializer.sync_options：Gmail/QQ 共用的范围对象。
+"""Responsibility: Validate explicit Gmail/QQ scope for each synchronization and freeze its time window.
+Implementation: Require at least one of days and message count, both positive integers; Gmail defaults to at most 50 messages and expands only after explicit approval.
+Relationships: qq_views and views validate HTTP input, processing freezes batch scope, and durable_sync and qq_sync apply filtering.
+Directory:
+- MailboxSyncOptionsSerializer: Declare synchronization limits with no prefilled values.
+- MailboxSyncOptionsSerializer.validate: Reject an empty scope.
+- SyncRequestSerializer: Declare required mailbox scope for generic synchronization requests.
+- snapshot: Convert a user selection to a fixed UTC time window.
+Variable index:
+- MailboxSyncOptionsSerializer.recent_days: Optional number of recent days.
+- MailboxSyncOptionsSerializer.max_messages: Optional number of messages to process in this batch.
+- MailboxSyncOptionsSerializer.allow_large_sync: Optional approval for this explicit over-limit message count.
+- SyncRequestSerializer.sync_options: Scope object shared by Gmail and QQ.
 """
 from datetime import timedelta
 
@@ -21,19 +21,19 @@ from agent.tools.gmail_scope import gmail_message_limit
 from .serializers import StrictSerializer
 
 
-# 功能：限制每次邮箱同步的处理范围。
-# 逻辑：允许只填天数、只填封数或两项；超量批准本身不能替代范围，由服务层按提供方处理上限。
-# 约束：字段须为正整数；未知字段由 StrictSerializer 拒绝。
+# Function: Limit the processing scope of each mailbox synchronization.
+# Logic: Permit days only, message count only, or both; over-limit approval cannot itself replace scope, and the service layer applies provider limits.
+# Constraints: Fields must be positive integers; StrictSerializer rejects unknown fields.
 class MailboxSyncOptionsSerializer(StrictSerializer):
     recent_days = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     max_messages = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     allow_large_sync = serializers.BooleanField(required=False)
 
-    # 功能：确保用户明确选择至少一种限制。
-    # 输入：`attrs` 为完成字段验证的范围对象。
-    # 输出：保留范围及显式提供的批准字段，未填范围项为 None。
-    # 逻辑：无任何范围正整数时返回 400，批准标记不构成有效范围。
-    # 约束：不把空选择解释为全量同步。
+    # Function: Ensure the user explicitly selects at least one limit.
+    # Inputs: `attrs` is the scope object after field validation.
+    # Outputs: Retains scope and explicitly supplied approval fields, using None for omitted scope items.
+    # Logic: Return 400 when no positive scope integer is present; an approval flag is not valid scope.
+    # Constraints: Does not interpret an empty selection as full synchronization.
     def validate(self, attrs):
         if not (attrs.get("recent_days") or attrs.get("max_messages")):
             raise serializers.ValidationError("请填写最近 N 天或最多 N 封，至少一项。")
@@ -41,18 +41,18 @@ class MailboxSyncOptionsSerializer(StrictSerializer):
                 **({"allow_large_sync": attrs["allow_large_sync"]} if "allow_large_sync" in attrs else {})}
 
 
-# 功能：声明共用邮箱同步请求的必填范围。
-# 逻辑：Gmail 与 QQ 均须提供 sync_options。
-# 约束：空请求不能启动全量同步。
+# Function: Declare required scope for shared mailbox synchronization requests.
+# Logic: Gmail and QQ must both provide sync_options.
+# Constraints: An empty request cannot start full synchronization.
 class SyncRequestSerializer(StrictSerializer):
     sync_options = MailboxSyncOptionsSerializer()
 
 
-# 功能：冻结一次普通邮箱同步的范围。
-# 输入：`options` 为用户选择；`gmail` 指定 Gmail 秒级窗口及 50 封策略；隐式读取服务器 UTC 当前时间。
-# 输出：包含 recent_days、max_messages、since、until 及显式批准的 JSON 对象。
-# 逻辑：校验后以排队时刻为上界，Gmail 截断到整秒并冻结有效封数；按 24 小时乘天数计算下界。
-# 约束：时间溢出明确拒绝；重试使用原快照而不调用本函数推进时间。
+# Function: Freeze scope for one ordinary mailbox synchronization.
+# Inputs: `options` is the user selection; `gmail` selects Gmail's second-level window and 50-message policy; server UTC current time is read implicitly.
+# Outputs: JSON object containing recent_days, max_messages, since, until, and explicit approval.
+# Logic: Validate and use queue time as the upper bound; Gmail truncates to whole seconds and freezes the effective message count; compute lower bound as days times 24 hours.
+# Constraints: Explicitly reject time overflow; retries use the original snapshot without calling this function to advance time.
 def snapshot(options, *, gmail=False):
     serializer = MailboxSyncOptionsSerializer(data=options or {})
     serializer.is_valid(raise_exception=True)

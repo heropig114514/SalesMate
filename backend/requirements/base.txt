@@ -1,8 +1,14 @@
-# 职责：声明后端及部署所需的 Python 依赖。
-# 实现：固定直接版本，更新后执行依赖、迁移和回归检查。
-# 关联：开发安装、CI 与服务器独立版本环境使用此清单。
-# 目录：无函数或类。
-# 变量索引：Django/psycopg 为业务及数据库；celery[redis] 为任务传输；gunicorn/uvicorn-worker 为生产 ASGI；pgvector 为向量适配；其余为现有接口和工具依赖。
+# Responsibility: Declare Python dependencies required by the backend and deployment.
+# Implementation: Pin direct versions; run dependency, migration, and regression checks after updates.
+# Relationships: Development installs, CI, and isolated server release environments use this manifest.
+# Directory:
+# - None
+# Variable index:
+# - Django/psycopg: Business application and database support.
+# - celery[redis]: Task transport.
+# - gunicorn/uvicorn-worker: Production ASGI.
+# - pgvector: Vector adapter.
+# - Remaining packages: Existing interface and tool dependencies.
 Django==5.2.17
 djangorestframework==3.18.1
 django-environ==0.14.0

@@ -1,16 +1,16 @@
-"""职责：执行邮件入库、归组、事实补交和同步游标事务。
-实现：按 owner 串行化写入，独立保存业务分类；来源变化沿血缘失效并重算，保留原文及抽取版本。
-关联：serializers 校验协议，jobs 创建任务，selectors 查询完整邮件；sales.CompanyAlias 提供已确认的人工归组。
-目录：
-- track_saved_email：把已提交邮件关联到活动批次，兼容旧 CLI。
-- submit_emails：原子保存一批已授权邮件，返回每项创建或去重状态。
-- resubmit_facts：将失败事实补交为已完成，并保留邮件本体。
-- sync_state：读取业务邮箱的同步游标。
-- save_sync_state：按乐观锁保存同步游标。
-变量索引：
-- EXTRACTION_KEYS：从不可变邮件本体剥离的版本化抽取字段
-- PUBLIC_DOMAINS：MVP 公共邮箱域名清单，命中后按联系人独立归组
-- logger：模块脱敏诊断日志记录器
+"""Responsibility: Execute email persistence, grouping, fact resubmission, and synchronization-cursor transactions.
+Implementation: Serialize writes by owner and persist business classification independently; source changes invalidate and recompute through lineage while retaining sources and extraction versions.
+Relationships: serializers validates protocol, jobs creates tasks, selectors queries complete email, and sales.CompanyAlias supplies confirmed manual grouping.
+Directory:
+- track_saved_email: Associate a submitted email with an active batch while supporting legacy CLI.
+- submit_emails: Atomically save authorized emails and return creation or deduplication state for each.
+- resubmit_facts: Resubmit failed facts as completed while retaining email source.
+- sync_state: Read a business mailbox synchronization cursor.
+- save_sync_state: Save a synchronization cursor under optimistic locking.
+Variable index:
+- EXTRACTION_KEYS: Versioned extraction fields removed from immutable email source.
+- PUBLIC_DOMAINS: MVP public mailbox domains that group independently by contact when matched.
+- logger: Redacted diagnostic logger for this module.
 """
 import logging
 
@@ -31,11 +31,11 @@ PUBLIC_DOMAINS = frozenset(["gmail.com", "googlemail.com", "outlook.com", "hotma
 EXTRACTION_KEYS = frozenset(["extract_status", "extract_prompt_version", "extract_error", "facts"])
 
 
-# 功能：原子保存一批已授权邮件，返回每项创建或去重状态。
-# 输入：`owner` 为认证用户；`payloads` 为 EmailSubmission 数组。
-# 输出：每封邮件的 dedupe_key、company_id 和 created/updated/duplicate 状态。
-# 逻辑：先验证再锁 owner；机器分类尊重人工，既有来源更改使快照失效；成功补交取消过时修复，新邮件按既定映射归组。
-# 约束：任何一项失败回滚整批；不接收 Gmail 凭证、不调用模型、不静默覆盖事实。
+# Function: Atomically save authorized emails and return creation or deduplication state for each.
+# Inputs: `owner` is the authenticated user and `payloads` is an EmailSubmission array.
+# Outputs: Each email's dedupe_key, company_id, and created, updated, or duplicate state.
+# Logic: Validate before locking owner; machine classification respects humans and existing-source changes invalidate snapshots. Successful resubmission cancels stale repairs, while new emails group through established mapping.
+# Constraints: Any item failure rolls back the whole batch; does not accept Gmail credentials, call models, or silently overwrite facts.
 @transaction.atomic
 def submit_emails(owner, payloads):
     from .lineage import invalidate_email, schedule_analysis
@@ -138,11 +138,11 @@ def submit_emails(owner, payloads):
     return results
 
 
-# 功能：将失败事实补交为已完成，并保留邮件本体。
-# 输入：`owner` 为认证用户；`payload` 为 FactsResubmission。
-# 输出：公司 ID 与新 revision。
-# 逻辑：锁公司和抽取记录，核验原文及持久方向后执行 failed → completed，取消过时修复并沿血缘重算。
-# 约束：重复成功补交返回 conflict，不自动重读 Gmail。
+# Function: Resubmit failed facts as completed while retaining email source.
+# Inputs: `owner` is the authenticated user and `payload` is FactsResubmission.
+# Outputs: Company ID and new revision.
+# Logic: Lock company and extraction record, verify source text and persisted direction, transition failed to completed, cancel stale repairs, and recompute through lineage.
+# Constraints: Repeated successful resubmission returns conflict and does not automatically reread Gmail.
 @transaction.atomic
 def resubmit_facts(owner, payload):
     from .lineage import invalidate_email, schedule_analysis
@@ -171,21 +171,21 @@ def resubmit_facts(owner, payload):
     return {"company_id": str(company.pk), "revision": company.revision}
 
 
-# 功能：读取业务邮箱的同步游标。
-# 输入：`mailbox` 为已授权邮箱实例。
-# 输出：README SyncState；未同步时显式返回空游标。
-# 逻辑：只合并初始表示和当前状态，不假称同步完成。
-# 约束：scope 初值为空，首次 Gmail 扫描范围应由 Agent 显式提供。
+# Function: Read the synchronization cursor for a business mailbox.
+# Inputs: `mailbox` is an authorized mailbox instance.
+# Outputs: README SyncState; explicitly returns an empty cursor before synchronization.
+# Logic: Merge only initial representation and current state without claiming synchronization completed.
+# Constraints: Initial scope is empty and the Agent must explicitly provide first Gmail scan scope.
 def sync_state(mailbox):
     return {"mailbox_id": str(mailbox.pk), "cursor": None, "scope": {}, "last_synced_at": None,
             "status": "authorization_required", **mailbox.sync_state, "version": mailbox.version}
 
 
-# 功能：按乐观锁保存同步游标。
-# 输入：`owner` 为认证用户；`data` 为已验证 SyncState；`expected` 为 If-Match。
-# 输出：写入后的 SyncState。
-# 逻辑：锁邮箱、校验版本并递增；保留活动批次身份和运行状态，不以游标写入宣称批次完成。
-# 约束：启用持久检查点的邮箱由独立 Worker 管理，拒绝旧 CLI 写入；不做令牌托管。
+# Function: Save a synchronization cursor under optimistic locking.
+# Inputs: `owner` is the authenticated user, `data` is validated SyncState, and `expected` is If-Match.
+# Outputs: Written SyncState.
+# Logic: Lock mailbox, validate and increment version, and retain active batch identity and running state without claiming batch completion through a cursor write.
+# Constraints: A mailbox with durable checkpoints is managed by independent Worker and rejects legacy CLI writes; no token custody occurs.
 @transaction.atomic
 def save_sync_state(owner, data, expected):
     mailbox = mailbox_for(owner, data["mailbox_id"], lock=True)
@@ -205,11 +205,11 @@ def save_sync_state(owner, data, expected):
     return sync_state(mailbox)
 
 
-# 功能：在邮件保存事务内关联活动同步批次。
-# 输入：`email` 为已保存邮件。
-# 输出：无；更新活动批次的逐封终态及公司。
-# 逻辑：正常提交和去重都登记实际落库结果，兼容尚未发送阶段事件的旧 CLI。
-# 约束：没有活动批次时不创建进度；抽取失败仍是失败任务但邮件本体保留。
+# Function: Associate an active synchronization batch within the email persistence transaction.
+# Inputs: `email` is a saved email.
+# Outputs: None; updates active-batch per-message terminal state and company.
+# Logic: Both ordinary submissions and deduplication register actual persisted outcomes, supporting legacy CLI that has not emitted stage events.
+# Constraints: Does not create progress without an active batch; extraction failure remains a failed job while source email is retained.
 def track_saved_email(email):
     from .models import EmailProcessingJob
     run = email.mailbox.sync_runs.filter(status="running").first()

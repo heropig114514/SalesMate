@@ -1,55 +1,55 @@
-# Agent 与 Django 集成
+# Agent and Django integration
 
-当前算法联调服务器启用[公开实验模式](laboratory-access.md)：所有业务数据（含非 KGSEED）免登录、跨账号可读写，Tool/MCP 无需令牌。下文原鉴权约束仅在关闭实验开关后生效，保留的外部动作与密钥边界见该说明。
+The current algorithm integration server enables [public experiment mode](laboratory-access.md): all business data, including non-KGSEED data, is readable/writable across accounts without login, and Tool/MCP requires no token. Original authorization constraints below apply only after disabling experiment switches; see that document for retained external-action and secret boundaries.
 
-更新：2026-09-13。当前 Agent 已通过 `agent/clients/backend_api.py` 接入真实 Django 后端。业务流程和 JSON 结构以 [Agent README](../../agent/README.md) 为准，HTTP 传输以 [OpenAPI](../contracts/openapi.yaml) 为准。
+Updated: 2026-09-13. Agent connects to the real Django backend through `agent/clients/backend_api.py`. The [Agent README](../../agent/README.md) defines business workflows/JSON structures; [OpenAPI](../contracts/openapi.yaml) defines HTTP transport.
 
-## 职责边界
+## Responsibility boundaries
 
-- Agent 负责 Gmail 读取、MIME 解析、L1 事实抽取、L2 公司事实归并、L3 客户画像与分析、L4 跟进优先级。
-- Django 负责用户、员工 Google OAuth、邮箱、邮件、公司、联系人、业务快照、Job 和分析结果持久化。
-- 浏览器从 Django 读取当前员工的 Gmail 状态、公司列表和详情，不读取 Gmail token、百炼 Key 或 Agent 服务令牌。
-- Agent 不导入 Django，也不直接访问数据库。
+- Agent handles Gmail reads, MIME parsing, L1 fact extraction, L2 company-fact merging, L3 profiles/analysis, and L4 follow-up priority.
+- Django persists users, employee Google OAuth, mailboxes, emails, companies, contacts, business snapshots, Jobs, and analysis results.
+- Browsers read the current employee's Gmail status and company lists/details from Django, never Gmail tokens, Bailian keys, or Agent service tokens.
+- Agent neither imports Django nor accesses the database directly.
 
-## 一次同步
+## One synchronization run
 
-1. 当前员工通过网页 OAuth 连接 Gmail，并在页面请求同步。
-2. Django 持久保存同步批次；独立 Worker 领取批次与员工授权，再调用 Agent。旧 CLI 的 `mailbox-syncs/claim/` 仅保留迁移调试。
-3. Worker 分页补采 inbox/sent 历史，每页 20 封；先持久保存发现 ID 与页位置，再处理原文。历史完成后使用 History 增量；游标过期才重扫历史并复用已缓存结果。
-4. Worker 按 `dedupe_key` 批量复用成功抽取；原文与已完成的 L1 输出分阶段持久化。新邮件执行 L1，明确重试根据失败阶段复用原文或直接重交抽取结果。
-5. 需要执行 L1 的邮件最多四路并发；任一邮件完成后，`DjangoBackendClient` 立即向 `POST /api/v1/agent/emails/` 逐封提交。
-6. 后端按 `mailbox_address:gmail_message_id` 去重，在当前员工范围内将邮件归组到公司；失败抽取在后续同步成功时可更新。
-7. 只有已完成、属于业务且有实质变化的邮件创建 `email_ingested` Job。
-8. Worker 持续记录逐封进度，邮箱处理结束后保存批次结果；浏览器轮询该批次的全量计数。
-9. 独立画像通道与同步并行，Agent 领取 Job，依次读取 Grouping 和 CompanyContext，构建并保存 L2。
-10. Agent 查询或生成 L3，计算并保存 L4，回报 Job。公司画像以公司 revision 为单位，同一公司的多封邮件共同组成一次分析输入。
+1. The employee connects Gmail through web OAuth and requests synchronization.
+2. Django persists the batch; an independent worker claims it with employee authorization and invokes Agent. Legacy CLI `mailbox-syncs/claim/` remains only for migration debugging.
+3. The worker backfills inbox/sent history at 20 emails per page, persisting discovered IDs/page positions before source processing. After history completes, use History increments; only expired cursors trigger historical rescans, reusing cached results.
+4. Batch-reuse successful extractions by `dedupe_key`, persisting source text and completed L1 output by stage. New emails run L1; explicit retries reuse source text or resubmit extraction results according to the failed stage.
+5. At most four emails requiring L1 run concurrently. As each finishes, `DjangoBackendClient` immediately submits it individually to `POST /api/v1/agent/emails/`.
+6. The backend deduplicates by `mailbox_address:gmail_message_id` and groups emails into companies within the current employee's scope; later successful syncs may update failed extractions.
+7. Only completed, business-relevant emails with substantive changes create `email_ingested` Jobs.
+8. The worker records per-email progress continuously and saves batch results after mailbox processing; browsers poll full batch counts.
+9. An independent profile channel runs alongside synchronization. Agent claims Jobs, reads Grouping/CompanyContext, then builds and saves L2.
+10. Agent queries/generates L3, computes/saves L4, and reports the Job. Company profiles are revision-scoped, combining multiple emails into one analysis input.
 
-Job 对 Agent workflow 暴露顶层 `company_id`。HTTP 层额外返回 `lease_token` 和 `expected_version`；适配器负责 ETag、If-Match 和租约请求头，使 L1–L4 保持简单的后端协议。
+Jobs expose top-level `company_id` to Agent workflows. HTTP additionally returns `lease_token` and `expected_version`; adapters handle ETag, If-Match, and lease headers, keeping L1–L4 on a simple backend protocol.
 
-## 运行模式
+## Runtime modes
 
-`ANALYSIS_PROVIDER=agent` 是真实 Agent 模式。页面的“更新分析”只创建 Job，独立终端中的 Worker 持续消费：
+`ANALYSIS_PROVIDER=agent` enables real Agent mode. The page's update-analysis action creates a Job only; a worker in a separate terminal continuously consumes jobs:
 
 ```powershell
 python backend/manage.py crm_worker
 ```
 
-`ANALYSIS_PROVIDER=rules` 是离线演示模式。页面可导入合成样例或模拟来信，Django 内的确定性规则会写入演示分析。它不会在 Agent 网络或模型调用失败时自动接管。
+`ANALYSIS_PROVIDER=rules` enables offline demonstrations. Pages can import synthetic examples or simulate incoming mail; deterministic Django rules write demonstration analyses. Rules never take over automatically when Agent network/model calls fail.
 
-## 当前限制
+## Current limitations
 
-- Agent CLI 保留一次性调试；产品链路由独立 `crm_worker` 消费数据库批次和公司任务。
-- 网页授权的 Google 凭证由 Django 保存，只通过 AgentAuthentication 保护的同步领取接口提供给 Agent。Agent 不再维护旧的本机 Desktop OAuth 读取命令；`test_tools/` 中的测试邮件注入器使用独立的 Desktop OAuth 凭据和 token，具体见其 README。
-- Worker 按必填 `sync_options` 选择最近天数或封数；Gmail 普通上限 50 封，超量须在告知风险并获用户明确批准后提供 `allow_large_sync=true` 与具体封数，StoredMessage 保存范围内原文及 L1 输出，SyncCheckpoint 仅标识接管并保留旧审计字段；旧 SyncState 提供兼容投影。Worker 接管后拒绝旧 CLI 游标双写，仍以 `dedupe_key` 保证保存幂等。
-- L1 最多四路并发，逐封失败隔离；批次与邮件任务保存到数据库。公司画像默认两路，同公司互斥。
-- 后端依据 Agent 信号保存独立分类，隐藏非业务和待复核邮件；人工确认优先于后续自动分类。
-- `extract-v7` 无采购阶段的入站邮件进入复核；人工确认缺失事实的业务邮件先补 L1，再自动重算画像。邮件分类或事实变化沿快照血缘使 L3/L4 失效，并对剩余业务来源重算。
-- 租约和 revision 用于阻止过期任务覆盖新上下文；公司任务没有自动续租或隐式重试；邮箱批次通过阶段事件刷新租约。
-- 工单、报价和订单由 sales 关系记录维护并投影到 CompanyContext；业务管理页提供编辑和状态入口，只有已发送报价及已确认订单提供相应分析证据。
-- 真实 Gmail 与百炼不属于自动测试依赖。
+- Agent CLI remains for one-off debugging; independent `crm_worker` consumes database batches/company jobs in the product flow.
+- Django stores web-authorized Google credentials and supplies them to Agent only through AgentAuthentication-protected sync claims. Agent no longer maintains legacy local Desktop OAuth read commands; `test_tools/` email injectors use independent Desktop OAuth credentials/tokens, as documented in their README.
+- Workers require `sync_options` selecting recent days or message count. Ordinary Gmail limits are 50 emails; larger runs require risk disclosure, explicit user approval, `allow_large_sync=true`, and a specific count. StoredMessage retains in-scope source text/L1 output; SyncCheckpoint marks takeover and retains old audit fields, while legacy SyncState provides compatibility projections. Worker takeover rejects CLI cursor dual-writes; `dedupe_key` still ensures idempotent saves.
+- L1 supports at most four concurrent tasks with per-email failure isolation; batches/email tasks persist in the database. Company profiling defaults to two concurrent tasks with same-company exclusion.
+- The backend stores separate classification based on Agent signals, hiding nonbusiness/review-pending emails; manual confirmation takes precedence over later automatic classification.
+- Inbound `extract-v7` emails without procurement stages enter review. Manually confirmed business emails with missing facts receive L1 repair before automatic profile recalculation. Classification/fact changes invalidate L3/L4 along snapshot lineage and recalculate from remaining business sources.
+- Leases/revisions prevent stale jobs overwriting newer context. Company jobs have no automatic lease renewal or implicit retries; mailbox batches refresh leases through stage events.
+- Sales relational records maintain tickets, quotes, and orders and project them into CompanyContext. Management pages expose edits/transitions; only sent quotes and confirmed orders provide corresponding analysis evidence.
+- Real Gmail and Bailian services are not automated-test dependencies.
 
-持久批次、Worker、复核及迁移兼容边界见 [邮件处理适配](processing-integration.md)。
+See [email processing integration](processing-integration.md) for persistent batches, workers, review, and migration compatibility boundaries.
 
-## 只读聊天适配
+## Read-only chat integration
 
-2026-09-18 新增独立 `apps.chat`，复用员工 Agent 服务认证；固定 claim/context/answers 三接口与原 Agent 聊天工作流兼容。运行使用独立 `chat_worker`，不修改本页的邮箱或 L1–L4 流程。精确契约、迁移、知识与恢复说明见 [聊天适配](chat-integration.md)。
+Independent `apps.chat` was added on 2026-09-18, reusing employee Agent service authentication. Its fixed claim/context/answers APIs remain compatible with the original Agent chat workflow. It uses an independent `chat_worker` without changing mailbox or L1–L4 flows documented here. See [chat integration](chat-integration.md) for exact contracts, migrations, knowledge, and recovery.

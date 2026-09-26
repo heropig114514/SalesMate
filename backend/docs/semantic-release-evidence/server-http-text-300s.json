@@ -1,0 +1,15 @@
+{
+  "status_code": 502,
+  "seconds": 301.3446640279726,
+  "body": {
+    "error": {
+      "code": "error",
+      "detail": {
+        "message": "本机模型生成或证据校验失败；未写入图谱，无自动重试。",
+        "stage": "local_model",
+        "reason": "ReadTimeout"
+      }
+    },
+    "request_id": "3f3dbb3fd0b340feb1cd8d56083baad0"
+  }
+}

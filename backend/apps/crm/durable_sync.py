@@ -1,19 +1,19 @@
-"""职责：按用户明确范围驱动 Gmail 去重同步和持久抽取。
-实现：默认单批最多五十封，超量须批准；每页二十封，范围内先去重再登记，原文先落库；批量复用抽取、四路 L1 完成即提交。
-关联：worker 负责授权和批次结束；Gmail/QQ 共用原文及 L1 页面处理，QQ 显式注入只读读取器和来源。
-目录：
-- BatchBackend：一页邮件的批量数据库读取适配器。
-- BatchBackend.__init__：绑定授权批次、HTTP 写入端和本页缓存。
-- BatchBackend.get_stored_email：按既定协议查询本页预取结果。
-- BatchBackend.submit_emails：委托原 HTTP 接口保存结果。
-- checkpoint：原子登记本批次消息及进度。
-- save_raw：持久化不可变邮件原文。
-- observe：持久化逐封事件与缓存处理终态。
-- process_page：读取未缓存原文并完成一页并发抽取。
-- sync_persisted：执行有界同步或明确失败重试。
-变量索引：
-- PAGE_SIZE：沿用既定二十封单页处理大小，仅在用户范围内分页。
-- logger：不含凭证或正文的同步日志。
+"""Responsibility: Drive Gmail deduplicated synchronization and durable extraction within explicit user scope.
+Implementation: Default to at most fifty messages per batch and require approval to exceed it; process twenty per page, deduplicate before registration within scope, persist sources first, reuse extraction in batches, and submit L1 as four lanes finish.
+Relationships: worker handles authorization and batch completion; Gmail and QQ share source and L1 page handling, with QQ explicitly injecting a read-only reader and source.
+Directory:
+- BatchBackend: Bulk database-read adapter for one email page.
+- BatchBackend.__init__: Bind authorized batch, HTTP writer, and page cache.
+- BatchBackend.get_stored_email: Query prefetched page results through the established protocol.
+- BatchBackend.submit_emails: Delegate result saving to the original HTTP interface.
+- checkpoint: Atomically register messages and progress for this batch.
+- save_raw: Persist immutable email source text.
+- observe: Persist per-message events and cached processing terminal state.
+- process_page: Read uncached source text and complete concurrent extraction for one page.
+- sync_persisted: Execute bounded synchronization or explicit failed-work retry.
+Variable index:
+- PAGE_SIZE: Established twenty-message page size, paginating only within user scope.
+- logger: Synchronization logger without credentials or bodies.
 """
 from functools import partial
 import logging
@@ -35,15 +35,15 @@ PAGE_SIZE = 20
 logger = logging.getLogger("salesmate.durable_sync")
 
 
-# 功能：批量读取本页已保存抽取而保留 HTTP 写入边界。
-# 逻辑：一次邮件查询和一次抽取预取替代逐封 HTTP GET。
-# 约束：只允许访问构造时已授权邮箱；缓存生命周期为单页。
+# Function: Bulk read persisted extractions for this page while retaining the HTTP write boundary.
+# Logic: Replace per-message HTTP GET calls with one email query and one extraction prefetch.
+# Constraints: Access only the mailbox authorized at construction; cache lifetime is one page.
 class BatchBackend:
-    # 功能：绑定本页已授权数据。
-    # 输入：`backend` 为 Agent HTTP 客户端，`run` 为授权批次，`keys` 为本页天然键；`source` 为邮件来源。
-    # 输出：初始化实例状态，无外部写入。
-    # 逻辑：从同一数据库批量预取最新事实；邮箱关系限定员工范围。
-    # 约束：不保存凭证，不跨页或跨员工共享缓存。
+    # Function: Bind authorized data for this page.
+    # Inputs: `backend` is the Agent HTTP client, `run` is an authorized batch, `keys` are page natural keys, and `source` is the email origin.
+    # Outputs: Initializes instance state without external writes.
+    # Logic: Bulk prefetch latest facts from the same database; mailbox relationship limits employee scope.
+    # Constraints: Does not store credentials or share cache across pages or employees.
     def __init__(self, backend, run, keys, source="gmail_real"):
         self.run = run
         self.source = source
@@ -51,21 +51,21 @@ class BatchBackend:
         self.backend, self.mailbox_id = backend, str(mailbox.pk)
         self.saved = {email.pk: email_data(email) for email in Email.objects.filter(mailbox=mailbox, pk__in=keys).select_related("mailbox").prefetch_related("extractions")}
 
-    # 功能：读取本页的已保存事实。
-    # 输入：`mailbox_id` 为请求邮箱，`dedupe_key` 为邮件天然键。
-    # 输出：原协议邮件表示或 None。
-    # 逻辑：校验邮箱后查询预取字典。
-    # 约束：不回退到其他邮箱或网络查询。
+    # Function: Read persisted facts for this page.
+    # Inputs: `mailbox_id` is the requested mailbox and `dedupe_key` is the email natural key.
+    # Outputs: Original-protocol email representation or None.
+    # Logic: Validate mailbox and query the prefetched dictionary.
+    # Constraints: Does not fall back to another mailbox or network query.
     def get_stored_email(self, mailbox_id, dedupe_key):
         if str(mailbox_id) != self.mailbox_id:
             raise Conflict("批量缓存邮箱不匹配。")
         return self.saved.get(dedupe_key)
 
-    # 功能：沿原 HTTP 契约保存单封抽取。
-    # 输入：`submissions` 为 Agent 已验证的载荷数组。
-    # 输出：后端提交统计。
-    # 逻辑：先缓存 L1 输出，再沿 HTTP 验证和去重接口提交；QQ 显式指定 qq_real，Gmail 保留原调用。
-    # 约束：缓存写入失败则不提交；提交失败保留成功抽取用于明确重试。
+    # Function: Save per-message extraction through the original HTTP contract.
+    # Inputs: `submissions` is an array of Agent-validated payloads.
+    # Outputs: Backend submission statistics.
+    # Logic: Cache L1 output first, then submit through HTTP validation and deduplication; QQ explicitly specifies qq_real while Gmail retains the original call.
+    # Constraints: Does not submit when cache writing fails; retains successful extractions for explicit retry when submission fails.
     def submit_emails(self, submissions):
         with transaction.atomic():
             require_run(self.run.pk, self.run.lease_token)
@@ -76,11 +76,11 @@ class BatchBackend:
         return self.backend.submit_emails(submissions)
 
 
-# 功能：原子保存本批次选中的消息和逐封进度。
-# 输入：`run` 为运行批次，`ids` 为去重后的选中 ID。
-# 输出：无；数据库与租约错误传播。
-# 逻辑：锁邮箱核验租约，以 SyncCheckpoint 标识 Worker 接管；登记原文占位及任务后保存范围，每页刷新租期。
-# 约束：不导入历史 pending，不推进全局 History 游标，不将范围之外的消息带入批次。
+# Function: Atomically save selected messages and per-message progress for this batch.
+# Inputs: `run` is the running batch and `ids` are deduplicated selected IDs.
+# Outputs: None; database and lease errors propagate.
+# Logic: Lock mailbox and validate lease, mark Worker takeover through SyncCheckpoint, then register source placeholders and jobs and save scope, refreshing lease per page.
+# Constraints: Does not import historical pending work, advance a global History cursor, or pull messages outside scope into the batch.
 @transaction.atomic
 def checkpoint(run, ids=()):
     mailbox = mailbox_for(run.mailbox.owner, run.mailbox_id, lock=True)
@@ -96,11 +96,11 @@ def checkpoint(run, ids=()):
     logger.info("gmail_scope_checkpoint run_id=%s discovered=%s", run.pk, len(ids))
 
 
-# 功能：在 LLM 调用前提交原文。
-# 输入：`run` 为批次，`record` 为已登记消息，`raw` 为 Gmail 或 QQ 的标准 MIME 解析结果。
-# 输出：无，原文独立事务提交。
-# 逻辑：核验租约和已有原文一致性；同一提供方消息 ID 的内容不能静默替换。
-# 约束：不保存 OAuth 凭证；原文保存失败时不得开始 L1。
+# Function: Commit source text before an LLM call.
+# Inputs: `run` is a batch, `record` is a registered message, and `raw` is normalized MIME parsing output from Gmail or QQ.
+# Outputs: None; commits source in an independent transaction.
+# Logic: Validate lease and consistency with an existing source; content for the same provider message ID cannot silently change.
+# Constraints: Does not save OAuth credentials; L1 cannot start if source persistence fails.
 @transaction.atomic
 def save_raw(run, record, raw):
     require_run(run.pk, run.lease_token)
@@ -111,11 +111,11 @@ def save_raw(run, record, raw):
     current.save(update_fields=["raw"])
 
 
-# 功能：保存逐封阶段和持久原文处理终态。
-# 输入：`run` 为批次，`stage` 为 Agent 事件，`data` 为安全阶段数据。
-# 输出：无；异常传播给调用方。
-# 逻辑：同一事务更新任务和缓存状态，线程回调结束释放数据库连接。
-# 约束：失败不会自动重排；无意义的高频正文日志被禁止。
+# Function: Save a per-message stage and durable source processing terminal state.
+# Inputs: `run` is a batch, `stage` is an Agent event, and `data` is safe stage data.
+# Outputs: None; exceptions propagate to caller.
+# Logic: Update job and cache state in one transaction, then release database connections when the thread callback ends.
+# Constraints: Failures are not automatically rescheduled and meaningless high-frequency body logs are prohibited.
 def observe(run, stage, data):
     try:
         with transaction.atomic():
@@ -126,11 +126,11 @@ def observe(run, stage, data):
         connections.close_all()
 
 
-# 功能：处理最多二十封已发现邮件。
-# 输入：`run` 为批次，`service` 为已授权客户端，`backend` 为 HTTP 写入端，`records` 为消息数组；`reader` 为可选读取函数，`source` 为来源。
-# 输出：无；逐封结果和错误持久保存。
-# 逻辑：批量查询终态和 L1 缓存；默认 Gmail、显式 QQ 读取器缓存原文后四路抽取，来源随 HTTP 提交。
-# 约束：读取错误隔离到单封；数据库/租约失败传播，禁止伪造持久成功。
+# Function: Process up to twenty discovered messages.
+# Inputs: `run` is a batch, `service` is an authorized client, `backend` is the HTTP writer, and `records` is a message array; `reader` is an optional read function and `source` is origin.
+# Outputs: None; per-message results and errors persist.
+# Logic: Bulk query terminal states and L1 cache; default Gmail and explicit QQ readers cache source before four-lane extraction, with origin sent through HTTP submission.
+# Constraints: Isolate read errors to individual messages; database and lease failures propagate and may not fabricate durable success.
 def process_page(run, service, backend, records, *, reader=None, source="gmail_real"):
     notify = partial(observe, run)
     notify("discovered", {"message_ids": [record.message_id for record in records]})
@@ -166,11 +166,11 @@ def process_page(run, service, backend, records, *, reader=None, source="gmail_r
     _extract_new_or_retryable_emails(emails, run.mailbox.address, str(run.mailbox_id), cached, bailian_extraction_provider, progress=notify)
 
 
-# 功能：执行有界 Gmail 同步或显式重试。
-# 输入：`run` 为已领取批次，`service` 为已授权 SDK，`backend` 为 Agent HTTP 客户端。
-# 输出：范围同步汇总；逐封状态由持久任务派生。
-# 逻辑：验证默认 50 封或已批准上限；最新 N 封先截断，再排除已保存业务邮件及 completed/failed 原文。
-# 约束：不进行全量补采、全局积压排空或自动重新抽取；失败仅通过明确重试，分页异常直接传播。
+# Function: Execute bounded Gmail synchronization or explicit retry.
+# Inputs: `run` is a claimed batch, `service` is an authorized SDK, and `backend` is the Agent HTTP client.
+# Outputs: Scope synchronization summary; persistent jobs derive per-message state.
+# Logic: Validate the default 50-message or approved limit; truncate newest N first, then exclude saved business emails and completed or failed sources.
+# Constraints: Does not run full backfill, drain global backlog, or automatically re-extract; failures require explicit retry and pagination exceptions propagate directly.
 def sync_persisted(run, service, backend):
     resolved = resolve_mailbox_address(service, run.mailbox.address)
     if resolved.casefold() != run.mailbox.address.casefold():

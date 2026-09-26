@@ -1,8 +1,8 @@
-"""职责：隔离面向开发者的客户端适配。
-实现：不在导入时读取配置或访问网络。
-关联：salesmate_tools 提供 HTTP、CLI 与 MCP 客户端。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Isolate developer-facing client adapters.
+Implementation: Importing reads no configuration and performs no network access.
+Relationships: salesmate_tools provides HTTP, CLI, and MCP clients.
+Directory:
+- None
+Variable index:
+- None
 """

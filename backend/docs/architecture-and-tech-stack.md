@@ -1,173 +1,173 @@
-# SalesMate 架构与技术选型（暂定）
+# SalesMate architecture and technology choices (provisional)
 
-更新日期：2026-09-13
+Updated: 2026-09-13
 
-状态：本页保留架构方向与后续扩展规划。当前实现以根 [README](../README.md) 为准：Django 与 Agent 已通过 HTTP 整合，本机使用 PostgreSQL，数据库由 DATABASE_URL 显式选择，规则模式仅供离线页面演示。后续 RAG 与复杂助手尚未引入。
+Status: this page retains architectural direction and extension plans. The application [README](../README.md) defines current implementation: Django/Agent integrate over HTTP, local development uses PostgreSQL selected explicitly by DATABASE_URL, and rules mode serves offline demonstrations only. Subsequent RAG/complex assistants have not been introduced in this documented baseline.
 
-## 1. 目标与范围
+## 1. Goals and scope
 
-后端以 Django 生态为核心，支持邮件理解、公司归组、客户业务数据、异步分析与页面查询，并为后续 RAG 和多轮助手提供扩展路径。
+The backend centers on Django, supporting email understanding, company grouping, customer business data, asynchronous analysis, and page queries, with extension paths for RAG and multiround assistants.
 
-当前邮件理解流程是开发基础。知识库、行业资讯、右栏助手、翻译、真实发送及发送后的商机写回，仍需团队确认本期范围和负责人；记录相关技术方案不等于将这些功能全部纳入 MVP。
+The existing email-understanding flow is the development foundation. Knowledge bases, industry news, sidebar assistants, translation, real sending, and post-send opportunity writeback still require team agreement on scope/ownership. Recording technical options does not include them all in MVP.
 
-需求依据为 [SalesMate MVP 产品功能文档（0909 更新）](https://docs.google.com/document/d/1IG0NtzszF1-RVtFgIuH_4KKTUuhKrehARNn_H6gt3aQ/edit) 及团队提供的《邮件理解 Agent · 模块设计》v1.11。两者及早期技术方案的本地摘要已收录到[项目参考总览](project-reference.md)，可离线阅读；摘要不替代原文及后续接口契约。
+Requirements derive from the [SalesMate MVP product specification, September 9 update](https://docs.google.com/document/d/1IG0NtzszF1-RVtFgIuH_4KKTUuhKrehARNn_H6gt3aQ/edit) and the team's Email Understanding Agent Module Design v1.11. Offline summaries of these and early proposals are in the [project references](project-reference.md); summaries do not replace originals or later API contracts.
 
-## 2. 总体架构
+## 2. Overall architecture
 
 ```mermaid
 flowchart LR
-    U[当前员工] --> F[前端 Gmail 收件箱]
-    F -->|会话业务查询、OAuth 与同步请求| B[Django + DRF]
-    B <-->|授权码交换| G[Google OAuth / Gmail API]
-    B -->|员工专属同步请求、授权与 History 游标| A[独立 Worker 调用 Python Agent]
-    A -->|新增 message ID 与只读邮件| G
-    A -->|逐封提交邮件、领取公司任务、读取上下文、保存结果| B
-    B <--> D[(关系数据库：业务数据与 Job)]
-    B -->|知识检索：后续扩展| V[(pgvector：文档片段与向量)]
-    B -->|文件存取：后续扩展| S[对象存储]
+    U[Current employee] --> F[Frontend Gmail inbox]
+    F -->|Session business queries, OAuth, sync requests| B[Django + DRF]
+    B <-->|Authorization-code exchange| G[Google OAuth / Gmail API]
+    B -->|Employee sync requests, authorization, History cursor| A[Independent worker invokes Python Agent]
+    A -->|New message IDs and read-only emails| G
+    A -->|Submit emails, claim company jobs, read context, save results| B
+    B <--> D[(Relational database: business records and Jobs)]
+    B -->|Future knowledge retrieval| V[(pgvector: chunks and embeddings)]
+    B -->|Future file storage| S[Object storage]
 ```
 
-生产扩展时可将 PostgreSQL 与 pgvector 部署于同一个数据库实例，使用不同表管理业务记录和知识索引。当前 MVP 不使用向量检索。
+Production extensions may place PostgreSQL/pgvector in one instance with separate business/index tables. This MVP baseline does not use vector retrieval.
 
-- **前端**：当前登录员工的 Gmail 授权、同步入口、按客户公司归组的列表、客户详情及业务交互。
-- **Django 后端**：员工鉴权、Google OAuth 凭证、邮箱归属、业务数据、公司实体决策、任务持久化、上下文查询、分析结果存储、筛选排序与统计。
-- **Agent**：读取 Gmail、抽取邮件事实、归并分析输入、生成分析、计算评分。
-- **数据与知识层**：保存权威业务事实、原始材料、可追溯的分析快照和知识索引。
+- **Frontend:** employee Gmail authorization/synchronization, company-grouped lists, details, and business interactions.
+- **Django:** authentication, Google credentials, mailbox ownership, business data, company entity decisions, persistent tasks, context queries, result storage, filtering/sorting/statistics.
+- **Agent:** Gmail reads, fact extraction, input merging, analysis generation, scoring.
+- **Data/knowledge:** authoritative facts, original materials, traceable snapshots, knowledge indexes.
 
-Agent 通过后端 API 访问业务数据，不直接读写业务表。后续如使用 LangGraph，其工作流检查点使用独立表或 schema，不承担业务记录的权威存储职责。
+Agent accesses business data through APIs, never directly through tables. Future LangGraph checkpoints use separate tables/schemas and are not authoritative business storage.
 
-## 3. 暂定技术栈
+## 3. Provisional stack
 
-| 层次 | 暂定选择 | 用途与引入时机 |
+| Layer | Provisional choice | Purpose and adoption stage |
 |---|---|---|
-| 业务框架 | Django 5.2 LTS，使用实施时适用的补丁版本 | 第一阶段：模型、迁移、业务逻辑、用户与管理后台 |
-| API | Django REST Framework（DRF） | 第一阶段：面向前端与 Agent 的接口、输入校验和权限 |
-| 框架辅助 | django-environ、drf-spectacular、Uvicorn | 已引入：环境配置读取、OpenAPI 生成和本地 ASGI 启动 |
-| 业务数据库 | PostgreSQL（本机）/ SQLite（显式配置） | 邮件、客户、商机、版本、分析结果和 Job |
-| Agent 运行 | 独立 Python 服务 | 第一阶段：沿用 Agent 主动领取任务的 Pull 模式 |
-| Agent 编排 | 固定流程先用普通 Python；复杂助手拟用 LangGraph | 多轮对话、工具选择、持久化步骤及等待人工确认时引入 |
-| 生成模型 | 沿用 Agent 侧现有百炼模型配置 | 不因后端框架变化自动更换模型或实验条件 |
-| 向量检索 | pgvector + pgvector-python | 知识库阶段：通过 Django ORM 管理文档片段与向量 |
-| Embedding | 百炼多语言向量模型，text-embedding-v4 作为候选 | 知识库阶段：根据中英文项目样例验证效果与地域可用性后确定 |
-| 文档解析 | Docling | 知识库阶段：解析产品 PDF 等文档，保留结构与来源定位 |
-| 原文件存储 | S3 兼容对象存储，服务商待定 | 知识库或文件生成功能启用时：保存原文件、附件和产物 |
-| 后台文档处理 | Celery + Redis | 文档解析和向量生成等后台工作启用时引入 |
-| Agent 可观测性 | Langfuse | 模型联调阶段：跟踪模型、检索和工具调用，检查耗时、费用与质量 |
-| 本地开发 | Python 环境 + 显式数据库配置 | 统一 `requirements.txt` 和根 `.env` |
-| 后续部署 | Docker Compose + Linux 容器 | 首个可运行后端版本完成后验证打包，部署阶段统一运行环境 |
+| Business framework | Django 5.2 LTS with an appropriate implementation-time patch | Stage 1: models, migrations, logic, users, administration |
+| API | Django REST Framework (DRF) | Stage 1: frontend/Agent APIs, validation, authorization |
+| Framework helpers | django-environ, drf-spectacular, Uvicorn | Introduced: environment configuration, OpenAPI, local ASGI |
+| Business database | PostgreSQL locally / explicitly configured SQLite | Emails, companies, opportunities, versions, results, Jobs |
+| Agent runtime | Independent Python service | Stage 1: existing pull-based task claiming |
+| Agent orchestration | Plain Python for fixed flows; proposed LangGraph for complex assistants | Multiround chat, tool selection, durable steps, human confirmation |
+| Generative model | Existing Agent Bailian configuration | Framework changes do not automatically alter models/experiments |
+| Vector retrieval | pgvector + pgvector-python | Knowledge stage: chunks/vectors through Django ORM |
+| Embeddings | Bailian multilingual embeddings; text-embedding-v4 candidate | Select after bilingual example and regional-availability evaluation |
+| Document parsing | Docling | Knowledge stage: product PDFs with structure/source locations |
+| Original files | S3-compatible object storage, provider undecided | Knowledge/file-generation stage: originals, attachments, artifacts |
+| Background document work | Celery + Redis | Adopt for parsing/embedding jobs |
+| Agent observability | Langfuse | Model integration: trace models/retrieval/tools, latency, cost, quality |
+| Local development | Python environment + explicit database configuration | Unified `requirements.txt` and root `.env` |
+| Later deployment | Docker Compose + Linux containers | Validate packaging after the first runnable backend; standardize deployment |
 
-本地命令见[本地开发环境](local-development.md)。PostgreSQL、后续扩展库及容器镜像的具体版本，在生产实施前完成兼容性验证并锁定。Langfuse 的托管或自建方式尚未确定；自建资源需求需另行评估。
+See [local development](local-development.md). Validate/lock PostgreSQL, extension, and container versions before production. Hosted versus self-hosted Langfuse is undecided; self-hosting resources need assessment.
 
-## 4. 后端功能模块
+## 4. Backend modules
 
-建议按业务职责组织 Django app，以下为初始划分。
+Organize Django apps by business responsibility; initial proposal:
 
-目录布局、模块内部文件职责和三方接口文件约定见[项目目录与文件规划](project-structure.md)。规划中的目录按功能逐步创建，不预先生成大量空模块。
+See [project structure](project-structure.md) for layout, internal responsibilities, and interface files. Create planned directories as features arrive, without numerous empty modules.
 
-| 模块 | 职责 |
+| Module | Responsibility |
 |---|---|
-| `accounts` | 用户、团队、权限、邮箱业务归属、Agent 服务鉴权 |
-| `mailbox` | 邮件去重存储、抽取事实及版本、失败抽取读取、同步状态 |
-| `customers` | 公司、联系人、归组规则、CRM 建档状态 |
-| `sales` | 商机、报价、订单及业务快照版本 |
-| `analysis` | 分析输入快照、画像、分析结果、评分与来源引用 |
-| `jobs` | 任务创建、原子领取、租约、回报及状态查询 |
-| `knowledge`（后续） | 文档、分块、向量、权限过滤、检索与索引版本 |
+| `accounts` | Users, teams, permissions, mailbox ownership, Agent authentication |
+| `mailbox` | Deduplicated email storage, facts/versions, failed extractions, sync state |
+| `customers` | Companies, contacts, grouping, CRM registration |
+| `sales` | Opportunities, quotes, orders, snapshot versions |
+| `analysis` | Input snapshots, profiles, analyses, scores, citations |
+| `jobs` | Creation, atomic claims, leases, reports, status |
+| `knowledge` (later) | Documents, chunks, vectors, authorization, retrieval, index versions |
 
-真实发送、草稿和助手会话的模块边界，在其产品范围确认后单独定义。Django Admin 用于内部维护和诊断；涉及归组、业务版本或重算的修改仍需经过业务规则，不能绕过任务触发和一致性检查。
+Define sending/draft/conversation module boundaries after confirming product scope. Django Admin supports maintenance/diagnosis, but grouping/version/recalculation changes must still follow business rules, task triggers, and consistency checks.
 
-## 5. 任务与 Agent 的协作
+## 5. Task and Agent coordination
 
-现有邮件理解任务继续使用后端持久化 Job 和 Agent Pull：
+Email understanding retains persistent backend Jobs and Agent Pull:
 
-1. 当前员工在前端发起 Google OAuth，Django 回调验证 Gmail profile 并保存员工邮箱连接。
-2. 前端请求同步该员工邮箱；Django 持久创建 MailboxSyncRun 并返回 HTTP 202。
-3. 独立 Worker 领取员工同步批次和授权，调用 Agent；首次扫描最近邮件，后续优先读取 History 游标后的新增邮件。
-4. Agent 复用已有成功抽取，对新邮件和可重试邮件最多四路执行 L1；任一邮件完成后立即逐封提交。
-5. Django 用单封事务保存邮件与事实，在该员工范围内完成归组，并为有效业务变化创建公司 Job。
-6. Worker 逐封保存处理状态并完成批次回报；独立画像通道并行领取公司 Job 和上下文。
-7. Agent 完成 L2 归并、L3 分析与 L4 评分，提交结果并回报公司 Job。
-8. 前端静默轮询后端，逐步显示已保存邮件和公司分析状态。
+1. Employees initiate OAuth; Django callbacks verify Gmail profiles and persist connections.
+2. Frontends request sync; Django creates MailboxSyncRun and returns HTTP 202.
+3. Independent workers claim batches/authorization and invoke Agent; initial scans read recent emails, later scans prefer History increments.
+4. Agent reuses successful extractions and processes new/retryable L1 emails at up to four-way concurrency, submitting each immediately on completion.
+5. Django saves email/facts in per-email transactions, groups within employee scope, and creates company Jobs for substantive business changes.
+6. Workers persist per-email state/report batches; independent profiling channels claim company Jobs/context concurrently.
+7. Agent merges L2, generates L3, computes L4, saves results, and reports Jobs.
+8. Frontends quietly poll and progressively show saved emails/company states.
 
-Job 表是公司分析任务状态的权威来源。后端负责原子领取、领取凭证、租约校验和防止过期任务覆盖新结果；HTTP 版本、领取凭证和失败语义已在 api-contract.md 固化并完成 Agent 联调。邮箱同步由 MailboxSyncRun 与 EmailProcessingJob 持久记录批次和逐封状态；失败由员工明确重试，不加入隐式回退。
+Job is authoritative for company-analysis status. Backend handles atomic claims, credentials, leases, and stale-write prevention. api-contract.md fixes HTTP versions, credentials, and failure semantics already integrated with Agent. MailboxSyncRun/EmailProcessingJob persist batches/per-email stages; employees retry explicitly without implicit fallback.
 
-Celery + Redis 用于后续文档处理等单独任务，不再次派发同一份邮件分析 Job。LangGraph 管理 Agent 内部执行步骤，也不替代后端的业务任务状态与操作权限。
+Future Celery/Redis document jobs do not redispatch the same email-analysis Job. LangGraph manages internal Agent steps without replacing backend task state/permissions.
 
-当前本地 MVP 由 Django 保存 Google 授权 JSON，浏览器不接触 access token 或 refresh token；Agent 刷新凭证后通过受保护接口回写。正式部署时应将凭证迁移到加密字段或密钥服务。真实发送若进入本期，需另行定义更高权限的授权链路。
+The local MVP stores Google authorization JSON in Django; browsers never see access/refresh tokens. Agent writes refreshed credentials through protected APIs. Production should migrate credentials to encrypted fields/secret services. Real sending requires a separately defined higher-permission authorization flow if included.
 
-## 6. RAG 的数据与执行路径
+## 6. RAG data and execution
 
-### 6.1 三类存储
+### 6.1 Three storage categories
 
-| 数据 | 存放位置 | 例子 |
+| Data | Location | Examples |
 |---|---|---|
-| 权威业务记录 | PostgreSQL 普通表 | 当前价格、库存、报价、订单、客户权限 |
-| 文档片段与向量 | PostgreSQL + pgvector | 产品功能、FAQ、解决方案说明 |
-| 原始文件 | 对象存储 | 产品手册 PDF、方案附件 |
+| Authoritative business records | Ordinary PostgreSQL tables | Current prices, inventory, quotes, orders, permissions |
+| Chunks/vectors | PostgreSQL + pgvector | Product features, FAQs, solution descriptions |
+| Original files | Object storage | Product PDFs, proposal attachments |
 
-价格、库存、订单状态等时效性业务事实通过结构化接口查询；检索到的文档不能覆盖当前业务记录。
+Query time-sensitive prices, inventory, and order states through structured APIs; retrieved documents cannot override current business records.
 
-### 6.2 文档入库
+### 6.2 Document ingestion
 
 ```text
-上传文档 → 保存原文件 → 后台解析 → 按结构分块
-        → 生成 Embedding → 保存片段、向量、来源和版本 → 标记可检索
+Upload → Save original → Background parse → Structural chunking
+       → Generate embeddings → Save chunks/vectors/sources/versions → Mark searchable
 ```
 
-每个片段至少关联所属团队、文档 ID 与版本、页码或章节、内容及 Embedding 模型和维度。替换或删除文档时同步处理其索引；索引构建失败要显式记录状态，避免把不完整的新版本展示为已完成。
+Each chunk identifies team, document/version, page/section, content, embedding model/dimensions. Document replacement/deletion updates indexes together. Index failures require explicit states so incomplete versions are not presented as complete.
 
-Embedding 模型、维度、分块策略和检索参数在评测后确定并版本化。更换 Embedding 模型时需重建对应索引，不能混用不同向量空间。
+Select and version embedding models, dimensions, chunking, and retrieval parameters after evaluation. Model changes require corresponding index rebuilds; never mix vector spaces.
 
-### 6.3 检索与回答
+### 6.3 Retrieval and answers
 
-例如用户询问：“帮李工推荐预算内的检测设备。”
+Example: a user asks for inspection equipment within Engineer Li's budget.
 
-1. Agent 调用后端，读取客户需求、预算和历史订单。
-2. Agent 调用知识检索接口，获取有权访问的产品说明片段。
-3. Agent 调用业务接口，核查产品当前价格、库存与交期。
-4. 模型结合检索证据和业务结果生成建议，并引用来源。
-5. 如需生成或执行业务动作，由 Django 校验相应权限及用户确认。
+1. Agent reads customer needs, budget, and historical orders from backend APIs.
+2. Retrieve authorized product-description chunks.
+3. Verify current prices, inventory, and lead times through business APIs.
+4. Generate cited recommendations from retrieval evidence/business results.
+5. Django checks permissions and user confirmation for any generated/executed business action.
 
-后端在检索查询中限制团队、资源访问范围及有效文档版本。向量结果不构成访问授权；权限过滤同样适用于片段返回和原文件下载。
+Backend retrieval constrains teams, resources, and active document versions. Vector hits are not authorization; filters also govern chunks/original downloads.
 
-先验证基础向量检索，再根据漏召回场景评估关键词混合检索和重排序。产品型号、精确数值等场景需纳入评测；不得未经评估固定阈值或扩大检索范围来制造成功结果。
+Validate basic vector retrieval before evaluating keyword hybrids/reranking for missed recall. Include exact product models/numbers in evaluation. Never fix unassessed thresholds or broaden retrieval to manufacture success.
 
-## 7. 可观测性与运行环境
+## 7. Observability and runtime
 
-- 使用 `request_id`、`job_id`、公司 ID、输入版本和模型/提示词版本串联 API、任务与模型日志。
-- 在数据提交、归组、任务领取、模型调用、结果保存和失败分支记录必要上下文。
-- Langfuse 用于追踪检索、模型及工具调用和评测，不作为客户业务数据的权威来源。
-- 令牌、密钥不进入日志；邮件正文和客户资料只记录诊断所需内容，接入外部追踪服务前明确发送范围。
-- Windows 开发环境中的 Celery Worker 使用 Linux 容器或 WSL2；Celery 官方不支持原生 Windows。
-- LangGraph 的暂停状态不等于业务操作已获批准；实际发送和写回仍由后端验证具体动作及版本。
-- 当前本机沿用 D 盘 Conda 环境与 PostgreSQL 开发，新环境可使用项目根目录 Python venv；前端为 Django 同源的原生 HTML/CSS/JavaScript；连接配置从根 `.env` 读取。后续容器按锁定依赖重新安装 Python 环境。
+- Correlate API/task/model logs using request_id, job_id, company ID, input version, and model/prompt versions.
+- Log necessary context at submission, grouping, claims, model calls, saves, and failures.
+- Langfuse traces retrieval/models/tools/evaluations, not authoritative customer records.
+- Never log tokens/keys; minimize email/profile content and define transmission scope before external tracing.
+- Windows development uses Linux containers or WSL2 for Celery workers; Celery does not officially support native Windows.
+- LangGraph suspension is not business approval; backend validates actual action/version before sending/writeback.
+- Current local development retains D-drive Conda/PostgreSQL; new environments may use root Python venv. Frontend is same-origin native HTML/CSS/JavaScript. Root `.env` supplies connections; later containers reinstall locked dependencies.
 
-## 8. 分阶段引入
+## 8. Phased adoption
 
-| 阶段 | 交付与组件 | 验收重点 |
+| Phase | Deliverables/components | Acceptance focus |
 |---|---|---|
-| 1：邮件分析闭环 | Django、DRF、关系数据库、独立 Agent、Job 协议 | 单公司提交、归组、领取、分析保存与页面查询；重复提交和失败路径 |
-| 2：知识库（范围确认后） | `knowledge`、pgvector、Docling、对象存储、Celery + Redis、Embedding | 文档入库、来源引用、权限隔离、文档更新删除和检索质量 |
-| 3：复杂助手（范围确认后） | LangGraph、会话与工作流状态、用户确认流程 | 多步工具调用、暂停恢复、结果可追溯、动作不重复执行 |
-| 模型联调阶段 | Langfuse、固定样例与评测记录 | 事实依据、检索命中、成本、延迟及版本变化的影响 |
+| 1: Email analysis loop | Django, DRF, relational database, independent Agent, Jobs | Company submission/grouping/claims/saves/pages; duplicates/failures |
+| 2: Knowledge, after scope approval | knowledge, pgvector, Docling, object storage, Celery/Redis, embeddings | Ingestion, citations, isolation, updates/deletion, retrieval quality |
+| 3: Complex assistants, after scope approval | LangGraph, conversations/workflow state, confirmation | Multistep tools, pause/resume, traceability, no duplicate execution |
+| Model integration | Langfuse, fixed examples/evaluation records | Evidence, retrieval hits, cost, latency, version effects |
 
-## 9. 后续待确定
+## 9. Open decisions
 
-- 知识库、行业资讯、翻译、右栏助手及真实发送是否进入本期，各由谁负责。
-- Worker 部署、真实进程中断与多进程压力验收；持久批次及进度已实现。
-- 画像并发量的实际容量评估；当前默认两路，同公司互斥且合并最新待办 revision。
-- 无采购阶段邮件的复核口径与人工确认后 L1 重做版本；基础分类、过滤和复核已实现，见 [邮件处理适配](processing-integration.md)。
-- 生产环境 Gmail 凭证加密、Worker 部署和运行监控。
-- 模型地域、Embedding、文档分块、检索评测及索引参数。
+- Inclusion/ownership of knowledge, industry news, translation, sidebar assistants, real sending.
+- Worker deployment, real interruptions, multiprocess load tests; persistent batches/progress already exist.
+- Profile concurrency capacity; current default is two, with company exclusion/latest pending revision merging.
+- Review criteria for missing procurement stages and L1 repair versions after manual confirmation; classification/filtering/review exist in [processing integration](processing-integration.md).
+- Production Gmail encryption, worker deployment, monitoring.
+- Model regions, embeddings, chunking, retrieval evaluations/index parameters.
 
-## 10. 官方参考
+## 10. Official references
 
-- [Django 版本支持](https://www.djangoproject.com/download/)
+- [Django support](https://www.djangoproject.com/download/)
 - [Django REST Framework](https://www.django-rest-framework.org/)
 - [pgvector](https://github.com/pgvector/pgvector)
-- [pgvector 的 Django 集成](https://github.com/pgvector/pgvector-python#django)
+- [Django pgvector integration](https://github.com/pgvector/pgvector-python#django)
 - [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview)
-- [百炼向量化模型](https://help.aliyun.com/zh/model-studio/embedding)
+- [Bailian embeddings](https://help.aliyun.com/zh/model-studio/embedding)
 - [Docling](https://docling-project.github.io/docling/)
-- [Celery 与平台支持](https://docs.celeryq.dev/en/stable/getting-started/introduction.html)
+- [Celery platform support](https://docs.celeryq.dev/en/stable/getting-started/introduction.html)
 - [Langfuse](https://langfuse.com/docs)

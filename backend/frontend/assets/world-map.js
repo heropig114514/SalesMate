@@ -1,14 +1,14 @@
-/** 职责：将活动与商机金额投影到真实世界地图。
- * 实现：本地 Natural Earth GeoJSON，跟进国家高亮；已知金额按比例绘圆，所选币种无数值时用固定白色半透明小气泡保留交互；圆心固定在地理锚点，标签保留所有已知币种。
- * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；world-news.js 提供筛选结果和选择回调；后端客户国家代码决定高亮；不请求在线瓦片。
- * 目录：WorldMap、WorldMap.constructor、WorldMap.load、WorldMap.setView、WorldMap.setCountries、WorldMap.setItems、WorldMap.draw、WorldMap.destroy。
- * 变量索引：MISSING_AMOUNT_DIAMETER 为无所选币种金额时的位置气泡直径，不表达金额；WorldMap.map 为 Leaflet 实例；layer 为活动标记；items/selectedId 为当前展示；onSelect 为回调；countries 为高亮国家名称；view 为当前视角，resizeObserver 为容器尺寸观察器。
+/** Responsibility: Project events and opportunity amounts onto a real world map.
+ * Implementation: Local Natural Earth GeoJSON highlights followed customer countries. Known amounts produce proportional circles; missing selected-currency values use fixed translucent white location bubbles retaining interaction. Centers stay at geographic anchors and labels retain all known currencies.
+ * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; world-news.js supplies filters/selection callbacks, and backend customer country codes control highlights. No online tiles.
+ * Directory: WorldMap, WorldMap.constructor, WorldMap.load, WorldMap.setView, WorldMap.setCountries, WorldMap.setItems, WorldMap.draw, WorldMap.destroy.
+ * Variable index: MISSING_AMOUNT_DIAMETER defines location-bubble diameter when the selected currency has no amount and does not encode value; WorldMap.map is Leaflet; layer contains event markers; items/selectedId describes current display; onSelect is the callback; countries contains highlighted country names; view is the current perspective; resizeObserver watches container dimensions.
  */
 import { language } from "./i18n.js?v=20260921-product";
 const MISSING_AMOUNT_DIAMETER = 18;
-/** 功能：管理地图与可访问活动气泡。逻辑：筛选不重置视角，显式切换视角同时变更中心与缩放。约束：业务记录来自接口，不定位用户。 */
+/** Function: Manage the map and accessible event bubbles. Logic: Filtering preserves perspective; explicit perspective changes update center/zoom together. Constraints: Business records come from the API; never locate the user. */
 export class WorldMap {
-  /** 功能：初始化地图。输入：element 与 onSelect 回调。输出：实例。逻辑：真实地理投影及本地底图。约束：Leaflet 缺失明确报错。 */
+  /** Function: Initialize the map. Inputs: element and onSelect callback. Outputs: An instance. Logic: Real geographic projection and local map data. Constraints: Missing Leaflet raises an explicit error. */
   constructor(element, onSelect) {
     if (!window.L) throw new Error("Map library unavailable");
     this.onSelect = onSelect;
@@ -36,7 +36,7 @@ export class WorldMap {
     this.resizeObserver.observe(element);
     window.addEventListener("pagehide", event => { if (!event.persisted) this.destroy(); });
   }
-  /** 功能：加载国界。输入：固定同源 GeoJSON。输出：Promise。逻辑：匹配数据库客户国家，使用主题色；新加坡在低精度底图中以实际位置标记。约束：失败不换数据源、不重试。 */
+  /** Function: Load country boundaries. Inputs: Fixed same-origin GeoJSON. Outputs: Promise. Logic: Match database customer countries and apply theme colors; mark Singapore at its actual position on low-resolution maps. Constraints: No alternative source or retry on failure. */
   async load() {
     const response = await fetch("/static/world-countries.geojson", {
       signal: AbortSignal.timeout(15000),
@@ -75,7 +75,7 @@ export class WorldMap {
     this.draw();
     console.info("insights_map_ready", { features: data.features.length });
   }
-  /** 功能：切换世界/亚太/欧洲视角。输入：view。输出：无。逻辑：fitBounds 同时控制中心及缩放。约束：只改变显示。 */
+  /** Function: Switch world/Asia-Pacific/Europe perspective. Inputs: view. Outputs: None. Logic: fitBounds controls center and zoom together. Constraints: Display changes only. */
   setView(view) {
     this.view = view;
     const bounds = {
@@ -97,24 +97,24 @@ export class WorldMap {
       animate: false,
     });
   }
-  /** 功能：释放地图资源。输入：实例观察器与地图。输出：无。逻辑：不进入往返缓存时退出页面断开尺寸观察与地图事件。约束：不修改数据。 */
+  /** Function: Release map resources. Inputs: Instance observer/map. Outputs: None. Logic: Disconnect resize observation and map events when leaving without entering the back-forward cache. Constraints: No data changes. */
   destroy() {
     this.resizeObserver.disconnect();
     this.map.remove();
   }
-  /** 功能：设置客户国家。输入：codes。输出：无。逻辑：使用 ISO 英文名称匹配底图，处理底图特有名称。约束：在 load 前设置，不从活动国家推断客户国家。 */
+  /** Function: Set customer countries. Inputs: codes. Outputs: None. Logic: Match ISO English names to map-specific names. Constraints: Set before load; never infer customer countries from events. */
   setCountries(codes) {
     const names = new Intl.DisplayNames(['en'], { type: 'region' });
     const aliases = { US: 'United States of America', KR: 'South Korea', KP: 'North Korea', RU: 'Russia', CZ: 'Czechia' };
     this.countries = new Set(codes.map(code => aliases[code] || names.of(code)));
   }
-  /** 功能：更新筛选后的活动。输入：items 和 selectedId。输出：无。逻辑：重绘图层，保持视角。约束：不修改数据。 */
+  /** Function: Update filtered events. Inputs: items and selectedId. Outputs: None. Logic: Redraw layers while retaining perspective. Constraints: No data changes. */
   setItems(items, selectedId) {
     this.items = items;
     this.selectedId = selectedId;
     this.draw();
   }
-  /** 功能：绘制按城市聚合的活动气泡。输入：实例快照，各项 map_amounts 为后端去重金额，amount 为所选币种数值或 null。输出：无。逻辑：正金额直径按最大值比例平方根乘 62；缺失数值用固定 18px 的白色半透明气泡，复用相同鼠标和键盘选择回调；所有已知币种仍列出，缺所选币种单独注明。约束：位置气泡不代表零或估算金额；已知零仍保持原零值语义，不换汇，选中不改变数据直径。 */
+  /** Function: Draw city-aggregated event bubbles. Inputs: Instance snapshot; map_amounts contains backend-deduplicated amounts, and amount is the selected-currency value or null. Outputs: None. Logic: Positive-value diameters equal the square root of their ratio to the maximum, multiplied by 62. Missing values use fixed 18px translucent white bubbles with the same mouse/keyboard selection callbacks. Show all known currencies and explicitly label a missing selected-currency amount. Constraints: Location bubbles represent neither zero nor estimated amounts; known zero retains its semantics, no currency conversion occurs, and selection does not change data-driven diameter. */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();

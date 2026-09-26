@@ -1,4 +1,30 @@
-"""公司级 L4 正式优先级规则，不访问后端或模型。"""
+"""Responsibility: Official company-level L4 priority rules without backend or model access.
+Implementation: Exercise real local functions against fixed in-memory data and mocked service boundaries; assertions check outputs, errors, and interactions.
+Relationships: Uses agent workflows and clients without proving live mailbox, model, or backend availability.
+
+Directory:
+- analysis_input: Build fixed L2 input for scoring tests.
+- context: Build fixed customer, seller, deal, and signal context.
+- scored: Run the real scorer with fixed test input and clock.
+- CompanyPriorityTests: Group offline assertions and fixture behavior for CompanyPriorityTests.
+- CompanyPriorityTests.test_formula_keeps_company_score_shape: Verify formula keeps company score shape.
+- CompanyPriorityTests.test_breakdown_top_reasons_and_next_action: Verify breakdown top reasons and next action.
+- CompanyPriorityTests.test_urgency_buckets: Verify urgency buckets.
+- CompanyPriorityTests.test_missing_business_data_gives_provisional_score_but_missing_intent_is_null: Verify missing business data gives provisional score but missing intent is null.
+- CompanyPriorityTests.test_amount_and_fit_change_company_score: Verify amount and fit change company score.
+- CompanyPriorityTests.test_buying_intent_levels_and_waiting_without_deadline: Verify buying intent levels and waiting without deadline.
+- CompanyPriorityTests.test_historical_deadline_does_not_stay_urgent_forever: Verify historical deadline does not stay urgent forever.
+- CompanyPriorityTests.test_date_only_deadline_uses_calendar_day_without_invented_hour: Verify date only deadline uses calendar day without invented hour.
+- CompanyPriorityTests.test_date_only_deadline_uses_seller_time_zone: Verify date only deadline uses seller time zone.
+- CompanyPriorityTests.test_signal_source_must_belong_to_company: Verify signal source must belong to company.
+- CompanyPriorityTests.test_l4_uses_structured_l1_stage_without_model: Verify l4 uses structured l1 stage without model.
+- CompanyPriorityTests.test_l4_missing_deal_uses_known_dimensions: Verify l4 missing deal uses known dimensions.
+- CompanyPriorityTests.test_ranking_is_company_level_and_null_last: Verify ranking is company level and null last.
+
+Variable index:
+- COMPANY_ID: Fixed company UUID used by fixtures.
+- NOW: Fixed timezone-aware test clock.
+"""
 
 import unittest
 from copy import deepcopy
@@ -181,9 +207,9 @@ class CompanyPriorityTests(unittest.TestCase):
     def test_date_only_deadline_uses_calendar_day_without_invented_hour(self):
         data = context()
         data["signals"][0]["value"] = "2026-09-19"
-        self.assertEqual(scored(data)["score"], 88)  # 今天按 90，不能推断成四小时内。
+        self.assertEqual(scored(data)["score"], 88)  # Today scores 90; do not infer a deadline within four hours.
         data["signals"][0]["value"] = "2026-09-20"
-        self.assertEqual(scored(data)["score"], 84)  # 明天按 80。
+        self.assertEqual(scored(data)["score"], 84)  # Tomorrow scores 80.
         data["signals"][0]["value"] = "2026-09-01"
         self.assertEqual(scored(data)["score_reasons"][0]["note"],
                          "No explicit urgent date; use the 10-point baseline")
@@ -195,7 +221,7 @@ class CompanyPriorityTests(unittest.TestCase):
         with_zone = compute_score(
             {"status": "completed"}, analysis_input(), clock=clock, priority_context=data,
         )
-        self.assertEqual(with_zone["score"], 88)  # 新加坡已是 9 月 20 日。
+        self.assertEqual(with_zone["score"], 88)  # It is already September 20 in Singapore.
         del data["seller"]["time_zone"]
         without_zone = compute_score(
             {"status": "completed"}, analysis_input(), clock=clock, priority_context=data,

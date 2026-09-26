@@ -1,8 +1,10 @@
-# 职责：每次 PR 或主分支更新时验证 backend 与 integrations Python 注释结构并列出变更复核项。
-# 实现：完整 Git 历史、标准库检查器和隔离测试；不安装业务依赖或启动外部服务。
-# 关联：backend/tools/check_docs.py、check_doc_changes.py 及各自测试。
-# 目录：backend-docs 检查任务；无函数或类。
-# 变量索引：DOC_BASE 为 PR 基准或推送前提交；首次推送及手动执行以当前提交自比较。
+# Responsibility: Validate backend and integrations Python documentation structure and report change-review findings for every PR or main-branch update.
+# Implementation: Use complete Git history, standard-library checkers, and isolated tests without installing business dependencies or starting external services.
+# Relationships: backend/tools/check_docs.py, check_doc_changes.py, and their tests.
+# Directory:
+# - backend-docs: Check job.
+# Variable index:
+# - DOC_BASE: PR base or pre-push commit; initial pushes and manual runs self-compare against the current commit.
 name: Backend documentation
 on:
   pull_request:

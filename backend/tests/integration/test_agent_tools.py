@@ -1,27 +1,27 @@
-"""职责：验证业务工具端到端授权、写入、确认和外部动作边界。
-实现：邮件草稿使用无预选公司的工作空间会话；工具全目录用例显式启用 QQ；真实隔离 PostgreSQL 与 HTTP 请求；只在外部发送边界模拟 provider。
-关联：agent_tools 包及原 crm/sales/chat 服务；不验证真实邮箱授权或发信。
-目录：
-- AgentToolTests：工具集成验证。
-- AgentToolTests.setUp：建立隔离用户及限定 token。
-- AgentToolTests.call：通过工具入口请求。
-- AgentToolTests.test_catalog_and_all_list_handlers：校验目录与全部资源查询。
-- AgentToolTests.test_token_scope_expiry_and_revocation：校验委托权限与期限。
-- AgentToolTests.test_session_csrf_and_credential_boundary：校验授权管理与确认权限。
-- AgentToolTests.test_idempotence_conflict_and_revisions：校验逻辑写入与版本。
-- AgentToolTests.test_private_data_and_mass_assignment：校验私人数据隔离。
-- AgentToolTests.test_proposal_frozen_confirmation_and_conflict：校验冻结提案和独立确认。
-- AgentToolTests.test_expired_or_revoked_proposal：校验失效授权不可执行。
-- AgentToolTests.test_external_actions_prepare_only：验证三种动作只准备。
-- AgentToolTests.test_quote_precision_and_parent_revision：验证真实报价计算。
-- AgentToolTests.test_knowledge_and_contact_identifiers：校验证据与整数联系人 ID。
-- AgentToolTests.test_failed_write_rolls_back_receipt：验证失败回滚。
-- AgentToolTests.test_crm_registration_and_sync_scope：验证 CRM 字段与 QQ 同步载荷。
-- ConcurrentToolTests：并发回执验证。
-- ConcurrentToolTests.invoke_in_thread：独立连接发送调用。
-- ConcurrentToolTests.test_two_credentials_share_one_logical_write：验证不同凭证相同键只写一次。
-变量索引：
-- BASE：工具 API 路径。
+"""Responsibility: Verify end-to-end authorization, writes, confirmation, and external-action boundaries for business tools.
+Implementation: Email drafts use workspace conversations without a preselected company; the full tool-catalog case explicitly enables QQ; use isolated real PostgreSQL and HTTP requests, mocking providers only at external-send boundaries.
+Relationships: Covers the agent_tools package and original crm/sales/chat services; does not verify real mailbox authorization or sending.
+Directory:
+- AgentToolTests: Tool integration verification.
+- AgentToolTests.setUp: Create isolated users and restricted tokens.
+- AgentToolTests.call: Request through the Tool entry point.
+- AgentToolTests.test_catalog_and_all_list_handlers: Check catalog and every resource query.
+- AgentToolTests.test_token_scope_expiry_and_revocation: Check delegated permissions and expiry.
+- AgentToolTests.test_session_csrf_and_credential_boundary: Check authorization administration and confirmation permissions.
+- AgentToolTests.test_idempotence_conflict_and_revisions: Check logical writes and versions.
+- AgentToolTests.test_private_data_and_mass_assignment: Check private-data isolation.
+- AgentToolTests.test_proposal_frozen_confirmation_and_conflict: Check frozen proposals and independent confirmation.
+- AgentToolTests.test_expired_or_revoked_proposal: Check expired authorization cannot execute.
+- AgentToolTests.test_external_actions_prepare_only: Verify all three actions prepare only.
+- AgentToolTests.test_quote_precision_and_parent_revision: Verify real quote calculation.
+- AgentToolTests.test_knowledge_and_contact_identifiers: Check evidence and integer contact IDs.
+- AgentToolTests.test_failed_write_rolls_back_receipt: Verify failure rollback.
+- AgentToolTests.test_crm_registration_and_sync_scope: Check CRM fields and QQ synchronization payload.
+- ConcurrentToolTests: Concurrent-receipt verification.
+- ConcurrentToolTests.invoke_in_thread: Independent connection-send call.
+- ConcurrentToolTests.test_two_credentials_share_one_logical_write: Verify the same key under different credentials writes only once.
+Variable index:
+- BASE: Tool API route.
 """
 
 import hashlib
@@ -45,16 +45,16 @@ from apps.sales import grouping, models
 BASE = "/api/v1/agent-tools/"
 
 
-# 功能：验证工具边界。
-# 逻辑：显式启用 QQ 的全目录断言基于隔离数据库及真实工具 HTTP 入口。
-# 约束：不运行外部发送服务，不连接真实邮箱。
+# Function: Verify Tool boundaries.
+# Logic: The full-catalog assertion with QQ explicitly enabled uses isolated database and real Tool HTTP entry point.
+# Constraints: Do not run external sending services or connect to real mailboxes.
 @override_settings(QQ_MAIL_ENABLED=True)
 class AgentToolTests(TestCase):
-    # 功能：建立上下文。
-    # 输入：无外部参数。
-    # 输出：用户、公司、token 客户端与 Session 客户端。
-    # 逻辑：token 明确列出测试目录中的工具。
-    # 约束：合成 token 仅用于测试数据库。
+    # Function: Establish context.
+    # Inputs: No external arguments.
+    # Outputs: User, company, token client, and Session client.
+    # Logic: The token explicitly lists tools in the test catalog.
+    # Constraints: Synthetic token is used only in the test database.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="tools-user")
         self.other = get_user_model().objects.create_user(username="tools-other")
@@ -72,11 +72,11 @@ class AgentToolTests(TestCase):
         self.human = APIClient()
         self.human.force_login(self.user)
 
-    # 功能：调用工具。
-    # 输入：`name`、`arguments`、`key` 可选写入 UUID、`expected` HTTP 状态。
-    # 输出：回执数据。
-    # 逻辑：调用真实认证路径并检查状态。
-    # 约束：调用者显式传递幂等键。
+    # Function: Call Tool.
+    # Inputs: `name`, `arguments`, optional write UUID `key`, and expected HTTP status `expected`.
+    # Outputs: Receipt data.
+    # Logic: Call the real authentication path and check status.
+    # Constraints: Caller explicitly passes the idempotency key.
     def call(self, name, arguments, key=None, expected=200):
         data = {"name": name, "arguments": arguments}
         if key is not None:
@@ -85,11 +85,11 @@ class AgentToolTests(TestCase):
         self.assertEqual(response.status_code, expected, response.data)
         return response.data
 
-    # 功能：验证可发现工具均有可执行列表适配。
-    # 输入：注册表和空业务数据。
-    # 输出：全部 Schema 合法、列表查询成功。
-    # 逻辑：逐一执行每类资源及特殊只读入口。
-    # 约束：日历需连接，独立外部测试覆盖。
+    # Function: Verify every discoverable tool has an executable list adapter.
+    # Inputs: Registry and empty business data.
+    # Outputs: Every schema is valid and list queries succeed.
+    # Logic: Execute every resource type and special read-only entry point individually.
+    # Constraints: Calendar requires a connection; separate external tests cover it.
     def test_catalog_and_all_list_handlers(self):
         registry = build_registry()
         self.assertGreaterEqual(len(registry), 120)
@@ -120,11 +120,11 @@ class AgentToolTests(TestCase):
         ):
             self.call(forbidden, {}, expected=404)
 
-    # 功能：验证凭证的有限授权。
-    # 输入：受限、到期、撤销和停用授权。
-    # 输出：目录缩小且越权、失效均拒绝。
-    # 逻辑：使用真实 Authorization 头。
-    # 约束：不以目录隐藏替代执行权限检查。
+    # Function: Verify limited authorization of credentials.
+    # Inputs: Restricted, expired, revoked, and inactive authorizations.
+    # Outputs: Catalog narrows, while unauthorized and expired access both reject.
+    # Logic: Use a real Authorization header.
+    # Constraints: Do not replace execution permission checks by hiding catalog entries.
     def test_token_scope_expiry_and_revocation(self):
         self.credential.allowed_tools = ["customers.search"]
         self.credential.save()
@@ -145,11 +145,11 @@ class AgentToolTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION="Agent synthetic-tools-token")
         self.assertEqual(self.client.get(BASE + "catalog/").status_code, 401)
 
-    # 功能：验证 Session-only 和 CSRF。
-    # 输入：token 客户端及真实 Session，无 CSRF/有 CSRF 请求。
-    # 输出：token 不能授权，Session 写入要求 CSRF，摘要不回显。
-    # 逻辑：不使用 force_authenticate 绕过浏览器认证。
-    # 约束：原始 token 仅在创建响应出现。
+    # Function: Verify Session-only access and CSRF.
+    # Inputs: Token client and real Session, with requests without and with CSRF.
+    # Outputs: Token cannot authorize; Session writes require CSRF; summary does not echo.
+    # Logic: Do not use force_authenticate to bypass browser authentication.
+    # Constraints: The original token appears only in the creation response.
     def test_session_csrf_and_credential_boundary(self):
         payload = {
             "name": "limited",
@@ -182,11 +182,11 @@ class AgentToolTests(TestCase):
             204,
         )
 
-    # 功能：验证幂等和乐观锁。
-    # 输入：相同键重放、不同内容、过期 revision。
-    # 输出：只创建一次，冲突返回 409。
-    # 逻辑：创建客户和跟进后修改版本。
-    # 约束：重放为历史回执，不再次执行业务。
+    # Function: Verify idempotency and optimistic locking.
+    # Inputs: Replay with the same key, different content, and stale revision.
+    # Outputs: Create only once; conflicts return 409.
+    # Logic: Create company and follow-up, then modify version.
+    # Constraints: Replay is a historical receipt and does not execute business logic again.
     def test_idempotence_conflict_and_revisions(self):
         key = str(uuid.uuid4())
         first = self.call("customers.create", {"name": "新增"}, key)
@@ -216,11 +216,11 @@ class AgentToolTests(TestCase):
         self.call("follow_ups.update", args, str(uuid.uuid4()), 409)
         self.assertEqual(models.FollowUp.objects.get(pk=item["id"]).title, "已更新")
 
-    # 功能：验证私人数据和字段边界。
-    # 输入：跨用户公司、知识与额外 owner 字段。
-    # 输出：越权查询拒绝、列表不泄露、写入拒绝。
-    # 逻辑：不伪造 actor，仅改变输入 ID。
-    # 约束：知识库 fixture 不代表真实检索质量。
+    # Function: Verify private-data and field boundaries.
+    # Inputs: Cross-user company, knowledge, and extra owner fields.
+    # Outputs: Unauthorized queries reject, lists do not leak, and writes reject.
+    # Logic: Do not fabricate actor; change only input ID.
+    # Constraints: The knowledge-base fixture does not represent real retrieval quality.
     def test_private_data_and_mass_assignment(self):
         self.call(
             "customers.context", {"company_id": str(self.foreign.pk)}, expected=404
@@ -253,11 +253,11 @@ class AgentToolTests(TestCase):
         self.call("knowledge.get", {"id": str(entry.pk)}, expected=404)
         self.assertEqual(self.call("knowledge.search", {})["data"]["count"], 0)
 
-    # 功能：验证提案冻结与一次确认。
-    # 输入：归档提案、篡改请求、工具身份、旧版本。
-    # 输出：批准前不改业务，批准只执行一次。
-    # 逻辑：通过真实 Session 决策，版本冲突保持 pending。
-    # 约束：测试客户端关闭 CSRF 的部分仅验证业务；CSRF 有独立测试。
+    # Function: Verify proposal freezing and one-time confirmation.
+    # Inputs: Archived proposal, tampered request, tool identity, and stale version.
+    # Outputs: Business data does not change before approval; approval executes once only.
+    # Logic: Decide through a real Session; version conflict retains pending status.
+    # Constraints: Test-client portions with CSRF disabled verify business behavior only; separate tests cover CSRF.
     def test_proposal_frozen_confirmation_and_conflict(self):
         item = self.call(
             "products.create",
@@ -309,11 +309,11 @@ class AgentToolTests(TestCase):
         )
         self.assertEqual(ToolProposal.objects.get(pk=stale["id"]).status, "pending")
 
-    # 功能：验证确认时授权仍有效。
-    # 输入：过期提案和撤销授权。
-    # 输出：批准均失败且业务未执行。
-    # 逻辑：先创建冻结提案，再改变状态。
-    # 约束：不执行原操作，确认接口仍使用真实 Session。
+    # Function: Verify authorization remains valid at confirmation.
+    # Inputs: Expired proposal and revoked authorization.
+    # Outputs: All approvals fail and business logic does not execute.
+    # Logic: Create frozen proposal first, then change state.
+    # Constraints: Do not execute original operation; confirmation endpoint still uses a real Session.
     def test_expired_or_revoked_proposal(self):
         proposal = self.call(
             "teams.create", {"data": {"name": "协作"}}, str(uuid.uuid4())
@@ -346,11 +346,11 @@ class AgentToolTests(TestCase):
             200,
         )
 
-    # 功能：验证 Gmail、QQ、日历均只准备。
-    # 输入：合成不可用连接和真实草稿。
-    # 输出：冻结待确认动作，无 provider 执行。
-    # 逻辑：工作空间草稿按明确客户走原动作服务；重复调用重用回执。
-    # 约束：模拟发送函数只是断言未调用，不证明发送可用。
+    # Function: Verify Gmail, QQ, and calendar all prepare only.
+    # Inputs: Synthetic unavailable connection and real draft.
+    # Outputs: Freeze action awaiting confirmation; provider does not execute.
+    # Logic: Workspace draft uses original action service for explicit company; repeated calls reuse receipt.
+    # Constraints: Mocked send function only asserts it was not called and does not prove sending is available.
     def test_external_actions_prepare_only(self):
         conversation = self.call(
             "conversations.create",
@@ -400,11 +400,11 @@ class AgentToolTests(TestCase):
             provider.assert_not_called()
         self.assertEqual(models.ToolAction.objects.count(), 3)
 
-    # 功能：验证金额与父单据版本。
-    # 输入：3 × 12.35 − 0.05 报价明细。
-    # 输出：总额 37.00、父版本递增。
-    # 逻辑：通过 tools 创建并重新读取。
-    # 约束：不批准或发送报价。
+    # Function: Verify amount and parent-document version.
+    # Inputs: Quote lines: 3 × 12.35 − 0.05.
+    # Outputs: Total is 37.00 and parent version increments.
+    # Logic: Create through tools and read again.
+    # Constraints: Do not approve or send quote.
     def test_quote_precision_and_parent_revision(self):
         quote = self.call(
             "quotes.create",
@@ -434,11 +434,11 @@ class AgentToolTests(TestCase):
         self.assertEqual(after["total"], "37.00")
         self.assertGreater(after["revision"], quote["revision"])
 
-    # 功能：验证知识引用与联系人主键。
-    # 输入：合成知识与联系人。
-    # 输出：来源标识和版本保持，整数 ID 可编辑。
-    # 逻辑：创建后重新读取公司版本。
-    # 约束：知识搜索是关键词匹配。
+    # Function: Verify knowledge citations and contact primary key.
+    # Inputs: Synthetic knowledge and contact.
+    # Outputs: Retain source identifier and version; integer ID is editable.
+    # Logic: Read company version again after creation.
+    # Constraints: Knowledge search is keyword matching.
     def test_knowledge_and_contact_identifiers(self):
         entry = KnowledgeEntry.objects.create(
             owner=self.user,
@@ -471,11 +471,11 @@ class AgentToolTests(TestCase):
             str(uuid.uuid4()),
         )
 
-    # 功能：验证失败不留下成功回执。
-    # 输入：无权写入其他用户公司。
-    # 输出：数据库拒绝并回滚 ToolCall。
-    # 逻辑：真实序列化关系权限失败。
-    # 约束：失败不自动重试。
+    # Function: Verify failure leaves no successful receipt.
+    # Inputs: Unauthorized write to another user's company.
+    # Outputs: Database rejects and rolls back ToolCall.
+    # Logic: Real serialization relationship-permission failure.
+    # Constraints: Failure does not retry automatically.
     def test_failed_write_rolls_back_receipt(self):
         key = str(uuid.uuid4())
         self.call(
@@ -487,11 +487,11 @@ class AgentToolTests(TestCase):
         self.assertFalse(ToolCall.objects.filter(key=key).exists())
         self.assertFalse(models.Ticket.objects.exists())
 
-    # 功能：验证 CRM 与同步适配契约。
-    # 输入：真实 CRM 登记及带范围同步提案。
-    # 输出：公司资料保存，确认时完整传递范围。
-    # 逻辑：仅模拟邮箱请求边界，检验参数不被吞掉。
-    # 约束：不证明邮箱同步已经完成。
+    # Function: Verify CRM and synchronization adapter contract.
+    # Inputs: Real CRM registration and scoped synchronization proposal.
+    # Outputs: Company profile saves; confirmation passes the complete scope.
+    # Logic: Mock mailbox-request boundary only and verify parameters are not swallowed.
+    # Constraints: Does not prove mailbox synchronization completed.
     def test_crm_registration_and_sync_scope(self):
         self.call(
             "customers.register",
@@ -525,15 +525,15 @@ class AgentToolTests(TestCase):
         self.assertEqual(result.data["result"]["status"], "accepted")
 
 
-# 功能：验证跨连接的幂等行为。
-# 逻辑：TransactionTestCase 允许两个线程各自提交。
-# 约束：使用隔离 PostgreSQL，不可用单线程 Mock 代替。
+# Function: Verify idempotency across connections.
+# Logic: TransactionTestCase permits two threads to commit independently.
+# Constraints: Use isolated PostgreSQL; a single-thread mock cannot replace it.
 class ConcurrentToolTests(TransactionTestCase):
-    # 功能：发送并发请求。
-    # 输入：`token`、`key`、`barrier` 同步起点。
-    # 输出：HTTP 状态和回执。
-    # 逻辑：每线程独立客户端和数据库连接。
-    # 约束：退出时关闭该线程连接，避免测试数据库清理阻塞。
+    # Function: Send concurrent requests.
+    # Inputs: `token`, `key`, and `barrier` synchronize the starting point.
+    # Outputs: HTTP status and receipt.
+    # Logic: Each thread has an independent client and database connection.
+    # Constraints: Close that thread's connection on exit to prevent test-database cleanup from blocking.
     def invoke_in_thread(self, token, key, barrier):
         close_old_connections()
         try:
@@ -553,11 +553,11 @@ class ConcurrentToolTests(TransactionTestCase):
         finally:
             close_old_connections()
 
-    # 功能：验证两个委托不会重复创建客户或倒序死锁。
-    # 输入：同用户、不同凭证、相同幂等键。
-    # 输出：两请求成功，其中一个重放，只有一个回执。
-    # 逻辑：线程同时进入真实 HTTP 与数据库事务。
-    # 约束：测试不保证任意业务的所有并发交错，覆盖本工具锁顺序。
+    # Function: Verify two delegations do not create duplicate companies or deadlock in reverse order.
+    # Inputs: Same user, different credentials, same idempotency key.
+    # Outputs: Both requests succeed, one is replayed, and only one receipt exists.
+    # Logic: Threads enter real HTTP and database transactions simultaneously.
+    # Constraints: The test does not guarantee every concurrent interleaving of arbitrary business logic; it covers this Tool's locking order.
     def test_two_credentials_share_one_logical_write(self):
         user = get_user_model().objects.create_user(username="concurrent-tools")
         for token in ("parallel-one", "parallel-two"):

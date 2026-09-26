@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 
-<!-- 职责：销售业务管理页的语义骨架。
-实现：workspace.js 提供工作台、Channels、客户及四类业务导航与客户上下文；business.js 渲染带 URL 筛选及共享实验只读标记的列表、受服务端开关控制的 QQ 发信连接及动作确认表单。
-关联：入口缓存同步侧栏优先级移除；入口缓存版本同步顶栏实验入口移除；入口脚本同步商机优先级导航缓存版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；0919 产品精简去除重复全局待办栏；共享语言/API 资源随需求界面统一版本；入口脚本版本随工作空间聊天升级；assistant-widget.js/css 提供底部条状助手；product-header.js 提供共享顶栏，design-system.css 提供 Nocturne 设计变量；复用现有会话登录及销售 API；business.css 提供独立响应式布局。
-目录：无函数或类；workspace-profile 为底部公司、邮箱设置及账号内部数据清空入口，workspace-nav 为共享导航，workspace-context 为当前客户，status-filter 为状态筛选；editor 是编辑及动作确认对话框。
-国际化：data-i18n 标记静态文本与属性；language-bar 提供语言选择，i18n.js 初始化时只翻译标记节点，选项显式 value 保持原协议值。
-变量索引：无脚本变量；DOM id 供业务模块定位。 -->
+<!-- Responsibility: Provide the semantic structure for sales business management.
+Implementation: workspace.js provides workspace, Channels, customers, four business navigation entries, and customer context; business.js renders URL-filtered lists with read-only shared-experiment labels, server-gated QQ sending connections, and action-confirmation forms.
+Relationships: Entry cache versions reflect sidebar-priority/experiment-entry removal and opportunity-priority support; chat Markdown, 0919 interface, and shared language/API resources use coordinated versions. The 0919 simplification removes duplicate global task bars; entry scripts follow workspace-chat upgrades. assistant-widget.js/css provides the bottom assistant, product-header.js the header, design-system.css Nocturne tokens, and business.css responsive layout; existing session login/sales APIs are reused.
+Directory: No functions or classes; workspace-profile provides company/mail settings and internal account reset, workspace-nav shared navigation, workspace-context the current customer, status-filter status filtering, and editor edit/action-confirmation dialogs.
+Internationalization: data-i18n marks static text/attributes; language-bar offers selection and i18n.js initializes marked nodes only. Explicit option values retain protocol values.
+Variable index: No script variables; business modules locate elements by DOM id. -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>

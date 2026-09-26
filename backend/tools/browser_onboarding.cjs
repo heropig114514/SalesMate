@@ -1,8 +1,8 @@
-/** 职责：验证四步引导在浏览器中的真实表单和交互契约。
- * 实现：本地静态服务、模拟 API 与真实 DOM，验证编辑保留后台分配的产品 ID 和交易关联；后端权限另由集成测试验证。
- * 关联：onboarding.js、company-settings.js 和对应模板/样式；截图写入忽略目录。
- * 目录：main。
- * 变量索引：ROOT 为前端目录；OUTPUT 为截图目录。
+/** Responsibility: Verify actual four-step onboarding form/interaction contracts in a browser.
+ * Implementation: Local static serving, mocked APIs, and real DOM verify preservation of backend-assigned product IDs and transaction relations; integration tests separately verify backend permissions.
+ * Relationships: onboarding.js, company-settings.js, and their templates/styles; screenshots go to an ignored directory.
+ * Directory: main.
+ * Variable index: ROOT is the frontend directory; OUTPUT is the screenshot directory.
  */
 const fs = require("node:fs"),
   path = require("node:path"),
@@ -11,9 +11,9 @@ const fs = require("node:fs"),
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const ROOT = path.resolve(__dirname, "../frontend"),
   OUTPUT = path.resolve(__dirname, "../artifacts/browser");
-/** 功能：执行引导 UI 验收。输入：浏览器环境变量。输出：断言和截图。
- * 逻辑：个人保存、公司规模、CSV 校验、手动产品、私有附件、方案、版本冲突、产品关联保留及完成后进入收件箱。
- * 约束：模拟接口不代表真实外部服务；不修改工作区数据库。 */
+/** Function: Run onboarding UI acceptance. Inputs: Browser environment variables. Outputs: Assertions/screenshots.
+ * Logic: Cover personal saves, company size, CSV validation, manual products, private attachments, solutions, version conflicts, preserved product links, and inbox navigation after completion.
+ * Constraints: Mock APIs do not verify external services; never change the workspace database. */
 async function main() {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");

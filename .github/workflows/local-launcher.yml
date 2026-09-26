@@ -1,8 +1,13 @@
-# 职责：验证本地启动器在 Windows、macOS 和 Linux 的平台边界与原生进程行为。
-# 实现：Python 标准库测试；POSIX 通过系统 Bash 创建空依赖测试环境，Windows 检查 PowerShell 语法。
-# 关联：local_server.py、test_local_server.py、start-local.ps1/start-local.sh；不读取业务凭据或启动真实业务服务。
-# 目录：launcher 平台矩阵任务；无函数或类。
-# 变量索引：matrix.os 选择宿主；matrix.python-version 验证 3.11 与 3.12；parseErrors/parseTokens 接收 PowerShell 解析结果；只读 contents 权限用于 checkout。
+# Responsibility: Verify platform boundaries and native-process behavior of the local launcher on Windows, macOS, and Linux.
+# Implementation: Run Python standard-library tests; POSIX creates an empty dependency test environment through system Bash, while Windows validates PowerShell syntax.
+# Relationships: local_server.py, test_local_server.py, start-local.ps1, and start-local.sh. It does not read business credentials or start real business services.
+# Directory:
+# - launcher: Platform-matrix job.
+# Variable index:
+# - matrix.os: Selects host.
+# - matrix.python-version: Validates Python 3.11 and 3.12.
+# - parseErrors/parseTokens: Receive PowerShell parser results.
+# - contents: Read-only checkout permission.
 name: Local launcher
 on:
   pull_request:

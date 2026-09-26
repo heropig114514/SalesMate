@@ -1,8 +1,8 @@
-"""职责：标记后端聊天适配应用。
-实现：无导入副作用。
-关联：由 config.settings.base 注册。
-目录：
-- 无
-变量索引：
-- 无
+"""Responsibility: Mark the backend chat-adapter application.
+Implementation: Importing has no side effects.
+Relationships: Registered by ``config.settings.base``.
+Directory:
+- None
+Variable index:
+- None
 """

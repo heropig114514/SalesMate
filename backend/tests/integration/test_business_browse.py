@@ -1,16 +1,16 @@
-"""职责：验证现有业务列表跨账号显示共享实验数据且不开放清单外记录。
-实现：隔离数据库和临时文件生成完整夹具，经 Session API 检查合并、分页、筛选、计数与拒绝写入。
-关联：sales.browse、原业务权限与实验清单；前端真实交互单独验证。
-目录：
-- BusinessBrowseTests：现有销售页面的合并读取测试。
-- BusinessBrowseTests.setUp：建立拥有者、读取者、虚构批次和真实权限反例。
-- BusinessBrowseTests.get：调用合并读取并核验状态。
-- BusinessBrowseTests.test_all_resources_and_foreign_privacy：业务资源可读、原归属保留、外部连接不开放。
-- BusinessBrowseTests.test_mixed_pagination_owner_dedup_and_company_filter：混合分页去重及客户状态筛选。
-- BusinessBrowseTests.test_no_unlisted_related_data：共享客户不带出新增普通联系人或设置。
-- BusinessBrowseTests.test_stats_permissions_and_revocation：计数、写入拒绝、漂移和撤销。
-变量索引：
-- 无
+"""Responsibility: Verify that existing business lists show shared experiment data across accounts without exposing records outside the manifest.
+Implementation: Generate complete fixtures through an isolated database and temporary files, then use Session API to check merging, pagination, filters, counts, and rejected writes.
+Relationships: Covers `sales.browse`, original business permissions, and experiment manifest; real frontend interaction is verified separately.
+Directory:
+- BusinessBrowseTests: Merged-read tests for existing sales pages.
+- BusinessBrowseTests.setUp: Establish owner, reader, fictional batch, and counterexample for real permissions.
+- BusinessBrowseTests.get: Call merged read and validate status.
+- BusinessBrowseTests.test_all_resources_and_foreign_privacy: Business resources are readable, original ownership remains, and external connections are unavailable.
+- BusinessBrowseTests.test_mixed_pagination_owner_dedup_and_company_filter: Mixed pagination deduplication and customer-status filtering.
+- BusinessBrowseTests.test_no_unlisted_related_data: Shared customer does not bring in newly added ordinary contacts or settings.
+- BusinessBrowseTests.test_stats_permissions_and_revocation: Counts, rejected writes, drift, and revocation.
+Variable index:
+- None
 """
 
 import tempfile
@@ -27,15 +27,15 @@ from apps.sales.management.commands.seed_kg_lab import run_seed, verify_manifest
 from apps.sales.models import AuditEvent
 
 
-# 功能：验证真实用户 Session 下的合并列表及原权限边界。
-# 逻辑：普通账号不加入导入者团队，原业务列表应为空，新的浏览列表应显示获准夹具。
-# 约束：仅使用测试库和临时附件，不调用外部服务。
+# Function: Verify merged lists and original permission boundaries under a real user Session.
+# Logic: An ordinary account does not join the importer's team, so original business lists are empty while new browse lists show approved fixtures.
+# Constraints: Use test database and temporary attachments only and do not call external services.
 class BusinessBrowseTests(TestCase):
-    # 功能：建立两账号和两个场景的共享夹具。
-    # 输入：测试数据库及临时目录。
-    # 输出：owner、reader、manifest、private、client 实例属性。
-    # 逻辑：将同前缀私有客户作为精确清单反例，不授予团队权限。
-    # 约束：测试结束回滚数据库并清理临时文件。
+    # Function: Establish shared fixtures for two accounts and two scenarios.
+    # Inputs: Test database and temporary directory.
+    # Outputs: Instance attributes `owner`, `reader`, `manifest`, `private`, and `client`.
+    # Logic: Use a private customer with the same prefix as an exact manifest counterexample without granting team permissions.
+    # Constraints: Roll back database and clean temporary files at test end.
     def setUp(self):
         folder = tempfile.TemporaryDirectory(prefix="business-browse-")
         self.addCleanup(folder.cleanup)
@@ -49,21 +49,21 @@ class BusinessBrowseTests(TestCase):
         self.client = APIClient()
         self.client.force_login(self.reader)
 
-    # 功能：读取一个合并页面。
-    # 输入：`resource` 业务资源、`params` 可选查询参数。
-    # 输出：成功响应数据。
-    # 逻辑：通过 Session 中间件调用实际路由，失败保留原响应供断言诊断。
-    # 约束：不绕过视图认证或 Schema。
+    # Function: Read one merged page.
+    # Inputs: `resource` is a business resource and `params` are optional query parameters.
+    # Outputs: Successful response data.
+    # Logic: Call the actual route through Session middleware and retain original response for assertion diagnostics on failure.
+    # Constraints: Do not bypass view authentication or schema.
     def get(self, resource, params=None):
         response = self.client.get(f"/api/v1/sales/browse/{resource}/", params or {})
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
 
-    # 功能：验证所有已映射业务表对普通其他账号可见。
-    # 输入：完整夹具、未共享客户、登录读取者。
-    # 输出：每个资源计数等于清单；原业务仍隔离，外部连接及匿名请求拒绝。
-    # 逻辑：逐资源核对 experiment 来源与布尔维护标记，额外查询私有主键验证不泄露。
-    # 约束：不把 Session 测试解释为浏览器视觉验证。
+    # Function: Verify that every mapped business table is visible to an ordinary other account.
+    # Inputs: Complete fixtures, unshared customer, and logged-in reader.
+    # Outputs: Each resource count equals the manifest; original business remains isolated, external connections and anonymous requests are rejected.
+    # Logic: Check experiment source and Boolean maintenance markers per resource, and query private primary key to verify no leakage.
+    # Constraints: Do not interpret Session tests as browser visual verification.
     def test_all_resources_and_foreign_privacy(self):
         self.assertEqual(self.client.get("/api/v1/sales/directory/").data["count"], 0)
         for resource, model in RESOURCES.items():
@@ -76,11 +76,11 @@ class BusinessBrowseTests(TestCase):
         self.client.logout()
         self.assertEqual(self.client.get("/api/v1/sales/browse/directory/").status_code, 403)
 
-    # 功能：验证普通记录与共享记录混合时分页、去重和筛选一致。
-    # 输入：读取者自有客户和导入者账号，同批已核验客户与工单。
-    # 输出：普通记录排在共享之前，无重复主键；导入者看到每条夹具一次。
-    # 逻辑：跨分页边界逐页检查，并通过客户 ID 与状态筛选工单。
-    # 约束：不让共享客户成为普通写权限的可引用对象。
+    # Function: Verify consistent pagination, deduplication, and filtering when ordinary and shared records mix.
+    # Inputs: Reader-owned customer, importer account, and verified customer and ticket from the same batch.
+    # Outputs: Ordinary records precede shared records with no duplicate primary keys; importer sees each fixture once.
+    # Logic: Check across pagination boundaries page by page and filter tickets through customer ID and status.
+    # Constraints: Do not make a shared customer referenceable with ordinary write permissions.
     def test_mixed_pagination_owner_dedup_and_company_filter(self):
         own = Company.objects.create(owner=self.reader, name="my real customer", group_key="own")
         first = self.get("directory", {"page_size": 2})
@@ -98,11 +98,11 @@ class BusinessBrowseTests(TestCase):
         owner_data = self.get("directory")
         self.assertEqual((owner_data["count"], owner_data["shared_count"]), (3, 2))
 
-    # 功能：验证共享客户的反向关系不能带出清单外记录。
-    # 输入：指向已共享客户但未登记到清单的普通联系人。
-    # 输出：共享客户中只有原清单联系人，不含新增敏感邮箱。
-    # 逻辑：实际创建外键关联，再通过合并目录读取。
-    # 约束：普通非共享数据只在测试库构造；不修改原夹具行。
+    # Function: Verify that reverse relationships of a shared customer cannot bring in records outside the manifest.
+    # Inputs: An ordinary contact pointing to a shared customer but absent from the manifest.
+    # Outputs: Shared customer contains only original manifest contacts and no newly added sensitive email.
+    # Logic: Actually create the foreign-key association and read through merged directory.
+    # Constraints: Construct ordinary unshared data only in the test database and do not modify original fixture rows.
     def test_no_unlisted_related_data(self):
         company = self.manifest["truth"][0]["company_id"]
         Contact.objects.create(company_id=company, name="private new contact", email="private@example.test")
@@ -111,11 +111,11 @@ class BusinessBrowseTests(TestCase):
         self.assertTrue(row["contacts"])
         self.assertEqual(verify_manifest(self.manifest), self.manifest["table_counts"])
 
-    # 功能：验证合并概览、只读方法和完整性失败。
-    # 输入：原权限为空的普通账号，完整批次后再模拟记录漂移与清单撤销。
-    # 输出：客户计数为 2 且标明实验数，写入口拒绝，漂移为 409，撤销后为零。
-    # 逻辑：检查列表和概览，再通过原写路径验证没有扩权。
-    # 约束：仅在测试事务内改变夹具；错误不得降级为部分成功。
+    # Function: Verify merged overview, read-only methods, and integrity failure.
+    # Inputs: An ordinary account with no original permissions, then simulated record drift and manifest revocation after a complete batch.
+    # Outputs: Customer count is 2 with experiment count marked, write entry point rejects, drift returns 409, and count becomes zero after revocation.
+    # Logic: Check list and overview, then use original write path to verify no permission expansion.
+    # Constraints: Change fixtures only within test transactions; errors must not degrade to partial success.
     def test_stats_permissions_and_revocation(self):
         data = self.get("overview")
         self.assertEqual((data["customers"], data["shared_counts"]["customers"]), (2, 2))

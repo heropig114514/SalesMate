@@ -1,17 +1,17 @@
-"""职责：保存可审查的外部动作、明确审批并执行 Google 或 QQ 工具。
-实现：允许工作空间草稿用于明确指定客户的待审阅动作；冻结动作和连接版本、原子领取；执行单元持有账号共享锁以隔离重置；禁用 QQ 时阻止准备、批准、执行和核对，无隐式重试。
-关联：integrations 提供已授权凭证，后台命令执行已批准动作，报价实际发送后才同步 Agent。
-目录：
-- validate_parameters：形成包含完整内容的可确认动作快照。
-- create_action：幂等创建待确认动作。
-- decide_action：批准或取消尚未执行的动作。
-- execute_provider：执行一次真实 Google 请求或 QQ SMTP 提交。
-- run_action：在账号共享锁下执行外部动作。
-- _run_action：领取并执行一个已批准动作，记录明确或未知结果。
-- reconcile_action：把已中断动作标记为未知结果。
-- verify_action：只读核对未知外部动作的真实标识。
-变量索引：
-- logger：外部动作状态日志，不输出正文、收件人或凭证。
+"""Responsibility: Persist reviewable external actions, explicit approval, and Google/QQ tool execution.
+Implementation: Allow workspace drafts for reviewable actions with an explicit customer; freeze action/connection versions and claim atomically. Hold the shared account lock during execution to isolate resets; disabling QQ blocks preparation, approval, execution, and reconciliation without implicit retries.
+Relationships: integrations supplies authorized credentials; background commands execute approved actions and synchronize quotations to the agent only after actual sending.
+Directory:
+- validate_parameters: Build a confirmable action snapshot containing complete content.
+- create_action: Idempotently create an action awaiting confirmation.
+- decide_action: Approve or cancel an unexecuted action.
+- execute_provider: Perform one real Google request or QQ SMTP submission.
+- run_action: Execute an external action under the shared account lock.
+- _run_action: Claim and execute an approved action, recording a definite or uncertain result.
+- reconcile_action: Mark an interrupted action as having an uncertain outcome.
+- verify_action: Read-only reconciliation of real identifiers for uncertain external actions.
+Variable index:
+- logger: External-action state logs without bodies, recipients, or credentials.
 """
 
 import base64
@@ -42,11 +42,11 @@ from common.mail_features import require_qq_enabled
 logger = logging.getLogger("salesmate.actions")
 
 
-# 功能：形成包含完整内容的可确认动作快照。
-# 输入：`actor`、`company`、`tool`、`parameters`。
-# 输出：普通 JSON 参数，包括连接身份和明确发送内容。
-# 逻辑：检查 QQ 能力后读取草稿及报价，QQ 冻结连接版本与 ASCII 信封；日历验证时间与通知方式。
-# 约束：不执行外部调用；未知参数拒绝，来源必须属于员工，旧客户草稿必须与明确指定公司一致。
+# Function: Build a confirmable action snapshot containing complete content.
+# Inputs: `actor`、`company`、`tool`、`parameters`.
+# Outputs: Plain JSON parameters containing connection identity and explicit outgoing content.
+# Logic: Check QQ capability before reading drafts/quotations; freeze QQ connection version and ASCII envelope; validate calendar times and notification mode.
+# Constraints: No external calls; reject unknown parameters, require employee-owned sources, and match legacy customer drafts to the explicitly selected company.
 def validate_parameters(actor, company, tool, parameters):
     if tool == "qq.send":
         require_qq_enabled("prepare_send")
@@ -186,11 +186,11 @@ def validate_parameters(actor, company, tool, parameters):
     return result
 
 
-# 功能：幂等创建待确认动作。
-# 输入：`actor`、`data` 含 company、tool、parameters、idempotency_key 和可选 conversation。
-# 输出：ToolAction。
-# 逻辑：按员工串行化创建；允许工作空间或当前客户历史会话，相同键只接受相同语义。
-# 约束：仅保存计划；用户必须另行批准，不从聊天文本推断批准。
+# Function: Idempotently create an action awaiting confirmation.
+# Inputs: `actor` and `data` containing company, tool, parameters, idempotency_key, and optional conversation.
+# Outputs: ToolAction.
+# Logic: Serialize creation per employee; allow workspace or current-customer historical conversations, accepting the same key only for identical semantics.
+# Constraints: Persist plans only; require separate user approval rather than inferring it from chat text.
 @transaction.atomic
 def create_action(actor, data):
     if not isinstance(data, dict) or set(data) - {
@@ -249,11 +249,11 @@ def create_action(actor, data):
     return action
 
 
-# 功能：批准或取消尚未执行的动作。
-# 输入：`action`、`actor`、`expected`、`decision`，仅 approved/cancelled。
-# 输出：更新后的动作。
-# 逻辑：要求 owner 提交正确版本；QQ 关闭时仅允许取消，批准后参数冻结。
-# 约束：执行中的动作不能保证撤销，不接受取消；不在审批请求内发送外部消息。
+# Function: Approve or cancel an unexecuted action.
+# Inputs: `action`, `actor`, `expected`, and `decision`, restricted to approved/cancelled.
+# Outputs: Updated action.
+# Logic: Require the owner and correct version; when QQ is disabled permit cancellation only; freeze parameters after approval.
+# Constraints: Reject cancellation of running actions because external cancellation cannot be guaranteed; approval requests send no external messages.
 @transaction.atomic
 def decide_action(action, actor, expected, decision):
     get_user_model().objects.select_for_update().get(pk=actor.pk)
@@ -301,11 +301,11 @@ def decide_action(action, actor, expected, decision):
     return action
 
 
-# 功能：执行一次真实 Google 请求或 QQ SMTP 提交。
-# 输入：`action` 为 running 动作，`credentials` 为已验证凭证。
-# 输出：外部标识、可选链接与 QQ 提交状态的结果字典。
-# 逻辑：QQ 使用冻结内容和 qq_smtp，Gmail 使用 MIME Base64URL，日历使用稳定事件 ID。
-# 约束：Google 仅 execute(num_retries=0)，QQ 仅提交一次 DATA；不重试、不生成内容、不扩大收件人范围。
+# Function: Perform one real Google request or QQ SMTP submission.
+# Inputs: `action`: running action; `credentials`: validated credentials.
+# Outputs: Result dictionary with external identifiers, optional links, and QQ submission state.
+# Logic: QQ uses frozen content and qq_smtp, Gmail uses MIME Base64URL, and calendar uses stable event IDs.
+# Constraints: Google uses only execute(num_retries=0) and QQ submits DATA once; no retries, content generation, or recipient expansion.
 def execute_provider(action, credentials):
     data = action.parameters
     if action.tool == "qq.send":
@@ -349,11 +349,11 @@ def execute_provider(action, credentials):
     raise InvalidState("未注册的外部工具。")
 
 
-# 功能：保护外部动作执行与账户清空的互斥边界。
-# 输入：`action_id` 为现有动作 UUID。
-# 输出：原动作状态；清理未完成抛 InvalidState，已清除队列记录返回 cancelled。
-# 逻辑：查找账号后持有共享锁，重读存在性，完整覆盖领取、外部调用及回报；过时队列键不终止共享 Worker。
-# 约束：不恢复已被清空的队列任务，不重试外部请求。
+# Function: Protect mutual exclusion between external-action execution and account reset.
+# Inputs: `action_id`: existing action UUID.
+# Outputs: Original action state; incomplete cleanup raises InvalidState and removed queue records return cancelled.
+# Logic: Find the account, hold its shared lock, and recheck existence across claim, external call, and report; stale queue keys do not terminate the shared worker.
+# Constraints: Do not restore cleared queue jobs or retry external requests.
 def run_action(action_id):
     owner_id = models.ToolAction.objects.filter(pk=action_id).values_list("owner_id", flat=True).first()
     if owner_id is None:
@@ -368,11 +368,11 @@ def run_action(action_id):
         return _run_action(action_id)
 
 
-# 功能：领取并执行一个已批准动作。
-# 输入：`action_id` 为动作 UUID。
-# 输出：动作最终状态；非 approved 直接返回当前状态。
-# 逻辑：领取后核对 QQ 能力及连接版本；禁用时在网络前记为 failed，SMTP 结果不明为 uncertain。
-# 约束：SMTP 接受不代表最终送达；不自动重试；进程中断留下 running，需人工核对。
+# Function: Claim and execute one approved action.
+# Inputs: `action_id`: action UUID.
+# Outputs: Final action state; return the current state immediately unless approved.
+# Logic: After claiming, recheck QQ capability/connection version; disabled QQ fails before network access and unclear SMTP outcomes become uncertain.
+# Constraints: SMTP acceptance does not guarantee delivery; no automatic retries. Interrupted processes leave running actions requiring manual reconciliation.
 def _run_action(action_id):
     with transaction.atomic():
         owner_id = models.ToolAction.objects.values_list("owner_id", flat=True).get(
@@ -472,11 +472,11 @@ def _run_action(action_id):
     return status
 
 
-# 功能：将已中断或结果未知的动作标记为待人工处理。
-# 输入：`action`、`actor`、`expected`。
-# 输出：标记 uncertain 后的动作。
-# 逻辑：仅接受 running，保留参数和执行时间，记录人工核对需要。
-# 约束：不会声明外部成功或重新执行；外部事件真实性需要独立查询确认。
+# Function: Mark interrupted or uncertain actions for manual handling.
+# Inputs: `action`、`actor`、`expected`.
+# Outputs: Action marked uncertain.
+# Logic: Accept only running state, preserve parameters/execution time, and record the need for manual reconciliation.
+# Constraints: Neither claim external success nor execute again; independent queries must verify external events.
 @transaction.atomic
 def reconcile_action(action, actor, expected):
     action = models.ToolAction.objects.select_for_update().get(
@@ -496,11 +496,11 @@ def reconcile_action(action, actor, expected):
     return action
 
 
-# 功能：只读核对未知动作是否已存在于外部服务。
-# 输入：`action`、`actor`、`expected` 为当前版本。
-# 输出：找到明确标识则更新成功，否则保持 uncertain 并抛明确错误。
-# 逻辑：QQ 开启后才核对 IMAP 副本，Gmail 查 Message-ID，日历查事件 ID；写回前校验版本。
-# 约束：不重新发送或创建；未找到不能证明未执行，不能自动解除报价冻结。
+# Function: Read-only verification of whether an uncertain action exists in the external service.
+# Inputs: `action`, `actor`, and `expected` current version.
+# Outputs: Mark successful only when definite identifiers are found; otherwise retain uncertain and raise an explicit error.
+# Logic: Check QQ IMAP copies only when enabled, Gmail by Message-ID, and calendar by event ID; validate version before writing back.
+# Constraints: Do not resend or recreate; absence does not prove non-execution and cannot automatically unfreeze quotations.
 def verify_action(action, actor, expected):
     action = models.ToolAction.objects.get(pk=action.pk, owner=actor)
     if action.tool == "qq.send":

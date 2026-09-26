@@ -1,16 +1,16 @@
-"""职责：为算法调用方提供资料、目录和文件的数据工具，不运行模型或评分。
-实现：实验模式开放跨账号资料文件查询，资料单例仍按所选实验身份定位；复用账号资料 API；目录修改保留账号锁和 revision；普通文件要求 TXT 后缀，实验入口可显式接受已核验 text/plain。
-关联：registry 调用 support_specs，dispatch 调用 execute_support；experiments 复用分块编码；services 提供幂等和调用日志。
-目录：
-- support_specs：声明资料、目录及文件工具。
-- catalog_operation：分页读取或版本化修改产品与方案条目。
-- document_operation：读取、上传或删除自己的引导文件。
-- read_content：生成有界文本或二进制分块。
-- execute_support：分派资料工具。
-变量索引：
-- logger：文件变更日志，只记录内部标识和字节数。
-- CHUNK_BYTES：一次二进制读取的最大字节数。
-- CHUNK_TEXT：一次文本读取的最大字符数。
+"""Responsibility: Provide information, catalog, and file data tools for algorithm callers without running models or scoring.
+Implementation: Experiment mode opens cross-account information-file queries while the information singleton remains located by selected experiment identity; reuse accounts information APIs; catalog changes retain account lock and revision; ordinary files require a TXT suffix while experiment entry may explicitly accept validated ``text/plain``.
+Relationships: ``registry`` calls ``support_specs`` and ``dispatch`` calls ``execute_support``; ``experiments`` reuses chunk encoding; ``services`` provides idempotency and call logging.
+Directory:
+- support_specs: Declare information, catalog, and file tools.
+- catalog_operation: Paginate reads or versioned modifications of product and solution entries.
+- document_operation: Read, upload, or delete the caller's onboarding file.
+- read_content: Generate a bounded text or binary chunk.
+- execute_support: Dispatch an information tool.
+Variable index:
+- logger: File-change logger that records only internal identifiers and byte count.
+- CHUNK_BYTES: Maximum bytes in one binary read.
+- CHUNK_TEXT: Maximum characters in one text read.
 """
 
 from common.laboratory import owner_scope
@@ -45,11 +45,11 @@ CHUNK_BYTES = 256 * 1024
 CHUNK_TEXT = 16000
 
 
-# 功能：定义可授权的软件辅助工具。
-# 输入：`tool` 为注册表声明工厂。
-# 输出：工具声明列表。
-# 逻辑：写入复用统一调用；正式模式资料修改需要读取到的 revision，分块文件不需要浏览器会话。
-# 约束：不提供评分、任意路径、外部抓取或自动授权；删除仅用于未被引用的本人引导附件。
+# Function: Define authorizable software-support tools.
+# Inputs: ``tool`` is the registry declaration factory.
+# Outputs: List of tool declarations.
+# Logic: Writes reuse unified invocation; production-mode information changes require the read revision, while chunked files do not require a browser session.
+# Constraints: Does not provide scoring, arbitrary paths, external fetching, or automatic authorization; deletion applies only to the caller's unreferenced onboarding attachments.
 def support_specs(tool):
     entries = []
     for prefix, serializer in (("company_profile", CompanyProfileSerializer), ("sales_setup", SetupSerializer), ("seller_profile", SellerProfileSerializer)):
@@ -85,11 +85,11 @@ def support_specs(tool):
     return entries
 
 
-# 功能：读取或修改一个资料目录。
-# 输入：`request` 为限定账号上下文，`spec` 为工具声明，`args` 为已校验参数。
-# 输出：分页/条目、setup_revision 或删除回执。
-# 逻辑：按所选身份读取目录并应用操作；revision 可省略时由统一版本策略决定，正式模式仍要求当前版本。
-# 约束：不修改交易 Product；更新不允许更换条目 id；失败整体回滚，无隐式重试。
+# Function: Read or modify an information catalog.
+# Inputs: ``request`` is restricted account context, ``spec`` is the tool declaration, and ``args`` are validated parameters.
+# Outputs: Pagination or item, ``setup_revision``, or deletion receipt.
+# Logic: Read the catalog by selected identity and apply operation; unified version policy decides when revision can be omitted, while production mode still requires the current version.
+# Constraints: Does not modify transactional ``Product``; updates cannot replace entry id; failures roll back wholly with no implicit retry.
 @transaction.atomic
 def catalog_operation(request, spec, args):
     operation, collection = spec["operation"], spec["collection"]
@@ -124,11 +124,11 @@ def catalog_operation(request, spec, args):
     return Response({"setup_revision": saved["revision"], **({"deleted_id": args["id"]} if operation == "delete" else {"item": saved[collection][index]})})
 
 
-# 功能：读取或维护私有引导文件。
-# 输入：`request`、`operation`、`args` 已通过 Schema 校验。
-# 输出：元数据、分页、分块或删除/上传回执。
-# 逻辑：上传复用原 PDF/TXT 校验；正式模式核对本人资料引用，实验模式核对所有账号引用。
-# 约束：正式模式仅当前账号文件；实验模式跨账号读写仍拒绝删除被引用文件；不解析 PDF、不自动读取所有分块。
+# Function: Read or maintain private onboarding files.
+# Inputs: ``request``, ``operation``, and Schema-validated ``args``.
+# Outputs: Metadata, pagination, chunk, or deletion or upload receipt.
+# Logic: Upload reuses original PDF and TXT validation; production mode checks the caller's information references and experiment mode checks references for all accounts.
+# Constraints: Production mode limits files to current account; experiment-mode cross-account reads and writes still refuse deleting referenced files; does not parse PDFs or automatically read all chunks.
 @transaction.atomic
 def document_operation(request, operation, args):
     if operation in {"upload", "delete"}:
@@ -165,11 +165,11 @@ def document_operation(request, operation, args):
                      "size": len(record.content), "sha256": hashlib.sha256(bytes(record.content)).hexdigest(), "references": references})
 
 
-# 功能：将文件内容映射为有界数据。
-# 输入：`record` 元数据、`content` 原始字节、`args` 的 format/offset/limit、`allow_plain_text` 是否允许已核验 text/plain 实验文件。
-# 输出：内容、单位、总长度和 next_offset。
-# 逻辑：二进制 Base64、TXT 按 UTF-8 解码；实验入口可显式接受 text/plain 元数据，普通文件默认仍要求 .txt 后缀。
-# 约束：text 不对 PDF/任意二进制猜测编码；偏移超界报错，末尾为空块；不执行文件或记录正文。
+# Function: Map file content to bounded data.
+# Inputs: Metadata ``record``, raw bytes ``content``, ``args`` format, offset, and limit, and whether ``allow_plain_text`` permits validated ``text/plain`` experiment files.
+# Outputs: Content, unit, total length, and ``next_offset``.
+# Logic: Decode binary as Base64 and TXT as UTF-8; experiment entry can explicitly accept ``text/plain`` metadata while ordinary files still require a ``.txt`` suffix by default.
+# Constraints: Text does not guess encodings for PDFs or arbitrary binary; out-of-bound offsets error and the end produces an empty chunk; does not execute files or log content.
 def read_content(record, content, args, *, allow_plain_text=False):
     offset, limit, mode = args["offset"], args["limit"], args["format"]
     if mode == "text":
@@ -192,11 +192,11 @@ def read_content(record, content, args, *, allow_plain_text=False):
             "content": chunk if mode == "text" else base64.b64encode(chunk).decode("ascii")}
 
 
-# 功能：执行已授权的软件辅助工具。
-# 输入：`request`、`spec` 固定声明、`args` 校验参数。
-# 输出：业务 Response。
-# 逻辑：资料工具分派到对应操作；附件由统一归属策略查询，正式模式限本人、实验模式跨账号。
-# 约束：不能绕过调用层白名单；不执行模型、任意 URL 或路径；文件句柄在读取结束关闭。
+# Function: Execute an authorized software-support tool.
+# Inputs: ``request``, fixed declaration ``spec``, and validated parameters ``args``.
+# Outputs: Business ``Response``.
+# Logic: Information tools dispatch to their corresponding operation; attachments use unified ownership policy, restricted to the caller in production mode and cross-account in experiment mode.
+# Constraints: Cannot bypass the invocation-layer allowlist; does not execute models, arbitrary URLs, or paths; file handles close after reading.
 def execute_support(request, spec, args):
     if spec["kind"] == "support_profile":
         view = {"company_profile": CompanyProfileView, "sales_setup": SetupView, "seller_profile": SellerProfileView}[spec["profile"]]()

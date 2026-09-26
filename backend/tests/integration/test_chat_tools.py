@@ -1,26 +1,26 @@
-"""职责：验证工作空间聊天只读接口、稳定证据与原业务权限的完整后端链路。
-实现：真实 PostgreSQL、认证 HTTP 和业务处理器，故障及并发等待仅在明确边界模拟。
-关联：chat.tool_reads/tool_views、agent_tools 注册表和 chat.services；不调用外部模型或邮箱。
-目录：
-- ChatToolTests：请求绑定工具服务集成测试。
-- ChatToolTests.setUp：创建两个员工、通用聊天与 Agent 身份。
-- ChatToolTests.read：发送一次请求绑定工具调用。
-- ChatToolTests.test_catalog_and_schema：目录隔离、Schema 一致及分页参数。
-- ChatToolTests.test_search_context_answer_round_trip：搜索、两公司详情、上下文兼容与引用持久化。
-- ChatToolTests.test_search_pagination_and_empty：分页完整性与空结果证据。
-- ChatToolTests.test_shared_search_does_not_grant_detail：共享目录可见但私人详情拒绝，聊天仍可完成。
-- ChatToolTests.test_schema_and_tool_whitelist：身份注入、错误参数、写入及确认工具拒绝。
-- ChatToolTests.test_auth_request_and_terminal_boundaries：凭证隔离、请求归属和终态拒绝。
-- ChatToolTests.test_read_versions_are_immutable：重复读取不覆盖旧证据。
-- ChatToolTests.test_failure_rolls_back_and_hides_internal_error：异常回滚、安全错误和状态保持。
-- ChatToolTests.test_registry_mode_is_rechecked：注册模式变更后发现和执行均拒绝。
-- ChatToolConcurrencyTests：工具读取与最终回报的串行化测试。
-- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read：在途读取完成后才允许结束请求。
-- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.blocked_execute：在真实处理器前设置同步屏障。
-- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.read：独立数据库连接执行工具服务。
-- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.answer：独立数据库连接保存最终回答。
-变量索引：
-- BASE：Agent 聊天服务前缀。
+"""Responsibility: Verify the complete backend path for workspace chat read-only interfaces, stable evidence, and original business permissions.
+Implementation: Use real PostgreSQL, authenticated HTTP, and business handlers; simulate failures and concurrent waits only at explicit boundaries.
+Relationships: chat.tool_reads/tool_views, the agent_tools registry, and chat.services; no external model or mailbox calls.
+Directory:
+- ChatToolTests: Integration tests for request-bound tool services.
+- ChatToolTests.setUp: Create two employees, general chat, and Agent identities.
+- ChatToolTests.read: Send one request-bound tool call.
+- ChatToolTests.test_catalog_and_schema: Catalog isolation, schema consistency, and pagination arguments.
+- ChatToolTests.test_search_context_answer_round_trip: Search, details for two companies, context compatibility, and citation persistence.
+- ChatToolTests.test_search_pagination_and_empty: Pagination completeness and empty-result evidence.
+- ChatToolTests.test_shared_search_does_not_grant_detail: Shared directory visibility with private-detail rejection while chat can still complete.
+- ChatToolTests.test_schema_and_tool_whitelist: Reject identity injection, invalid arguments, write tools, and confirmation tools.
+- ChatToolTests.test_auth_request_and_terminal_boundaries: Credential isolation, request ownership, and terminal-state rejection.
+- ChatToolTests.test_read_versions_are_immutable: Repeated reads do not overwrite old evidence.
+- ChatToolTests.test_failure_rolls_back_and_hides_internal_error: Exception rollback, safe errors, and retained state.
+- ChatToolTests.test_registry_mode_is_rechecked: Reject both discovery and execution after registered mode changes.
+- ChatToolConcurrencyTests: Serialization tests for tool reads and final reports.
+- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read: Allow request completion only after in-flight reads finish.
+- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.blocked_execute: Place a synchronization barrier before the real handler.
+- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.read: Execute the tool service on an independent database connection.
+- ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.answer: Save the final answer on an independent database connection.
+Variable index:
+- BASE: Agent chat service prefix.
 """
 
 import copy
@@ -46,15 +46,15 @@ from tests.integration.test_chat import fixture, result_for
 BASE = "/api/v1/agent/chat/"
 
 
-# 功能：验证只读工具服务与现有业务查询的对接。
-# 逻辑：使用真实员工服务凭证、通用请求及数据库记录，HTTP 请求不绕过认证。
-# 约束：每例测试回滚，不接入模型、真实客户或外部业务服务。
+# Function: Verify read-only tool services integrate with existing business queries.
+# Logic: Use real employee service credentials, general requests, and database records; HTTP does not bypass authentication.
+# Constraints: Roll back each test; do not connect to models, real customers, or external business services.
 class ChatToolTests(TestCase):
-    # 功能：建立未绑定公司的处理请求。
-    # 输入：无外部参数；复用隔离聊天夹具。
-    # 输出：员工、两家自有公司、一家他人公司、请求和 HTTP 客户端。
-    # 逻辑：补全邮件 payload 与入库必有的 Extraction，再从通用会话提交并领取，不传 company_id。
-    # 约束：凭证仅用于测试数据库，其他员工公司初始不可见。
+    # Function: Create a processing request without a company binding.
+    # Inputs: No external arguments; reuse isolated chat fixtures.
+    # Outputs: Employees, two owned companies, another employee's company, a request, and an HTTP client.
+    # Logic: Populate email payload and the Extraction required by ingestion, then submit and claim through a general conversation without company_id.
+    # Constraints: Credentials are restricted to the test database; the other employee's company is initially invisible.
     def setUp(self):
         self.owner, self.other, self.company, _ = fixture()
         email = self.company.emails.get()
@@ -93,11 +93,11 @@ class ChatToolTests(TestCase):
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION="Agent chat-test-token")
 
-    # 功能：发送一次真实认证的只读查询。
-    # 输入：`name` 为工具名，`arguments` 为参数，`request_id` 可显式覆盖以验证隔离。
-    # 输出：原始 HTTP 响应。
-    # 逻辑：默认绑定本例处理请求，保留错误供调用者断言。
-    # 约束：不自动重试或补写公司参数。
+    # Function: Send one genuinely authenticated read-only query.
+    # Inputs: `name` identifies the tool, `arguments` contains its arguments, and `request_id` may override the default to verify isolation.
+    # Outputs: Original HTTP response.
+    # Logic: Bind to this test's processing request by default, preserving errors for caller assertions.
+    # Constraints: Do not retry automatically or fill company arguments.
     def read(self, name, arguments, request_id=None):
         return self.client.post(
             BASE + "tool-reads/",
@@ -109,11 +109,11 @@ class ChatToolTests(TestCase):
             format="json",
         )
 
-    # 功能：验证工具目录准确反映当前白名单与原始参数契约。
-    # 输入：处理请求、分页参数和无效查询变体。
-    # 输出：八个明确获准且执行模式准确的工具，原 Schema 相等，错误参数为 400。
-    # 逻辑：遍历分页并对照真实业务注册表。
-    # 约束：仅三种实验维护允许写入，也不要求预选公司。
+    # Function: Verify the catalog reflects the current allowlist and original argument contracts accurately.
+    # Inputs: Processing request, pagination parameters, and invalid query variants.
+    # Outputs: Eight explicitly permitted tools with correct execution modes, identical original schemas, and 400 for invalid arguments.
+    # Logic: Traverse pages and compare against the real business registry.
+    # Constraints: Only three experimental-maintenance operations permit writes, without requiring a preselected company.
     def test_catalog_and_schema(self):
         response = self.client.get(
             BASE + "tools/", {"request_id": str(self.request.pk)}
@@ -150,11 +150,11 @@ class ChatToolTests(TestCase):
             400,
         )
 
-    # 功能：验证原上下文、两公司工具来源和最终浏览器引用共同工作。
-    # 输入：原快照、客户搜索及两个详情读取。
-    # 输出：业务数据与原工具相同，来源可区分，浏览器仅接收实际引用正文。
-    # 逻辑：完整通过 HTTP 回报新提示词版本，保存后查询 Agent 状态。
-    # 约束：不把测试合成回答解释为真实模型已完成工具编排。
+    # Function: Verify original context, tool sources from two companies, and final browser citations work together.
+    # Inputs: Original snapshot, customer search, and two detail reads.
+    # Outputs: Business data matches original tools, sources are distinguishable, and browsers receive only actually cited content.
+    # Logic: Report the new prompt version entirely through HTTP, then query Agent status after saving.
+    # Constraints: Do not interpret synthetic test answers as real-model tool orchestration.
     def test_search_context_answer_round_trip(self):
         context = services.context_for(self.owner, self.request.pk, "internal")
         search = self.read("customers.search", {"q": "客户"})
@@ -204,11 +204,11 @@ class ChatToolTests(TestCase):
         public = browser.get(f"/api/v1/sales/chat/requests/{self.request.pk}/")
         self.assertEqual(public.data["citations"], status.data["citations"])
 
-    # 功能：验证分页数据不被裁剪成假全量，空搜索仍有可用结果证据。
-    # 输入：两家可见客户、每页一条及不存在的关键词。
-    # 输出：总数为二、页码准确，空查询返回 completed/count=0。
-    # 逻辑：逐页检查结果与页级来源，确保他人公司不出现在结果中。
-    # 约束：只验证后端分页，不声称 Agent 已遍历所有页。
+    # Function: Verify paginated data is not truncated into a false complete dataset and empty searches still provide usable result evidence.
+    # Inputs: Two visible customers, one row per page, and a nonexistent keyword.
+    # Outputs: Total count is two, page numbers are accurate, and an empty query returns completed/count=0.
+    # Logic: Check results and page-level sources individually, ensuring other employees' companies are absent.
+    # Constraints: Verify backend pagination only; do not claim the Agent traversed all pages.
     def test_search_pagination_and_empty(self):
         seen = []
         for page in (1, 2):
@@ -227,11 +227,11 @@ class ChatToolTests(TestCase):
             json.loads(empty.data["evidence_items"][0]["content"])["count"], 0
         )
 
-    # 功能：验证共享搜索范围不扩大私人详情访问。
-    # 输入：另一员工向当前员工团队共享公司。
-    # 输出：搜索有结果、详情 404 且 scope=tool，仍能保存正常回答。
-    # 逻辑：使用既有团队授权模型与真实客户处理器。
-    # 约束：失败不登记证据，不将请求变为 failed。
+    # Function: Verify shared search scope does not expand private-detail access.
+    # Inputs: Another employee shares a company with the current employee's team.
+    # Outputs: Search returns a result, details return 404 with scope=tool, and a normal answer can still be saved.
+    # Logic: Use existing team-grant models and real customer handlers.
+    # Constraints: Failures register no evidence and do not mark the request failed.
     def test_shared_search_does_not_grant_detail(self):
         team = Team.objects.create(owner=self.other, name="共享团队")
         Membership.objects.create(
@@ -255,11 +255,11 @@ class ChatToolTests(TestCase):
         )
         self.assertEqual(saved.status_code, 200)
 
-    # 功能：验证工具白名单及参数 Schema，不能通过身份参数越权。
-    # 输入：额外身份/幂等字段、缺少定位参数、错误分页和非白名单名称。
-    # 输出：结构错误 400，工具范围错误 403，未产生读取记录。
-    # 逻辑：覆盖写工具、确认工具及未开放的其他只读工具。
-    # 约束：不通过取消 company_id 定位要求来猜测客户。
+    # Function: Verify the tool allowlist and argument schema prevent unauthorized access through identity parameters.
+    # Inputs: Additional identity/idempotency fields, missing locator arguments, invalid pagination, and names outside the allowlist.
+    # Outputs: Structural errors return 400, tool-scope errors return 403, and no read records are created.
+    # Logic: Cover write tools, confirmation tools, and other unavailable read-only tools.
+    # Constraints: Do not guess customers by removing company_id locator requirements.
     def test_schema_and_tool_whitelist(self):
         for name in (
             "customers.create",
@@ -294,11 +294,11 @@ class ChatToolTests(TestCase):
             self.assertEqual(response.data["error"]["scope"], "request")
         self.assertFalse(ToolRead.objects.exists())
 
-    # 功能：验证凭证、请求归属和生命周期边界。
-    # 输入：无凭证、Tool 凭证、Session、其他员工请求及本请求终态。
-    # 输出：认证失败 401、越权 404、终态读取 409，状态查询仍可读本人终态。
-    # 逻辑：分别通过真实认证和请求查询，不将公司是否绑定作为访问前提。
-    # 约束：不会复活终态或恢复已撤销会话。
+    # Function: Verify credential, request-ownership, and lifecycle boundaries.
+    # Inputs: Missing credentials, Tool credentials, Session, another employee's request, and the current request's terminal state.
+    # Outputs: Authentication failures return 401, unauthorized access 404, and terminal-state reads 409; status queries can still read the caller's terminal requests.
+    # Logic: Use real authentication and request queries separately, without requiring a company binding for access.
+    # Constraints: Do not revive terminal requests or restore revoked conversations.
     def test_auth_request_and_terminal_boundaries(self):
         payload = {
             "request_id": str(self.request.pk),
@@ -347,11 +347,11 @@ class ChatToolTests(TestCase):
         )
         self.assertFalse(ToolRead.objects.exists())
 
-    # 功能：验证同公司多次读取的来源稳定且不会覆盖旧结果。
-    # 输入：第一次详情读取、公司资料修改及第二次读取。
-    # 输出：来源标识不同，旧记录与旧引用仍保留首次正文。
-    # 逻辑：再次查询后选旧来源回报，不要求预先调用 chat/context。
-    # 约束：测试修改为数据库夹具操作，聊天工具本身不执行写入。
+    # Function: Verify repeated reads of one company have stable sources without overwriting prior results.
+    # Inputs: First detail read, company-profile modification, and second read.
+    # Outputs: Source identifiers differ; old records and citations retain the first content.
+    # Logic: Report the old source after another query without requiring an earlier chat/context call.
+    # Constraints: Test modifications operate on database fixtures; chat tools themselves perform no writes.
     def test_read_versions_are_immutable(self):
         first = self.read(
             "customers.context", {"company_id": str(self.company.pk)}
@@ -381,11 +381,11 @@ class ChatToolTests(TestCase):
         self.request.refresh_from_db()
         self.assertIsNone(self.request.context_snapshot)
 
-    # 功能：验证查询或证据保存异常不留下半成功状态且不泄露内部细节。
-    # 输入：工具执行异常及证据写入边界抛出的异常。
-    # 输出：HTTP 500、无证据记录、请求保持 processing，异常文本不出现在响应。
-    # 逻辑：分别模拟调用边界与保存事务失败。
-    # 约束：不模拟成功，不把异常解释为真实服务已验证。
+    # Function: Verify query/evidence-save exceptions leave no partial success and reveal no internal details.
+    # Inputs: Exceptions at tool execution and evidence-write boundaries.
+    # Outputs: HTTP 500, no evidence records, request remains processing, and exception text is absent from the response.
+    # Logic: Simulate call-boundary and save-transaction failures separately.
+    # Constraints: Do not simulate success or interpret exceptions as verification of a real service.
     def test_failure_rolls_back_and_hides_internal_error(self):
         for target in (
             "apps.chat.tool_reads.execute",
@@ -400,11 +400,11 @@ class ChatToolTests(TestCase):
             self.request.refresh_from_db()
             self.assertEqual(self.request.status, "processing")
 
-    # 功能：验证白名单工具后来变为写模式时不会被继续开放。
-    # 输入：仅在测试中替换注册表的 customers.search executionMode。
-    # 输出：目录移除该工具，调用被 403 拒绝且处理器未执行。
-    # 逻辑：发现保留其他四个 read 及三个实验 write 工具，执行再次复核 customers.search 的实时 read 模式。
-    # 约束：模拟只涉及注册表，不修改真实业务代码或数据库。
+    # Function: Verify an allowlisted tool is no longer exposed after changing to write mode.
+    # Inputs: Replace registry customers.search executionMode only within the test.
+    # Outputs: The catalog removes the tool; calls return 403 without executing the handler.
+    # Logic: Discovery retains four other read tools and three experimental write tools; execution rechecks the live read mode of customers.search.
+    # Constraints: Only the registry is mocked; real business code and database are unchanged.
     def test_registry_mode_is_rechecked(self):
         registry = copy.deepcopy(build_registry())
         registry["customers.search"]["executionMode"] = "write"
@@ -423,15 +423,15 @@ class ChatToolTests(TestCase):
             handler.assert_not_called()
 
 
-# 功能：验证真实数据库中工具读取和保存回答不能交错破坏终态边界。
-# 逻辑：使用独立连接、线程屏障及原业务查询，不模拟数据库行锁。
-# 约束：要求支持 select_for_update 的 PostgreSQL，不用于推断其他数据库并发行为。
+# Function: Verify tool reads and answer saves cannot interleave to violate terminal-state boundaries in the real database.
+# Logic: Use independent connections, thread barriers, and original business queries without mocking database row locks.
+# Constraints: Requires PostgreSQL select_for_update support; does not establish concurrency behavior for other databases.
 class ChatToolConcurrencyTests(TransactionTestCase):
-    # 功能：验证读取持锁时最终回报等待，结束后拒绝新读取。
-    # 输入：无外部参数；真实处理请求及受控在途读取。
-    # 输出：读取先登记，回答后完成，终态新读取被拒绝。
-    # 逻辑：在线程内独立连接，事件只延迟业务处理器，不代替事务锁。
-    # 约束：等待均有限且 finally 释放，失败不遗留线程或数据库连接。
+    # Function: Verify final reporting waits while a read holds its lock, and new reads are rejected after completion.
+    # Inputs: No external arguments; a real processing request and controlled in-flight read.
+    # Outputs: The read registers first, the answer completes afterward, and new terminal-state reads are rejected.
+    # Logic: Each thread uses its own connection; events only delay the business handler and do not replace transaction locks.
+    # Constraints: All waits are bounded and released in finally, leaving no threads or database connections after failure.
     def test_answer_waits_for_inflight_read(self):
         owner, _, _, conversation = fixture()
         request, _ = services.submit(
@@ -445,22 +445,22 @@ class ChatToolConcurrencyTests(TransactionTestCase):
         services.claim(owner)
         entered, release, answer_started = Event(), Event(), Event()
 
-        # 功能：在取得请求锁后阻塞读取，便于验证另一事务确实等待。
-        # 输入：`args`/`kwargs` 为原 execute 调用参数。
-        # 输出：原业务响应。
-        # 逻辑：通知主线程并等待释放后调用真实处理器。
-        # 约束：最多等待 10 秒，不模拟查询结果。
+        # Function: Block the read after acquiring the request lock to verify another transaction actually waits.
+        # Inputs: `args`/`kwargs` are the original execute arguments.
+        # Outputs: Original business response.
+        # Logic: Notify the main thread, wait for release, then invoke the real handler.
+        # Constraints: Wait at most 10 seconds without mocking query results.
         def blocked_execute(*args, **kwargs):
             entered.set()
             if not release.wait(10):
                 raise TimeoutError("测试未释放在途读取")
             return execute(*args, **kwargs)
 
-        # 功能：用独立连接读取工具。
-        # 输入：闭包中的 owner 和 request。
-        # 输出：成功工具回执。
-        # 逻辑：线程前后清理连接，调用真实事务服务。
-        # 约束：不复用测试主线程连接。
+        # Function: Read a tool through an independent connection.
+        # Inputs: The closure's owner and request.
+        # Outputs: Successful tool receipt.
+        # Logic: Clean connections before and after the thread and call the real transactional service.
+        # Constraints: Do not reuse the main test thread's connection.
         def read():
             close_old_connections()
             try:
@@ -475,11 +475,11 @@ class ChatToolConcurrencyTests(TransactionTestCase):
             finally:
                 close_old_connections()
 
-        # 功能：用独立连接回报最终回答。
-        # 输入：闭包中的 owner、request 与 answer_started 事件。
-        # 输出：保存回执。
-        # 逻辑：通知开始后调用真实保存服务，结束时清理连接。
-        # 约束：不修改请求锁或工具状态。
+        # Function: Report the final answer through an independent connection.
+        # Inputs: The closure's owner, request, and answer_started event.
+        # Outputs: Save receipt.
+        # Logic: Signal the start, call the real save service, and clean connections on completion.
+        # Constraints: Do not change request locks or tool state.
         def answer():
             close_old_connections()
             try:

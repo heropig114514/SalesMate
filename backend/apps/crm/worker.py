@@ -1,12 +1,12 @@
-"""职责：在独立进程中执行邮箱同步和公司分析。
-实现：按显式员工执行同步与画像，每个工作单元持有账号共享锁并使用可撤销的独立 HTTP 身份；外部调用后按 Django 生命周期清理失效连接，异常记录执行阶段和无敏感正文的调用位置。
-关联：crm_worker 共享调度，dispatch 管理临时凭证；Gmail/QQ 与 L1–L4 仍通过 HTTP 协议读写。
-目录：
-- error_location：提取异常链的安全代码位置。
-- run_sync：领取并执行一个持久邮箱批次。
-- run_analysis：领取并执行一个公司任务。
-变量索引：
-- logger：工作单元生命周期和安全错误日志。
+"""Responsibility: Execute mailbox synchronization and company analysis in an isolated process.
+Implementation: Perform synchronization and profiling for an explicit employee; each work unit holds an account-shared lock and uses a revocable isolated HTTP identity. Clean stale connections according to the Django lifecycle after external calls, and record execution stage and a location without sensitive bodies on exceptions.
+Relationships: crm_worker shares scheduling and dispatch manages temporary credentials; Gmail/QQ and L1–L4 continue reading and writing through HTTP protocol.
+Directory:
+- error_location: Extract safe code locations from an exception chain.
+- run_sync: Claim and execute one durable mailbox batch.
+- run_analysis: Claim and execute one company job.
+Variable index:
+- logger: Work-unit lifecycle and safe-error logger.
 """
 import logging
 from pathlib import Path
@@ -29,11 +29,11 @@ from .lineage import run_repair
 logger = logging.getLogger("salesmate.crm_worker")
 
 
-# 功能：提取诊断所需异常类型和调用帧，不输出异常正文或局部变量。
-# 输入：`error` 为捕获的异常实例。
-# 输出：异常链各层类型、文件名、函数名和行号组成的字符串。
-# 逻辑：沿显式 cause 或未隐藏 context 遍历，使用已见集合防止异常链循环。
-# 约束：不读取源码行、不序列化异常参数、凭证或 HTTP 正文；完整路径不入日志。
+# Function: Extract exception types and frames needed for diagnosis without outputting exception bodies or locals.
+# Inputs: `error` is a captured exception instance.
+# Outputs: String containing each exception-chain level's type, filename, function, and line number.
+# Logic: Traverse explicit cause or unsuppressed context and use a seen set to prevent exception-chain loops.
+# Constraints: Does not read source lines or serialize exception arguments, credentials, or HTTP bodies; full paths are not logged.
 def error_location(error):
     parts, seen = [], set()
     while error is not None and id(error) not in seen:
@@ -48,11 +48,11 @@ def error_location(error):
     return " <- ".join(parts)
 
 
-# 功能：执行一个员工邮箱的持久同步批次。
-# 输入：`owner` 为共享调度器选出的员工。
-# 输出：是否领取了工作；最终状态保存数据库。
-# 逻辑：共享锁覆盖整个单元及异常回报；显式结束过期批次后优先人工修复，使用临时身份分发 Gmail/QQ；外部等待后清理失效连接再写终态，stage 标识失败边界。
-# 约束：只读 Gmail/QQ，不执行销售发信或日历，不自动重试失败；错误正文不入日志，QQ 连接在 finally 释放。
+# Function: Execute one employee mailbox's durable synchronization batch.
+# Inputs: `owner` is the employee selected by shared scheduling.
+# Outputs: Whether work was claimed; final state is stored in the database.
+# Logic: The shared lock covers the full unit and exception reporting; explicitly finish expired batches, prioritize human repairs, and use temporary identity to dispatch Gmail/QQ. Clear stale connections after external waits before writing terminal state, with stage marking the failure boundary.
+# Constraints: Read Gmail/QQ only, never execute sales email or calendar actions, and do not retry failures automatically; error bodies are not logged and QQ connections are released in finally.
 @account_work
 def run_sync(owner):
     run = None
@@ -103,11 +103,11 @@ def run_sync(owner):
         connections.close_all()
 
 
-# 功能：执行当前员工的一个公司画像任务。
-# 输入：`owner` 为共享调度器选出的员工。
-# 输出：是否领取任务。
-# 逻辑：共享锁覆盖单元；创建独立临时身份和 HTTP 客户端，按该员工领取一个任务。
-# 约束：异常仅记录类型与代码位置后结束本单元，不记录正文或重试任务；其他公司的单元继续。
+# Function: Execute one company profiling job for the current employee.
+# Inputs: `owner` is the employee selected by shared scheduling.
+# Outputs: Whether a job was claimed.
+# Logic: The shared lock covers the unit; create an isolated temporary identity and HTTP client, then claim one job for that employee.
+# Constraints: On exception, record only type and code location and end this unit without bodies or retry; units for other companies continue.
 @account_work
 def run_analysis(owner):
     try:

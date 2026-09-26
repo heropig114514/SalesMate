@@ -1,12 +1,12 @@
-"""职责：建立聊天请求、引用与内部知识关系表。
-实现：约束随各新表一起声明；仅新增 chat 表，保留现有会话、消息与 L1–L4 数据。
-关联：依赖 crm/sales 当前迁移及可替换用户模型。
-目录：
-- Migration：初始聊天 Schema。
-变量索引：
-- Migration.initial：声明应用初始迁移。
-- Migration.dependencies：关联模型已存在的前置版本。
-- Migration.operations：建表及活动会话、引用位置、知识版本约束。
+"""Responsibility: Create tables for chat requests, citations, and internal-knowledge relations.
+Implementation: Declare constraints with each new table; add only chat tables while retaining existing conversations, messages, and L1–L4 data.
+Relationships: Depends on current crm and sales migrations and the swappable user model.
+Directory:
+- Migration: Initial chat Schema.
+Variable index:
+- Migration.initial: Declares the application's initial migration.
+- Migration.dependencies: Prerequisite versions where related models exist.
+- Migration.operations: Table creation and active-conversation, citation-position, and knowledge-version constraints.
 """
 
 import django.db.models.deletion
@@ -15,9 +15,9 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-# 功能：创建聊天适配所需持久结构。
-# 逻辑：Django 按声明顺序创建含约束的新表，满足保守在线迁移门禁。
-# 约束：首次发布前整理初始迁移，不改变约束语义，不迁移或补造既有历史问题、答案和知识。
+# Function: Create persistent structures required by chat adaptation.
+# Logic: Django creates constrained new tables in declaration order, satisfying the conservative online-migration gate.
+# Constraints: Consolidate the initial migration before first release without changing constraint semantics or migrating or fabricating historical questions, answers, or knowledge.
 class Migration(migrations.Migration):
     initial = True
 

@@ -1,19 +1,19 @@
-"""职责：在现有销售页面合并展示原授权业务与获准共享的实验记录。
-实现：个人空间隔离时不合并实验批次；先校验精确批次清单，普通查询排除同批主键后分页合并；共享行直接投影校验结果。
-关联：business.js 使用本只读入口；原 views、permissions 及写接口不扩权；experiments 提供完整来源详情。
-目录：
-- shared_records：加载并投影指定业务资源的获准实验行。
-- ordinary_query：取得原权限下且符合页面筛选的查询集。
-- matches：对校验后的实验投影应用相同页面筛选。
-- BrowseView：合并列表只读接口。
-- BrowseView.get：分页合并普通记录与实验记录并标记来源。
-- BrowseOverviewView：合并计数且分离实验提示的概览入口。
-- BrowseOverviewView.get：在原计数上仅增加此前不可见的实验记录。
-变量索引：
-- RESOURCES：业务资源到实验模型的固定映射，不含凭据或外部连接。
-- logger：记录读取者、资源及数量，不记录正文。
-- BrowseView.http_method_names：只接受读取方法。
-- BrowseOverviewView.http_method_names：只接受读取方法。
+"""Responsibility: Combine originally authorized business records and approved shared experiment records in existing sales pages.
+Implementation: Do not merge experiment batches under personal-workspace isolation; validate exact batch manifests, exclude matching primary keys from ordinary queries before pagination, and project validated shared rows directly.
+Relationships: business.js uses this read-only entry point; existing views, permissions, and write endpoints gain no privileges; experiments provides full provenance details.
+Directory:
+- shared_records: Load and project approved experimental rows for a business resource.
+- ordinary_query: Obtain a queryset under original permissions and page filters.
+- matches: Apply equivalent page filters to validated experiment projections.
+- BrowseView: Read-only merged-list endpoint.
+- BrowseView.get: Paginate ordinary and experimental records together with origin markers.
+- BrowseOverviewView: Overview combining counts while separating experiment notices.
+- BrowseOverviewView.get: Add only previously invisible experiment records to original counts.
+Variable index:
+- RESOURCES: Fixed business-resource to experiment-model mapping, excluding credentials and external connections.
+- logger: Log reader, resource, and counts without body content.
+- BrowseView.http_method_names: Accept read methods only.
+- BrowseOverviewView.http_method_names: Accept read methods only.
 """
 
 import logging
@@ -38,11 +38,11 @@ RESOURCES = {key: serializer.Meta.model._meta.label for key, serializer in SERIA
 logger = logging.getLogger("salesmate.sales.browse")
 
 
-# 功能：读取业务页面对应的合成记录。
-# 输入：`resource` 为 RESOURCES 中的业务资源键。
-# 输出：带 id、experiment 元数据及业务字段的列表。
-# 逻辑：个人隔离时没有共享行；其余逐批校验原行，关系字段转换为界面字段名；客户联系人和归档设置也仅取同清单记录。
-# 约束：不调用含反向关系的业务序列化器处理共享行，避免顺带读取清单外明细或联系人。
+# Function: Read synthetic records corresponding to a business page.
+# Inputs: `resource`: business resource key in RESOURCES.
+# Outputs: List containing id, experiment metadata, and business fields.
+# Logic: Personal isolation has no shared rows; otherwise verify each batch and map relation fields to UI names. Include only listed contacts and archival settings.
+# Constraints: Do not apply business serializers with reverse relations to shared rows, which could read unlisted details or contacts.
 def shared_records(resource):
     if owner_only():
         return []
@@ -71,11 +71,11 @@ def shared_records(resource):
     return sorted(result, key=lambda row: row["id"])
 
 
-# 功能：生成原业务范围内的列表查询。
-# 输入：`user` 已认证用户、`resource` 业务资源、`params` 已限定的页面查询参数。
-# 输出：保留原业务权限的 QuerySet。
-# 逻辑：客户沿用 visible_company_ids，其余沿用 scope；只支持页面实际使用的公司、状态与归档筛选。
-# 约束：此函数不增加跨账号权限；筛选未知字段明确报错，不接受任意 ORM 查询。
+# Function: Build a list query within the original business scope.
+# Inputs: `user`: authenticated user; `resource`: business resource; `params`: restricted page query parameters.
+# Outputs: A QuerySet retaining the original business permissions.
+# Logic: Use visible_company_ids for companies and scope for other resources; support only company, status, and archival filters used by the page.
+# Constraints: This function grants no cross-account access; reject unknown filters instead of accepting arbitrary ORM queries.
 def ordinary_query(user, resource, params):
     model = apps.get_model(RESOURCES[resource])
     query = Company.objects.filter(pk__in=visible_company_ids(user)) if resource == "directory" else scope(model, user)
@@ -99,11 +99,11 @@ def ordinary_query(user, resource, params):
     return query.order_by("id")
 
 
-# 功能：对共享行使用与业务查询相同的页面筛选。
-# 输入：`row` 已核验业务投影、`resource` 资源键、`params` 页面参数。
-# 输出：是否应在当前列表出现的布尔值。
-# 逻辑：比较精确客户 ID、状态及归档；不展开关联或做名称模糊匹配。
-# 约束：字段支持情况由 ordinary_query 先验证，缺省归档状态为 false。
+# Function: Apply the same page filters to shared rows as to business queries.
+# Inputs: `row`: verified business projection; `resource`: resource key; `params`: page parameters.
+# Outputs: Whether the row belongs in the current list.
+# Logic: Compare exact company IDs, status, and archival state without expanding relations or fuzzy name matching.
+# Constraints: ordinary_query validates supported fields first; archival state defaults to false.
 def matches(row, resource, params):
     if params.get("company") and str(row["id"] if resource == "directory" else row.get("company")) != params["company"]:
         return False
@@ -113,17 +113,17 @@ def matches(row, resource, params):
     return archived == "all" or bool(row.get("archived", False)) == (archived == "true")
 
 
-# 功能：提供现有业务页面的合并读取。
-# 逻辑：普通数据保留原处理器序列化，共享数据只来自已核验投影，两者主键去重。
-# 约束：没有写方法；普通详情和写 API 权限保持原状。
+# Function: Provide merged reads for existing business pages.
+# Logic: Serialize ordinary data with existing handlers, use only verified shared projections, and deduplicate both by primary key.
+# Constraints: No write methods; ordinary detail and write API permissions remain unchanged.
 class BrowseView(SalesView):
     http_method_names = ["get", "head", "options"]
 
-    # 功能：分页返回原业务及合成实验记录。
-    # 输入：`request` 的认证用户及页面筛选，`resource` 固定资源名。
-    # 输出：count、page、page_size、shared_count、results；共享记录带 experiment 标记。
-    # 逻辑：最外层开启只读一致性快照；先普通后共享，并按主键排除重复；错误不降级成空共享数据。
-    # 约束：最多每页 100 条；任何已共享表漂移则整次失败，不调用模型或写业务记录。
+    # Function: Paginate ordinary business records and synthetic experiment records.
+    # Inputs: The authenticated user and page filters from `request`; `resource`: fixed resource name.
+    # Outputs: count, page, page_size, shared_count, and results; shared records include an experiment marker.
+    # Logic: Open a read-only consistent snapshot in the outermost transaction; place ordinary rows first and deduplicate shared rows by primary key. Never replace errors with empty shared data.
+    # Constraints: At most 100 rows per page; drift in any shared table fails the entire request. No model calls or business writes.
     @extend_schema(operation_id="sales_browse", responses=OpenApiTypes.OBJECT,
                    parameters=[OpenApiParameter(name, str) for name in ("company", "status", "archived", "page", "page_size")])
     def get(self, request, resource):
@@ -158,17 +158,17 @@ class BrowseView(SalesView):
         return response
 
 
-# 功能：为合并列表提供对应计数。
-# 逻辑：只补充原权限下不可见的实验客户与待办计数，金额保持原业务范围并明确标记。
-# 约束：不把共享模拟交易金额加入普通业务金额。
+# Function: Provide counts corresponding to merged lists.
+# Logic: Add only experiment companies and pending items outside the original permission scope; retain and explicitly label the original monetary scope.
+# Constraints: Do not add shared synthetic transaction amounts to ordinary business totals.
 class BrowseOverviewView(SalesView):
     http_method_names = ["get", "head", "options"]
 
-    # 功能：生成与合并列表一致的概览。
-    # 输入：`request` 当前认证用户。
-    # 输出：原概览和 shared_counts；客户、工单、跟进计数已包含共享行且去重。
-    # 逻辑：对三类已核验记录应用原状态条件，与原 scope 比较后仅补新增数量。
-    # 约束：无业务写入；共享表漂移时明确失败，不继续展示零值。
+    # Function: Build an overview consistent with merged lists.
+    # Inputs: `request`: the current authenticated user request.
+    # Outputs: The original overview and shared_counts; company, ticket, and follow-up counts include deduplicated shared rows.
+    # Logic: Apply the original status conditions to three verified record types and add only records outside the original scope.
+    # Constraints: No business writes; shared-table drift fails explicitly instead of displaying zero values.
     @extend_schema(operation_id="sales_browse_overview", responses=OpenApiTypes.OBJECT)
     @transaction.atomic
     def get(self, request):

@@ -1,18 +1,18 @@
 /**
- * 职责：在共享工作空间挂载唯一的悬浮聊天入口与面板。
- * 实现：静态模板复用 AssistantPanel；按钮展开/收起，旧聊天链接只打开浮窗，不占用页面。
- * 关联：聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；workspace.js 挂载时启用，业务权限由 API 校验；app.js 处理会话退出与旧链接；assistant-widget.css 提供跨页样式。
- * 目录：getAssistant、enableAssistant、openAssistantLink。
- * 变量索引：panel 为当前页面单例。
+ * Responsibility: Mount one floating chat entry and panel in the shared workspace.
+ * Implementation: A static template reuses AssistantPanel; buttons expand/collapse it, and legacy chat links open the widget without taking over the page.
+ * Relationships: Chat Markdown, 0919 interface, and shared language/API resources use coordinated cache versions. workspace.js enables the widget on mounting, with business permissions enforced by the API; app.js handles logout and legacy links; assistant-widget.css supplies cross-page styles.
+ * Directory: getAssistant, enableAssistant, openAssistantLink.
+ * Variable index: panel is the singleton for the current page.
  */
 import { h } from './i18n.js?v=20260921-product';
 import { AssistantPanel } from './assistant.js?v=20260921-markdown';
 
 let panel = null;
 
-/** 功能：获取或创建悬浮助手。输入：当前页面 DOM。输出：唯一 AssistantPanel。
- * 逻辑：仅挂载可信静态模板和按钮，初始隐藏；页面离开时取消状态观察。
- * 约束：不创建会话、不请求模型，不把业务正文存入浏览器持久化存储。 */
+/** Function: Get or create the floating assistant. Inputs: Current page DOM. Outputs: The unique AssistantPanel.
+ * Logic: Mount only a trusted static template and buttons, initially hidden; cancel status observation when leaving the page.
+ * Constraints: Do not create conversations, request model inference, or persist business content in browser storage. */
 export function getAssistant() {
   if (panel) return panel;
   document.body.insertAdjacentHTML('beforeend', h`<aside aria-labelledby="assistant-title" class="assistant-panel" hidden="" id="assistant-panel" role="complementary">
@@ -43,18 +43,18 @@ export function getAssistant() {
   return panel;
 }
 
-/** 功能：控制登录态下的悬浮入口。输入：enabled 是否可用，默认 true。输出：无。
- * 逻辑：启用不打开聊天；停用清理当前账号的内存状态并隐藏入口。
- * 约束：权限始终由 API 验证；不同页面不共享未保存草稿。 */
+/** Function: Control floating-entry availability for the login state. Inputs: enabled defaults to true. Outputs: None.
+ * Logic: Enabling does not open chat; disabling clears current-account memory state and hides the entry.
+ * Constraints: The API always enforces permissions; unsaved drafts are not shared across pages. */
 export function enableAssistant(enabled = true) {
   const current = getAssistant();
   document.getElementById('assistant-launcher').hidden = !enabled;
   if (!enabled) { current.reset(); }
 }
 
-/** 功能：从旧聊天链接打开工作空间浮窗。输入：无参数。输出：无。
- * 逻辑：始终显示工作空间会话，旧 URL 的公司标识不进入请求或决定上下文。
- * 约束：不请求客户详情，不创建任务或重派旧问题。 */
+/** Function: Open workspace chat from a legacy chat link. Inputs: None. Outputs: None.
+ * Logic: Always show the workspace conversation; company identifiers in legacy URLs neither enter requests nor determine context.
+ * Constraints: Never read customer details, create tasks, or redispatch old questions. */
 export function openAssistantLink() {
   const current = getAssistant();
   if (!current.isOpen) current.open(document.getElementById('assistant-launcher'));

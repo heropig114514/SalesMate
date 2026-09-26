@@ -1,26 +1,26 @@
-"""职责：验证共享全球资讯、私人关联隔离、日期兼容和服务端去重。
-实现：真实 Django HTTP、Tool 凭证与隔离数据库；两个员工跨入口读取，写入仍受 owner 和令牌授权限制。
-关联：sales.permissions/serializers/insights 与 agent_tools；不调用外部来源或模型，不修改 Agent。
-目录：
-- SharedInsightsTests：共享读取和兼容接口验收。
-- SharedInsightsTests.setUp：建立两个员工及限定工具身份。
-- SharedInsightsTests.event：构造明确活动载荷。
-- SharedInsightsTests.news：构造新闻载荷。
-- SharedInsightsTests.call：调用真实工具入口。
-- SharedInsightsTests.test_shared_reads_private_relations_and_writes：验证多模式多入口共享与写隔离。
-- SharedInsightsTests.test_anonymous_and_tool_scope：验证匿名拒绝和最小工具范围。
-- SharedInsightsTests.test_agent_date_protocol_and_explicit_precision：验证旧 Agent 和显式日期契约。
-- SharedInsightsTests.test_duplicate_sources_archive_and_occurrences：验证跨账号去重、归档和不同届次。
-- SharedInsightsTests.test_database_constraints：验证绕过序列化器也不能创建重复采集记录。
-- InsightMigrationTests：历史数据迁移和并发唯一性验收。
-- InsightMigrationTests.test_historical_dates_and_duplicate_rejection：拒绝静默合并历史重复，正确标记旧日期记录。
-- InsightMigrationTests.test_concurrent_agent_news：不同账号同时写同源新闻仅成功一次。
-- InsightMigrationTests.test_concurrent_agent_news.insert：在线程独立连接中写测试记录。
-- InsightMigrationTests.test_concurrent_http_conflict：同步跨账号 HTTP 写入验证 409 回执。
-- InsightMigrationTests.test_concurrent_http_conflict.synchronized_clean：在模型校验后建立确定竞争窗口。
-- InsightMigrationTests.test_concurrent_http_conflict.create：独立连接执行一次已授权 HTTP 写入。
-变量索引：
-- TOOLS：仅允许本测试所需资讯和活动工具。
+"""Responsibility: Verify shared global insights, private-link isolation, date compatibility, and server-side deduplication.
+Implementation: Real Django HTTP, Tool credentials, and isolated database; two employees read across entry points while ownership/token permissions still constrain writes.
+Relationships: sales.permissions/serializers/insights and agent_tools; no external sources/models or Agent modifications.
+Directory:
+- SharedInsightsTests: Shared-read and compatibility-interface acceptance tests.
+- SharedInsightsTests.setUp: Create two employees and restricted tool identities.
+- SharedInsightsTests.event: Construct explicit event payloads.
+- SharedInsightsTests.news: Construct news payloads.
+- SharedInsightsTests.call: Call the real tool entry point.
+- SharedInsightsTests.test_shared_reads_private_relations_and_writes: Verify sharing and write isolation across modes/entry points.
+- SharedInsightsTests.test_anonymous_and_tool_scope: Verify anonymous rejection and minimal tool scope.
+- SharedInsightsTests.test_agent_date_protocol_and_explicit_precision: Verify legacy Agent and explicit-date contracts.
+- SharedInsightsTests.test_duplicate_sources_archive_and_occurrences: Verify cross-account deduplication, archival, and different event editions.
+- SharedInsightsTests.test_database_constraints: Verify bypassing serializers cannot create duplicate collected records.
+- InsightMigrationTests: Historical migration and concurrent uniqueness acceptance tests.
+- InsightMigrationTests.test_historical_dates_and_duplicate_rejection: Reject silent merging of historical duplicates and correctly mark old date records.
+- InsightMigrationTests.test_concurrent_agent_news: Concurrent same-source news writes from different accounts succeed only once.
+- InsightMigrationTests.test_concurrent_agent_news.insert: Write test records through a thread-local database connection.
+- InsightMigrationTests.test_concurrent_http_conflict: Synchronize cross-account HTTP writes to verify 409 receipts.
+- InsightMigrationTests.test_concurrent_http_conflict.synchronized_clean: Establish a deterministic race window after model validation.
+- InsightMigrationTests.test_concurrent_http_conflict.create: Perform one authorized HTTP write through an independent connection.
+Variable index:
+- TOOLS: Allow only news/event tools required by this test.
 """
 
 import hashlib
@@ -44,16 +44,16 @@ from apps.sales.insight_dates import LEGACY_DATE_MARKER
 TOOLS = [f"{resource}.{action}" for resource in ("world_news", "world_events") for action in ("list", "get", "create", "update", "archive")] + ["world_insights.get"]
 
 
-# 功能：验证公开事实与私人销售信息的权限边界。
-# 逻辑：Session 与 Tool 走实际视图，显式关闭实验开放与自动登录；模式在场景中独立切换。
-# 约束：数据库由 TestCase 隔离，外部网络不调用，不代表真实 Agent 已联调。
+# Function: Verify permission boundaries between public facts and private sales information.
+# Logic: Session and Tool use real views with laboratory opening and automatic login explicitly disabled; switch modes separately within scenarios.
+# Constraints: TestCase isolates the database; no external networking or claim of real Agent integration acceptance.
 @override_settings(LAB_OPEN_ACCESS=False, WORKSPACE_OWNER_ONLY=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class SharedInsightsTests(TestCase):
-    # 功能：建立两位员工及工具身份。
-    # 输入：无外部参数。
-    # 输出：实例中的员工、Session 和 Tool 客户端。
-    # 逻辑：令牌以摘要保存，仅授权资讯活动工具；令牌原文仅为固定测试数据。
-    # 约束：不写本地开发账号或生产凭证。
+    # Function: Create two employees and tool identities.
+    # Inputs: No external arguments.
+    # Outputs: Employee, Session, and Tool clients in the instance.
+    # Logic: Store token digests and authorize news/event tools only; raw tokens are fixed test data.
+    # Constraints: Do not write local development accounts or production credentials.
     def setUp(self):
         self.a = get_user_model().objects.create_user(username="insights-a")
         self.b = get_user_model().objects.create_user(username="insights-b")
@@ -65,27 +65,27 @@ class SharedInsightsTests(TestCase):
             ToolCredential.objects.create(owner=user, name="test", digest=hashlib.sha256(token.encode()).hexdigest(), allowed_tools=TOOLS, expires_at=timezone.now() + timedelta(hours=1))
             client.credentials(HTTP_AUTHORIZATION="Tool " + token)
 
-    # 功能：构造合法展会事实。
-    # 输入：无外部参数。
-    # 输出：可独立修改的活动载荷字典。
-    # 逻辑：默认确切时间，不附私人关联。
-    # 约束：example.org 仅为测试来源，不发请求。
+    # Function: Construct valid exhibition facts.
+    # Inputs: No external arguments.
+    # Outputs: An independently mutable event-payload dictionary.
+    # Logic: Default to exact times without private links.
+    # Constraints: example.org is a test source only and receives no requests.
     def event(self):
         return {"title": "共享展会", "event_type": "exhibition", "country": "SG", "city": "Singapore", "latitude": 1.3, "longitude": 103.8, "starts_at": "2026-10-27T09:00:00+08:00", "ends_at": "2026-10-29T17:00:00+08:00", "source_url": "https://example.org/expo", "description": "公开的展会说明", "data_source": "agent"}
 
-    # 功能：构造合法新闻事实。
-    # 输入：无外部参数。
-    # 输出：新闻创建载荷。
-    # 逻辑：提供来源与确切发布时间。
-    # 约束：不访问来源或生成模型文本。
+    # Function: Construct valid news facts.
+    # Inputs: No external arguments.
+    # Outputs: News-creation payload.
+    # Logic: Provide sources and exact publication times.
+    # Constraints: Do not visit sources or generate model text.
     def news(self):
         return {"title": "共享新闻", "category": "industry", "published_at": "2026-09-24T08:00:00Z", "source_url": "https://example.org/news", "content": "公开行业新闻", "data_source": "agent"}
 
-    # 功能：调用真实工具 HTTP 入口。
-    # 输入：`client` 客户端、`name` 工具、`arguments` 参数、`status` 预期 HTTP 状态。
-    # 输出：响应数据。
-    # 逻辑：每次写入使用独立幂等键，以验证来源去重而非幂等重放。
-    # 约束：不模拟后端处理器；错误回执同样经过 HTTP。
+    # Function: Call the real tool HTTP entry point.
+    # Inputs: `client` is the client, `name` the tool, `arguments` its inputs, and `status` the expected HTTP status.
+    # Outputs: Response data.
+    # Logic: Use an independent idempotency key for every write to verify source deduplication rather than receipt replay.
+    # Constraints: Do not mock backend handlers; error receipts also traverse HTTP.
     def call(self, client, name, arguments, status=200):
         payload = {"name": name, "arguments": arguments}
         if name.rsplit(".", 1)[1] not in {"list", "get"}:
@@ -94,11 +94,11 @@ class SharedInsightsTests(TestCase):
         self.assertEqual(response.status_code, status, response.data)
         return response.data
 
-    # 功能：验证共享事实和私人关系隔离覆盖所有读入口。
-    # 输入：无外部参数；A 的私有商机、人工/Agent 新闻活动及 B 身份。
-    # 输出：B 可读事实但看不到私有 ID、客户和金额，也不能修改或归档。
-    # 逻辑：循环普通和 owner_only 模式，实际读取列表、详情、地图及四个 Tool；A 仍能看到自己的关联。
-    # 约束：不使用实验模式证明正式权限；不修改客户或商机权限。
+    # Function: Verify shared facts and private-link isolation at every read entry point.
+    # Inputs: No external arguments; A's private opportunity, manual/Agent news/events, and B's identity.
+    # Outputs: B reads facts without private IDs, customers, or amounts and cannot edit/archive them.
+    # Logic: Loop through ordinary and owner_only modes, reading real lists, details, map, and four Tools; A retains visibility of owned links.
+    # Constraints: Do not use experimental mode to prove normal permissions or change customer/opportunity access.
     def test_shared_reads_private_relations_and_writes(self):
         company = grouping.create_company(self.a, "A 私有客户")
         opportunity = models.Opportunity.objects.create(owner=self.a, company=company, title="私有商机", amount="12345", currency="SGD")
@@ -144,11 +144,11 @@ class SharedInsightsTests(TestCase):
         self.assertEqual(self.call(self.tool_b, "world_news.list", {})["data"]["count"], 1)
         self.assertEqual(self.call(self.tool_b, "world_news.list", {"archived": "all"})["data"]["count"], 2)
 
-    # 功能：确认共享不等于匿名访问或无限工具授权。
-    # 输入：无外部参数；匿名客户端和仅 list 授权的 Tool 身份。
-    # 输出：匿名业务请求及未授权工具被拒绝。
-    # 逻辑：两种正式模式均保留认证；凭证即使可见共享记录也不能调用 create。
-    # 约束：不改变实验模式既有语义。
+    # Function: Verify sharing does not imply anonymous access or unrestricted tool authorization.
+    # Inputs: No external arguments; anonymous clients and a list-only Tool identity.
+    # Outputs: Reject anonymous business requests and unauthorized tools.
+    # Logic: Both normal modes require authentication; credentials seeing shared records still cannot call create without permission.
+    # Constraints: Do not change existing laboratory-mode semantics.
     def test_anonymous_and_tool_scope(self):
         anonymous = APIClient()
         for owner_only in (False, True):
@@ -160,11 +160,11 @@ class SharedInsightsTests(TestCase):
         self.call(self.tool_b, "world_news.list", {})
         self.call(self.tool_b, "world_news.create", {"data": self.news()}, 403)
 
-    # 功能：验证原 Agent 载荷无需新参数即可准确显示日期。
-    # 输入：无外部参数；完整标记、中午边界、普通时刻及不一致标记样本。
-    # 输出：正确精度与包含末日的日期；错误协议拒绝且不改时间。
-    # 逻辑：旧协议自动设置 date，显式日期支持 UTC 午夜；普通 datetime 日期投影为 null。
-    # 约束：只模拟 Agent HTTP 载荷，不运行 Agent 或模型。
+    # Function: Verify original Agent payloads display accurate dates without new arguments.
+    # Inputs: No external arguments; complete markers, noon boundaries, ordinary timestamps, and inconsistent markers.
+    # Outputs: Correct precision and inclusive end dates; invalid protocols are rejected without changing timestamps.
+    # Logic: Legacy protocol automatically sets date; explicit dates support UTC midnight; ordinary datetime date projections are null.
+    # Constraints: Simulate Agent HTTP payloads only, without running Agents/models.
     def test_agent_date_protocol_and_explicit_precision(self):
         payload = {**self.event(), "starts_at": "2026-10-27T12:00:00Z", "ends_at": "2026-10-30T12:00:00Z", "description": "展会公开说明\n" + LEGACY_DATE_MARKER}
         event = self.call(self.tool_a, "world_events.create", {"data": payload})["data"]
@@ -178,11 +178,11 @@ class SharedInsightsTests(TestCase):
         explicit = self.call(self.tool_a, "world_events.create", {"data": {**self.event(), "time_precision": "date", "starts_at": "2026-12-31T00:00:00Z", "ends_at": "2027-01-02T00:00:00Z"}})["data"]
         self.assertEqual((explicit["starts_on"], explicit["ends_on"]), ("2026-12-31", "2027-01-01"))
 
-    # 功能：验证来源去重而非扩大 owner 或修改原记录。
-    # 输入：无外部参数；跨账号相同新闻与活动、已归档记录、同 URL 下一届活动。
-    # 输出：重复 409，归档后仍 409，人工记录和下一届活动允许创建。
-    # 逻辑：各次调用使用不同幂等键，数据库数量及原 owner 不变。
-    # 约束：不模拟并发；并发由独立测试覆盖。
+    # Function: Verify source deduplication without expanding ownership or modifying original records.
+    # Inputs: No external arguments; same-source cross-account news/events, archived records, and next-edition events at the same URL.
+    # Outputs: Duplicates return 409 even after archival; manual records and later editions can be created.
+    # Logic: Use different idempotency keys per call; persisted counts and original ownership remain unchanged.
+    # Constraints: No concurrency simulation here; separate tests cover concurrency.
     def test_duplicate_sources_archive_and_occurrences(self):
         news = self.call(self.tool_a, "world_news.create", {"data": self.news()})["data"]
         self.call(self.tool_b, "world_news.create", {"data": self.news()}, 409)
@@ -194,11 +194,11 @@ class SharedInsightsTests(TestCase):
         self.call(self.tool_b, "world_events.create", {"data": {**self.event(), "starts_at": "2027-10-27T09:00:00+08:00", "ends_at": "2027-10-29T17:00:00+08:00"}})
         self.assertEqual((models.WorldNews.objects.count(), models.WorldEvent.objects.count()), (2, 2))
 
-    # 功能：验证数据库层防止绕过视图产生重复。
-    # 输入：无外部参数；不同 owner 的同源 Agent 记录。
-    # 输出：直接 ORM 重复写入抛 IntegrityError。
-    # 逻辑：分别验证新闻和活动的条件唯一索引，内层事务隔离预期错误。
-    # 约束：不以序列化器预检查代替数据库唯一性验证。
+    # Function: Verify database constraints prevent duplicates when views are bypassed.
+    # Inputs: No external arguments; same-source Agent records owned by different users.
+    # Outputs: Direct duplicate ORM writes raise IntegrityError.
+    # Logic: Check conditional unique indexes for news/events separately, isolating expected errors in inner transactions.
+    # Constraints: Serializer prechecks do not replace database uniqueness verification.
     def test_database_constraints(self):
         for model, data in ((models.WorldNews, self.news()), (models.WorldEvent, self.event())):
             model.objects.create(owner=self.a, **data)
@@ -206,16 +206,16 @@ class SharedInsightsTests(TestCase):
                 model.objects.create(owner=self.b, **data)
 
 
-# 功能：验证迁移历史兼容和 PostgreSQL 实际并发。
-# 逻辑：使用可提交事务的隔离测试数据库，历史迁移测试始终恢复当前 schema。
-# 约束：只作用于 Django 测试库，不迁移实际开发数据库。
+# Function: Verify historical migration compatibility and actual PostgreSQL concurrency.
+# Logic: Use an isolated database with committable transactions; historical-migration tests always restore the current schema.
+# Constraints: Operate only on Django test databases, not actual development databases.
 @override_settings(LAB_OPEN_ACCESS=False, WORKSPACE_OWNER_ONLY=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class InsightMigrationTests(TransactionTestCase):
-    # 功能：验证旧记录精度迁移及重复阻断。
-    # 输入：无外部参数；0008 历史状态中的旧 Agent 日期活动与重复新闻。
-    # 输出：重复时迁移失败且记录保留，人工移除测试重复后迁移成功且日期被标记。
-    # 逻辑：真正执行前后迁移；finally 恢复执行前所有应用的最新 schema，失败数据仅限测试库。
-    # 约束：生产迁移从不删除重复，此处删除的是测试自行创建的重复夹具。
+    # Function: Verify legacy-record precision migration and duplicate blocking.
+    # Inputs: No external arguments; legacy Agent date events and duplicate news in historical state 0008.
+    # Outputs: Duplicates cause migration failure without deletion; after manually removing test duplicates, migration succeeds and dates are marked.
+    # Logic: Run backward/forward migrations genuinely; finally restore every application's latest pre-test schema. Failure data stays in the test database.
+    # Constraints: Production migrations never delete duplicates; deleted rows here are duplicate fixtures created by the test.
     def test_historical_dates_and_duplicate_rejection(self):
         executor = MigrationExecutor(connection)
         latest = executor.loader.graph.leaf_nodes()
@@ -245,21 +245,21 @@ class InsightMigrationTests(TransactionTestCase):
                 duplicate.delete()
             MigrationExecutor(connection).migrate(latest)
 
-    # 功能：验证不同账号并发采集只创建一条新闻。
-    # 输入：无外部参数；两个测试账号、同步屏障和独立数据库连接。
-    # 输出：一个成功、一个唯一约束冲突，最终一条记录。
-    # 逻辑：线程同时提交相同来源的直接数据库写入，覆盖客户端分页去重无法保证的竞争窗口。
-    # 约束：必须在 PostgreSQL 执行，不用 SQLite 代替并发证据；线程结束关闭连接。
+    # Function: Verify concurrent collection by different accounts creates only one news record.
+    # Inputs: No external arguments; two test accounts, a barrier, and independent database connections.
+    # Outputs: One success, one unique-constraint conflict, and one final record.
+    # Logic: Threads simultaneously submit same-source direct writes, covering races that client-side paginated deduplication cannot prevent.
+    # Constraints: Run on PostgreSQL, not SQLite as concurrency evidence; close connections when threads finish.
     def test_concurrent_agent_news(self):
         self.assertEqual(connection.vendor, "postgresql")
         users = [get_user_model().objects.create_user(username=f"concurrent-{number}") for number in range(2)]
         barrier = Barrier(2)
 
-        # 功能：从独立连接尝试插入同源测试新闻。
-        # 输入：`owner_id` 测试账号主键；隐式读取同步屏障。
-        # 输出：created 或 conflict；其他异常向测试传播。
-        # 逻辑：同步后一次写入；只捕获预期唯一约束错误。
-        # 约束：不重试，每个线程始终关闭自己的连接。
+        # Function: Attempt same-source test-news insertion on an independent connection.
+        # Inputs: `owner_id` is the test-account primary key; implicitly reads the synchronization barrier.
+        # Outputs: created or conflict; other exceptions propagate to the test.
+        # Logic: Write once after synchronization and catch only expected unique-constraint errors.
+        # Constraints: No retry; each thread always closes its connection.
         def insert(owner_id):
             close_old_connections()
             try:
@@ -276,11 +276,11 @@ class InsightMigrationTests(TransactionTestCase):
         self.assertCountEqual(outcomes, ["created", "conflict"])
         self.assertEqual(models.WorldNews.objects.filter(source_url="https://example.org/concurrent").count(), 1)
 
-    # 功能：验证跨账号竞争通过正式 Tool API 返回 409。
-    # 输入：无外部参数；两个限权凭证与实际 HTTP 处理器。
-    # 输出：一条 completed 回执、一个 409，数据库仅一条新闻。
-    # 逻辑：只在 full_clean 完成后用屏障安排并发，所有认证、序列化、事务和索引均真实执行。
-    # 约束：屏障仅控制测试时序，不模拟数据库结果；不重试失败调用。
+    # Function: Verify cross-account races return 409 through the formal Tool API.
+    # Inputs: No external arguments; two restricted credentials and actual HTTP handlers.
+    # Outputs: One completed receipt, one 409, and one persisted news record.
+    # Logic: Only schedule concurrency with a barrier after full_clean; authentication, serialization, transactions, and indexes execute normally.
+    # Constraints: The barrier controls timing without mocking database results; failed calls are not retried.
     def test_concurrent_http_conflict(self):
         barrier = Barrier(2)
         original = models.WorldNews.full_clean
@@ -289,20 +289,20 @@ class InsightMigrationTests(TransactionTestCase):
             user = get_user_model().objects.create_user(username=token)
             ToolCredential.objects.create(owner=user, name="test", digest=hashlib.sha256(token.encode()).hexdigest(), allowed_tools=["world_news.create"], expires_at=timezone.now() + timedelta(hours=1))
 
-        # 功能：使两次调用均完成预检后竞争真实数据库唯一索引。
-        # 输入：`instance` 模型实例、`args` 和 `kwargs` 原 full_clean 参数。
-        # 输出：无；原校验异常正常传播。
-        # 逻辑：保留原校验，在写入前同步线程。
-        # 约束：仅 patch 此测试的模型方法，不模拟校验结果。
+        # Function: Let both calls finish preflight before contending on the real unique index.
+        # Inputs: `instance` is the model instance; `args`/`kwargs` are original full_clean arguments.
+        # Outputs: None; original validation exceptions propagate normally.
+        # Logic: Retain original validation and synchronize threads before writing.
+        # Constraints: Patch only this test's model method without mocking validation results.
         def synchronized_clean(instance, *args, **kwargs):
             original(instance, *args, **kwargs)
             barrier.wait(timeout=10)
 
-        # 功能：执行一位员工的真实 HTTP 写入。
-        # 输入：`token` 固定测试凭证。
-        # 输出：HTTP 状态码。
-        # 逻辑：不同连接、不同幂等键提交同源新闻，末尾关闭连接。
-        # 约束：不捕获未预期异常，不使用生产身份。
+        # Function: Perform a real HTTP write for one employee.
+        # Inputs: `token` is a fixed test credential.
+        # Outputs: HTTP status code.
+        # Logic: Submit same-source news with distinct connections/idempotency keys, then close connections.
+        # Constraints: Do not catch unexpected exceptions or use production identities.
         def create(token):
             close_old_connections()
             try:

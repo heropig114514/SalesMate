@@ -1,18 +1,18 @@
-"""职责：提供当前账号工作空间的本公司资料接口。
-实现：公司规模及显式字段验证、会话权限、owner 行锁和 If-Match 防止越权及并发覆盖；读取不创建记录。
-关联：CompanyProfile 独立于 CRM 客户及销售目标画像；前端 company-settings.js 调用。
-目录：
-- CompanyProfileSerializer：验证并输出公司资料。
-- CompanyProfileSerializer.Meta：声明字段白名单。
-- CompanyProfileView：读取和保存账号自己的公司资料。
-- CompanyProfileView.get：返回已存资料或版本为零的空资料。
-- CompanyProfileView.patch：按版本合并保存并记录非敏感审计日志。
-变量索引：
-- logger：仅记录账号标识、版本及修改字段名。
-- CompanyProfileSerializer.updated_at：只读保存时间，首次未建档时为 null。
-- CompanyProfileSerializer.Meta.model：资料模型。
-- CompanyProfileSerializer.Meta.fields：可见资料及版本字段。
-- CompanyProfileSerializer.Meta.read_only_fields：服务端维护的版本和时间。
+"""Responsibility: Provide company-information endpoints for the current account workspace.
+Implementation: Company-size and explicit-field validation, session permissions, owner row locks, and ``If-Match`` prevent unauthorized access and concurrent overwrites; reads do not create records.
+Relationships: ``CompanyProfile`` is independent of CRM customer and sales-target profiles; ``company-settings.js`` calls these endpoints.
+Directory:
+- CompanyProfileSerializer: Validate and render company information.
+- CompanyProfileSerializer.Meta: Declare the field allowlist.
+- CompanyProfileView: Read and save the account's own company information.
+- CompanyProfileView.get: Return persisted information or an empty profile at version zero.
+- CompanyProfileView.patch: Merge and save by version while recording a non-sensitive audit log.
+Variable index:
+- logger: Records only account identifier, version, and changed field names.
+- CompanyProfileSerializer.updated_at: Read-only save time; null when no profile was first created.
+- CompanyProfileSerializer.Meta.model: Profile model.
+- CompanyProfileSerializer.Meta.fields: Visible profile and version fields.
+- CompanyProfileSerializer.Meta.read_only_fields: Server-maintained version and time.
 """
 
 import logging
@@ -31,40 +31,40 @@ from .models import CompanyProfile
 logger = logging.getLogger(__name__)
 
 
-# 功能：验证并输出公司资料。
-# 逻辑：复用严格字段拒绝规则和模型长度、邮箱与 URL 校验；未建档时间显式允许 null。
-# 约束：不允许 owner、revision 或未知字段写入；公司名称必填，规模 size_band 和其他字段可清空。
+# Function: Validate and render company information.
+# Logic: Reuse strict field-rejection rules and model length, mailbox, and URL validation; a profile not yet created explicitly permits a null timestamp.
+# Constraints: ``owner``, ``revision``, and unknown fields cannot be written; company name is required, while ``size_band`` and other fields may be blank.
 class CompanyProfileSerializer(StrictModelSerializer):
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
-    # 功能：声明字段白名单。
-    # 逻辑：包含公司规模，排除 owner，服务端版本及时间只读。
-    # 约束：不暴露邮箱授权、团队信息或客户资料。
+    # Function: Declare the field allowlist.
+    # Logic: Includes company size, excludes owner, and makes server-managed version and time read-only.
+    # Constraints: Does not expose mailbox authorization, team information, or customer data.
     class Meta:
         model = CompanyProfile
         fields = ["company_name", "industry", "size_band", "website", "email", "phone", "address", "description", "revision", "updated_at"]
         read_only_fields = ["revision", "updated_at"]
 
 
-# 功能：读取和保存账号自己的公司资料。
-# 逻辑：沿用全局 SessionAuthentication/IsAuthenticated，以 request.user 定位唯一记录。
-# 约束：不提供按 ID 访问其他账号的接口；写入受会话 CSRF 和版本约束。
+# Function: Read and save the account's own company information.
+# Logic: Reuse global ``SessionAuthentication`` and ``IsAuthenticated`` and locate the sole record through ``request.user``.
+# Constraints: Provides no ID-based endpoint for other accounts; writes are subject to session CSRF and version constraints.
 class CompanyProfileView(APIView):
-    # 功能：返回已存资料或版本为零的空资料。
-    # 输入：`request` 为认证后的会话请求。
-    # 输出：公司资料和 ETag；未保存时 updated_at 为 null。
-    # 逻辑：未找到记录时构造未保存模型，仅供序列化。
-    # 约束：不写数据库，不触发评分或邮件任务。
+    # Function: Return persisted information or an empty profile at version zero.
+    # Inputs: ``request`` is an authenticated session request.
+    # Outputs: Company information and ETag; ``updated_at`` is null before saving.
+    # Logic: Construct an unsaved model only for serialization when no record is found.
+    # Constraints: Does not write the database or trigger scoring or email jobs.
     @extend_schema(responses=CompanyProfileSerializer, tags=["accounts"])
     def get(self, request):
         profile = CompanyProfile.objects.filter(owner=request.user).first() or CompanyProfile(owner=request.user)
         return Response(CompanyProfileSerializer(profile).data, headers={"ETag": f'"{profile.revision}"'})
 
-    # 功能：按版本合并保存并记录非敏感审计日志。
-    # 输入：`request` 提供字段 JSON 及 If-Match 版本。
-    # 输出：已保存资料；无效字段或缺失版本为 400，过期版本为 409。
-    # 逻辑：先锁用户行，覆盖首次创建的竞争；校验后仅在实际变更时递增版本。
-    # 约束：失败事务不写入；日志不含公司字段值；不改变客户、评分或邮箱配置。
+    # Function: Merge and save by version while recording a non-sensitive audit log.
+    # Inputs: ``request`` supplies field JSON and the ``If-Match`` version.
+    # Outputs: Persisted information; invalid fields or a missing version produce 400, and a stale version produces 409.
+    # Logic: Lock the user row first to cover the race on initial creation; after validation, increment the version only for an actual change.
+    # Constraints: Failed transactions do not write; logs exclude company field values and do not alter customers, scoring, or mailbox configuration.
     @extend_schema(request=CompanyProfileSerializer, responses=CompanyProfileSerializer, tags=["accounts"],
                    parameters=[OpenApiParameter("If-Match", int, OpenApiParameter.HEADER, required=True)])
     @transaction.atomic

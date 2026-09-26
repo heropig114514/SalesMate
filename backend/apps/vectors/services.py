@@ -1,12 +1,12 @@
-"""职责：提供显式输入向量的员工隔离存储和余弦检索。
-实现：验证有限非零向量，限定员工、空间、模型和维度后执行精确相似度查询。
-关联：VectorDocument/pgvector；调用方负责模型选择与嵌入生成，不自动读取历史邮件。
-目录：
-- validate_vector：验证并标准化输入向量。
-- put_document：写入同来源同模型的文档向量。
-- search_documents：在明确的员工和模型范围内执行近邻检索。
-变量索引：
-- logger：文档写入的元数据日志，不记录文本和向量。
+"""Responsibility: Provide employee-isolated storage and cosine retrieval for explicitly supplied vectors.
+Implementation: Validate finite nonzero vectors and run exact similarity queries restricted by employee, namespace, model, and dimensions.
+Relationships: Uses ``VectorDocument`` and pgvector; callers select models and create embeddings, and historical email is never read automatically.
+Directory:
+- validate_vector: Validate and normalize an input vector.
+- put_document: Persist a document vector for the same source and model.
+- search_documents: Run nearest-neighbor retrieval within an explicit employee and model scope.
+Variable index:
+- logger: Metadata logger for document writes; it never records text or vectors.
 """
 import hashlib
 import logging
@@ -19,11 +19,11 @@ from .models import VectorDocument
 logger = logging.getLogger("salesmate.vectors")
 
 
-# 功能：验证向量可以参与余弦距离计算。
-# 输入：`vector` 为数值序列。
-# 输出：float 列表；空、非有限、超出 float32 或零向量抛 ValueError。
-# 逻辑：统一转换并检查 pgvector 单精度范围和最大维度。
-# 约束：不归一化或更改嵌入模型输出的维度。
+# Function: Validate that a vector can participate in cosine-distance calculation.
+# Inputs: ``vector`` is a numeric sequence.
+# Outputs: A list of floats; an empty, non-finite, out-of-float32-range, or zero vector raises ``ValueError``.
+# Logic: Convert consistently and check pgvector single-precision bounds and maximum dimensions.
+# Constraints: Do not normalize the vector or alter dimensions produced by the embedding model.
 def validate_vector(vector):
     values = [float(value) for value in vector]
     if not 1 <= len(values) <= 16000 or not all(math.isfinite(value) and abs(value) <= 3.4028235e38 for value in values) or not any(values):
@@ -31,11 +31,11 @@ def validate_vector(vector):
     return values
 
 
-# 功能：写入显式提供的文本及向量。
-# 输入：`owner` 员工、`namespace` 空间、`source` 来源、`model` 模型版本、`content` 文本、`embedding` 向量。
-# 输出：保存后的 VectorDocument；停用员工或维度不一致明确失败。
-# 逻辑：锁定有效员工序列化写入，校验同模型维度一致，再按唯一键更新内容及摘要。
-# 约束：不调用外部模型、不自动向量化；调用方必须确保向量对应文本。
+# Function: Persist explicitly supplied text and a vector.
+# Inputs: ``owner`` is the employee; ``namespace`` is the space; ``source`` is the source; ``model`` is the model version; ``content`` is text; ``embedding`` is the vector.
+# Outputs: The persisted ``VectorDocument``; an inactive employee or inconsistent dimensions fails explicitly.
+# Logic: Lock the active employee to serialize writes, validate dimensions for the model, then update content and hash by the unique key.
+# Constraints: Do not call an external model or vectorize automatically; callers must ensure that the vector represents the text.
 @transaction.atomic
 def put_document(*, owner, namespace, source, model, content, embedding):
     values = validate_vector(embedding)
@@ -54,11 +54,11 @@ def put_document(*, owner, namespace, source, model, content, embedding):
     return document
 
 
-# 功能：在当前员工的指定向量空间搜索文档。
-# 输入：`owner` 员工、`namespace` 空间、`model` 模型版本、`embedding` 查询向量、`limit` 返回上限。
-# 输出：含 source/content/content_hash/distance 的字典列表，按余弦距离升序。
-# 逻辑：验证员工有效和向量，先限定归属及维度，再计算距离；主键打破相同距离平局。
-# 约束：limit 为 1..100；精确检索无 ANN 索引，不混用模型，不调用外部服务。
+# Function: Search a selected vector namespace for the current employee.
+# Inputs: ``owner`` is the employee; ``namespace`` is the space; ``model`` is the model version; ``embedding`` is the query vector; ``limit`` is the return bound.
+# Outputs: A list of dictionaries containing source, content, content_hash, and distance, in ascending cosine distance.
+# Logic: Validate the active employee and vector, restrict ownership and dimensions before computing distance, and break equal-distance ties by primary key.
+# Constraints: ``limit`` is 1..100; exact retrieval has no ANN index, does not mix models, and calls no external service.
 def search_documents(*, owner, namespace, model, embedding, limit=10):
     values = validate_vector(embedding)
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:

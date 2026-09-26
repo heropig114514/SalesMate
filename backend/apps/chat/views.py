@@ -1,25 +1,25 @@
-"""职责：暴露浏览器聊天操作和固定 Agent 三接口。
-实现：实验模式免登录并跨账号读取，正式模式 Session/CSRF 与 Agent 凭证分离，视图只负责结构校验、分页及事务服务分派。
-关联：config.urls 注册独立路径，复用既有统一异常与 OpenAPI。
-目录：
-- SubmitView：显式提交聊天问题。
-- SubmitView.post：原子创建消息及任务。
-- RequestListView：会话请求列表。
-- RequestListView.get：授权分页读取请求。
-- RequestView：单请求状态查询。
-- RequestView.get：读取权威状态。
-- RetryView：显式失败重试。
-- RetryView.post：创建或返回唯一后继。
-- ClaimView：Agent 原子领取。
-- ClaimView.post：返回零个或一个请求。
-- ContextView：Agent 证据读取。
-- ContextView.post：返回冻结上下文。
-- AnswerView：Agent 幂等回报。
-- AnswerView.post：保存经验证的最终结果。
-变量索引：
-- ClaimView.authentication_classes：员工绑定服务认证。
-- ContextView.authentication_classes：证据读取的独立服务认证。
-- AnswerView.authentication_classes：结果写入的独立服务认证。
+"""Responsibility: Expose browser chat operations and three fixed Agent endpoints.
+Implementation: Experiment mode requires no login and reads across accounts; production Session and CSRF are separate from Agent credentials; views only validate structure, paginate, and dispatch transaction services.
+Relationships: ``config.urls`` registers independent paths and reuses existing unified exceptions and OpenAPI.
+Directory:
+- SubmitView: Explicitly submit chat question.
+- SubmitView.post: Atomically create message and task.
+- RequestListView: Conversation request list.
+- RequestListView.get: Read requests with authorized pagination.
+- RequestView: Single-request status query.
+- RequestView.get: Read authoritative status.
+- RetryView: Explicit failed-request retry.
+- RetryView.post: Create or return unique successor.
+- ClaimView: Agent atomic claim.
+- ClaimView.post: Return zero or one request.
+- ContextView: Agent evidence read.
+- ContextView.post: Return frozen context.
+- AnswerView: Agent idempotent report.
+- AnswerView.post: Save validated final result.
+Variable index:
+- ClaimView.authentication_classes: Employee-bound service authentication.
+- ContextView.authentication_classes: Independent service authentication for evidence read.
+- AnswerView.authentication_classes: Independent service authentication for result write.
 """
 
 from common.laboratory import owner_scope
@@ -35,15 +35,15 @@ from . import contracts, services
 from .models import AnswerRequest
 
 
-# 功能：接收浏览器的明确提问。
-# 逻辑：继承 SessionAuthentication 和登录权限，保留 CSRF。
-# 约束：不在 Web 请求中调用模型。
+# Function: Receive an explicit browser question.
+# Logic: Inherits SessionAuthentication and login permission while retaining CSRF.
+# Constraints: Does not call model during web request.
 class SubmitView(APIView):
-    # 功能：保存问题并入队。
-    # 输入：`request` 带会话、正文和 client_key。
-    # 输出：201 新任务或 200 幂等重传。
-    # 逻辑：委托单事务服务后投影状态。
-    # 约束：员工从登录身份确定，未知字段拒绝。
+    # Function: Save question and queue it.
+    # Inputs: ``request`` includes conversation, content, and client_key.
+    # Outputs: 201 for a new task or 200 for idempotent retransmission.
+    # Logic: Delegates to single-transaction service then projects state.
+    # Constraints: Employee derives from login identity and unknown fields are rejected.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT},
@@ -54,15 +54,15 @@ class SubmitView(APIView):
         return Response(services.request_data(answer), status=201 if created else 200)
 
 
-# 功能：提供会话内回答状态分页。
-# 逻辑：先核验自有客户会话，再读取员工请求。
-# 约束：不允许通过 company 参数覆盖请求绑定。
+# Function: Provide pagination of answer state within conversation.
+# Logic: Validates owned customer conversation before reading employee requests.
+# Constraints: Does not allow company parameter to override request binding.
 class RequestListView(APIView):
-    # 功能：读取稳定排序的请求列表。
-    # 输入：`request` 查询参数 conversation/page/page_size。
-    # 输出：现有 count/results 分页结构。
-    # 逻辑：正式模式按用户过滤，实验模式读取所选会话全部请求；使用既有分页及绑定校验，非法分页返回 400。
-    # 约束：每条结果再次核验绑定，不输出原始快照。
+    # Function: Read stably ordered request list.
+    # Inputs: conversation, page, and page_size query parameters from ``request``.
+    # Outputs: Existing count and results pagination structure.
+    # Logic: Production mode filters by user; experiment mode reads all selected-conversation requests; uses existing pagination and binding checks and invalid pagination returns 400.
+    # Constraints: Rechecks binding for every result and does not output raw snapshots.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="chat_requests_list")
     def get(self, request):
         conversation = services.conversation_for(
@@ -86,15 +86,15 @@ class RequestListView(APIView):
         )
 
 
-# 功能：提供单个回答的轮询状态。
-# 逻辑：独立读取不触发重算或重试。
-# 约束：只能访问完整绑定仍有效的自有请求。
+# Function: Provide polling status for one answer.
+# Logic: Independent read does not trigger recomputation or retry.
+# Constraints: Can access only caller-owned request whose complete binding remains valid.
 class RequestView(APIView):
-    # 功能：读取请求状态与引用。
-    # 输入：`request` 登录请求，`request_id` 路径 UUID。
-    # 输出：浏览器安全状态对象。
-    # 逻辑：统一授权后投影。
-    # 约束：无写入副作用。
+    # Function: Read request status and citations.
+    # Inputs: Logged-in ``request`` and path UUID ``request_id``.
+    # Outputs: Browser-safe state object.
+    # Logic: Projects after unified authorization.
+    # Constraints: No write side effects.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="chat_request_read")
     def get(self, request, request_id):
         return Response(
@@ -102,15 +102,15 @@ class RequestView(APIView):
         )
 
 
-# 功能：接收明确的失败重试操作。
-# 逻辑：创建新尝试，重复提交返回同一后继。
-# 约束：不会复活旧 request_id。
+# Function: Receive explicit failed-request retry.
+# Logic: Creates new attempt and repeated submission returns same successor.
+# Constraints: Does not revive old request_id.
 class RetryView(APIView):
-    # 功能：重新请求回答。
-    # 输入：`request` 空 JSON，`request_id` 原失败请求 UUID。
-    # 输出：201 新尝试或 200 已存在后继。
-    # 逻辑：校验空对象后调用事务服务。
-    # 约束：原结果不覆盖，非失败状态拒绝。
+    # Function: Request answer again.
+    # Inputs: Empty JSON ``request`` and original-failed-request UUID ``request_id``.
+    # Outputs: 201 for new attempt or 200 for existing successor.
+    # Logic: Calls transaction service after validating empty object.
+    # Constraints: Original result is not overwritten and non-failed state is rejected.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -122,17 +122,17 @@ class RetryView(APIView):
         return Response(services.request_data(answer), status=201 if created else 200)
 
 
-# 功能：提供 Agent 固定领取接口。
-# 逻辑：服务凭证映射单个员工。
-# 约束：浏览器 Session 不能调用。
+# Function: Provide fixed Agent claim endpoint.
+# Logic: Service credential maps one employee.
+# Constraints: Browser Session cannot call it.
 class ClaimView(APIView):
     authentication_classes = [AgentAuthentication]
 
-    # 功能：领取至多一条 pending 请求。
-    # 输入：`request` 空 JSON 和 Agent Authorization。
-    # 输出：request 对象或 null。
-    # 逻辑：原子状态转换后返回冻结历史。
-    # 约束：无工作为 200，不自动恢复失败任务。
+    # Function: Claim at most one pending request.
+    # Inputs: Empty JSON ``request`` and Agent Authorization.
+    # Outputs: Request object or null.
+    # Logic: Returns frozen history after atomic state transition.
+    # Constraints: No work is 200 and does not automatically recover failed task.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -143,17 +143,17 @@ class ClaimView(APIView):
         return Response({"request": services.claim(request.user)})
 
 
-# 功能：提供 Agent 固定上下文接口。
-# 逻辑：只接受 request_id 和 scope。
-# 约束：不接受任意 company/query 覆盖。
+# Function: Provide fixed Agent context endpoint.
+# Logic: Accepts only request_id and scope.
+# Constraints: Does not accept arbitrary company or query overrides.
 class ContextView(APIView):
     authentication_classes = [AgentAuthentication]
 
-    # 功能：读取并冻结请求证据。
-    # 输入：`request` 含 request_id/scope。
-    # 输出：严格 AnswerContext。
-    # 逻辑：校验身份后执行事务快照服务。
-    # 约束：未启用的 external 返回明确错误。
+    # Function: Read and freeze request evidence.
+    # Inputs: ``request`` contains request_id and scope.
+    # Outputs: Strict ``AnswerContext``.
+    # Logic: Runs transaction snapshot service after identity validation.
+    # Constraints: Unenabled external returns explicit error.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,
@@ -170,17 +170,17 @@ class ContextView(APIView):
         )
 
 
-# 功能：提供 Agent 固定结果回报接口。
-# 逻辑：受保护服务创建 assistant 消息，不放开浏览器普通消息权限。
-# 约束：无跨员工写入或结果覆盖。
+# Function: Provide fixed Agent result-report endpoint.
+# Logic: Protected service creates assistant message and does not open browser ordinary-message permission.
+# Constraints: No cross-employee write or result overwrite.
 class AnswerView(APIView):
     authentication_classes = [AgentAuthentication]
 
-    # 功能：幂等持久化最终回答。
-    # 输入：`request` 严格 completed/failed 回报。
-    # 输出：saved/duplicate/assistant_message_id。
-    # 逻辑：校验回报 Schema、权限和状态后原子保存，不判断正文和引用真实性。
-    # 约束：成功重复回报仍返回 saved=true。
+    # Function: Idempotently persist final answer.
+    # Inputs: Strict completed or failed report ``request``.
+    # Outputs: saved, duplicate, and assistant_message_id.
+    # Logic: Atomically saves after validating report Schema, permission, and state without judging truth of content or citations.
+    # Constraints: Successful duplicate report still returns saved=true.
     @extend_schema(
         request=OpenApiTypes.OBJECT,
         responses=OpenApiTypes.OBJECT,

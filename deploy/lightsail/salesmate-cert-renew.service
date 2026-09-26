@@ -1,8 +1,10 @@
-# 职责：检查已配置的 IP 和域名证书是否到期并在需要时续期。
-# 实现：Certbot 保留 ACME 验证与失败日志，成功续期后检查并重载 Nginx。
-# 关联：salesmate-cert-renew.timer；网站 80 端口必须保持 ACME 验证路径可达。
-# 目录：无函数或类。
-# 变量索引：ExecStart 为续期命令及成功后部署钩子。
+# Responsibility: Check configured IP and domain certificates for expiry and renew when required.
+# Implementation: Certbot retains ACME validation and failure logs; Nginx is tested and reloaded after successful renewal.
+# Relationships: salesmate-cert-renew.timer; port 80 must keep the ACME path reachable.
+# Directory:
+# - None
+# Variable index:
+# - ExecStart: Renewal command and successful-renewal deployment hook.
 [Unit]
 Description=Renew SalesMate IP and domain TLS certificates
 After=network-online.target nginx.service

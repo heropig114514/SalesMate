@@ -1,13 +1,13 @@
-"""职责：维护邮件业务分类及人工复核的有效判断。
-实现：实验模式使用公开跨账号业务范围；无采购阶段的入站邮件进入复核，人工结果优先；分类变化沿血缘失效并自动修正。
-关联：ingestion 更新机器分类，processing_views 按邮箱展示带来源的原文与复核；selectors 只投影业务邮件。
-目录：
-- automatic_classification：把抽取状态映射为业务分类。
-- apply_classification：更新无人工覆盖的邮件分类。
-- review_data：序列化原文证据和复核版本。
-- review_email：在公司锁内保存人工决定和审计。
-变量索引：
-- logger：只记录实体、分类和操作类型的诊断日志。
+"""Responsibility: Maintain valid email business classification and human-review decisions.
+Implementation: Experiment mode uses a public cross-account business scope; inbound messages without a purchasing stage enter review, human results take precedence, and classification changes invalidate and repair lineage automatically.
+Relationships: ingestion updates machine classification, processing_views displays sourced original text and review per mailbox, and selectors projects business emails only.
+Directory:
+- automatic_classification: Map extraction status to business classification.
+- apply_classification: Update email classification when no human override exists.
+- review_data: Serialize source evidence and review version.
+- review_email: Save a human decision and audit it under the company lock.
+Variable index:
+- logger: Diagnostic logger that records only entity, classification, and operation type.
 """
 
 from common.laboratory import owner_scope
@@ -23,11 +23,11 @@ from .models import Email
 logger = logging.getLogger("salesmate.classification")
 
 
-# 功能：按需求文档计算机器分类。
-# 输入：`status` 为抽取状态，`facts` 为事实或 None，`payload` 为原始邮件载荷。
-# 输出：分类、来源、理由三元组。
-# 逻辑：规则跳过隐藏；无采购阶段的入站邮件送复核，不再以有无实质更新区分。
-# 约束：外发无阶段及 failed 不额外隐藏；不调用模型。
+# Function: Calculate machine classification according to the requirements document.
+# Inputs: `status` is extraction status, `facts` is facts or None, and `payload` is the source email payload.
+# Outputs: A classification, source, and reason triple.
+# Logic: Hide rule-skipped messages; send inbound messages without a purchasing stage to review, no longer distinguishing them by substantive update.
+# Constraints: Does not additionally hide outbound messages without a stage or failed messages, and does not call a model.
 def automatic_classification(status, facts, payload):
     if status == "skipped_non_business":
         return "non_business", "rule", payload.get("non_business_reason") or "规则判定为非业务邮件。"
@@ -37,11 +37,11 @@ def automatic_classification(status, facts, payload):
     return "business", "llm" if status == "completed" else "rule", "保留业务往来；是否重算由实质更新字段决定。"
 
 
-# 功能：保存机器分类且保留人工判断。
-# 输入：`email` 为邮件实例，`extraction` 为本次抽取实例。
-# 输出：无；有人工决定时不写入。
-# 逻辑：分类字段独立保存，不修改不可变 payload 或抽取历史。
-# 约束：调用者管理事务和公司 revision；不独立入队。
+# Function: Save machine classification while preserving human judgment.
+# Inputs: `email` is an email instance and `extraction` is this extraction instance.
+# Outputs: None; does not write when a human decision exists.
+# Logic: Save classification fields independently without modifying immutable payload or extraction history.
+# Constraints: The caller manages transactions and company revision; does not queue independently.
 def apply_classification(email, extraction):
     if email.classification_source == "human":
         return
@@ -50,11 +50,11 @@ def apply_classification(email, extraction):
     email.save(update_fields=["business_classification", "classification_source", "classification_reason", "review_revision"])
 
 
-# 功能：返回复核所需的邮件原文与证据。
-# 输入：`email` 为已按邮箱 owner 授权的 Email。
-# 输出：原文、来源、日期和分类的 JSON 字典，不含 OAuth 凭证。
-# 逻辑：来源取邮件本体，选最新抽取展示分类依据及补抽取状态，revision 用于并发确认；错误为受控代码。
-# 约束：业务列表隐藏不影响复核原文可读性。
+# Function: Return source email text and evidence required for review.
+# Inputs: `email` is an Email authorized through its mailbox owner.
+# Outputs: JSON dictionary of source text, origin, date, and classification, excluding OAuth credentials.
+# Logic: Take the source from the email itself, use the latest extraction for classification basis and repair status, and use revision for concurrent confirmation; errors are controlled codes.
+# Constraints: Hiding entries in business lists does not affect review-source readability.
 def review_data(email):
     extraction = email.extractions.order_by("-pk").first()
     facts = extraction.facts or {} if extraction else {}
@@ -70,11 +70,11 @@ def review_data(email):
             "repair_status": repair.status if repair else None, "repair_error": repair.error if repair else None}
 
 
-# 功能：保存人工确认并使受影响画像失效。
-# 输入：`owner` 为登录员工，`email_id` 为邮件键，`decision` 为确认状态，`expected` 为复核版本。
-# 输出：更新后的复核表示。
-# 逻辑：按当前模式查找邮件，实验模式跨账号；锁公司与邮件后保存人工决定并传播失效，保留补抽取及剩余来源重算流程。
-# 约束：同一决定不改变版本，但再次确认业务可明确重排失败补抽取；无剩余业务邮件则停止画像。
+# Function: Save human confirmation and invalidate affected profiles.
+# Inputs: `owner` is the signed-in employee, `email_id` is the email key, `decision` is confirmation status, and `expected` is the review version.
+# Outputs: Updated review representation.
+# Logic: Find the email according to the current mode, crossing accounts in experiment mode; lock company and email, save the human decision, and propagate invalidation while retaining repair and remaining-source recomputation flows.
+# Constraints: The same decision does not change version, though reconfirming business can explicitly reschedule failed repairs; profiling stops when no business messages remain.
 @transaction.atomic
 def review_email(owner, email_id, decision, expected):
     from apps.sales.services import audit
@@ -101,7 +101,7 @@ def review_email(owner, email_id, decision, expected):
     email.save(update_fields=["review_status", "business_classification", "classification_source", "classification_reason", "reviewed_by", "reviewed_at", "review_revision"])
     company.revision += 1
     company.save(update_fields=["revision"])
-    # 更改决定撤销旧补抽取，运行中的模型回报通过状态与 review_revision 拒绝。
+    # A changed decision cancels old repair extraction; reports from running models are rejected by status and review_revision.
     email.repairs.filter(status__in=["pending", "running", "failed"]).update(status="skipped")
     invalidate_email(email, "classification_changed")
     if decision == "confirmed_business":

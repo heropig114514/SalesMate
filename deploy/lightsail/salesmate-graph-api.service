@@ -1,0 +1,33 @@
+# Responsibility: Run the semantic-graph experimental backend against an isolated database.
+# Implementation: Expose loopback HTTP only through an SSH tunnel; use dedicated credentials and the established 300-second model timeout.
+# Relationships: runtime.env supplies the dedicated database and Django secret; stdio MCP calls the HTTP tool interface.
+# Directory:
+# - None
+# Variable index:
+# - workers/threads: Limit experimental-request concurrency.
+# - timeout: Set to 360 seconds to cover model timeout and graph synchronization.
+[Unit]
+Description=SalesMate isolated semantic graph API
+After=network.target postgresql.service salesmate-graph-model.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=salesmate-graph
+Group=salesmate-graph
+WorkingDirectory=/opt/salesmate-semantic/app/backend
+EnvironmentFile=/opt/salesmate-semantic/runtime.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.base
+Environment=PYTHONPATH=/opt/salesmate-semantic/app
+ExecStart=/opt/salesmate-semantic/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8090 --workers 1 --threads 2 --timeout 360 --graceful-timeout 360 --access-logfile - --error-logfile -
+Restart=no
+Nice=10
+CPUWeight=20
+TimeoutStopSec=370
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

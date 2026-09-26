@@ -1,56 +1,54 @@
-# 后端适配 extract-v7 与 L4 暂定分
+# Backend adaptation for extract-v7 and provisional L4 scores
 
-## 已实现的接口和状态边界
+## Implemented API and state boundaries
 
-### 历史事实升级
+### Historical fact upgrades
 
-`GET /api/v1/companies/{company_id}/extraction-upgrade/` 使用已登录员工 Session，只返回其拥有的客户。响应 ETag 是客户 revision；版本统计只计算每封业务邮件的最新抽取，历史版本不重复计数。响应包括 `target_version`、`versions`、`incompatible_emails`、`repairs`（pending/running/failed）。GET 不写库或调用模型。
+`GET /api/v1/companies/{company_id}/extraction-upgrade/` uses the authenticated employee Session and returns only owned companies. The response ETag is the company revision. Version statistics count only each business email's latest extraction, without recounting historical versions. Responses include `target_version`, `versions`, `incompatible_emails`, and `repairs` (pending/running/failed). GET neither writes the database nor calls models.
 
-使用 GET 返回的 ETag 请求 `POST` 同一路径，正文为空对象 `{}`，并按现有 Session API 提供 CSRF Token 和 `If-Match`。成功返回 202、新 ETag、`created`、`reused`、`revision` 和最新预览。越权返回 404，缺少或过期的 If-Match 按既有版本协议拒绝。不接收调用者自报的事实、模型或提示词参数。
+Use the GET ETag to `POST` to the same path with an empty object `{}`, supplying CSRF Token and `If-Match` according to the existing Session API. Success returns 202, a new ETag, `created`, `reused`, `revision`, and the latest preview. Unauthorized access returns 404; missing/stale If-Match follows the existing version protocol. Caller-supplied facts, model selections, and prompt parameters are not accepted.
 
-POST 只排队当前业务邮件中与目标版本不同的最新抽取；现有 pending/running 修复复用，failed 修复只在这次明确操作后重排。排队不改写旧事实或人工决定，新建任务会推进公司 revision 并更新现有分析任务。当前版本的普通失败抽取继续使用既有事实补交/人工复核流程。
+POST enqueues only the latest extractions of current business emails whose versions differ from the target. Existing pending/running repairs are reused; failed repairs are requeued only after this explicit operation. Enqueueing preserves old facts and manual decisions. New tasks advance company revision and update existing analysis tasks. Ordinary failed extractions already at the current version retain the existing fact-resubmission/manual-review workflow.
 
-既有 `crm_worker` 消费修复队列，从 StoredMessage 原文（旧记录可用 Email 已存正文）按当前 L1 提示词及配置模型重抽取，不重新读取 Gmail/QQ。新结果以新的 Extraction 记录保存；原文、旧事实及旧版本保留。保存前重新核验任务租期、来源、人工复核版本、方向及原文证据，拒绝已经过期的结果。机器分类按新事实更新，人工分类决定优先；若新事实无采购阶段，可进入 needs_review。
+The existing `crm_worker` consumes repairs and re-extracts StoredMessage source text (or persisted Email bodies for legacy records) using current L1 prompts and configured models, without rereading Gmail/QQ. New results are saved as new Extraction records; original text, facts, and versions remain. Before saving, revalidate lease, source, manual-review version, direction, and source evidence, rejecting expired results. Machine classification updates from new facts, with manual classification taking precedence; missing procurement stages may produce needs_review.
 
-pending/running/failed 修复会阻塞该客户的分析领取；成功保存传播血缘失效并排队重分析，失败不自动重试。仅凭升级 POST 返回 202 不能认为画像或评分已完成。Worker 是否在部署环境运行仍由既有服务管理负责；本次没有启动本地邮箱同步 Worker，以免消费其他待办。
+pending/running/failed repairs block analysis claims for that company. Successful saves propagate lineage invalidation and enqueue reanalysis; failures are not retried automatically. An upgrade POST returning 202 alone does not establish completed profiles or scores. Existing service management remains responsible for running workers in deployment. No local mailbox synchronization worker was started in this update, to avoid consuming unrelated pending work.
 
-在 agent 模式下，客户分析 POST 检测到旧事实会返回 409 并提示升级入口，不自动把旧阶段映射为新阶段，也不会自动调用模型改写实验条件。规则联调模式保持既有行为。
+In agent mode, company analysis POST returns 409 with the upgrade entry point when it detects old facts. It neither maps old stages to new ones nor automatically calls models to alter experimental conditions. Rule-based integration mode retains existing behavior.
 
-### v7 方向约束
+### v7 direction constraints
 
-新邮件提交、失败事实补交及 Worker 修复结果保存均校验：只有 inbound 邮件能声明非空采购阶段；outbound/unknown 必须为 null，证据数组也须为空。依据仍须定位于已存原文。不静默删除无效阶段，不把未知猜成 L1。
+New email submissions, failed-fact resubmissions, and worker repair saves all enforce: only inbound emails may declare nonempty procurement stages; outbound/unknown must use null with empty evidence arrays. Evidence must still occur in persisted source text. Do not silently discard invalid stages or infer L1 from unknown.
 
-### L4 暂定分
+### Provisional L4 scores
 
-保留远端 score-v2 的评分算法与权重。后端允许非空分数携带完整空解释：
+Retain the remote score-v2 algorithm and weights. The backend allows nonnull scores with a completely empty explanation:
 
 ```json
 {"score_breakdown": null, "top_reasons": [], "evidence": [], "recommended_next_action": null}
 ```
 
-这表示 Agent 尚未提供可展示分项，不表示分项为零。贡献项仍须完整、非负且严格加总为分数；不完整的半空解释仍拒绝。非空解释仍检查分项、贡献、证据原文与当前公司来源归属。详情接口原样提供 `score_detail.score_details`，前端应展示已有 score_reasons，不把空解释显示成零。
+This means Agent has not supplied displayable components, not that components equal zero. Contributions must still be complete, nonnegative, and sum exactly to the score; partially empty explanations remain invalid. Nonempty explanations still validate components, contributions, source excerpts, and current-company source ownership. Detail APIs expose `score_detail.score_details` unchanged; frontends should display existing score_reasons without rendering empty explanations as zero.
 
-## 与 Agent/前端的分工
+## Responsibilities shared with Agent/frontend
 
-- 前端可在分析返回旧事实错误后，先显示升级预览，再由用户明确提交升级；本次提供后端接口，没有新增前端按钮。
-- 时间信号生成仍需 Agent 适配：当前 L2 重建 signals 时只保留采购阶段，后端不能单独恢复截止日期等信号。不能仅在后端塞入 signals，因为会被 L2 覆盖。既有后端销售方资料、商机金额与历史成交口径不变。
-- score-v2 名称未区分远端变更前后的算法，实验结果仍需同时记录代码提交。统一评分版本的更名应与 Agent 和前端协作，本次不单独更改协议版本。
-- 实验 JS 仍为 v6；其升级及新的实验批次尚未执行。本接口不把旧事实直接改标签为 v7。
+- After analysis reports old facts, the frontend can display an upgrade preview and require explicit user submission. This update provides backend APIs without adding a frontend button.
+- Temporal-signal generation still requires Agent adaptation: current L2 rebuilds signals using procurement stages only, so the backend alone cannot restore deadline signals. Injecting backend signals alone is insufficient because L2 overwrites them. Existing seller-profile, opportunity-amount, and historical-transaction definitions remain unchanged.
+- score-v2 does not distinguish the algorithm before/after the remote change; experiments must also record code commits. Coordinate a scoring-version rename with Agent and frontend; this update does not change the protocol version independently.
+- Experiment JS remains v6; its upgrade and new experiment batches have not been executed. This API does not simply relabel old facts as v7.
 
-## 验证范围
+## Validation scope
 
-使用隔离 PostgreSQL 测试库与固定模型替身验证升级授权、只读预览、版本锁、复用、失败不重试、旧事实保留、原文重用、人工决定变化、方向约束、机器分类刷新及暂定分保存。实际模型质量、真实历史批次升级和生产部署另行执行；本次没有改写真实历史数据、提交 Git 或部署。
+An isolated PostgreSQL test database and fixed model doubles verify upgrade authorization, read-only previews, version locks, reuse, no automatic failure retry, old-fact retention, source reuse, manual-decision changes, direction constraints, machine classification refresh, and provisional-score persistence. Actual model quality, real historical-batch upgrades, and production deployment require separate execution. This update did not rewrite real history, commit Git changes, or deploy.
 
+Actual checks for this update:
 
-本次实际检查结果：
+- 70 targeted backend regressions passed, covering historical upgrades, scoring, durable lineage, email processing, and chat.
+- Of 185 complete backend regressions (excluding disabled QQ-specific tests), 184 passed and 1 failed because the new API was absent from the OpenAPI snapshot. After regenerating the contract, that test passed independently. No assertions were changed or tests removed.
+- OpenAPI generation/specification validation, Django check, makemigrations --check --dry-run, and git diff --check passed; no new database migrations.
+- Python comment/directory checks covered 166 files, with 0 errors and 0 review items in change checks. Natural-language semantics and API descriptions were manually reviewed. Changes remained uncommitted; commit atomicity was not claimed.
+- Local Web was restarted; actual company lists, sales overview, and new upgrade previews returned HTTP 200. Only GET previews were invoked; no real account upgrades were queued.
 
-- 70 项针对性后端回归通过，覆盖历史升级、评分、持久血缘、邮件处理和聊天。
-- 完整后端回归（排除已禁用 QQ 专项）185 项中，184 项通过，1 项因新增接口未同步 OpenAPI 快照失败；同步生成契约后，该项单独复测通过。没有改动测试断言或删除用例。
-- OpenAPI 生成及规范校验、Django check、makemigrations --check --dry-run、git diff --check 通过；无新增数据库迁移。
-- Python 注释/目录检查覆盖 166 文件，变更检查 0 错误、0 待复核；自然语言语义及接口说明已人工核对。改动尚未提交，未声称验证提交原子性。
-- 本地 Web 已重启；真实客户列表、销售概览、新升级预览均返回 HTTP 200。仅调用 GET 预览，没有对真实账户排队升级。
+Additional concurrency, rollback, lease, and mixed-batch white-box verification appears in the [white-box test record](extraction-upgrade-whitebox-tests.md).
 
-
-补充的并发、回滚、租约和混合批次白盒验证见 [白盒测试记录](extraction-upgrade-whitebox-tests.md)。
-
-最新白盒补测结果：新增 9 项，升级模块 16 项通过；随后完整后端回归 194 项一次性全部通过（QQ 专项仍排除），覆盖此前 OpenAPI 契约复测事项。
+Latest supplemental results: 9 tests added and 16 upgrade-module tests passed; subsequently all 194 complete backend regressions passed in one run (QQ-specific tests still excluded), covering the earlier OpenAPI contract recheck.

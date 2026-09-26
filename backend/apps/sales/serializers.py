@@ -1,161 +1,161 @@
-"""职责：校验销售业务接口与关系引用，并生成明确的 OpenAPI 字段。
-实现：公开新闻校验单组销售线索、来源金额与证据，不生成或关联 CRM；通用资源同时注册独立商机信号和评分，不执行算法；活动资讯校验日期精度、来源及授权关联，并在所有读取入口过滤私有商机标识；显式字段白名单、只读状态保护和授权关系查询；商机接收规范产品名称，金额计算使用 Decimal。
-关联：views 选择具体序列化器，services 再执行事务、跨实体和状态校验。
-目录：
-- ZonedDateTimeField：活动资讯时间及字段验证。
-- ZonedDateTimeField.to_internal_value：活动资讯时间及字段验证。
-- WorldEventSerializer：活动资讯时间及字段验证。
-- WorldEventSerializer.validate：活动资讯时间及字段验证。
-- WorldEventSerializer.to_representation：过滤无权读取的商机标识，返回明确日期范围。
-- WorldEventSerializer.Meta：活动资讯时间及字段验证。
-- WorldNewsSerializer：公共新闻、单组销售线索和来源金额契约。
-- WorldNewsSerializer.validate：合并更新校验金额证据，再验证来源去重。
-- WorldNewsSerializer.Meta：声明基础新闻和十三个可选公共线索字段。
-- ConnectionSerializer：连接安全字段。
-- ConnectionSerializer.Meta：字段配置。
-- StrictModelSerializer：拒绝未知或只读输入并按用户限制关系。
-- StrictModelSerializer.to_internal_value：拒绝未经声明的写入。
-- StrictModelSerializer.get_fields：限制关系字段可引用的对象。
-- DocumentSerializer：为报价和订单输出金额与行项目。
-- DocumentSerializer.get_total：计算当前有效行项目净额。
-- DocumentSerializer.get_lines：返回行项目快照。
-- CompanySettingsSerializer：客户生命周期和人工主要联系人设置的授权字段契约。
-- CompanySettingsSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- CompanyAliasSerializer：人工确认的域名或联系人归组映射的授权字段契约。
-- CompanyAliasSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- ContactProfileSerializer：人工联系人补充资料的授权字段契约。
-- ContactProfileSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- TeamSerializer：拥有明确管理者的业务团队的授权字段契约。
-- TeamSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- MembershipSerializer：团队成员及角色的授权字段契约。
-- MembershipSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- CompanyGrantSerializer：公司业务记录共享授权的授权字段契约。
-- CompanyGrantSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- ProductSerializer：商品目录与人工库存记录的授权字段契约。
-- ProductSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- TicketSerializer：客户服务工单的授权字段契约。
-- TicketSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- OpportunitySerializer：销售商机与管线的授权字段契约。
-- OpportunitySerializer.Meta：声明本实体字段和不可直接写入的状态。
-- QuoteSerializer：有审核与真实外发证据的报价单的授权字段契约。
-- QuoteSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- QuoteLineSerializer：报价明细快照的授权字段契约。
-- QuoteLineSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- SalesOrderSerializer：客户订单及确认状态的授权字段契约。
-- SalesOrderSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- OrderLineSerializer：订单明细快照的授权字段契约。
-- OrderLineSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- FollowUpSerializer：客户跟进与到期提醒的授权字段契约。
-- FollowUpSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- ConversationSerializer：员工自己的通用或客户助手会话的授权字段契约。
-- ConversationSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- MessageSerializer：不可变会话消息的授权字段契约。
-- MessageSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- DraftSerializer：私有会话中的可编辑草稿的授权字段契约。
-- DraftSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- ToolActionSerializer：明确确认的外部工具动作与执行状态的授权字段契约。
-- ToolActionSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- AttachmentSerializer：员工私有文件及客户关联的授权字段契约。
-- AttachmentSerializer.Meta：声明本实体字段和不可直接写入的状态。
-- NotificationSerializer：应用内到期提醒的授权字段契约。
-- NotificationSerializer.Meta：声明本实体字段和不可直接写入的状态。
-变量索引：
-- WorldEventSerializer.starts_on：日期型活动的包含式开始日期，只读。
-- WorldEventSerializer.ends_on：日期型活动的包含式结束日期，只读。
-- WorldEventSerializer.source_url：来源格式校验；条件去重由 insights 和数据库负责，避免对人工来源施加唯一性。
-- WorldNewsSerializer.source_url：新闻来源格式校验；跨账号 Agent 去重由 insights 和数据库负责。
-- WorldEventSerializer.Meta.validators：关闭 DRF 自动条件唯一校验，使用显式 409 契约。
-- WorldNewsSerializer.Meta.validators：关闭 DRF 自动条件唯一校验，保留手工条件和数据库约束。
-- WorldEventSerializer.latitude：显式验证 latitude 的类型与边界。
-- WorldEventSerializer.longitude：显式验证 longitude 的类型与边界。
-- WorldEventSerializer.country：显式验证 country 的类型与边界。
-- WorldEventSerializer.starts_at：显式验证 starts_at 的类型与边界。
-- WorldEventSerializer.ends_at：显式验证 ends_at 的类型与边界。
-- WorldEventSerializer.registration_deadline：显式验证 registration_deadline 的类型与边界。
-- WorldEventSerializer.onsite：显式验证 onsite 的类型与边界。
-- WorldEventSerializer.suggested_actions：显式验证 suggested_actions 的类型与边界。
-- WorldEventSerializer.opportunity_ids：显式验证 opportunity_ids 的类型与边界。
-- WorldNewsSerializer.published_at：显式验证 published_at 的类型与边界。
-- WorldNewsSerializer.country：显式验证 country 的类型与边界。
-- WorldNewsSerializer.summary：显式验证 summary 的类型与边界。
-- WorldNewsSerializer.content：显式验证 content 的类型与边界。
-- WorldNewsSerializer.amount：非负十进制字符串，24 位整数与 6 位小数；返回固定精度字符串或 null。
-- WorldNewsSerializer.evidence：保留原文空白，最长 600 字符。
-- WorldNewsSerializer.amount_evidence：保留金额原文空白，最长 400 字符。
-- WorldEventSerializer.Meta.model：声明对应模型。
-- WorldEventSerializer.Meta.fields：声明公开字段。
-- WorldEventSerializer.Meta.read_only_fields：声明服务端维护字段。
-- WorldNewsSerializer.Meta.model：声明对应模型。
-- WorldNewsSerializer.Meta.fields：声明公开字段。
-- WorldNewsSerializer.Meta.read_only_fields：声明服务端维护字段。
-- OpportunitySerializer.product_names：规范产品名称的显式数组；省略沿用原值，null 或空数组表示未知。
-- ConnectionSerializer.Meta.model：连接模型。
-- ConnectionSerializer.Meta.fields：无凭证字段清单。
-- ConnectionSerializer.Meta.read_only_fields：所有字段只读。
-- DocumentSerializer.total：以字符串返回的单币种净额，不含税费。
-- DocumentSerializer.lines：当前有效行项目列表。
-- SERIALIZERS：业务路由名到具体序列化器的白名单。
-- CompanySettingsSerializer.Meta.model：对应 CompanySettings 关系模型。
-- CompanySettingsSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- CompanySettingsSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- CompanyAliasSerializer.Meta.model：对应 CompanyAlias 关系模型。
-- CompanyAliasSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- CompanyAliasSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- ContactProfileSerializer.Meta.model：对应 ContactProfile 关系模型。
-- ContactProfileSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- ContactProfileSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- TeamSerializer.Meta.model：对应 Team 关系模型。
-- TeamSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- TeamSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- MembershipSerializer.Meta.model：对应 Membership 关系模型。
-- MembershipSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- MembershipSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- CompanyGrantSerializer.Meta.model：对应 CompanyGrant 关系模型。
-- CompanyGrantSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- CompanyGrantSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- ProductSerializer.Meta.model：对应 Product 关系模型。
-- ProductSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- ProductSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- TicketSerializer.Meta.model：对应 Ticket 关系模型。
-- TicketSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- TicketSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- OpportunitySerializer.Meta.model：对应 Opportunity 关系模型。
-- OpportunitySerializer.Meta.fields：明确允许返回及校验的字段集合。
-- OpportunitySerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- QuoteSerializer.Meta.model：对应 Quote 关系模型。
-- QuoteSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- QuoteSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- QuoteLineSerializer.Meta.model：对应 QuoteLine 关系模型。
-- QuoteLineSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- QuoteLineSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- SalesOrderSerializer.Meta.model：对应 SalesOrder 关系模型。
-- SalesOrderSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- SalesOrderSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- OrderLineSerializer.Meta.model：对应 OrderLine 关系模型。
-- OrderLineSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- OrderLineSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- FollowUpSerializer.Meta.model：对应 FollowUp 关系模型。
-- FollowUpSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- FollowUpSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- ConversationSerializer.Meta.model：对应 Conversation 关系模型。
-- ConversationSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- ConversationSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- MessageSerializer.Meta.validators：消息幂等键由事务检查，允许相同内容重复提交。
-- MessageSerializer.Meta.model：对应 Message 关系模型。
-- MessageSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- MessageSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- DraftSerializer.Meta.model：对应 Draft 关系模型。
-- DraftSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- DraftSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- ToolActionSerializer.Meta.model：对应 ToolAction 关系模型。
-- ToolActionSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- ToolActionSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- AttachmentSerializer.Meta.model：对应 Attachment 关系模型。
-- AttachmentSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- AttachmentSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
-- NotificationSerializer.Meta.model：对应 Notification 关系模型。
-- NotificationSerializer.Meta.fields：明确允许返回及校验的字段集合。
-- NotificationSerializer.Meta.read_only_fields：服务层维护的身份、版本及执行状态。
+"""Responsibility: Validate sales APIs and relation references and declare explicit OpenAPI fields.
+Implementation: Public news validates one set of sales leads, source amounts, and evidence without generating/linking CRM. Generic resources register opportunity signals/scores without executing algorithms. Events/news validate date precision, sources, and authorized links, filtering private opportunity IDs at all read entry points. Use explicit field allowlists, read-only state protection, and authorized relation queries; opportunities accept canonical product names and amounts use Decimal.
+Relationships: views selects concrete serializers; services additionally validates transactions, cross-entity relationships, and state.
+Directory:
+- ZonedDateTimeField: Event/news time and field validation.
+- ZonedDateTimeField.to_internal_value: Event/news time and field validation.
+- WorldEventSerializer: Event/news time and field validation.
+- WorldEventSerializer.validate: Event/news time and field validation.
+- WorldEventSerializer.to_representation: Filter inaccessible opportunity IDs and return explicit date ranges.
+- WorldEventSerializer.Meta: Event/news time and field validation.
+- WorldNewsSerializer: Public-news, single-lead-set, and source-amount contract.
+- WorldNewsSerializer.validate: Validate amount evidence after merging updates, then validate source deduplication.
+- WorldNewsSerializer.Meta: Declare base news fields and thirteen optional public lead fields.
+- ConnectionSerializer: Safe connection fields.
+- ConnectionSerializer.Meta: Field configuration.
+- StrictModelSerializer: Reject unknown/read-only inputs and restrict relations per user.
+- StrictModelSerializer.to_internal_value: Reject undeclared writes.
+- StrictModelSerializer.get_fields: Restrict objects referenceable by relation fields.
+- DocumentSerializer: Output amounts and line items for quotes/orders.
+- DocumentSerializer.get_total: Calculate net amounts of currently active line items.
+- DocumentSerializer.get_lines: Return line-item snapshots.
+- CompanySettingsSerializer: Authorized field contract for company lifecycle and manual primary-contact settings.
+- CompanySettingsSerializer.Meta: Declare entity fields and states not directly writable.
+- CompanyAliasSerializer: Authorized field contract for manually confirmed domain/contact grouping mappings.
+- CompanyAliasSerializer.Meta: Declare entity fields and states not directly writable.
+- ContactProfileSerializer: Authorized field contract for supplemental manual contact details.
+- ContactProfileSerializer.Meta: Declare entity fields and states not directly writable.
+- TeamSerializer: Authorized field contract for business teams with explicit managers.
+- TeamSerializer.Meta: Declare entity fields and states not directly writable.
+- MembershipSerializer: Authorized field contract for team membership and roles.
+- MembershipSerializer.Meta: Declare entity fields and states not directly writable.
+- CompanyGrantSerializer: Authorized field contract for company business-record sharing grants.
+- CompanyGrantSerializer.Meta: Declare entity fields and states not directly writable.
+- ProductSerializer: Authorized field contract for product catalogs and manual inventory.
+- ProductSerializer.Meta: Declare entity fields and states not directly writable.
+- TicketSerializer: Authorized field contract for customer service tickets.
+- TicketSerializer.Meta: Declare entity fields and states not directly writable.
+- OpportunitySerializer: Authorized field contract for sales opportunities and pipelines.
+- OpportunitySerializer.Meta: Declare entity fields and states not directly writable.
+- QuoteSerializer: Authorized field contract for reviewed quotes with genuine external-send evidence.
+- QuoteSerializer.Meta: Declare entity fields and states not directly writable.
+- QuoteLineSerializer: Authorized field contract for quote line snapshots.
+- QuoteLineSerializer.Meta: Declare entity fields and states not directly writable.
+- SalesOrderSerializer: Authorized field contract for customer orders and confirmation states.
+- SalesOrderSerializer.Meta: Declare entity fields and states not directly writable.
+- OrderLineSerializer: Authorized field contract for order line snapshots.
+- OrderLineSerializer.Meta: Declare entity fields and states not directly writable.
+- FollowUpSerializer: Authorized field contract for customer follow-ups and due reminders.
+- FollowUpSerializer.Meta: Declare entity fields and states not directly writable.
+- ConversationSerializer: Authorized field contract for employees' own general/company assistant conversations.
+- ConversationSerializer.Meta: Declare entity fields and states not directly writable.
+- MessageSerializer: Authorized field contract for immutable conversation messages.
+- MessageSerializer.Meta: Declare entity fields and states not directly writable.
+- DraftSerializer: Authorized field contract for editable drafts in private conversations.
+- DraftSerializer.Meta: Declare entity fields and states not directly writable.
+- ToolActionSerializer: Authorized field contract for explicitly confirmed external-tool actions and execution states.
+- ToolActionSerializer.Meta: Declare entity fields and states not directly writable.
+- AttachmentSerializer: Authorized field contract for employee-private files and company links.
+- AttachmentSerializer.Meta: Declare entity fields and states not directly writable.
+- NotificationSerializer: Authorized field contract for in-app due reminders.
+- NotificationSerializer.Meta: Declare entity fields and states not directly writable.
+Variable index:
+- WorldEventSerializer.starts_on: Inclusive start date of date-only events, read-only.
+- WorldEventSerializer.ends_on: Inclusive end date of date-only events, read-only.
+- WorldEventSerializer.source_url: Source-format validation; insights and the database handle conditional deduplication, avoiding uniqueness constraints on manual sources.
+- WorldNewsSerializer.source_url: News source-format validation; insights and the database handle cross-account Agent deduplication.
+- WorldEventSerializer.Meta.validators: Disable automatic DRF conditional uniqueness validation in favor of the explicit 409 contract.
+- WorldNewsSerializer.Meta.validators: Disable automatic DRF conditional uniqueness validation while retaining manual conditions and database constraints.
+- WorldEventSerializer.latitude: Explicit latitude type and boundary validation.
+- WorldEventSerializer.longitude: Explicit longitude type and boundary validation.
+- WorldEventSerializer.country: Explicit country type and boundary validation.
+- WorldEventSerializer.starts_at: Explicit starts_at type and boundary validation.
+- WorldEventSerializer.ends_at: Explicit ends_at type and boundary validation.
+- WorldEventSerializer.registration_deadline: Explicit registration_deadline type and boundary validation.
+- WorldEventSerializer.onsite: Explicit onsite type and boundary validation.
+- WorldEventSerializer.suggested_actions: Explicit suggested_actions type and boundary validation.
+- WorldEventSerializer.opportunity_ids: Explicit opportunity_ids type and boundary validation.
+- WorldNewsSerializer.published_at: Explicit published_at type and boundary validation.
+- WorldNewsSerializer.country: Explicit country type and boundary validation.
+- WorldNewsSerializer.summary: Explicit summary type and boundary validation.
+- WorldNewsSerializer.content: Explicit content type and boundary validation.
+- WorldNewsSerializer.amount: Nonnegative decimal string with 24 integer and 6 fractional digits; return a fixed-precision string or null.
+- WorldNewsSerializer.evidence: Preserve original whitespace; at most 600 characters.
+- WorldNewsSerializer.amount_evidence: Preserve original amount whitespace; at most 400 characters.
+- WorldEventSerializer.Meta.model: Declare the corresponding model.
+- WorldEventSerializer.Meta.fields: Declare public fields.
+- WorldEventSerializer.Meta.read_only_fields: Declare server-maintained fields.
+- WorldNewsSerializer.Meta.model: Declare the corresponding model.
+- WorldNewsSerializer.Meta.fields: Declare public fields.
+- WorldNewsSerializer.Meta.read_only_fields: Declare server-maintained fields.
+- OpportunitySerializer.product_names: Explicit canonical product-name array; omission retains the existing value, while null/empty arrays denote unknown.
+- ConnectionSerializer.Meta.model: Connection model.
+- ConnectionSerializer.Meta.fields: Credential-free field list.
+- ConnectionSerializer.Meta.read_only_fields: All fields are read-only.
+- DocumentSerializer.total: Single-currency net amount returned as a string, excluding taxes.
+- DocumentSerializer.lines: Currently active line-item list.
+- SERIALIZERS: Allowlist mapping business route names to concrete serializers.
+- CompanySettingsSerializer.Meta.model: Corresponding CompanySettings relation model.
+- CompanySettingsSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- CompanySettingsSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- CompanyAliasSerializer.Meta.model: Corresponding CompanyAlias relation model.
+- CompanyAliasSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- CompanyAliasSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- ContactProfileSerializer.Meta.model: Corresponding ContactProfile relation model.
+- ContactProfileSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- ContactProfileSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- TeamSerializer.Meta.model: Corresponding Team relation model.
+- TeamSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- TeamSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- MembershipSerializer.Meta.model: Corresponding Membership relation model.
+- MembershipSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- MembershipSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- CompanyGrantSerializer.Meta.model: Corresponding CompanyGrant relation model.
+- CompanyGrantSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- CompanyGrantSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- ProductSerializer.Meta.model: Corresponding Product relation model.
+- ProductSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- ProductSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- TicketSerializer.Meta.model: Corresponding Ticket relation model.
+- TicketSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- TicketSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- OpportunitySerializer.Meta.model: Corresponding Opportunity relation model.
+- OpportunitySerializer.Meta.fields: Explicit field set permitted for output and validation.
+- OpportunitySerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- QuoteSerializer.Meta.model: Corresponding Quote relation model.
+- QuoteSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- QuoteSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- QuoteLineSerializer.Meta.model: Corresponding QuoteLine relation model.
+- QuoteLineSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- QuoteLineSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- SalesOrderSerializer.Meta.model: Corresponding SalesOrder relation model.
+- SalesOrderSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- SalesOrderSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- OrderLineSerializer.Meta.model: Corresponding OrderLine relation model.
+- OrderLineSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- OrderLineSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- FollowUpSerializer.Meta.model: Corresponding FollowUp relation model.
+- FollowUpSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- FollowUpSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- ConversationSerializer.Meta.model: Corresponding Conversation relation model.
+- ConversationSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- ConversationSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- MessageSerializer.Meta.validators: Transactions check message idempotency keys, permitting repeated submission of identical content.
+- MessageSerializer.Meta.model: Corresponding Message relation model.
+- MessageSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- MessageSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- DraftSerializer.Meta.model: Corresponding Draft relation model.
+- DraftSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- DraftSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- ToolActionSerializer.Meta.model: Corresponding ToolAction relation model.
+- ToolActionSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- ToolActionSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- AttachmentSerializer.Meta.model: Corresponding Attachment relation model.
+- AttachmentSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- AttachmentSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
+- NotificationSerializer.Meta.model: Corresponding Notification relation model.
+- NotificationSerializer.Meta.fields: Explicit field set permitted for output and validation.
+- NotificationSerializer.Meta.read_only_fields: Service-maintained identity, version, and execution state.
 """
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -170,15 +170,15 @@ from .news_signals import NewsAmountField, validate_news_signal
 from .permissions import scope, visible_company_ids
 
 
-# 功能：严格控制销售接口输入和关系引用。
-# 逻辑：白名单之外的字段明确报错，关系对象通过用户授权查询。
-# 约束：状态变化和跨实体一致性不依赖序列化器单独保证。
+# Function: Strictly control sales API inputs and relation references.
+# Logic: Reject fields outside the allowlist explicitly; query related objects through user authorization.
+# Constraints: Serializers alone do not guarantee state transitions or cross-entity consistency.
 class StrictModelSerializer(s.ModelSerializer):
-    # 功能：拒绝未经声明的写入。
-    # 输入：`data` 为客户端 JSON 对象。
-    # 输出：经 DRF 类型转换的数据；未知或只读字段抛 ValidationError。
-    # 逻辑：先检查集合，再调用 ModelSerializer 的常规校验。
-    # 约束：不静默忽略 owner、状态或拼错的参数。
+    # Function: Reject undeclared writes.
+    # Inputs: `data`: client JSON object.
+    # Outputs: DRF-converted data; unknown/read-only fields raise ValidationError.
+    # Logic: Check field sets before ordinary ModelSerializer validation.
+    # Constraints: Never silently ignore owner, state, or misspelled parameters.
     def to_internal_value(self, data):
         if not isinstance(data, dict):
             raise s.ValidationError("请求必须是 JSON 对象。")
@@ -190,11 +190,11 @@ class StrictModelSerializer(s.ModelSerializer):
             )
         return super().to_internal_value(data)
 
-    # 功能：限制关系字段可引用的对象。
-    # 输入：无参数；读取 serializer.context.request.user。
-    # 输出：经过授权过滤的字段字典。
-    # 逻辑：客户与联系人使用公司业务权限，其他模型调用 scope，负责人限当前用户和共同团队成员；成员邀请可引用有效账号，其授权由事务验证。
-    # 约束：Schema 生成无用户时所有关系查询为空，不执行业务数据枚举。
+    # Function: Restrict objects referenceable by relation fields.
+    # Inputs: No parameters; read serializer.context.request.user.
+    # Outputs: Dictionary of authorization-filtered fields.
+    # Logic: Companies/contacts use company business permissions; other models use scope. Assignees are limited to the current user and common team members; invitations may reference active accounts, with transaction-level authorization.
+    # Constraints: Without a user during schema generation, relation querysets are empty; never enumerate business data.
     def get_fields(self):
         fields = super().get_fields()
         request = self.context.get("request")
@@ -237,18 +237,18 @@ class StrictModelSerializer(s.ModelSerializer):
         return fields
 
 
-# 功能：输出单据金额和有效明细。
-# 逻辑：所有计算保留 Decimal 精度，逐行四舍五入到两位小数后求和。
-# 约束：金额是同一单据币种的折扣后净额，不包括未声明税费。
+# Function: Output document amounts and active details.
+# Logic: Preserve Decimal precision and sum after rounding each line to two fractional digits.
+# Constraints: Amounts are post-discount net totals in the document currency, excluding undeclared taxes.
 class DocumentSerializer(StrictModelSerializer):
     total = s.SerializerMethodField()
     lines = s.SerializerMethodField()
 
-    # 功能：计算当前有效行项目净额。
-    # 输入：`obj` 为 Quote 或 SalesOrder。
-    # 输出：两位小数字符串。
-    # 逻辑：数量乘单价减整行折扣，各行使用 ROUND_HALF_UP。
-    # 约束：不跨币种、不使用浮点、不推算税费。
+    # Function: Calculate net amounts of currently active line items.
+    # Inputs: `obj`: Quote or SalesOrder.
+    # Outputs: String with two fractional digits.
+    # Logic: Quantity times unit price minus whole-line discount, using ROUND_HALF_UP per line.
+    # Constraints: No cross-currency arithmetic, floats, or inferred taxes.
     def get_total(self, obj) -> str:
         return str(
             sum(
@@ -262,11 +262,11 @@ class DocumentSerializer(StrictModelSerializer):
             )
         )
 
-    # 功能：返回行项目快照。
-    # 输入：`obj` 为报价或订单。
-    # 输出：序列化后的有效行数组。
-    # 逻辑：按创建时间和 UUID 稳定排序。
-    # 约束：父单据须已授权，不重新从目录覆盖历史单价。
+    # Function: Return line-item snapshots.
+    # Inputs: `obj`: quote or order.
+    # Outputs: Serialized active-line array.
+    # Logic: Stable ordering by creation time and UUID.
+    # Constraints: The parent document must be authorized; never overwrite historical prices from the catalog.
     def get_lines(self, obj) -> list[dict]:
         serializer = (
             QuoteLineSerializer
@@ -280,13 +280,13 @@ class DocumentSerializer(StrictModelSerializer):
         ).data
 
 
-# 功能：声明客户生命周期和人工主要联系人设置的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for company lifecycle and manual primary-contact settings.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class CompanySettingsSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.CompanySettings
         fields = [
@@ -310,13 +310,13 @@ class CompanySettingsSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明人工确认的域名或联系人归组映射的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for manually confirmed domain/contact grouping mappings.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class CompanyAliasSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.CompanyAlias
         fields = [
@@ -339,13 +339,13 @@ class CompanyAliasSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明人工联系人补充资料的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for supplemental manual contact details.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class ContactProfileSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.ContactProfile
         fields = [
@@ -370,13 +370,13 @@ class ContactProfileSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明拥有明确管理者的业务团队的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for business teams with explicit managers.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class TeamSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Team
         fields = [
@@ -398,13 +398,13 @@ class TeamSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明团队成员及角色的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for team membership and roles.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class MembershipSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Membership
         fields = [
@@ -428,13 +428,13 @@ class MembershipSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明公司业务记录共享授权的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for company business-record sharing grants.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class CompanyGrantSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.CompanyGrant
         fields = [
@@ -458,13 +458,13 @@ class CompanyGrantSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明商品目录与人工库存记录的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for product catalogs and manual inventory.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class ProductSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Product
         fields = [
@@ -491,13 +491,13 @@ class ProductSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明客户服务工单的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for customer service tickets.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class TicketSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Ticket
         fields = [
@@ -526,14 +526,14 @@ class TicketSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明销售商机与管线的字段契约。
-# 逻辑：关系字段按当前用户过滤，商机产品名称显式录入，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for sales opportunities and pipelines.
+# Logic: Filter relations by current user; enter opportunity product names explicitly, and maintain state through dedicated business actions.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class OpportunitySerializer(StrictModelSerializer):
     product_names = s.ListField(child=s.CharField(max_length=240), required=False, allow_empty=True, allow_null=True)
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式开放产品名称和已有商机字段，不允许浏览器改变 owner 或状态。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicitly expose product names and existing opportunity fields; browsers cannot change owner or state.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Opportunity
         fields = [
@@ -564,13 +564,13 @@ class OpportunitySerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明有审核与真实外发证据的报价单的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for reviewed quotes with genuine external-send evidence.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class QuoteSerializer(DocumentSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Quote
         fields = [
@@ -605,13 +605,13 @@ class QuoteSerializer(DocumentSerializer):
         ]
 
 
-# 功能：声明报价明细快照的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for quote line snapshots.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class QuoteLineSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.QuoteLine
         fields = [
@@ -638,13 +638,13 @@ class QuoteLineSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明客户订单及确认状态的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for customer orders and confirmation states.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class SalesOrderSerializer(DocumentSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.SalesOrder
         fields = [
@@ -677,13 +677,13 @@ class SalesOrderSerializer(DocumentSerializer):
         ]
 
 
-# 功能：声明订单明细快照的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for order line snapshots.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class OrderLineSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.OrderLine
         fields = [
@@ -710,13 +710,13 @@ class OrderLineSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明客户跟进与到期提醒的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for customer follow-ups and due reminders.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class FollowUpSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.FollowUp
         fields = [
@@ -744,13 +744,13 @@ class FollowUpSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明员工自己的通用或客户助手会话的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for employees' own general/company assistant conversations.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class ConversationSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Conversation
         fields = [
@@ -773,13 +773,13 @@ class ConversationSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明不可变会话消息的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for immutable conversation messages.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class MessageSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Message
         validators = []
@@ -806,13 +806,13 @@ class MessageSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明私有会话中的可编辑草稿的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for editable drafts in private conversations.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class DraftSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Draft
         fields = [
@@ -838,13 +838,13 @@ class DraftSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明明确确认的外部工具动作与执行状态的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for explicitly confirmed external-tool actions and execution states.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class ToolActionSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.ToolAction
         fields = [
@@ -882,13 +882,13 @@ class ToolActionSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明员工私有文件及客户关联的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for employee-private files and company links.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class AttachmentSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Attachment
         fields = [
@@ -916,13 +916,13 @@ class AttachmentSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：声明应用内到期提醒的字段契约。
-# 逻辑：关系字段按当前用户过滤，状态由专门业务动作维护。
-# 约束：不接受客户端指定 owner、revision 或伪造执行结果。
+# Function: Declare fields for in-app due reminders.
+# Logic: Filter relations by current user; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision or fabricated execution results.
 class NotificationSerializer(StrictModelSerializer):
-    # 功能：绑定模型和接口字段。
-    # 逻辑：显式字段列表确保新增模型字段不会自动暴露。
-    # 约束：跨字段规则由事务服务继续校验。
+    # Function: Bind model and API fields.
+    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
+    # Constraints: Transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Notification
         fields = [
@@ -951,13 +951,13 @@ class NotificationSerializer(StrictModelSerializer):
         ]
 
 
-# 功能：公开连接身份及状态。
-# 逻辑：凭证字段完全排除，连接仅通过 OAuth 回调写入。
-# 约束：密文也不返回客户端。
+# Function: Expose connection identity and status.
+# Logic: Exclude credential fields completely; connections are written only through OAuth callbacks.
+# Constraints: Never return ciphertext to clients either.
 class ConnectionSerializer(StrictModelSerializer):
-    # 功能：声明无凭证的字段白名单。
-    # 逻辑：全部字段只读，停用经专用版本化归档。
-    # 约束：不能通过记录接口伪造连接。
+    # Function: Declare a credential-free field allowlist.
+    # Logic: All fields are read-only; disabling uses dedicated versioned archival.
+    # Constraints: Record APIs cannot fabricate connections.
     class Meta:
         model = models.Connection
         fields = [
@@ -974,15 +974,15 @@ class ConnectionSerializer(StrictModelSerializer):
 
 
 
-# 功能：验证明确带时区的时间。
-# 逻辑：拒绝没有偏移的字符串，避免默用服务端时区。
-# 约束：序列化输出遵循原 DRF 时间约定。
+# Function: Validate explicitly timezone-aware timestamps.
+# Logic: Reject strings without offsets to avoid silently using the server timezone.
+# Constraints: Serialization follows existing DRF time conventions.
 class ZonedDateTimeField(s.DateTimeField):
-    # 功能：检查时间输入。
-    # 输入：`value` 为原始字段。
-    # 输出：带时区 datetime。
-    # 逻辑：先检查 ISO 解析及偏移，再执行 DRF 校验。
-    # 约束：非法或无时区输入抛 400，不补默认时区。
+    # Function: Check timestamp input.
+    # Inputs: `value`: raw field.
+    # Outputs: Timezone-aware datetime.
+    # Logic: Check ISO parsing and offset before DRF validation.
+    # Constraints: Invalid or timezone-free input raises 400 without adding a default timezone.
     def to_internal_value(self, value):
         from django.utils.dateparse import parse_datetime
         from django.utils.timezone import is_aware
@@ -992,9 +992,9 @@ class ZonedDateTimeField(s.DateTimeField):
         return super().to_internal_value(value)
 
 
-# 功能：验证共享活动事实并隔离关联业务信息。
-# 逻辑：写入校验日期精度；所有读取入口过滤不可见商机 ID，日期型输出包含末日的日期范围。
-# 约束：活动原文为共享事实，商机、客户和金额不随活动扩大权限；不访问外站。
+# Function: Validate shared event facts and isolate linked business information.
+# Logic: Validate date precision on writes; all read entry points filter invisible opportunity IDs. Date-only output includes the final day in its date range.
+# Constraints: Original event text is shared fact data; opportunities, companies, and amounts gain no permissions through events. No external site access.
 class WorldEventSerializer(StrictModelSerializer):
     source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     starts_on = s.DateField(read_only=True, allow_null=True)
@@ -1009,20 +1009,20 @@ class WorldEventSerializer(StrictModelSerializer):
     suggested_actions = s.ListField(child=s.CharField(max_length=1000), max_length=100, required=False)
     opportunity_ids = s.ListField(child=s.UUIDField(), max_length=200, required=False)
 
-    # 功能：校验跨字段。
-    # 输入：`attrs` 字段。
-    # 输出：验证后的 attrs。
-    # 逻辑：委托 insights 校验来源、日期、归属及跨账号重复，兼容明确 Agent 日期占位协议。
-    # 约束：不改变原始文本和时间，重复返回 409，不覆盖已有记录。
+    # Function: Validate cross-field relationships.
+    # Inputs: `attrs`: fields.
+    # Outputs: Validated attrs.
+    # Logic: Delegate source, date, ownership, and cross-account duplicate checks to insights, supporting the explicit Agent date-placeholder protocol.
+    # Constraints: Preserve original text/timestamps; duplicates return 409 without overwriting records.
     def validate(self, attrs):
         from .insights import validate_insight
         return validate_insight(self, attrs)
 
-    # 功能：为共享活动生成访问者可见的投影。
-    # 输入：`instance` 为活动记录；隐式读取 request.user 和当前批次的商机关联。
-    # 输出：过滤后的活动字典，日期型附 starts_on/ends_on，普通时刻的两字段为 null。
-    # 逻辑：按当前序列化批次一次性查询可见商机，所有 API 和 Tool 共用；日期型从 UTC 边界取包含式日期。
-    # 约束：无请求身份时关联为空；缓存仅存当前序列化器实例，不跨请求复用，不改数据库。
+    # Function: Project shared events for the current viewer.
+    # Inputs: `instance`: event record; implicitly read request.user and opportunity links for the current batch.
+    # Outputs: Filtered event dictionary; date-only events include starts_on/ends_on, while timestamp events return null for both.
+    # Logic: Query visible opportunities once per serialization batch, shared by all APIs/Tools; derive inclusive dates from UTC boundaries for date-only events.
+    # Constraints: Without request identity, links are empty. Cache only on the current serializer instance, never across requests; no database writes.
     def to_representation(self, instance):
         from .insight_dates import date_range
         data = super().to_representation(instance)
@@ -1038,9 +1038,9 @@ class WorldEventSerializer(StrictModelSerializer):
         data["starts_on"], data["ends_on"] = [value.isoformat() if value else None for value in dates]
         return data
 
-    # 功能：声明活动字段。
-    # 逻辑：复用 Record 的只读版本与账号，暴露数据来源、日期精度及只读日期范围。
-    # 约束：不接受调用方伪造 owner 或日期投影，关联 ID 由访问者权限投影。
+    # Function: Declare event fields.
+    # Logic: Reuse Record's read-only version/account fields; expose provenance, time precision, and read-only date ranges.
+    # Constraints: Reject fabricated owners/date projections; project linked IDs through viewer permissions.
     class Meta:
         model = models.WorldEvent
         validators = []
@@ -1048,9 +1048,9 @@ class WorldEventSerializer(StrictModelSerializer):
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
-# 功能：验证行业资讯、公共销售线索和精确来源金额。
-# 逻辑：新增字段可省略，不自动关联 CRM；金额证据及组合通过合并校验，来源对 Agent 全局去重。
-# 约束：关闭 DRF 自动来源唯一校验，重复由 insights 返回 409 并由数据库兜住并发；不抓取或生成摘要。
+# Function: Validate industry news, public sales leads, and exact source amounts.
+# Logic: New fields are optional and never automatically linked to CRM; merge to validate amount evidence/combinations, with globally deduplicated Agent sources.
+# Constraints: Disable DRF automatic source uniqueness checks; insights returns 409 for duplicates and the database handles concurrency. No fetching or summary generation.
 class WorldNewsSerializer(StrictModelSerializer):
     source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     published_at = ZonedDateTimeField()
@@ -1061,18 +1061,18 @@ class WorldNewsSerializer(StrictModelSerializer):
     evidence = s.CharField(max_length=600, allow_blank=True, required=False, trim_whitespace=False)
     amount_evidence = s.CharField(max_length=400, allow_blank=True, required=False, trim_whitespace=False)
 
-    # 功能：校验新闻来源和完整金额证据组合。
-    # 输入：`attrs`。
-    # 输出：验证后字段。
-    # 逻辑：先合并旧值校验金额组合和原文包含关系，再复用 insights 校验 HTTPS 与重复来源。
-    # 约束：重复抛 409，不访问来源或覆盖原记录。
+    # Function: Validate news sources and complete monetary-evidence combinations.
+    # Inputs: `attrs`.
+    # Outputs: Validated fields.
+    # Logic: Merge old values to validate monetary combinations and excerpt inclusion, then reuse insights for HTTPS/source-duplicate validation.
+    # Constraints: Duplicates raise 409; never access sources or overwrite original records.
     def validate(self, attrs):
         from .insights import validate_insight
         return validate_insight(self, validate_news_signal(self, attrs))
 
-    # 功能：声明资讯字段。
-    # 逻辑：内容、来源和十三个公共线索字段可写，新增字段可省略；身份与版本只读，来源唯一性由 insights 及数据库约束。
-    # 约束：人工记录不被 DRF 自动来源唯一校验误拦，归档走命令接口。
+    # Function: Declare news fields.
+    # Logic: Content, source, and thirteen public lead fields are writable; new fields are optional. Identity/version are read-only; insights/database constraints enforce source uniqueness.
+    # Constraints: DRF automatic source uniqueness must not incorrectly reject manual records; archival uses command endpoints.
     class Meta:
         model = models.WorldNews
         validators = []

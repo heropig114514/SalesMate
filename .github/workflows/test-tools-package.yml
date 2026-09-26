@@ -1,8 +1,11 @@
-# 职责：验证 Gmail 与 QQ 测试邮件工具，并生成包含两者的独立下载包。
-# 实现：离线测试、注释检查、两种 dry-run；仅复制公开文件，并在打包目录复验后上传 Artifact。
-# 关联：test_tools 中 Gmail/QQ 注入脚本、模板及说明；QQ 仅显式 --apply 才能写入邮箱。
-# 目录：package-test-tools 打包任务；无函数或类。
-# 变量索引：package_dir 为固定分发目录；流水线不读取邮箱授权码或 OAuth token。
+# Responsibility: Verify Gmail and QQ test-mail tools and create a standalone download package containing both.
+# Implementation: Run offline tests, documentation checks, and both dry runs; copy only public files, reverify in the package directory, then upload the artifact.
+# Relationships: Gmail/QQ injector scripts, templates, and documentation in test_tools. QQ writes a mailbox only with explicit --apply.
+# Directory:
+# - package-test-tools: Packaging job.
+# Variable index:
+# - package_dir: Fixed distribution directory.
+# - Pipeline: Does not read mailbox authorization codes or OAuth tokens.
 name: Package test tools
 
 on:

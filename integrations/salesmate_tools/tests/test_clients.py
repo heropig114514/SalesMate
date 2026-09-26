@@ -1,23 +1,24 @@
-"""职责：验证客户端传输和真实 MCP stdio 握手。
-实现：本机 HTTP fixture、真实 SDK 子进程和无外部账户的协议请求。
-关联：client、cli、mcp_server；不代替 Django 权限集成测试。
-目录：
-- Handler：模拟业务 HTTP 协议。
-- Handler.log_message：禁止访问日志污染输出。
-- Handler.do_GET：模拟分页目录。
-- Handler.do_POST：模拟调用和错误。
-- Handler.reply：输出 JSON。
-- ClientTests：HTTP 与命令行验证。
-- ClientTests.setUp：启动测试 HTTP 服务。
-- ClientTests.tearDown：释放服务和线程。
-- ClientTests.test_cli_and_key_forwarding：验证文件参数及幂等键。
-- ClientTests.test_transport_errors_and_redirects：验证不重试、不泄露 token。
-- ClientTests.test_configuration_and_fixed_endpoints：拒绝不安全地址与未知接口。
-- ProtocolTests：真实子进程 MCP 验证。
-- ProtocolTests.test_anonymous_stdio：验证无令牌 MCP 与可省略幂等键。
-- ProtocolTests.test_stdio_catalog_call_and_error：验证 SDK 握手、分页、写参数及错误标志。
-变量索引：
-- ROOT：项目根目录。
+"""Responsibility: Verify client transport and actual MCP stdio handshakes.
+Implementation: Local HTTP fixtures, real SDK subprocesses, and protocol requests without external accounts.
+Relationships: client, cli, mcp_server; does not replace Django authorization integration tests.
+Directory:
+- Handler: Mock the business HTTP protocol.
+- Handler.log_message: Prevent access logs from polluting output.
+- Handler.do_GET: Mock a paginated catalog.
+- Handler.do_POST: Mock calls and errors.
+- Handler.reply: Output JSON.
+- ClientTests: HTTP and command-line checks.
+- ClientTests.setUp: Start the test HTTP service.
+- ClientTests.tearDown: Release the service/thread.
+- ClientTests.test_cli_and_key_forwarding: Verify file arguments and idempotency keys.
+- ClientTests.test_transport_errors_and_redirects: Verify no retries or token leakage.
+- ClientTests.test_configuration_and_fixed_endpoints: Reject unsafe addresses and unknown endpoints.
+- ClientTests.test_timeout_configuration_and_model_errors: Verify explicit long timeouts and forwarded model errors.
+- ProtocolTests: Actual subprocess MCP checks.
+- ProtocolTests.test_anonymous_stdio: Verify tokenless MCP and optional idempotency keys.
+- ProtocolTests.test_stdio_catalog_call_and_error: Verify SDK handshakes, pagination, write arguments, and error flags.
+Variable index:
+- ROOT: Repository root.
 """
 
 import contextlib
@@ -39,23 +40,23 @@ from integrations.salesmate_tools.cli import main
 ROOT = Path(__file__).resolve().parents[3]
 
 
-# 功能：模拟固定协议。
-# 逻辑：模拟带合成授权的正式模式和无授权的实验模式。
-# 约束：不访问 Django 或真实业务。
+# Function: Mock a fixed protocol.
+# Logic: Model production mode with synthetic authorization and experiment mode without authorization.
+# Constraints: No Django or real business access.
 class Handler(BaseHTTPRequestHandler):
-    # 功能：关闭测试访问日志。
-    # 输入：`format`、`args`。
-    # 输出：无。
-    # 逻辑：fixture 请求由断言检查。
-    # 约束：不影响被测服务日志。
+    # Function: Disable test access logs.
+    # Inputs: `format` and `args`.
+    # Outputs: None.
+    # Logic: Assertions check fixture requests.
+    # Constraints: Do not affect logs of the tested service.
     def log_message(self, format, *args):
         pass
 
-    # 功能：模拟两页目录。
-    # 输入：HTTP 路径及可选 Authorization。
-    # 输出：一页工具描述。
-    # 逻辑：读工具和写工具分两页。
-    # 约束：页数仅用于协议测试。
+    # Function: Mock two catalog pages.
+    # Inputs: HTTP path and optional Authorization.
+    # Outputs: One tool-description page.
+    # Logic: Place read/write tools on separate pages.
+    # Constraints: Page counts serve protocol testing only.
     def do_GET(self):
         if self.headers.get("Authorization") not in (None, "Tool fixture-token"):
             return self.reply(401, {})
@@ -78,11 +79,11 @@ class Handler(BaseHTTPRequestHandler):
             {"tools": [spec], "page": 2 if second else 1, "page_size": 1, "count": 2},
         )
 
-    # 功能：记录调用。
-    # 输入：JSON 信封。
-    # 输出：completed 或测试错误。
-    # 逻辑：回显不含 token 的载荷验证适配。
-    # 约束：不模拟业务权限成功。
+    # Function: Record calls.
+    # Inputs: A JSON envelope.
+    # Outputs: completed or a test error.
+    # Logic: Echo token-free payloads to verify adaptation.
+    # Constraints: Do not simulate successful business authorization.
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.reply(
@@ -90,11 +91,11 @@ class Handler(BaseHTTPRequestHandler):
             {"status": "completed", "echo": payload},
         )
 
-    # 功能：输出固定响应。
-    # 输入：`status`、`data`。
-    # 输出：JSON 字节。
-    # 逻辑：声明长度和编码。
-    # 约束：仅测试 fixture 使用。
+    # Function: Emit a fixed response.
+    # Inputs: `status` and `data`.
+    # Outputs: JSON bytes.
+    # Logic: Declare length and encoding.
+    # Constraints: Test fixtures only.
     def reply(self, status, data):
         content = json.dumps(data).encode()
         self.send_response(status)
@@ -104,15 +105,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
-# 功能：验证客户端错误和参数。
-# 逻辑：本机 HTTP 服务与有限网络 Mock。
-# 约束：不请求生产服务。
+# Function: Verify client errors and arguments.
+# Logic: Local HTTP service and limited network mocks.
+# Constraints: No production requests.
 class ClientTests(unittest.TestCase):
-    # 功能：启动本机 fixture。
-    # 输入：无外部参数。
-    # 输出：服务、线程和客户端实例状态。
-    # 逻辑：操作系统分配空闲端口。
-    # 约束：只监听 loopback。
+    # Function: Start a local fixture.
+    # Inputs: No external arguments.
+    # Outputs: Service, thread, and client instance state.
+    # Logic: Let the operating system allocate a free port.
+    # Constraints: Listen on loopback only.
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -120,21 +121,21 @@ class ClientTests(unittest.TestCase):
         self.url = f"http://127.0.0.1:{self.server.server_port}"
         self.client = ToolClient(self.url, "fixture-token")
 
-    # 功能：释放 fixture。
-    # 输入：实例服务与线程。
-    # 输出：无。
-    # 逻辑：停止监听并等待线程。
-    # 约束：不会停止其他服务。
+    # Function: Release the fixture.
+    # Inputs: Instance service/thread.
+    # Outputs: None.
+    # Logic: Stop listening and join the thread.
+    # Constraints: Never stop other services.
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join()
 
-    # 功能：验证 CLI 文件参数与键。
-    # 输入：临时 JSON 文件、合成环境。
-    # 输出：stdout 可解析 JSON，原键被保留。
-    # 逻辑：调用真实 CLI 主函数和 HTTP。
-    # 约束：不修改业务。
+    # Function: Verify CLI file arguments and keys.
+    # Inputs: Temporary JSON files and a synthetic environment.
+    # Outputs: Parseable stdout JSON with original keys retained.
+    # Logic: Call the actual CLI main function and HTTP transport.
+    # Constraints: No business changes.
     def test_cli_and_key_forwarding(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "arguments.json"
@@ -168,11 +169,11 @@ class ClientTests(unittest.TestCase):
             self.client.describe("customers.create")["executionMode"], "write"
         )
 
-    # 功能：验证网络失败策略。
-    # 输入：重定向、超时、拒绝响应。
-    # 输出：错误且无重试或 token 回显。
-    # 逻辑：Mock 仅替代 requests 单次请求。
-    # 约束：超时不会被解释为未执行。
+    # Function: Verify network failure policy.
+    # Inputs: Redirects, timeouts, and rejection responses.
+    # Outputs: Errors without retries or token echoing.
+    # Logic: Mock only individual requests calls.
+    # Constraints: A timeout must not imply nonexecution.
     def test_transport_errors_and_redirects(self):
         with patch(
             "integrations.salesmate_tools.client.requests.request",
@@ -193,11 +194,11 @@ class ClientTests(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "403"):
             self.client.call("denied", {})
 
-    # 功能：验证连接配置边界。
-    # 输入：非 TLS 外网、带凭证 URL、错误路径。
-    # 输出：显式拒绝。
-    # 逻辑：在发起网络前验证。
-    # 约束：不提供任意 HTTP 代理能力。
+    # Function: Verify connection configuration boundaries.
+    # Inputs: Non-TLS external addresses, credential-bearing URLs, and invalid paths.
+    # Outputs: Explicit rejection.
+    # Logic: Validate before network access.
+    # Constraints: Do not provide arbitrary HTTP proxy capabilities.
     def test_configuration_and_fixed_endpoints(self):
         for url in (
             "http://example.com",
@@ -210,16 +211,37 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(ToolError):
             self.client.request("POST", "credentials/")
 
+    # Function: Verify explicit long-request timeouts and that graph-unready errors cannot become successes.
+    # Inputs: No external arguments; synthetic dedicated environment variables and 503 responses.
+    # Outputs: Assert the 30-second default, forwarded 600-second override, rejected invalid values, and retained 503 business codes.
+    # Logic: Mock network responses only; no model-service connection.
+    # Constraints: Do not change timeout defaults or retry automatically.
+    def test_timeout_configuration_and_model_errors(self):
+        with patch.dict(os.environ, {"SALESMATE_TOOLS_URL": "http://127.0.0.1"}, clear=True):
+            self.assertEqual(ToolClient.from_env().timeout, 30)
+            os.environ["SALESMATE_TOOLS_TIMEOUT"] = "600"
+            self.assertEqual(ToolClient.from_env().timeout, 600)
+            for value in ["nan", "inf", "0", "3601", "bad"]:
+                os.environ["SALESMATE_TOOLS_TIMEOUT"] = value
+                with self.assertRaises(ToolError):
+                    ToolClient.from_env()
+        response = Mock(status_code=503)
+        response.json.return_value = {"error": {"code": "graph_unavailable", "detail": "Model not configured"}}
+        with patch("integrations.salesmate_tools.client.requests.request", return_value=response) as request:
+            with self.assertRaisesRegex(ToolError, "graph_unavailable"):
+                self.client.call("graph.status", {})
+            request.assert_called_once()
 
-# 功能：验证真实 MCP 进程。
-# 逻辑：SDK 客户端通过 stdio 与服务子进程通信。
-# 约束：HTTP 端使用 fixture，不能证明生产连接可用。
+
+# Function: Verify actual MCP processes.
+# Logic: SDK clients communicate with server subprocesses through stdio.
+# Constraints: HTTP uses fixtures and cannot establish production connectivity.
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
-    # 功能：验证协议握手、目录和调用。
-    # 输入：本机 HTTP fixture 和合成 token。
-    # 输出：两页目录、独立写 Schema、结构化结果、isError。
-    # 逻辑：启动真实 Python MCP 子进程；最终释放 HTTP 线程。
-    # 约束：stdout 仅协议内容，客户端成功握手即检验未被日志污染。
+    # Function: Verify protocol handshakes, catalogs, and calls.
+    # Inputs: Local HTTP fixture and synthetic token.
+    # Outputs: Two catalog pages, independent write schemas, structured results, and isError assertions.
+    # Logic: Start a real Python MCP subprocess and finally release the HTTP thread.
+    # Constraints: stdout contains protocol content only; successful handshakes check that logs have not polluted it.
     async def test_stdio_catalog_call_and_error(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -268,11 +290,11 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             server.server_close()
             thread.join()
 
-    # 功能：验证匿名 MCP 真实握手及写入参数。
-    # 输入：本机实验 HTTP fixture 和空令牌配置。
-    # 输出：Schema 不要求幂等键，写调用得到结构化成功响应。
-    # 逻辑：启动真实 stdio 子进程，通过 MCP SDK 完成目录和调用。
-    # 约束：HTTP 业务由 fixture 模拟，后端权限另由集成测试验证。
+    # Function: Verify actual anonymous MCP handshakes and write arguments.
+    # Inputs: Local experiment HTTP fixture and empty-token configuration.
+    # Outputs: Schemas omit mandatory idempotency keys; writes receive structured success responses.
+    # Logic: Start actual stdio subprocesses and use the MCP SDK for discovery/calls.
+    # Constraints: Fixtures mock HTTP business behavior; integration tests separately verify backend permissions.
     async def test_anonymous_stdio(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

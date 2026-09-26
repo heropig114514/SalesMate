@@ -1,15 +1,15 @@
-"""职责：通过 stdio 发布当前授权的业务 MCP 工具。
-实现：MCP SDK 低层回调透传分页目录、Schema 和调用结果；HTTP 在线程中运行。
-关联：client 连接后端；后端是权限、确认、幂等及 Schema 的唯一业务来源。
-目录：
-- Bridge：动态工具协议桥。
-- Bridge.__init__：绑定客户端。
-- Bridge.list_tools：发布分页工具及写入幂等参数。
-- Bridge.call_tool：转发调用并区分错误。
-- create_server：构造低层 MCP Server。
-- main：运行 stdio 服务。
-变量索引：
-- 无
+"""Responsibility: Expose currently authorized business MCP tools over stdio.
+Implementation: The MCP SDK forwards paginated catalogs/results; ordinary writes add UUIDs while source-idempotent graph tools preserve original schemas; HTTP runs in threads.
+Relationships: client connects to the backend, the sole authority for business permissions, confirmation, idempotency, and schemas.
+Directory:
+- Bridge: Dynamic tool-protocol bridge.
+- Bridge.__init__: Bind the client.
+- Bridge.list_tools: Publish paginated tools and write-idempotency parameters.
+- Bridge.call_tool: Forward calls and distinguish errors.
+- create_server: Construct a low-level MCP Server.
+- main: Run the stdio service.
+Variable index:
+- None
 """
 
 import copy
@@ -21,23 +21,23 @@ from mcp.server.stdio import stdio_server
 from .client import ToolClient, ToolError
 
 
-# 功能：适配业务与 MCP 协议。
-# 逻辑：每个业务工具保留独立名称。
-# 约束：不提供通用函数执行或权限提升。
+# Function: Adapt business and MCP protocols.
+# Logic: Preserve separate names for each business tool.
+# Constraints: No general function execution or privilege escalation.
 class Bridge:
-    # 功能：保存客户端。
-    # 输入：`client`。
-    # 输出：实例。
-    # 逻辑：无网络访问。
-    # 约束：凭证不写 stdout。
+    # Function: Store the client.
+    # Inputs: `client`.
+    # Outputs: An instance.
+    # Logic: No network access.
+    # Constraints: Never write credentials to stdout.
     def __init__(self, client):
         self.client = client
 
-    # 功能：返回授权工具。
-    # 输入：`context` 协议上下文、`params` 可选游标。
-    # 输出：MCP ListToolsResult。
-    # 逻辑：每页 100，写 Schema 增加 idempotency_key；是否必填由服务端当前模式声明。
-    # 约束：只读工具不接受 key，目录不发布 Session-only 确认或授权接口。
+    # Function: Return authorized tools.
+    # Inputs: Protocol `context` and optional cursor `params`.
+    # Outputs: MCP ListToolsResult.
+    # Logic: Use 100 entries per page; ordinary write schemas add idempotency_key, while source-idempotent tools omit transport keys and retain server-declared requirements.
+    # Constraints: Read-only tools reject keys; catalogs never publish Session-only confirmation/authorization endpoints.
     async def list_tools(self, context, params):
         cursor = params.cursor if params else None
         try:
@@ -50,7 +50,7 @@ class Bridge:
         result = []
         for spec in catalog["tools"]:
             schema = copy.deepcopy(spec["inputSchema"])
-            if spec["executionMode"] != "read":
+            if spec["executionMode"] != "read" and not spec.get("idempotency_scope"):
                 schema["properties"]["idempotency_key"] = {
                     "type": "string",
                     "format": "uuid",
@@ -77,11 +77,11 @@ class Bridge:
             ),
         )
 
-    # 功能：执行一个 MCP 调用。
-    # 输入：`context`、`params` 的名称及参数。
-    # 输出：文本 JSON 和 structuredContent；协议调用失败为 isError。
-    # 逻辑：拆分传输幂等键，后端再次验证权限和参数。
-    # 约束：待确认回执不等同业务执行，不自动重试。
+    # Function: Execute one MCP call.
+    # Inputs: `context` and the name/arguments in `params`.
+    # Outputs: Text JSON and structuredContent; protocol-call failures set isError.
+    # Logic: Separate transport idempotency keys; the backend validates permissions/arguments again.
+    # Constraints: Pending confirmation is not business execution; no automatic retries.
     async def call_tool(self, context, params):
         arguments = dict(params.arguments or {})
         key = arguments.pop("idempotency_key", None)
@@ -103,11 +103,11 @@ class Bridge:
             )
 
 
-# 功能：创建可测试服务。
-# 输入：`client`。
-# 输出：Server。
-# 逻辑：注册两个固定回调。
-# 约束：无网络监听、无远程 MCP 认证实现。
+# Function: Create a testable server.
+# Inputs: `client`.
+# Outputs: Server.
+# Logic: Register two fixed callbacks.
+# Constraints: No network listener or remote MCP authentication implementation.
 def create_server(client):
     bridge = Bridge(client)
     return Server(
@@ -118,11 +118,11 @@ def create_server(client):
     )
 
 
-# 功能：启动 stdio。
-# 输入：专用环境配置和 stdin。
-# 输出：stdout MCP 消息。
-# 逻辑：官方 SDK 管理会话。
-# 约束：不向 stdout 打印日志、不自动注入当前聊天 Agent。
+# Function: Start stdio transport.
+# Inputs: Dedicated environment configuration and stdin.
+# Outputs: MCP messages on stdout.
+# Logic: The official SDK manages sessions.
+# Constraints: Never print logs to stdout or automatically inject tools into the current chat Agent.
 async def main():
     server = create_server(ToolClient.from_env())
     async with stdio_server() as (reader, writer):

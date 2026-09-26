@@ -1,24 +1,24 @@
-"""职责：向所有有效登录账号提供已批准虚构批次的跨账号数据视图与可写能力说明。
-实现：个人空间隔离时停用共享批次入口；模型白名单与精确清单主键限制读取；正式模式同时核验当前指纹，实验模式返回现存记录；保留归属与外键，提供分页、导出和附件。
-关联：seed_kg_lab 建立清单，experiment_writes 原子维护；网页和 agent_tools 复用校验，普通业务权限保持原样。
-目录：
-- load_batch：定位获准且未清理的完整批次。
-- model_fields：返回允许展示的字段及关系说明。
-- table_rows：验证和投影清单中的单表记录。
-- file_content：核验并读取清单内文件字节。
-- batch_summary：提供表目录、归属与来源声明。
-- ExperimentView：已登录用户的只读实验 API。
-- ExperimentView.get：分派目录、分页、完整导出和文件下载。
-- ExperimentView.download：核验并返回清单内文件。
-- ExperimentCatalogView：声明批次目录的独立接口契约。
-- ExperimentExportView：声明 JSON 导出接口契约。
-- ExperimentFileView：声明二进制附件接口契约。
-变量索引：
-- APPROVED_BATCHES：用户明确批准共享的完整批次名称；不自动开放其他 KGSEED 批次。
-- TABLES：44 个可读模型的中文名称与归属用户关联路径；None 表示用户自身。
-- HIDDEN_FIELDS：不返回的登录信息、内部文件路径和授权关联字段。
-- logger：只记录访问者、批次、模型和数量的审计日志。
-- ExperimentView.http_method_names：禁止通过实验入口写入或执行动作。
+"""Responsibility: Expose cross-account views and writable capabilities for approved fictional batches to all active authenticated accounts.
+Implementation: Disable shared batches under personal workspace isolation; restrict reads by model allowlist and exact manifest primary keys. Production also verifies current fingerprints; experiment mode returns existing records. Preserve ownership and foreign keys and provide pagination, exports, and attachments.
+Relationships: seed_kg_lab creates manifests and experiment_writes maintains them atomically; web and agent_tools reuse validation, retaining ordinary business permissions.
+Directory:
+- load_batch: Locate an approved, uncleared complete batch.
+- model_fields: Return displayable fields and relation descriptions.
+- table_rows: Validate and project manifest records for one table.
+- file_content: Verify and read file bytes listed in the manifest.
+- batch_summary: Provide the table catalog, ownership, and provenance declarations.
+- ExperimentView: Read-only experiment API for authenticated users.
+- ExperimentView.get: Dispatch catalog, pagination, full export, and file download requests.
+- ExperimentView.download: Verify and return a manifest-listed file.
+- ExperimentCatalogView: Declare the separate batch catalog interface contract.
+- ExperimentExportView: Declare the JSON export interface contract.
+- ExperimentFileView: Declare the binary attachment interface contract.
+Variable index:
+- APPROVED_BATCHES: Complete batch names explicitly approved for sharing; other KGSEED batches are not opened automatically.
+- TABLES: Chinese display names and owner relation paths for 44 readable models; None denotes the user itself.
+- HIDDEN_FIELDS: Excluded login information, internal file paths, and authorization relation fields.
+- logger: Audit logs containing only visitor, batch, model, and count.
+- ExperimentView.http_method_names: Prohibit writes or action execution through the experiment entry point.
 """
 
 import hashlib
@@ -99,11 +99,11 @@ HIDDEN_FIELDS = {
 logger = logging.getLogger("salesmate.experiments")
 
 
-# 功能：定位获准且未清理的完整批次。
-# 输入：`batch` 完整批次名称。
-# 输出：保存当前清单及原始身份的 AuditEvent；未开放返回 404，清单异常返回 409。
-# 逻辑：个人空间隔离时拒绝共享批次；其余只读取固定事件及名称并核验清单。
-# 约束：不按名称前缀推断合成身份，不扩大到其他账号的非清单记录。
+# Function: Locate an approved, uncleared complete batch.
+# Inputs: `batch`: complete batch name.
+# Outputs: AuditEvent holding the current manifest and original identity; unavailable batches return 404 and invalid manifests return 409.
+# Logic: Reject shared batches under personal isolation; otherwise read only the fixed event and name and verify the manifest.
+# Constraints: Do not infer synthetic identity from name prefixes or extend access to unlisted records of other accounts.
 def load_batch(batch):
     if owner_only() or batch not in APPROVED_BATCHES:
         raise NotFound("实验批次未开放。")
@@ -122,11 +122,11 @@ def load_batch(batch):
     return entry
 
 
-# 功能：返回允许展示的字段及关系说明。
-# 输入：`label` 已在 TABLES 注册的模型名称。
-# 输出：字段说明列表，含原始数据库表名可由目录另行读取。
-# 逻辑：使用 ORM 具体字段，不包含反向关系及密码等排除字段。
-# 约束：关系仅声明目标，不自动展开其他记录内容；二进制经单独下载提供。
+# Function: Return displayable fields and relation descriptions.
+# Inputs: `label`: model name registered in TABLES.
+# Outputs: Field descriptions; the catalog separately exposes the original database table name.
+# Logic: Use concrete ORM fields, excluding reverse relations and excluded fields such as passwords.
+# Constraints: Relations declare only their targets without expanding record contents; binary data uses a separate download.
 def model_fields(label):
     return [{"name": field.attname, "type": field.get_internal_type(),
              "relation": field.related_model._meta.label if field.is_relation else None,
@@ -135,11 +135,11 @@ def model_fields(label):
             if field.attname not in HIDDEN_FIELDS.get(label, set())]
 
 
-# 功能：验证并投影清单中的单表记录。
-# 输入：`entry` 已批准的清单事件、`label` 模型名称。
-# 输出：原始主键、归属、批次、当前 fingerprint、真实 read_only 能力及字段组成的记录列表。
-# 逻辑：只按清单主键读取，外键归属通过确定路径追溯；实验模式返回当前内容和指纹，正式模式逐行校验清单。
-# 约束：正式模式缺失或修改返回 409；实验模式允许常规业务入口修改或删除合成行，清理前仍须核验原清单；不导出密码或存储路径。
+# Function: Validate and project one table's manifest records.
+# Inputs: `entry`: approved manifest event; `label`: model name.
+# Outputs: Records containing original primary keys, ownership, batch, current fingerprint, actual read_only capability, and fields.
+# Logic: Read only manifest primary keys and trace foreign-key ownership along fixed paths. Experiment mode returns current contents and fingerprints; production verifies each manifest row.
+# Constraints: Missing or modified production rows return 409. Experiment mode permits ordinary business endpoints to modify/delete synthetic rows, but cleanup still verifies the original manifest. Never export passwords or storage paths.
 def table_rows(entry, label):
     from .experiment_writes import capabilities
     if label not in TABLES:
@@ -177,11 +177,11 @@ def table_rows(entry, label):
     return rows
 
 
-# 功能：核验并读取清单内文件字节。
-# 输入：`entry` 为已授权批次，`label` 为文件模型，`pk` 为清单主键字符串。
-# 输出：模型记录与完整 bytes；未知记录 404，文件漂移或路径越界 409。
-# 逻辑：检查整表清单后再次核验实际读取的记录，避免 READ COMMITTED 下两次查询间漂移；附件另验路径和摘要。
-# 约束：调用方必须先验证用户权限并在事务中调用；不写下载审计，不读取批次目录外文件。
+# Function: Verify and read file bytes listed in the manifest.
+# Inputs: `entry`: authorized batch; `label`: file model; `pk`: manifest primary-key string.
+# Outputs: Model record and complete bytes; unknown records return 404, file drift or path escape returns 409.
+# Logic: After checking the full table manifest, reverify the record actually read to detect drift between READ COMMITTED queries; additionally check attachment path and digest.
+# Constraints: The caller must validate user permissions first and call within a transaction; no download audit writes or reads outside the batch directory.
 def file_content(entry, label, pk):
     if label not in {"sales.Attachment", "accounts.SetupDocument"}:
         raise NotFound("该记录没有文件下载。")
@@ -206,11 +206,11 @@ def file_content(entry, label, pk):
     return record, content
 
 
-# 功能：提供表目录、归属与来源声明。
-# 输入：`entry` 已批准的批次事件。
-# 输出：批次元数据、表字段结构与登记数量。
-# 逻辑：数量来自当前清单；发布逐模型 write 能力、变更数量及原始场景真值状态，实际行在分页和导出时验证。
-# 约束：不将 synthetic 分析或非语义向量描述为真实模型输出，不返回内部文件清单。
+# Function: Provide the table catalog, ownership, and provenance declarations.
+# Inputs: `entry`: approved batch event.
+# Outputs: Batch metadata, table field schemas, and registered counts.
+# Logic: Counts come from the current manifest; publish per-model write capabilities, mutation counts, and original scenario truth status. Validate actual rows during pagination/export.
+# Constraints: Do not describe synthetic analyses or nonsemantic vectors as real model output; do not return internal file manifests.
 def batch_summary(entry):
     from .experiment_writes import capabilities
     counts = Counter(row["model"] for row in entry.changes["rows"])
@@ -224,23 +224,23 @@ def batch_summary(entry):
             "total": sum(counts[label] for label in TABLES)}
 
 
-# 功能：已登录用户的只读实验 API。
-# 逻辑：继承统一 Session 认证及 IsAuthenticated；所有路由仅接受 GET/HEAD/OPTIONS。
-# 约束：不提供权限管理、任务执行或修改能力，所有响应禁止缓存。
+# Function: Read-only experiment API for authenticated users.
+# Logic: Inherit shared Session authentication and IsAuthenticated; routes accept only GET/HEAD/OPTIONS.
+# Constraints: No permission management, task execution, or mutation capabilities; disable caching for every response.
 class ExperimentView(APIView):
     http_method_names = ["get", "head", "options"]
 
-    # 功能：分派目录、分页、完整导出和文件下载。
-    # 输入：`request` 当前登录请求，`batch` 可选批次，`label` 可选模型，`pk` 可选文件主键。
-    # 输出：含 write 字段契约的 JSON 目录/分页、JSON 下载或附件；无权限及漂移使用明确错误。
-    # 逻辑：个人隔离返回空批次目录，详情仍由 load_batch 拒绝；多表导出使用一致快照。
-    # 约束：仅 PostgreSQL；不写业务表，查询日志不含正文、密码或令牌。
+    # Function: Dispatch catalog, pagination, full export, and file download requests.
+    # Inputs: `request`: current authenticated request; `batch`: optional batch; `label`: optional model; `pk`: optional file primary key.
+    # Outputs: JSON catalog/pages containing the write contract, a JSON download, or an attachment; permission and drift failures are explicit.
+    # Logic: Personal isolation returns an empty batch catalog, while load_batch still rejects details; multi-table exports use a consistent snapshot.
+    # Constraints: PostgreSQL only; no business-table writes, and query logs omit contents, passwords, and tokens.
     @extend_schema(operation_id="experiments_table", responses=OpenApiTypes.OBJECT, tags=["experiments"],
                    parameters=[OpenApiParameter(name, str) for name in ("q", "owner", "pk", "page", "page_size")])
     def get(self, request, batch=None, label=None, pk=None):
         from django.db import connection
         with transaction.atomic():
-            # 独立请求的最外层事务在首次业务查询前固定快照；测试外层事务保留测试隔离级别。
+            # For standalone requests, the outermost transaction fixes the snapshot before the first business query; outer test transactions retain their test isolation level.
             if len(connection.atomic_blocks) == 1:
                 with connection.cursor() as cursor:
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -284,38 +284,38 @@ class ExperimentView(APIView):
         response["X-Content-Type-Options"] = "nosniff"
         return response
 
-    # 功能：核验并返回清单内文件。
-    # 输入：`entry` 批次事件、`label` 文档或附件模型、`pk` 原始主键字符串。
-    # 输出：强制下载响应；未知文件 404，文件损坏或路径越界 409。
-    # 逻辑：委托 file_content 核验行及文件，下载与 Agent 分块读取使用同一内容边界。
-    # 约束：不沿用私有附件的写审计服务，不访问批次目录之外的文件，不以内联 HTML 执行。
+    # Function: Verify and return a manifest-listed file.
+    # Inputs: `entry`: batch event; `label`: document or attachment model; `pk`: original primary-key string.
+    # Outputs: Forced-download response; unknown files return 404, corruption or path escape returns 409.
+    # Logic: Delegate row/file checks to file_content so downloads and Agent chunked reads share the same content boundary.
+    # Constraints: Do not reuse private attachment audit-writing services, access files outside the batch directory, or execute content as inline HTML.
     def download(self, entry, label, pk):
         record, content = file_content(entry, label, pk)
         return FileResponse(io.BytesIO(content), as_attachment=True, filename=Path(record.name).name,
                             content_type="application/octet-stream")
 
 
-# 功能：声明批次目录的独立接口契约。
-# 逻辑：继承同一只读鉴权和查询实现，仅区分 OpenAPI 操作名称及参数。
-# 约束：不改变父类的读取范围或方法白名单。
+# Function: Declare the separate batch catalog interface contract.
+# Logic: Inherit identical read-only authorization and queries, distinguishing only OpenAPI operation names and parameters.
+# Constraints: Do not change the parent read scope or method allowlist.
 @extend_schema_view(get=extend_schema(operation_id="experiments_catalog", parameters=[
     OpenApiParameter(name, str, exclude=True) for name in ("q", "owner", "pk", "page", "page_size")]))
 class ExperimentCatalogView(ExperimentView):
     pass
 
 
-# 功能：声明 JSON 导出接口契约。
-# 逻辑：继承只读批次分派，导出返回 JSON 附件而非分页。
-# 约束：不引入第二套序列化或权限实现。
+# Function: Declare the JSON export interface contract.
+# Logic: Inherit read-only batch dispatch; exports return JSON attachments instead of pages.
+# Constraints: Do not introduce a second serialization or permission implementation.
 @extend_schema_view(get=extend_schema(operation_id="experiments_export", parameters=[
     OpenApiParameter(name, str, exclude=True) for name in ("q", "owner", "pk", "page", "page_size")]))
 class ExperimentExportView(ExperimentView):
     pass
 
 
-# 功能：声明二进制附件接口契约。
-# 逻辑：父类核验行与文件摘要，契约显式为强制下载的 application/octet-stream。
-# 约束：不将文件内容误声明为 JSON，不开放任意文件路径。
+# Function: Declare the binary attachment interface contract.
+# Logic: The parent verifies row and file digests; the contract explicitly declares a forced application/octet-stream download.
+# Constraints: Do not declare file contents as JSON or expose arbitrary file paths.
 @extend_schema_view(get=extend_schema(operation_id="experiments_file", responses={
     (200, "application/octet-stream"): OpenApiTypes.BINARY}, parameters=[
     OpenApiParameter(name, str, exclude=True) for name in ("q", "owner", "pk", "page", "page_size")]))

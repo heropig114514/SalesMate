@@ -1,52 +1,52 @@
-"""职责：定义共用 Django、数据库、API 和日志配置。
-实现：读取环境变量及项目根目录 .env，进程变量优先；数据库通过单一 DATABASE_URL 配置。
-关联：供 local.py 导入；注册 accounts、crm、sales、vectors、chat、agent_tools、请求日志中间件、错误处理器及 OpenAPI 生成器。
+"""Responsibility: Define shared Django, database, API, and logging settings.
+Implementation: Reads environment variables and the project-root .env, with process variables taking precedence; configures the database through one DATABASE_URL.
+Relationships: Imported by local.py; registers accounts, crm, sales, vectors, chat, agent_tools, knowledge_graph, request logging middleware, the exception handler, and the OpenAPI generator.
 
-目录：
-- 无
+Directory:
+- None
 
-变量索引：
-- WORKSPACE_OWNER_ONLY：显式恢复个人空间，优先禁止匿名实验访问、团队与实验批次共享。
-- LAB_OPEN_ACCESS：显式启用所有业务 API 免登录和跨账号实验访问，默认关闭。
-- LAB_DEFAULT_USER：匿名实验写入的归属及审计账号名。
-- BASE_DIR：软件根目录 backend，作为前端、契约、静态文件和媒体路径基准。
-- PROJECT_DIR：项目根目录，共享 .env 所在位置。
-- env：具有类型转换能力的环境变量读取器。
-- SECRET_KEY：必需且非空的 Django 密钥，从环境读取，禁止记录其值。
-- DEBUG：共用配置中的调试开关，默认关闭。
-- ALLOWED_HOSTS：允许的 Host 列表，从 DJANGO_ALLOWED_HOSTS 读取。
-- CSRF_TRUSTED_ORIGINS：允许的 CSRF 来源列表。
-- INSTALLED_APPS：框架、API、账号、crm 邮件、sales 业务、vectors 向量、chat 聊天与 agent_tools 业务工具应用的注册顺序。
-- MIDDLEWARE：请求处理链，日志位于最外层；账号锁覆盖 SessionMiddleware 的会话保存阶段。
-- ROOT_URLCONF：根路由模块路径。
-- WSGI_APPLICATION：WSGI 应用导入路径。
-- ASGI_APPLICATION：ASGI 应用导入路径。
-- TEMPLATES：Admin 与软件根目录内 frontend/index.html 共用的模板后端及上下文处理器。
-- DATABASES：由必填 DATABASE_URL 生成的数据库连接；缺失或非法配置直接失败，不自动切换数据库。
-- AUTH_USER_MODEL：项目用户模型 accounts.User。
-- AUTH_PASSWORD_VALIDATORS：仅保留最少 8 字符长度要求，不限制字符组合、常见值或用户名相似性；Django 密码校验器集合。
-- LANGUAGES：界面支持简体中文和英文；LocaleMiddleware 优先使用语言 cookie，再匹配请求头。
-- LOCALE_PATHS：项目 gettext 目录位置。
-- LANGUAGE_CODE：默认界面语言 zh-hans。
-- TIME_ZONE：DJANGO_TIME_ZONE 指定的时区，缺省 UTC。
-- USE_I18N：启用国际化。
-- USE_TZ：启用时区感知的日期时间处理。
-- DEFAULT_AUTO_FIELD：默认自增主键类型 BigAutoField。
-- STATIC_URL：静态文件 URL 前缀。
-- STATIC_ROOT：静态文件收集目录。
-- MEDIA_ROOT：媒体文件目录。
-- ANALYSIS_PROVIDER：显式选择 rules 占位或 agent 独立任务消费者。
-- QQ_MAIL_ENABLED：QQ 收信及发信开关，默认关闭，历史数据仍可读。
-- GOOGLE_OAUTH_CLIENT_ID：Google Web application OAuth 客户端标识。
-- GOOGLE_OAUTH_CLIENT_SECRET：Google Web application OAuth 客户端密钥。
-- GOOGLE_OAUTH_REDIRECT_URI：Google 回到 Django 的精确授权回调地址。
-- SALESMATE_VAULT_KEY：新外部动作连接的 Fernet 密钥，空值时授权与解密明确失败。
-- REST_FRAMEWORK：会话认证、默认权限、JSON 渲染、Schema 与异常处理器配置。
-- SPECTACULAR_SETTINGS：API 元数据、枚举名称及默认仅管理员访问的文档配置。
-- TASK_EXECUTION_MODE：显式 local/celery 执行方式，本地默认 local，无连接失败回退。
-- CELERY_BROKER_URL：服务器 Redis 消息地址，celery 模式必填。
-- CELERY_RESULT_BACKEND：服务器 Redis 结果地址，celery 模式必填。
-- LOGGING：控制台日志格式、处理器和 Django/SalesMate 日志级别。
+Variable index:
+- WORKSPACE_OWNER_ONLY: Explicitly restores personal workspaces, taking priority over anonymous laboratory access, team sharing, and experiment-batch sharing.
+- LAB_OPEN_ACCESS: Explicitly enables unauthenticated, cross-account laboratory access for all business APIs; disabled by default.
+- LAB_DEFAULT_USER: Ownership and audit account name for anonymous laboratory writes.
+- BASE_DIR: backend software root, the base path for frontend, contracts, static files, and media.
+- PROJECT_DIR: Project root containing the shared .env.
+- env: Environment-variable reader with type conversion.
+- SECRET_KEY: Required non-empty Django secret read from the environment; its value must never be logged.
+- DEBUG: Shared debug switch, disabled by default.
+- ALLOWED_HOSTS: Allowed Host list read from DJANGO_ALLOWED_HOSTS.
+- CSRF_TRUSTED_ORIGINS: Allowed CSRF origin list.
+- INSTALLED_APPS: Registration order for framework, API, account, CRM mail, sales, vector, chat, agent-tool, and knowledge-graph apps.
+- MIDDLEWARE: Request-processing chain with logging outermost; the account lock covers SessionMiddleware session persistence.
+- ROOT_URLCONF: Root URL module path.
+- WSGI_APPLICATION: WSGI application import path.
+- ASGI_APPLICATION: ASGI application import path.
+- TEMPLATES: Template backend and context processors shared by Admin and frontend/index.html under the software root.
+- DATABASES: Database connection created from required DATABASE_URL; missing or invalid configuration fails directly and never switches databases automatically.
+- AUTH_USER_MODEL: accounts.User project user model.
+- AUTH_PASSWORD_VALIDATORS: Django password validator set retaining only the minimum eight-character requirement, with no character-combination, common-value, or username-similarity restrictions.
+- LANGUAGES: Simplified Chinese and English UI languages; LocaleMiddleware prefers the language cookie and then request headers.
+- LOCALE_PATHS: Project gettext directory.
+- LANGUAGE_CODE: Default UI language, zh-hans.
+- TIME_ZONE: Time zone from DJANGO_TIME_ZONE, defaulting to UTC.
+- USE_I18N: Enables internationalization.
+- USE_TZ: Enables time-zone-aware datetime handling.
+- DEFAULT_AUTO_FIELD: Default BigAutoField auto-increment primary-key type.
+- STATIC_URL: Static-file URL prefix.
+- STATIC_ROOT: Static-file collection directory.
+- MEDIA_ROOT: Media-file directory.
+- ANALYSIS_PROVIDER: Explicit rules placeholder or agent standalone-task consumer selection.
+- QQ_MAIL_ENABLED: QQ inbound and outbound mail switch, disabled by default while historical data remains readable.
+- GOOGLE_OAUTH_CLIENT_ID: Google Web application OAuth client identifier.
+- GOOGLE_OAUTH_CLIENT_SECRET: Google Web application OAuth client secret.
+- GOOGLE_OAUTH_REDIRECT_URI: Exact authorization callback URI from Google back to Django.
+- SALESMATE_VAULT_KEY: Fernet key for new external-action connections; an empty value makes authorization and decryption fail explicitly.
+- REST_FRAMEWORK: Session authentication, default permission, JSON renderer, schema, and exception-handler configuration.
+- SPECTACULAR_SETTINGS: API metadata, enum names, and documentation configuration that defaults to administrator-only access.
+- TASK_EXECUTION_MODE: Explicit local/celery execution selection, local by default, with no fallback on connection failures.
+- CELERY_BROKER_URL: Server Redis message address, required in celery mode.
+- CELERY_RESULT_BACKEND: Server Redis result address, required in celery mode.
+- LOGGING: Console log format, handlers, and Django/SalesMate log levels.
 """
 
 
@@ -57,13 +57,13 @@ from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 env = environ.Env()
-# 项目只使用根目录一个 .env；进程环境仍拥有更高优先级。
+# The project uses only the root .env; process environment variables still take precedence.
 PROJECT_DIR = BASE_DIR.parent
 if (PROJECT_DIR / ".env").is_file():
     environ.Env.read_env(PROJECT_DIR / ".env", overwrite=False)
 
 SECRET_KEY = env.str("DJANGO_SECRET_KEY")
-# 空白密钥也视为配置失败；异常中不包含读取到的密钥值。
+# A blank secret is also a configuration failure; exceptions never include its value.
 if not SECRET_KEY.strip():
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set to a non-empty secret.")
 
@@ -89,9 +89,10 @@ INSTALLED_APPS = [
     "apps.vectors",
     "apps.chat",
     "apps.agent_tools",
+    "apps.knowledge_graph",
 ]
 MIDDLEWARE = [
-    # 最外层先生成 request_id，使后续视图、错误响应和完成日志能够关联。
+    # Generate request_id outermost so subsequent views, error responses, and completion logs can correlate it.
     "common.middleware.RequestLoggingMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "apps.accounts.reset_middleware.AccountDataMiddleware",
@@ -155,7 +156,7 @@ GOOGLE_OAUTH_REDIRECT_URI = env.str(
 )
 
 REST_FRAMEWORK = {
-    # 实验认证仅在显式开关下提供公开身份；关闭时恢复 Session，健康检查独立匿名。
+    # Laboratory authentication exposes public identity only behind its explicit switch; otherwise Session authentication resumes and health checks remain independently anonymous.
     "DEFAULT_AUTHENTICATION_CLASSES": ["common.laboratory.LaboratoryAuthentication", "rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],

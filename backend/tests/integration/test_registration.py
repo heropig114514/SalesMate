@@ -1,18 +1,18 @@
-"""职责：验证简易注册、登录衔接和新账号的数据隔离。
-实现：真实测试数据库与启用 CSRF 校验的客户端覆盖账号写入、重复用户名及权限边界。
-关联：accounts.registration、CRM SessionView 和 sales 客户目录；不调用 Gmail 或模型服务。
-目录：
-- RegistrationTests：覆盖匿名注册和普通会话边界。
-- RegistrationTests.setUp：准备 CSRF 客户端与合成注册资料。
-- RegistrationTests.submit：通过真实 HTTP 视图提交注册载荷。
-- RegistrationTests.test_register_login_logout_and_empty_workspace：验证注册后登录、空工作空间和重新登录。
-- RegistrationTests.test_csrf_and_privileged_fields_rejected：验证 CSRF 与权限字段不能绕过。
-- RegistrationTests.test_invalid_username_and_password_rejected：验证用户名及 8–128 位密码长度规则。
-- RegistrationTests.test_duplicate_and_normalized_username_rejected：验证规范化重名不覆盖旧账号。
-- RegistrationTests.test_database_duplicate_is_validation_error：模拟预检查竞争后验证真实唯一约束处理。
-- RegistrationTests.test_authenticated_registration_keeps_identity：验证已登录身份不会被注册请求替换。
-变量索引：
-- 无
+"""Responsibility: Verify simplified registration, login continuation, and data isolation for new accounts.
+Implementation: Use real test database and a CSRF-enforcing client to cover account writes, duplicate usernames, and permission boundaries.
+Relationships: Covers `accounts.registration`, CRM `SessionView`, and sales customer directory; does not call Gmail or model services.
+Directory:
+- RegistrationTests: Covers anonymous registration and ordinary session boundaries.
+- RegistrationTests.setUp: Prepare a CSRF client and synthetic registration data.
+- RegistrationTests.submit: Submit registration payload through real HTTP view.
+- RegistrationTests.test_register_login_logout_and_empty_workspace: Verify post-registration login, empty workspace, and relogin.
+- RegistrationTests.test_csrf_and_privileged_fields_rejected: Verify CSRF and privilege fields cannot be bypassed.
+- RegistrationTests.test_invalid_username_and_password_rejected: Verify username and 8–128-character password-length rules.
+- RegistrationTests.test_duplicate_and_normalized_username_rejected: Verify normalized duplicate names do not overwrite existing accounts.
+- RegistrationTests.test_database_duplicate_is_validation_error: Mock precheck race then verify real unique-constraint handling.
+- RegistrationTests.test_authenticated_registration_keeps_identity: Verify a registration request does not replace existing logged-in identity.
+Variable index:
+- None
 """
 
 from unittest.mock import patch
@@ -22,34 +22,34 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 
-# 功能：验证无需外部验证服务的普通账号注册。
-# 逻辑：关闭调试自动登录，使用真实密码哈希、数据库和 Session 进行请求。
-# 约束：仅使用隔离测试库和合成数据，不消耗模型额度或发送邮件。
+# Function: Verify ordinary account registration without external verification services.
+# Logic: Disable debug automatic login and make requests with real password hashes, database, and Session.
+# Constraints: Use isolated test database and synthetic data only and do not consume model quota or send mail.
 @override_settings(DEBUG=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class RegistrationTests(TestCase):
-    # 功能：准备匿名浏览器与合法注册数据。
-    # 输入：无外部参数；读取 Django 测试运行环境。
-    # 输出：client、csrf、payload 实例状态。
-    # 逻辑：先访问 session/ 取得真实 CSRF Cookie，再构造只含两个字段的请求。
-    # 约束：不强制认证，不跳过密码验证。
+    # Function: Prepare an anonymous browser and valid registration data.
+    # Inputs: No external parameters; reads Django test runtime.
+    # Outputs: Instance state for `client`, `csrf`, and `payload`.
+    # Logic: Access session first to obtain a real CSRF cookie, then construct a request containing only two fields.
+    # Constraints: Do not force authentication or skip password validation.
     def setUp(self):
         self.client = APIClient(enforce_csrf_checks=True)
         self.csrf = self.client.get("/api/v1/session/").data["csrf_token"]
         self.payload = {"username": "new-sales-user", "password": "Quartz-Bridge-86!"}
 
-    # 功能：提交带有效 CSRF 的注册请求。
-    # 输入：`payload` 为本场景的注册 JSON。
-    # 输出：HTTP 响应对象。
-    # 逻辑：复用当前客户端 Cookie 与 csrf 实例状态。
-    # 约束：调用方在 Session 轮换后需更新 csrf，不隐式刷新或重试。
+    # Function: Submit a registration request with valid CSRF.
+    # Inputs: `payload` is registration JSON for this scenario.
+    # Outputs: HTTP response object.
+    # Logic: Reuse current client cookie and `csrf` instance state.
+    # Constraints: Caller must update `csrf` after Session rotation; do not refresh or retry implicitly.
     def submit(self, payload):
         return self.client.post("/api/v1/accounts/register/", payload, format="json", HTTP_X_CSRFTOKEN=self.csrf)
 
-    # 功能：验证从注册到业务使用及重新登录的闭环。
-    # 输入：匿名客户端、合法注册资料和另一用户拥有的客户。
-    # 输出：201、普通权限、哈希密码、数据隔离与重新登录断言。
-    # 逻辑：另一用户先创建客户，新用户注册后只能创建和读取自己的客户，注销后用同一密码登录。
-    # 约束：另一用户的 force_login 仅构造隔离前提；待测注册和登录均通过真实接口。
+    # Function: Verify the closed loop from registration to business use and relogin.
+    # Inputs: Anonymous client, valid registration data, and a customer owned by another user.
+    # Outputs: Assertions for 201, ordinary permissions, hashed password, data isolation, and relogin.
+    # Logic: Another user first creates a customer; newly registered user can create and read only their own customer, then logs in with the same password after logout.
+    # Constraints: Other user's `force_login` establishes isolation preconditions only; registration and login under test use real APIs.
     def test_register_login_logout_and_empty_workspace(self):
         other = get_user_model().objects.create_user(username="existing-owner")
         other_client = APIClient()
@@ -76,11 +76,11 @@ class RegistrationTests(TestCase):
         self.assertEqual(logged_in.status_code, 200)
         self.assertEqual(self.client.get("/api/v1/sales/directory/").data["count"], 1)
 
-    # 功能：验证注册保留 CSRF 并拒绝客户端提升权限。
-    # 输入：缺失 CSRF 请求及带 is_staff/is_superuser 的合成请求。
-    # 输出：403/400 和无新增用户的断言。
-    # 逻辑：分别经真实中间件和字段校验拒绝，检查数据库未写入。
-    # 约束：不把错误响应本身当作无副作用的证据。
+    # Function: Verify registration retains CSRF and rejects client privilege escalation.
+    # Inputs: Request missing CSRF and synthetic requests with is_staff or is_superuser.
+    # Outputs: Assertions for 403/400 and no new user.
+    # Logic: Reject through real middleware and field validation respectively, then check database remains unwritten.
+    # Constraints: Do not treat an error response itself as proof of no side effects.
     def test_csrf_and_privileged_fields_rejected(self):
         self.assertEqual(self.client.post("/api/v1/accounts/register/", self.payload, format="json").status_code, 403)
         for field in ["is_staff", "is_superuser"]:
@@ -88,11 +88,11 @@ class RegistrationTests(TestCase):
                 self.assertEqual(self.submit({**self.payload, field: True}).status_code, 400)
         self.assertEqual(get_user_model().objects.count(), 0)
 
-    # 功能：验证注册输入采用已有账号规则。
-    # 输入：非对象载荷、缺失字段、非法用户名、长度不合规密码及超长密码场景。
-    # 输出：每个场景返回 400 且无账号写入。
-    # 逻辑：通过完整接口执行模型用户名与 Django 密码校验。
-    # 约束：没有添加邮箱、手机或验证码校验；不改变全局密码规则。
+    # Function: Verify registration input uses established account rules.
+    # Inputs: Non-object payload, missing fields, invalid username, noncompliant password lengths, and oversized password case.
+    # Outputs: Every case returns 400 with no account write.
+    # Logic: Run model username and Django password validation through the full API.
+    # Constraints: Do not add email, phone, or verification-code validation or change global password rules.
     def test_invalid_username_and_password_rejected(self):
         for changes in [{"username": ""}, {"username": "bad name"}, {"password": "short"}, {"password": "x" * 129}]:
             with self.subTest(changes=changes):
@@ -101,11 +101,11 @@ class RegistrationTests(TestCase):
         self.assertEqual(self.submit([self.payload]).status_code, 400)
         self.assertEqual(get_user_model().objects.count(), 0)
 
-    # 功能：验证重复注册与 Unicode 规范化重名处理。
-    # 输入：已有 sales 用户和普通/全角用户名请求。
-    # 输出：400、单一用户及旧密码保持不变的断言。
-    # 逻辑：两种输入均映射到已有用户名，不允许重置或接管账号。
-    # 约束：不改变既有用户名大小写语义。
+    # Function: Verify duplicate registration and Unicode-normalized duplicate-name handling.
+    # Inputs: Existing sales user and ordinary/fullwidth username requests.
+    # Outputs: Assertions for 400, one user, and unchanged old password.
+    # Logic: Both inputs map to the existing username and cannot reset or take over the account.
+    # Constraints: Do not change established username case semantics.
     def test_duplicate_and_normalized_username_rejected(self):
         user = get_user_model().objects.create_user(username="sales", password="Original-Secret-82!")
         for username in ["sales", "ｓａｌｅｓ"]:
@@ -114,11 +114,11 @@ class RegistrationTests(TestCase):
         self.assertTrue(user.check_password("Original-Secret-82!"))
         self.assertEqual(get_user_model().objects.count(), 1)
 
-    # 功能：验证预检查之后出现重名时仍返回明确校验错误。
-    # 输入：`validate_username` 为模拟已通过的预检查；数据库内真实存在同名用户。
-    # 输出：400、无注册会话且用户数量未变的断言。
-    # 逻辑：只模拟预检查结果，由真实数据库触发唯一约束和原子事务回滚。
-    # 约束：模拟竞争窗口，不声称验证了多进程并发调度。
+    # Function: Verify an explicit validation error still returns when a duplicate name appears after precheck.
+    # Inputs: `validate_username` is a mock precheck that passes; database contains a real same-name user.
+    # Outputs: Assertions for 400, no registration session, and unchanged user count.
+    # Logic: Mock precheck result only; real database triggers unique constraint and atomic rollback.
+    # Constraints: Simulates a race window and does not claim to verify multiprocess concurrency scheduling.
     @patch("apps.accounts.registration.RegistrationSerializer.validate_username")
     def test_database_duplicate_is_validation_error(self, validate_username):
         get_user_model().objects.create_user(username=self.payload["username"])
@@ -127,11 +127,11 @@ class RegistrationTests(TestCase):
         self.assertEqual(get_user_model().objects.count(), 1)
         self.assertNotIn("_auth_user_id", self.client.session)
 
-    # 功能：验证注册不能替换已登录用户的身份。
-    # 输入：已建立的用户会话和另一个注册用户名。
-    # 输出：409、原会话 ID 和单一用户数量断言。
-    # 逻辑：先真实注册并刷新 CSRF，再向同一接口提交新用户名。
-    # 约束：不注销用户，不创建第二个账号。
+    # Function: Verify registration cannot replace an existing logged-in identity.
+    # Inputs: Established user Session and another registration username.
+    # Outputs: Assertions for 409, original session ID, and one user.
+    # Logic: Register through the real API and refresh CSRF first, then submit new username to the same endpoint.
+    # Constraints: Do not log out the user or create a second account.
     def test_authenticated_registration_keeps_identity(self):
         response = self.submit(self.payload)
         self.assertEqual(response.status_code, 201)

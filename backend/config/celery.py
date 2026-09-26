@@ -1,10 +1,10 @@
-"""职责：定义服务器 Celery 应用与明确的消息失败语义。
-实现：从 Django 环境读取 Redis 地址，只传 JSON 标识符，禁止业务自动重试及发送重试。
-关联：common.execution 提交工作，common.tasks 执行；本地模式不连接 Redis。
-目录：
-- 无
-变量索引：
-- app：Celery 应用，配置序列化、确认、结果和队列行为。
+"""Responsibility: Define the server Celery application and explicit message-failure semantics.
+Implementation: Reads Redis addresses from the Django environment, sends JSON identifiers only, and disables business and publish retries.
+Relationships: common.execution submits work and common.tasks executes it; local mode does not connect to Redis.
+Directory:
+- None
+Variable index:
+- app: Celery application configuring serialization, acknowledgements, results, and queue behavior.
 """
 from celery import Celery
 from django.conf import settings

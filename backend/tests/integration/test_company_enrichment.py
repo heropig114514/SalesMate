@@ -1,26 +1,26 @@
-"""职责：验证跨账号公司资料补充的实际 HTTP、L2/L3 保存和失效边界。
-实现：隔离数据库内生成完整实验夹具，真实 Agent 凭证调用接口；只替换模型输出。
-关联：enrichment、results、共享实验写入和真实 DjangoBackendClient；不访问外部模型。
-目录：
-- initialize：建立不同归属的资料源与分析目标。
-- provider：构造引用实验资料的确定性模型输出。
-- EnrichmentTests：验证解析、保存和撤销边界。
-- EnrichmentTests.setUp：初始化隔离夹具。
-- EnrichmentTests.document：通过 HTTP 读取上下文并构造 L2。
-- EnrichmentTests.save：通过当前租约提交 L2。
-- EnrichmentTests.test_cross_account_context_and_integrity：验证免额外 Tool 凭证及防篡改。
-- EnrichmentTests.test_ambiguity_and_exact_matching：验证歧义、完整域名和受限名称匹配。
-- EnrichmentTests.test_crm_priority_and_l3_sources：验证 CRM 优先、实验规模和引用白名单。
-- EnrichmentTests.test_source_changes_revoke_cached_results：验证修改和删除批准后旧分析失效。
-- EnrichmentTests.test_integrity_failure_is_explicit：验证源数据漂移不是无匹配。
-- EnrichmentTests.test_no_match_and_legacy_input：验证无匹配和旧协议保持可用。
-- EnrichmentTests.test_batch_resolution_reuses_verified_rows_and_rechecks_changes：验证批量等价、清单仅读一次及下次调用重新核验。
-- EnrichmentTests.test_batch_resolution_keeps_owner_only_and_integrity_failure：验证批量不会绕过账号隔离或完整性错误。
-- EnrichmentLiveTests：真实网络上的 Agent 分析闭环。
-- EnrichmentLiveTests.setUp：初始化隔离夹具。
-- EnrichmentLiveTests.test_real_worker_client_and_cache：验证无 Tool 令牌的 L2/L3/L4 与缓存。
-变量索引：
-- 无
+"""Responsibility: Verify actual HTTP, L2/L3 saves, and invalidation boundaries for cross-account company enrichment.
+Implementation: Generate complete experimental fixtures in an isolated database and call interfaces with real Agent credentials; replace only model output.
+Relationships: enrichment, results, shared experimental writes, and real DjangoBackendClient; no external model access.
+Directory:
+- initialize: Create differently owned material sources and analysis targets.
+- provider: Construct deterministic model output citing experimental material.
+- EnrichmentTests: Verify resolution, saving, and revocation boundaries.
+- EnrichmentTests.setUp: Initialize isolated fixtures.
+- EnrichmentTests.document: Read context through HTTP and construct L2.
+- EnrichmentTests.save: Submit L2 using the current lease.
+- EnrichmentTests.test_cross_account_context_and_integrity: Verify no additional Tool credential is needed and tampering is rejected.
+- EnrichmentTests.test_ambiguity_and_exact_matching: Verify ambiguity, full-domain matching, and restricted name matching.
+- EnrichmentTests.test_crm_priority_and_l3_sources: Verify CRM precedence, experimental scale, and citation allowlists.
+- EnrichmentTests.test_source_changes_revoke_cached_results: Verify approved modifications/deletions invalidate old analysis.
+- EnrichmentTests.test_integrity_failure_is_explicit: Verify source drift is not treated as no match.
+- EnrichmentTests.test_no_match_and_legacy_input: Verify no-match cases and the old protocol remain usable.
+- EnrichmentTests.test_batch_resolution_reuses_verified_rows_and_rechecks_changes: Verify bulk equivalence, one manifest read, and revalidation on the next call.
+- EnrichmentTests.test_batch_resolution_keeps_owner_only_and_integrity_failure: Verify bulk operations cannot bypass account isolation or integrity errors.
+- EnrichmentLiveTests: Agent analysis loop over real networking.
+- EnrichmentLiveTests.setUp: Initialize isolated fixtures.
+- EnrichmentLiveTests.test_real_worker_client_and_cache: Verify L2/L3/L4 and caching without a Tool token.
+Variable index:
+- None
 """
 
 import copy
@@ -48,11 +48,11 @@ from apps.sales.models import AuditEvent
 from integrations.company_enrichment import input_version, employee_size
 
 
-# 功能：建立不同归属的资料源与分析目标。
-# 输入：`case` 为 Django 测试实例。
-# 输出：初始化账号、目标公司、种子记录、Agent 客户端与租约头。
-# 逻辑：生成两组实验记录，另一个普通新账号以相同完整域名创建空 CRM 公司。
-# 约束：临时文件自动回收，令牌仅为测试常量，不使用 ToolCredential。
+# Function: Create differently owned material sources and analysis targets.
+# Inputs: `case` is a Django test instance.
+# Outputs: Initialize accounts, target company, seed records, Agent client, and lease headers.
+# Logic: Generate two experimental record sets; another ordinary new account creates an empty CRM company with the same full domain.
+# Constraints: Temporary files are automatically reclaimed; tokens are test constants only, without ToolCredential.
 def initialize(case):
     folder = tempfile.TemporaryDirectory(prefix="enrichment-test-")
     case.addCleanup(folder.cleanup)
@@ -73,11 +73,11 @@ def initialize(case):
     case.headers = {"HTTP_IF_MATCH": str(case.company.revision), "HTTP_X_JOB_ID": job["job_id"], "HTTP_X_LEASE_TOKEN": job["lease_token"]}
 
 
-# 功能：构造引用实验资料的确定性模型输出。
-# 输入：`document` 为真实后端提供的 L2。
-# 输出：L3 list_view/detail_view 的 JSON 文本。
-# 逻辑：无邮件时信号保持 unknown，使用补充行业来源和确定性人数档位。
-# 约束：只替换模型边界，不模拟鉴权、匹配、数据库或 HTTP。
+# Function: Construct deterministic model output citing experimental material.
+# Inputs: `document` is L2 provided by the real backend.
+# Outputs: JSON text for L3 list_view/detail_view.
+# Logic: Without mail, signals remain unknown; use supplemental industry sources and deterministic headcount bands.
+# Constraints: Replace only the model boundary; do not mock authentication, matching, database, or HTTP.
 def provider(document):
     enrichment = document["business_context"]["company_enrichment"]
     refs = [enrichment["source"]["source_id"]] if enrichment["status"] == "matched" else []
@@ -93,15 +93,15 @@ def provider(document):
         "missing_fields": [], "context_completeness": {"unparsed_message_count": 0, "note": None}}}, ensure_ascii=False)
 
 
-# 功能：验证解析、保存和撤销边界。
-# 逻辑：用真实 HTTP 视图和事务数据库，构造准确匹配与攻击反例。
-# 约束：所有写入限测试数据库。
+# Function: Verify resolution, saving, and revocation boundaries.
+# Logic: Use real HTTP views and a transactional database to construct exact matches and attack counterexamples.
+# Constraints: Restrict all writes to the test database.
 class EnrichmentTests(TestCase):
-    # 功能：验证批量解析与独立解析相同且仅读取一次清单。
-    # 输入：测试实例中的获准夹具、匹配公司及无匹配公司。
-    # 输出：完整结果相等、实际 table_rows 调用一次，源变更后下一调用返回完整性错误。
-    # 逻辑：包装真实投影函数统计次数，保留数据库和指纹检查；没有模拟成功结果。
-    # 约束：变更只在隔离测试库，不缓存上一调用结果。
+    # Function: Verify bulk and independent resolution are identical and read the manifest only once.
+    # Inputs: Approved fixtures, matching companies, and unmatched companies in the test instance.
+    # Outputs: Complete results are equal, actual table_rows is called once, and the next call returns an integrity error after source changes.
+    # Logic: Wrap the real projection function to count calls while retaining database/fingerprint checks; no successful results are mocked.
+    # Constraints: Changes occur only in the isolated test database; previous-call results are not cached.
     def test_batch_resolution_reuses_verified_rows_and_rechecks_changes(self):
         other = Company.objects.create(owner=self.reader, group_key="batch-miss", domains=["unmatched.example"])
         companies = [self.company, other]
@@ -113,11 +113,11 @@ class EnrichmentTests(TestCase):
         Company.objects.filter(pk=self.row["pk"]).update(name="changed-source")
         self.assertEqual(resolve_many(companies)[self.company.pk]["reason"], "integrity_error")
 
-    # 功能：验证批量解析的隔离和失效边界。
-    # 输入：已批准清单、个人隔离开关和被删除的清单。
-    # 输出：个人隔离不读取共享表；清单缺失明确 unavailable；空集合无读取。
-    # 逻辑：保留真实表读取，检查调用次数和结果中的安全原因。
-    # 约束：不把清单失败变为正常无匹配，不修改运行环境默认值。
+    # Function: Verify bulk-resolution isolation and invalidation boundaries.
+    # Inputs: Approved manifest, personal-isolation switch, and deleted manifest.
+    # Outputs: Personal isolation prevents shared-table reads; missing manifests explicitly return unavailable; empty sets perform no reads.
+    # Logic: Retain real table reads and inspect call counts and safe reasons in results.
+    # Constraints: Do not convert manifest failures into ordinary no-match results or change runtime defaults.
     def test_batch_resolution_keeps_owner_only_and_integrity_failure(self):
         with self.settings(WORKSPACE_OWNER_ONLY=True), patch("apps.crm.enrichment.experiments.table_rows", wraps=table_rows) as project:
             self.assertEqual(resolve_many([self.company])[self.company.pk]["status"], "not_found")
@@ -126,19 +126,19 @@ class EnrichmentTests(TestCase):
         AuditEvent.objects.filter(event="kg_synthetic_batch_v1", object_id=self.batch).delete()
         self.assertEqual(resolve_many([self.company])[self.company.pk]["reason"], "batch_unavailable")
 
-    # 功能：初始化隔离夹具。
-    # 输入：无外部参数，测试实例。
-    # 输出：initialize 建立的实例状态。
-    # 逻辑：每个测试独立建数据。
-    # 约束：不复用生产凭证。
+    # Function: Initialize isolated fixtures.
+    # Inputs: No external arguments; the test instance.
+    # Outputs: Instance state established by initialize.
+    # Logic: Create independent data for each test.
+    # Constraints: Do not reuse production credentials.
     def setUp(self):
         initialize(self)
 
-    # 功能：通过 HTTP 读取上下文并构造 L2。
-    # 输入：实例的 api、company。
-    # 输出：(L2 字典, 公司上下文)。
-    # 逻辑：使用原规则归并构造邮件部分，再按正式共享版本函数绑定补充资料。
-    # 约束：真实 Agent builder 在 LiveServer 测试独立覆盖。
+    # Function: Read context through HTTP and construct L2.
+    # Inputs: The instance's api and company.
+    # Outputs: (L2 dictionary, company context).
+    # Logic: Use original rule-based merging for mail, then bind supplemental material through the formal shared-version function.
+    # Constraints: The real Agent builder is covered separately by LiveServer tests.
     def document(self):
         grouping = self.api.get("/api/v1/agent/grouping/", {"company_id": str(self.company.pk)}).data
         response = self.api.get("/api/v1/agent/context/", {"company_id": str(self.company.pk)}, HTTP_IF_MATCH=str(self.company.revision))
@@ -149,19 +149,19 @@ class EnrichmentTests(TestCase):
         document["input_version"] = input_version(context["emails"], document["merge_version"], context["external_snapshot_version"], context["company_enrichment"])
         return document, context
 
-    # 功能：通过当前租约提交 L2。
-    # 输入：`document` 为待保存的快照。
-    # 输出：实际 HTTP 响应。
-    # 逻辑：带 Agent 凭证及领取凭据执行 POST。
-    # 约束：不绕过 results.save_input。
+    # Function: Submit L2 using the current lease.
+    # Inputs: `document` is the snapshot to save.
+    # Outputs: Actual HTTP response.
+    # Logic: POST with Agent credentials and claim credentials.
+    # Constraints: Do not bypass results.save_input.
     def save(self, document):
         return self.api.post("/api/v1/agent/analysis-inputs/", document, format="json", **self.headers)
 
-    # 功能：验证免额外 Tool 凭证及防篡改。
-    # 输入：跨账号实验资料与空 CRM 目标。
-    # 输出：成功保存，伪造字段、版本和私有公司访问失败。
-    # 逻辑：逐项篡改且重算版本以排除只检查摘要的假安全。
-    # 约束：普通其他员工私有数据不开放。
+    # Function: Verify no additional Tool credential is needed and tampering is rejected.
+    # Inputs: Cross-account experimental material and an empty CRM target.
+    # Outputs: Saving succeeds; forged fields/versions and private-company access fail.
+    # Logic: Tamper with each field and recompute versions to exclude false security based only on digest checks.
+    # Constraints: Ordinary private data of other employees remains unavailable.
     def test_cross_account_context_and_integrity(self):
         document, context = self.document()
         enrichment = context["company_enrichment"]
@@ -181,11 +181,11 @@ class EnrichmentTests(TestCase):
         anonymous = APIClient()
         self.assertEqual(anonymous.get("/api/v1/agent/context/", {"company_id": str(self.company.pk)}).status_code, 401)
 
-    # 功能：验证歧义、完整域名和受限名称匹配。
-    # 输入：同域名第二候选及子域、普通同名目标。
-    # 输出：ambiguous、not_found、matched 的准确状态。
-    # 逻辑：通过公开维护服务增加候选，避免直接破坏清单。
-    # 约束：不将 q 子串或普通公司同名当成精确对应。
+    # Function: Verify ambiguity, full-domain matching, and restricted name matching.
+    # Inputs: A second same-domain candidate, subdomains, and ordinary same-name targets.
+    # Outputs: Accurate ambiguous, not_found, and matched states.
+    # Logic: Add candidates through public maintenance services without directly corrupting the manifest.
+    # Constraints: Do not treat q substrings or ordinary matching company names as exact correspondence.
     def test_ambiguity_and_exact_matching(self):
         self.company.domains = ["sub." + self.row["fields"]["domains"][0]]
         self.assertEqual(resolve(self.company)["status"], "not_found")
@@ -197,11 +197,11 @@ class EnrichmentTests(TestCase):
         mutate(self.reader, "create", self.batch, "crm.Company", data={"group_key": "duplicate-domain", "name": "另一个虚构", "domains": self.company.domains})
         self.assertEqual(resolve(self.company)["status"], "ambiguous")
 
-    # 功能：验证 CRM 优先、实验规模和引用白名单。
-    # 输入：匹配的 L2、未知 CRM 人数与伪造引用。
-    # 输出：L3 实验规模保存成功，越界引用失败，已有 CRM 数值优先。
-    # 逻辑：执行实际 Agent 校验和后端保存；资料仍仅存于快照。
-    # 约束：不评估真实模型生成质量。
+    # Function: Verify CRM precedence, experimental scale, and citation allowlists.
+    # Inputs: Matched L2, unknown CRM headcount, and forged citations.
+    # Outputs: L3 experimental scale saves successfully, out-of-scope citations fail, and existing CRM values take precedence.
+    # Logic: Run actual Agent validation and backend saving; supplemental material remains snapshot-only.
+    # Constraints: Do not evaluate real-model generation quality.
     def test_crm_priority_and_l3_sources(self):
         document, _ = self.document()
         self.assertEqual(self.save(document).status_code, 200)
@@ -220,11 +220,11 @@ class EnrichmentTests(TestCase):
         self.assertEqual(analysis["list_view"]["size_band"], "gte_500")
         self.assertEqual(analysis["list_view"]["size_source"], "crm")
 
-    # 功能：验证修改和删除批准后旧分析失效。
-    # 输入：已保存 L2/L3 和合法实验修改。
-    # 输出：缓存 miss、当前结果为空、旧快照不可继续保存；新版本变化。
-    # 逻辑：正常维护清单后测试所有当前结果入口，并移除批次清单模拟撤销。
-    # 约束：历史记录保留，不隐式重新调用模型。
+    # Function: Verify approved modifications/deletions invalidate old analysis.
+    # Inputs: Saved L2/L3 and legitimate experimental modifications.
+    # Outputs: Cache miss, empty current results, rejection of further saves against old snapshots, and a changed new version.
+    # Logic: After normal manifest maintenance, test every current-result entry point; remove the batch manifest to simulate revocation.
+    # Constraints: Retain history without implicitly calling the model again.
     def test_source_changes_revoke_cached_results(self):
         document, _ = self.document()
         self.save(document)
@@ -245,11 +245,11 @@ class EnrichmentTests(TestCase):
         with patch("apps.sales.experiments.APPROVED_BATCHES", ()):
             self.assertEqual(selectors.latest_result(self.company), (None, None))
 
-    # 功能：验证源数据漂移不是无匹配。
-    # 输入：绕过正式维护入口的实验记录修改。
-    # 输出：明确 integrity_error 状态和无补充事实；L2 仍可保存状态。
-    # 逻辑：实际指纹检查拒绝损坏数据，不阻断已完成的 L1。
-    # 约束：不吞掉未知异常或伪造来源。
+    # Function: Verify source drift is not treated as no match.
+    # Inputs: Experimental-record modifications bypassing the formal maintenance entry point.
+    # Outputs: Explicit integrity_error with no supplemental facts; L2 can still save that state.
+    # Logic: Actual fingerprint checks reject corrupted data without blocking completed L1.
+    # Constraints: Do not swallow unknown exceptions or fabricate sources.
     def test_integrity_failure_is_explicit(self):
         Company.objects.filter(pk=self.row["pk"]).update(name="untracked edit")
         document, context = self.document()
@@ -257,11 +257,11 @@ class EnrichmentTests(TestCase):
         self.assertEqual(context["company_enrichment"]["facts"], {})
         self.assertEqual(self.save(document).status_code, 200)
 
-    # 功能：验证无匹配和旧协议保持可用。
-    # 输入：普通公司域名和不提交补充字段的旧客户端。
-    # 输出：无错误补全，两种输入均可保存。
-    # 逻辑：旧协议仍遵循原版本规则，新协议记录 not_found 状态。
-    # 约束：不把无匹配解释为没有其他私有公司。
+    # Function: Verify no-match cases and the old protocol remain usable.
+    # Inputs: Ordinary company domains and old clients omitting supplemental fields.
+    # Outputs: No incorrect enrichment; both inputs can be saved.
+    # Logic: The old protocol retains original version rules; the new protocol records not_found.
+    # Constraints: Do not interpret no match as absence of other private companies.
     def test_no_match_and_legacy_input(self):
         self.company.domains = ["ordinary.example"]
         self.company.save(update_fields=["domains"])
@@ -273,23 +273,23 @@ class EnrichmentTests(TestCase):
         self.assertEqual(self.save(document).status_code, 200)
 
 
-# 功能：真实网络上的 Agent 分析闭环。
-# 逻辑：LiveServer 与真实客户端共享隔离 PostgreSQL，只替换模型输出。
-# 约束：不使用外部模型或生产数据库。
+# Function: Agent analysis loop over real networking.
+# Logic: LiveServer and the real client share isolated PostgreSQL, replacing only model output.
+# Constraints: Use no external models or production database.
 class EnrichmentLiveTests(LiveServerTestCase):
-    # 功能：初始化隔离夹具。
-    # 输入：无外部参数，测试实例。
-    # 输出：initialize 建立的实例状态。
-    # 逻辑：提交真实数据供服务器线程读取。
-    # 约束：测试数据库由框架清理。
+    # Function: Initialize isolated fixtures.
+    # Inputs: No external arguments; the test instance.
+    # Outputs: Instance state established by initialize.
+    # Logic: Commit real data for the server thread to read.
+    # Constraints: The framework cleans the test database.
     def setUp(self):
         initialize(self)
 
-    # 功能：验证无 Tool 令牌的 L2/L3/L4 与缓存。
-    # 输入：真实 Agent 令牌、HTTP 服务地址和确定性 provider。
-    # 输出：画像完成、再次运行命中缓存、L1 事实空且不污染 CRM。
-    # 逻辑：重新排队后由 DjangoBackendClient 领取租约并运行实际 analyze_company。
-    # 约束：不把模型替身当成真实 LLM 评测。
+    # Function: Verify L2/L3/L4 and caching without a Tool token.
+    # Inputs: Real Agent token, HTTP service address, and deterministic provider.
+    # Outputs: Profile completes, a repeated run hits cache, L1 facts remain empty, and CRM is not contaminated.
+    # Logic: After requeuing, DjangoBackendClient claims the lease and runs actual analyze_company.
+    # Constraints: Do not treat a model substitute as real LLM evaluation.
     def test_real_worker_client_and_cache(self):
         Job.objects.filter(company=self.company).update(status="pending")
         backend = DjangoBackendClient(self.live_server_url + "/api/v1/agent/", "enrichment-test")

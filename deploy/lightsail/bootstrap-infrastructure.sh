@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 职责：将已有单实例安装转换为共享数据和双 Web 发布布局。
-# 实现：保留原版本启动新 Gunicorn，检查后切换入口；配置 Redis 身份及 vector 扩展，原目录归档；预建服务用户的私有 Gunicorn 控制套接字目录。
-# 关联：首次由管理员执行；后续使用 root 安装的 deploy-from-git.sh，不能重复初始化。
-# 目录：无函数；嵌入 Python 只处理固定配置和目录，不访问外部业务。
-# 变量索引：source 为已审查代码目录；backup 为初始化备份；legacy 为原代码的候选副本；
-# revision 为当前版本；attempt 为就绪观察；name 为共享数据目录；FD 9 为发布互斥锁。
+# Responsibility: Convert an existing single-instance installation to shared data and a dual-Web release layout.
+# Implementation: Start new Gunicorn while retaining the original version, switch entry after checks, configure Redis identity and vector extension, archive the original directory, and precreate the service user's private Gunicorn control-socket directory.
+# Relationships: An administrator runs this once; subsequent releases use root-installed deploy-from-git.sh and must not initialize again.
+# Directory: No functions. Embedded Python handles fixed configuration and directories only and does not access external business services.
+# Variable index: source is reviewed code directory; backup is initialization backup; legacy is candidate copy of original code.
+# revision is current version; attempt is readiness observation; name is shared-data directory; FD 9 is the release mutual-exclusion lock.
 set -euo pipefail
 umask 027
 source="${1:-}"
@@ -23,7 +23,7 @@ cp /usr/local/sbin/salesmate-deploy-from-git "$backup/deploy-from-git.sh"
 sudo -u postgres pg_dump -Fc salesmate > "$backup/database.dump"
 install -d -m 755 /opt/salesmate/releases /opt/salesmate/slots/8001 /opt/salesmate/slots/8002
 install -d -m 750 -o root -g salesmate /opt/salesmate/shared /etc/salesmate
-# Gunicorn 在服务用户 HOME 下创建控制套接字；部署根保持 root 所有，仅此私有目录允许服务用户写入。
+# Gunicorn creates control sockets under service-user HOME. Deployment root remains root-owned; only this private directory permits service-user writes.
 install -d -m 700 -o salesmate -g salesmate /opt/salesmate/.gunicorn
 python3 - <<'PY'
 from pathlib import Path
@@ -119,7 +119,7 @@ curl -fsS --max-time 15 https://milkdragon.dev/api/v1/health/ready/ > "$backup/p
 printf '8001\n' > /opt/salesmate/active-port
 systemctl daemon-reload
 systemctl enable salesmate-web@8001 salesmate-celery@crm salesmate-celery@sales
-# 此时运行的仍是旧代码；消费者在首个新版本发布后启动，旧调度器继续原逻辑。
+# Old code still runs at this point. Consumers start after the first new release, while the old scheduler continues its original logic.
 systemctl start salesmate-crm salesmate-sales
 install -m 755 "$source/backend/deploy/lightsail/deploy-from-git.sh" /usr/local/sbin/salesmate-deploy-from-git
 printf 'Bootstrap switched successfully; backup=%s; retire legacy salesmate-web after confirming old requests drained.\n' "$backup"

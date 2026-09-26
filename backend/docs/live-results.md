@@ -1,26 +1,24 @@
-# 邮件、画像和评分逐步展示
+# Progressive Display of Mail, Profiles, and Scores
 
-客户详情现有独立的只读观察器。初次打开或明确点击“更新分析”后，先读取当前已保存结果，随后每次 GET 完成约 3 秒后再次检查。邮箱同步和公司分析不需要全部结束；同一公司 revision 下新产出的 L3 画像和后续 L4 评分也会分别显示。
+Customer detail has an independent read-only observer. On initial open or an explicit Update analysis click, it first reads the currently saved result and then checks again roughly every three seconds after each GET completes. Mail synchronization and company analysis need not both finish: new L3 profiles and later L4 scores for the same company revision appear independently.
 
-## 页面行为
+## Page Behavior
 
-- 工作台列表沿用同步期间的逐步刷新；详情独立观察当前客户，邮箱批次结束后仍能收到手动分析或后继任务的结果。
-- 比较完整响应，不仅比较公司 revision；响应不变时不重建详情 DOM。
-- 变化区域按稳定节点键更新。邮件方向、未变化原文的文本选择、阅读锚点、滚动容器以及独立助手草稿、编辑对话框保持。
-- 切换客户、退出登录或离开页面停止后续检查；已经发出的 GET 可以完成，但其响应失去更新页面的资格。
-- 读取失败显示“自动更新已暂停”和原有内容可能过时的提示，停止轮询；点击“恢复自动更新”只读取，不重新创建分析或重试失败业务任务。
-- 观察间隔沿用既有 3000ms；实际显示延迟还包括请求时间及浏览器后台标签页的调度延迟。展示单位为通过校验、已经落库的完整邮件抽取、画像和评分。
+- Workspace lists retain their progressive refresh during synchronization. Detail observes the current customer independently and can receive results from manual analysis or later work after the mailbox batch ends.
+- Compare complete responses, not only company revision. Unchanged responses do not rebuild the detail DOM.
+- Changed regions update by stable node key. Mail direction, text selection in unchanged originals, reading anchor, scroll containers, and independent assistant drafts and edit dialogs persist.
+- Switching customer, signing out, or leaving the page stops subsequent checks. An issued GET may complete, but its response is no longer eligible to update the page.
+- Read failure shows Auto refresh paused and warns that existing content may be stale, then stops polling. Resume auto refresh only reads; it does not recreate analysis or retry failed business tasks.
+- The observer interval remains 3000 ms. Actual display latency also includes request time and browser background-tab scheduling. Displayed units are validated, persisted complete mail extraction, profile, and score.
 
-`live-detail.js` 管理单客户观察与节点复用；`app.js` 负责当前身份、路由、详情和明确的分析请求。每个观察周期只有一个 GET 在途，不创建消息推送服务，不修改模型参数、评分或服务端任务失败语义。
+live-detail.js manages single-customer observation and node reuse. app.js manages current identity, routing, detail, and explicit analysis requests. Each observation cycle has one GET in flight. No push service is added, and model parameters, scoring, and server task-failure semantics remain unchanged.
 
-## 验证
+## Verification
 
-```powershell
-node backend/tools/browser_live_detail.cjs
-node backend/tools/browser_workspace.cjs
-node backend/tools/browser_processing.cjs
-```
+    node backend/tools/browser_live_detail.cjs
+    node backend/tools/browser_workspace.cjs
+    node backend/tools/browser_processing.cjs
 
-浏览器使用模拟 API，验证固定 revision 下的新邮件、L3 和 L4 分别出现；整批 running 时先显示已完成部分；保留 DOM、阅读位置、原文选择、草稿焦点和未提交表单；手动分析持续更新；失败暂停与只读恢复；旧客户慢响应失效及离开页面后停止读取。测试不调用真实 LLM 或 Gmail。
+Browser tests use mocked APIs and verify separate appearance of new mail, L3, and L4 under a fixed revision; display of already completed parts while a batch runs; preservation of DOM, reading position, original-text selection, draft focus, and unsubmitted forms; ongoing manual-analysis updates; failure pause and read-only resume; stale slow responses from an old customer; and stopping reads after leaving the page. The tests do not call a real LLM or Gmail.
 
-本次发布合入远程 `19abc8b` 的 Gmail 测试工具更新，保留其对旧 Desktop OAuth 入口的删除。Agent 离线测试 120 项通过；发布范围内 Django 隔离 PostgreSQL 测试 81 项通过；完整本机工作区另有 84 项通过，额外 3 项为原有本地演示数据测试，其文件不纳入本次发布。三套浏览器检查、JS 语法、Schema 校验、迁移一致性、注释与空白检查分别验证；提交内容通过暂存区注释检查（88 个后端 Python 文件，0 错误、0 待复核）；修改的两个 Agent Python 文件也通过结构检查，并人工核对变更说明。真实模型效果、生产并发与进程崩溃演练不属于本次验证结论。
+This release incorporates remote commit 19abc8b's Gmail test-tool update and retains its removal of the legacy Desktop OAuth entry. 120 Agent offline tests passed. Isolated PostgreSQL Django tests in the release scope passed 81 cases; the complete local workspace passed 84, with three additional pre-existing local demonstration-data cases excluded from release scope. Three browser checks, JavaScript syntax, schema validation, migration consistency, documentation, and whitespace checks were performed separately. Commit content passed staged documentation checks for 88 backend Python files with zero errors and zero review findings. The two modified Agent Python files also passed structural checks and their change descriptions were manually reviewed. Real-model quality, production concurrency, and process-crash exercises are outside this verification claim.

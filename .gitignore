@@ -34,3 +34,9 @@ artifacts/
 
 # Private sales attachments
 backend/private_uploads/
+
+
+# Semantic deployment artifacts and credentials stay outside Git.
+*.gguf
+*.safetensors
+client-secret.json

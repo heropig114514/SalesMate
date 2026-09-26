@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-24",
+  "database": "local PostgreSQL 16; existing business database, derived graph only",
+  "capture_triggers": 20,
+  "source_counts": {
+    "crm.company": 51,
+    "crm.contact": 50,
+    "crm.mailbox": 3,
+    "crm.email": 87,
+    "crm.extraction": 94,
+    "sales.companysettings": 4,
+    "sales.product": 7,
+    "sales.opportunity": 12,
+    "sales.salesorder": 4,
+    "sales.orderline": 8
+  },
+  "owners": [
+    {
+      "owner_id": 1,
+      "current": true,
+      "entities": 131,
+      "facts": 132,
+      "lineage_http": 200
+    },
+    {
+      "owner_id": 2,
+      "current": true,
+      "entities": 17,
+      "facts": 33,
+      "lineage_http": 200
+    }
+  ],
+  "source_versions": 320,
+  "active_derivations": 183,
+  "pending_events": 0,
+  "failed_events": 0,
+  "tests": {
+    "graph": 14,
+    "graph_and_related_regressions_total": 50,
+    "documentation_structure_files": 236,
+    "documentation_change_errors": 0,
+    "manual_comment_review": "completed for changed files",
+    "launcher_passed": 10,
+    "launcher_platform_skipped": 2,
+    "openapi_read_only_paths": 4
+  },
+  "api_verification": "APIClient with authenticated existing users; not a live browser login",
+  "runtime": "one-shot backfill completed; persistent graph worker starts with PostgreSQL local launcher",
+  "llm_calls": 0,
+  "not_verified": [
+    "production load",
+    "remote deployment",
+    "browser session authentication",
+    "Git commit atomicity (uncommitted)"
+  ]
+}

@@ -1,15 +1,15 @@
 /**
- * 职责：提供客户、交易、跟进、协作与外部动作的业务管理界面。
- * 实现：合并浏览原授权业务与获准实验行，实验详情标记原归属并链接共享维护；普通写入仍使用原权限。
- * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
- * 关联：侧栏优先级入口移除后更新导航缓存；共享导航使用移除实验入口后的缓存版本；导航依赖更新至商机优先级支持版本；聊天 Markdown 模块依赖使用统一缓存版本；0919 界面及共享语言资源统一缓存版本；导航资源使用账号清空版本以更新缓存；共享语言/API 资源随需求界面统一版本；工作空间聊天模块使用统一升级版本以避免旧公司入口缓存；workspace.js 提供主导航及底部 Profile，同时启用可收起的共享底部聊天条；workspace.js 使用 Nocturne 版本精简共享导航、待办和 URL 客户上下文；sales-api.js 同源通信，不自动批准工具。
- * 目录：nameOf、label、display、notice、perform、showDialog、optionRows、relationOptions、fieldControl、
- * editRecord、readForm、detailRecord、runCommand、customerDetail、editCustomer、editContact、
- * groupingForm、attachmentForm、actionForm、renderActions、connectionForm、qqConnectionForm、refreshDirectory、
- * syncBusinessContext、loadPage、experimentLabel、experimentDetail、renderRows、renderStats、boot。
- * 变量索引：$ 为 DOM 查询；labels 为字段界面名；states 为状态界面名；
- * metadata 为资源契约，companies 为原业务表单目录，browseCompanies 为含共享实验的筛选目录，BROWSE_RESOURCES 为合并浏览资源白名单，user 为当前身份，current 为路由，page 为页码，
- * qqEnabled 为服务端 QQ 能力开关，generation 为异步加载代次，relations 为当前已读关系名称缓存。
+ * Responsibility: Provide business management for customers, transactions, follow-ups, collaboration, and external actions.
+ * Implementation: Browse authorized business data together with permitted experiment rows; mark original ownership in experiment details and link to shared maintenance. Ordinary writes retain their original permissions.
+ * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
+ * Relationships: Navigation cache versions reflect removal of sidebar priority/experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat uses a shared upgrade version to avoid cached company-specific entry points. workspace.js provides navigation, bottom Profile, collapsible bottom chat, and the Nocturne navigation/task/URL customer context. sales-api.js handles same-origin calls without automatically approving tools.
+ * Directory: nameOf, label, display, notice, perform, showDialog, optionRows, relationOptions, fieldControl,
+ * editRecord, readForm, detailRecord, runCommand, customerDetail, editCustomer, editContact,
+ * groupingForm, attachmentForm, actionForm, renderActions, connectionForm, qqConnectionForm, refreshDirectory,
+ * syncBusinessContext, loadPage, experimentLabel, experimentDetail, renderRows, renderStats, boot.
+ * Variable index: $ queries the DOM; labels holds field labels; states holds status labels.
+ * metadata holds resource contracts; companies is the original business-form directory; browseCompanies includes shared experiments for filtering; BROWSE_RESOURCES allowlists merged browse resources; user is the current identity; current is the route; page is the page number.
+ * qqEnabled is the backend QQ capability flag; generation tracks asynchronous loads; relations caches names of already-read relationships.
  */
 import { t, h, locale, language } from './i18n.js?v=20260921-product';
 
@@ -136,9 +136,9 @@ let metadata = {},
 const relations = new Map();
 const BROWSE_RESOURCES = new Set(["directory", "audit", "customers", "aliases", "contact-profiles", "teams", "memberships", "grants", "products", "tickets", "opportunities", "quotes", "quote-lines", "orders", "order-lines", "follow-ups", "conversations", "messages", "drafts", "actions", "files", "notifications"]);
 
-/** 功能：给授权记录选择可辨识的业务名称。输入：row 记录。
- * 输出：纯文本名称。逻辑：客户未命名时使用已有域名或联系人，草稿显示主题或内容摘要。
- * 约束：仅作界面标识，不把域名或联系人写回公司名称。 */
+/** Function: Select a recognizable business name for an authorized record. Inputs: row is the record.
+ * Outputs: A plain-text name. Logic: Unnamed customers use known domains or contacts; drafts show their subject or content summary.
+ * Constraints: Display identity only; never write domains or contacts back as company names. */
 function nameOf(row) {
   if (Array.isArray(row.contacts))
     return (
@@ -162,15 +162,15 @@ function nameOf(row) {
   );
 }
 
-/** 功能：返回业务字段名称。输入：name。输出：当前界面语言名称或原字段名。
- * 逻辑：固定词表转换。约束：未知契约字段保留实际名称，避免错误解释。 */
+/** Function: Return a business-field label. Inputs: name. Outputs: A current-language label or the original field name.
+ * Logic: Convert through a fixed vocabulary. Constraints: Preserve unknown contract field names to avoid misrepresentation. */
 function label(name) {
   return labels[name] || name;
 }
 
-/** 功能：将值转换为可读文本。输入：value、可选 key。
- * 输出：纯文本。逻辑：客户名称来自含共享实验的只读目录；状态、关系及时间按类型展示，业务正文原样保留。
- * 约束：返回值插入 HTML 时仍须转义；不渲染可执行 HTML。 */
+/** Function: Convert a value to readable text. Inputs: value and optional key.
+ * Outputs: Plain text. Logic: Customer names come from the read-only directory including shared experiments; format status, relations, and time by type while preserving business content.
+ * Constraints: Callers must still escape the output before inserting HTML; never render executable HTML. */
 function display(value, key = "") {
   if (value === null || value === undefined || value === "") return t("未填写");
   if (typeof value === "boolean") return value ? t("是") : t("否");
@@ -192,17 +192,17 @@ function display(value, key = "") {
   return String(value);
 }
 
-/** 功能：显示明确的操作错误。输入：error、modal 是否位于对话框。
- * 输出：无。逻辑：textContent 防止异常文本注入。约束：不隐藏失败或自动重试。 */
+/** Function: Show an explicit operation error. Inputs: error and modal, indicating dialog placement.
+ * Outputs: None. Logic: textContent prevents injection through exception text. Constraints: Never hide failures or retry automatically. */
 function notice(error, modal = false) {
   const node = $(modal ? "editor-error" : "business-notice");
   node.textContent = error.message || String(error);
   node.hidden = false;
 }
 
-/** 功能：执行一次界面操作并恢复控件。输入：task 异步函数、可选 button。
- * 输出：无。逻辑：阻止同按钮重复提交，异常显示于当前对话框或主页面。
- * 约束：不把后端失败解释为成功，不自动确认任何操作。 */
+/** Function: Perform one UI operation and restore controls. Inputs: Asynchronous task and optional button.
+ * Outputs: None. Logic: Prevent duplicate submissions from the button and display exceptions in the current dialog or main page.
+ * Constraints: Never interpret backend failure as success or automatically confirm actions. */
 async function perform(task, button) {
   if (button) button.disabled = true;
   $("editor-error").hidden = true;
@@ -216,9 +216,9 @@ async function perform(task, button) {
   }
 }
 
-/** 功能：打开原生模态对话框。输入：title、body 为已转义 HTML。
- * 输出：无。逻辑：替换上一操作视图并聚焦首个控件。
- * 约束：所有业务数据须在调用处通过 esc 转义。 */
+/** Function: Open a native modal dialog. Inputs: title and body containing escaped HTML.
+ * Outputs: None. Logic: Replace the previous action view and focus the first control.
+ * Constraints: Callers must escape all business data with esc. */
 function showDialog(title, body) {
   $("editor-title").textContent = title;
   $("editor-body").innerHTML = body;
@@ -227,9 +227,9 @@ function showDialog(title, body) {
   $("editor-body").querySelector("input,select,textarea,button")?.focus();
 }
 
-/** 功能：构造安全的下拉选项。输入：rows、selected 当前标识。
- * 输出：option HTML。逻辑：id 与展示名称分别转义。
- * 约束：不根据名称推断业务归属。 */
+/** Function: Build safe select options. Inputs: rows and selected, the current identifier.
+ * Outputs: option HTML. Logic: Escape identifiers and display names separately.
+ * Constraints: Never infer business ownership from names. */
 function optionRows(rows, selected = "") {
   return (
     h`<option value="">请选择</option>` +
@@ -242,9 +242,9 @@ function optionRows(rows, selected = "") {
   );
 }
 
-/** 功能：读取已授权关系选项。输入：field 契约字段。
- * 输出：含 id 和展示名的数组。逻辑：公司和联系人来自业务目录，其他资源从分页 API 读取。
- * 约束：前端筛选不能替代后端权限；成员账号允许按完整用户名另行查找。 */
+/** Function: Read authorized relationship options. Inputs: field is a contract field.
+ * Outputs: An array of IDs and display names. Logic: Companies/contacts come from the business directory; other resources come from paginated APIs.
+ * Constraints: Frontend filtering does not replace backend authorization; member accounts may be looked up separately by full username. */
 async function relationOptions(field) {
   let rows;
   if (field.relation === "company")
@@ -268,9 +268,9 @@ async function relationOptions(field) {
   return rows;
 }
 
-/** 功能：渲染单个业务表单字段。输入：field、value、options 关系选项。
- * 输出：label 和控件 HTML。逻辑：金额用十进制字符串输入，收件人使用分隔邮箱列表。
- * 约束：不会为币种、价格、会议通知方式补填推测值。 */
+/** Function: Render one business-form field. Inputs: field, value, and relationship options.
+ * Outputs: A label and control HTML. Logic: Enter amounts as decimal strings and recipients as delimited email lists.
+ * Constraints: Do not infer currencies, prices, or meeting notification methods. */
 function fieldControl(field, value, options = []) {
   const name = field.name,
     required = field.required ? "required" : "",
@@ -306,9 +306,9 @@ function fieldControl(field, value, options = []) {
   return `<label class="${["description", "notes", "content", "recipients"].includes(name) ? "wide" : ""}">${esc(name === "title" && field.profileTitle ? t("职位") : label(name))}${field.required ? " *" : ""}${control}${name === "group_key" ? h("<small>域名填 domain:example.com；指定联系人填 contact:name@example.com。</small>") : ""}</label>`;
 }
 
-/** 功能：打开创建或编辑业务记录表单。输入：resource、可选 record 和 preset。
- * 输出：无。逻辑：读取实际可写字段和关系选项，保存使用读取时的 revision。
- * 约束：消息只能创建；工具动作、文件与连接使用专用流程。 */
+/** Function: Open a business record create/edit form. Inputs: resource, optional record, and preset.
+ * Outputs: None. Logic: Read actual writable fields and relationship options; save with the observed revision.
+ * Constraints: Messages are create-only; tool actions, files, and connections use dedicated flows. */
 async function editRecord(resource, record = null, preset = {}) {
   const definition = metadata[resource];
   const editable = definition.fields
@@ -360,9 +360,9 @@ async function editRecord(resource, record = null, preset = {}) {
   };
 }
 
-/** 功能：把表单转为严格接口数据。输入：form、fields 契约、editing 是否编辑。
- * 输出：请求字典。逻辑：空值按 nullable 或可选语义处理，日期带时区，金额保持字符串。
- * 约束：不静默纠正非法邮箱和业务关系，后端负责最终校验。 */
+/** Function: Convert form input into strict API data. Inputs: form, fields contract, and editing flag.
+ * Outputs: A request object. Logic: Handle empty values according to nullable/optional semantics, include time zones in dates, and keep amounts as strings.
+ * Constraints: Never silently repair invalid email addresses or business relations; the backend performs final validation. */
 function readForm(form, fields, editing) {
   const result = {};
   for (const field of fields) {
@@ -382,9 +382,9 @@ function readForm(form, fields, editing) {
   return result;
 }
 
-/** 功能：显示单条记录和可用业务动作。输入：resource、id。
- * 输出：无。逻辑：重新获取版本，展示净额、时间及单据行，按后端状态边生成按钮。
- * 约束：外部动作审批使用完整内容预览；浏览器不能直接设置已发送状态。 */
+/** Function: Show a record and available business actions. Inputs: resource and id.
+ * Outputs: None. Logic: Refetch the version, show net amounts, times, and document lines, and generate buttons from backend state transitions.
+ * Constraints: External-action approval requires a full-content preview; the browser cannot directly set sent status. */
 async function detailRecord(resource, id) {
   const record = await salesRequest(`records/${resource}/${id}/`),
     definition = metadata[resource];
@@ -433,9 +433,9 @@ async function detailRecord(resource, id) {
       perform(() => detailRecord(lineResource, button.dataset.line));
 }
 
-/** 功能：执行已明确选择的版本化业务命令。输入：resource、record、command、value。
- * 输出：无。逻辑：保存后关闭详情并刷新视图和公司版本。
- * 约束：失败保持原对话框；批准外部动作另由专用预览入口调用。 */
+/** Function: Execute an explicitly selected versioned business command. Inputs: resource, record, command, and value.
+ * Outputs: None. Logic: Close details after saving and refresh the view and company version.
+ * Constraints: Preserve the original dialog on failure; external approval uses a separate preview entry. */
 async function runCommand(resource, record, command, value = null) {
   await salesRequest(`records/${resource}/${record.id}/commands/`, {
     method: "POST",
@@ -447,9 +447,9 @@ async function runCommand(resource, record, command, value = null) {
   await loadPage();
 }
 
-/** 功能：显示客户档案与联系人操作。输入：id。
- * 输出：无。逻辑：从授权目录读取版本并设置共享客户上下文；客户操作继续使用原权限检查。
- * 约束：客户核心资料和合并由 owner 维护，后端继续验证授权。 */
+/** Function: Show customer profiles and contact actions. Inputs: id.
+ * Outputs: None. Logic: Read versions from the authorized directory and set shared customer context; retain original permission checks for customer actions.
+ * Constraints: Owners maintain core customer data and merges; backend authorization remains mandatory. */
 async function customerDetail(id) {
   await refreshDirectory();
   const company = companies.find((item) => item.id === id);
@@ -502,9 +502,9 @@ async function customerDetail(id) {
     perform(() => editRecord("aliases", null, { company: company.id }));
 }
 
-/** 功能：编辑已确认客户档案。输入：company 当前目录版本。
- * 输出：无。逻辑：使用既有建档 API 和相同人数来源规则。
- * 约束：保存后按原项目配置触发分析，不更改模型、权重或时区。 */
+/** Function: Edit a confirmed customer profile. Inputs: company is the current directory version.
+ * Outputs: None. Logic: Use the existing registration API and employee-count source rules.
+ * Constraints: Saving triggers analysis under existing project configuration without changing models, weights, or time zones. */
 function editCustomer(company) {
   showDialog(
     t("编辑客户档案"),
@@ -529,9 +529,9 @@ function editCustomer(company) {
   };
 }
 
-/** 功能：新增或编辑联系人邮箱身份。输入：company 和可选 contact。
- * 输出：无。逻辑：写入公司版本，有历史邮件时后端禁止改邮箱。
- * 约束：电话职位另存补充资料，不覆盖原邮件事实。 */
+/** Function: Add or edit a contact's email identity. Inputs: company and optional contact.
+ * Outputs: None. Logic: Write with the company version; the backend prohibits email changes when historical messages exist.
+ * Constraints: Store phone/title as supplementary information without overwriting original email facts. */
 function editContact(company, contact = null) {
   showDialog(
     contact ? t("编辑联系人") : t("新增联系人"),
@@ -553,9 +553,9 @@ function editContact(company, contact = null) {
   };
 }
 
-/** 功能：展示人工归组的完整计划表单。输入：target 客户、operation 为 move/merge。
- * 输出：无。逻辑：明确选择来源，搬移逐封勾选邮件，显示两客户名称后再次确认。
- * 约束：没有默认全选；合并冲突由后端事务拒绝，不自动扩大共享权限。 */
+/** Function: Display a complete manual-grouping plan form. Inputs: target customer and operation, either move or merge.
+ * Outputs: None. Logic: Explicitly choose the source, select individual emails to move, display both customer names, and request confirmation again.
+ * Constraints: No select-all default; backend transactions reject merge conflicts without automatically expanding sharing permissions. */
 function groupingForm(target, operation) {
   showDialog(
     operation === "move" ? t("搬移邮件到当前客户") : t("合并客户"),
@@ -616,9 +616,9 @@ function groupingForm(target, operation) {
   };
 }
 
-/** 功能：上传客户私有附件。输入：无参数，读取客户目录和筛选。
- * 输出：无。逻辑：选择客户与单文件后交给受保护上传 API。
- * 约束：限制 20 MiB，不把附件公开托管。 */
+/** Function: Upload a private customer attachment. Inputs: None; reads the customer directory and filter.
+ * Outputs: None. Logic: Select a customer and one file, then use the protected upload API.
+ * Constraints: Limit files to 20 MiB and never host attachments publicly. */
 function attachmentForm() {
   showDialog(
     t("上传私有附件"),
@@ -638,9 +638,9 @@ function attachmentForm() {
   };
 }
 
-/** 功能：准备邮件发送或会议创建计划。输入：无参数，读取当前筛选及连接。
- * 输出：无。逻辑：按服务端 QQ 能力及动作提供方筛选连接，明确指定客户和内容来源，后端返回冻结快照供用户审阅。
- * 约束：准备计划不会执行；会议时间使用当前设备时区转换为有偏移的绝对时间。 */
+/** Function: Prepare an email-send or meeting-create plan. Inputs: None; reads current filters and connections.
+ * Outputs: None. Logic: Filter connections by backend QQ capability and action provider; explicitly select customer/content source. The backend returns a frozen snapshot for review.
+ * Constraints: Preparation does not execute the action; convert meeting times from the device time zone to absolute timestamps with offsets. */
 async function actionForm() {
   const connections = (await allRows("records/connections/")).filter(item => qqEnabled || item.provider !== "qq"),
     drafts = await allRows("records/drafts/"),
@@ -699,10 +699,10 @@ async function actionForm() {
   };
 }
 
-/** 功能：展示冻结外部动作并绑定确认、取消和核对。
- * 输入：record 完整动作响应。输出：无。
- * 逻辑：邮件展示账号、收件人、主题和逐字正文；会议展示时间、参会人与通知范围。
- * 约束：确认按钮是单独用户操作，未知结果只能查询，不提供自动重试按钮。 */
+/** Function: Display a frozen external action and bind confirmation, cancellation, and reconciliation.
+ * Inputs: record is the complete action response. Outputs: None.
+ * Logic: Email previews show account, recipients, subject, and verbatim body; meeting previews show time, attendees, and notification scope.
+ * Constraints: Confirmation is a separate user action; unknown outcomes allow queries only, with no automatic-retry button. */
 function renderActions(record) {
   const p = record.parameters,
     email = ["gmail.send", "qq.send"].includes(record.tool);
@@ -736,9 +736,9 @@ function renderActions(record) {
         );
 }
 
-/** 功能：选择 QQ 发信或 Google 写权限连接。输入：无参数。
- * 输出：无。逻辑：QQ 打开独立授权码表单；Google 获取固定 OAuth 地址并导航。
- * 约束：不会扩展既有只读 Gmail 连接；配置不足显示明确错误。 */
+/** Function: Select a QQ-send or Google-write connection. Inputs: None.
+ * Outputs: None. Logic: QQ opens a separate authorization-code form; Google obtains the configured OAuth URL and navigates there.
+ * Constraints: Never expand existing read-only Gmail permissions; missing configuration produces an explicit error. */
 function connectionForm() {
   showDialog(
     t("连接外部服务"),
@@ -757,9 +757,9 @@ function connectionForm() {
       }, button);
 }
 
-/** 功能：收集独立 QQ 发信授权。输入：无参数，读取本次表单。
- * 输出：无。逻辑：QQ 关闭时拒绝打开；启用后提交固定连接入口并清空授权码。
- * 约束：仅验证登录，不发送邮件；不保存到浏览器缓存，不复用收信授权。 */
+/** Function: Collect separate QQ sending authorization. Inputs: None; reads this form.
+ * Outputs: None. Logic: Refuse to open when QQ is disabled; when enabled, submit through the dedicated connection entry and clear the authorization code.
+ * Constraints: Verify login only, without sending mail; never cache the code in the browser or reuse receiving authorization. */
 function qqConnectionForm() {
   if (!qqEnabled) throw new Error(t("QQ 邮箱功能暂时停用。"));
   showDialog(t("连接 QQ 发信"), h('<form id="qq-send-form"><div class="form-grid"><label class="wide">QQ 或 foxmail 邮箱<input name="address" type="email" autocomplete="off" required></label><label class="wide">客户端授权码<input name="authorization_code" type="password" autocomplete="new-password" minlength="16" maxlength="16" required></label></div><p class="form-note">与 QQ 收信连接独立。此操作仅验证连接；发送前仍需预览并确认。请在 QQ 邮箱中开启 SMTP；核对发送结果还需开启 IMAP 并保留发送副本。</p><div class="actions"><button class="primary">验证并连接发信</button></div></form>'));
@@ -781,9 +781,9 @@ function qqConnectionForm() {
   };
 }
 
-/** 功能：刷新授权客户目录并保持筛选。输入：无参数。
- * 输出：无。逻辑：分别读取原业务表单目录与含共享实验的浏览目录，筛选与写入候选不混用。
- * 约束：请求失败不展示伪造空目录。 */
+/** Function: Refresh the authorized customer directory while retaining filters. Inputs: None.
+ * Outputs: None. Logic: Read the original business-form directory separately from the browse directory containing shared experiments; keep filter candidates separate from write candidates.
+ * Constraints: Failed requests must not produce a fabricated empty directory. */
 async function refreshDirectory() {
   const selected = $("company-filter").value;
   [companies, browseCompanies] = await Promise.all([allRows("directory/?archived=all"), allRows("browse/directory/?archived=all")]);
@@ -798,9 +798,9 @@ async function refreshDirectory() {
   $("company-filter").value = selected;
 }
 
-/** 功能：同步授权客户筛选、URL 和共享客户导航。输入：当前 company-filter、current。
- * 输出：无。逻辑：保留合并目录中的客户及只读来源，更新同源链接和刷新筛选。
- * 约束：不写业务数据；不使用设备缓存跨账号保留客户身份。 */
+/** Function: Synchronize authorized customer filters, URL, and shared customer navigation. Inputs: Current company-filter and current route.
+ * Outputs: None. Logic: Retain customers and read-only provenance from the merged directory; update same-origin links and refresh filters.
+ * Constraints: No business writes or device-cache persistence of customer identity across accounts. */
 function syncBusinessContext() {
   const selected = browseCompanies.find(company => company.id === $("company-filter").value);
   const url = new URL(location.href);
@@ -810,9 +810,9 @@ function syncBusinessContext() {
   setWorkspaceContext(selected ? { id: selected.id, name: nameOf(selected), experiment: selected.experiment } : null, current);
 }
 
-/** 功能：按当前路由加载一页记录。输入：无参数，读取 current/page/筛选。
- * 输出：无。逻辑：业务及共享实验使用合并只读入口和计数；选中实验客户时隐藏创建操作，异步代次防止旧响应覆盖。
- * 约束：只读加载不执行外部动作或模型分析。 */
+/** Function: Load one page of records for the current route. Inputs: None; reads current, page, and filters.
+ * Outputs: None. Logic: Business and shared experiment records use merged read-only endpoints/counts; hide creation for experiment customers and use asynchronous generations to reject stale responses.
+ * Constraints: Read-only loading never executes external actions or model analysis. */
 async function loadPage() {
   void refreshWorkspace();
   const turn = ++generation,
@@ -901,16 +901,16 @@ async function loadPage() {
     : `含 ${result.shared_count} 条共享虚构记录；带标记的记录仅供实验，保留原归属，可维护项可从详情进入。`;
 }
 
-/** 功能：生成共享记录来源标签。输入：row 含服务端 experiment 元数据的行。输出：纯文本标签。
- * 逻辑：根据界面语言显示虚构、维护权限及原用户名。约束：调用方插入 HTML 时必须转义。 */
+/** Function: Build a shared-record provenance label. Inputs: row includes backend experiment metadata. Outputs: A plain-text label.
+ * Logic: Show synthetic status, maintenance permission, and original username in the UI language. Constraints: Callers must escape the label before HTML insertion. */
 function experimentLabel(row) {
   return language === "en" ? `Synthetic · ${row.experiment.read_only ? "Read only" : "Editable"} · Owner: ${row.experiment.owner.username}`
     : `虚构实验 · ${row.experiment.read_only ? "只读" : "可维护"} · 归属：${row.experiment.owner.username}`;
 }
 
-/** 功能：在现有业务页展示已核验的共享记录详情。输入：row 列表记录与实验定位信息。输出：详情对话框及共享维护链接。
- * 逻辑：重新读取精确批次主键，保留原字段；提供来源浏览、文件下载和客户业务导航。
- * 约束：不进入原业务编辑处理器；撤销或漂移时明确报错，全部动态内容转义。 */
+/** Function: Show verified shared-record details in the existing business page. Inputs: row contains list data and experiment location. Outputs: A detail dialog and shared-maintenance link.
+ * Logic: Refetch by exact batch primary key and retain original fields; provide provenance browsing, file downloads, and customer business navigation.
+ * Constraints: Never enter ordinary business edit handlers; report revocation/drift explicitly and escape all dynamic content. */
 async function experimentDetail(row) {
   const { batch, model } = row.experiment;
   const base = `experiments/${encodeURIComponent(batch)}/${encodeURIComponent(model)}/`;
@@ -930,9 +930,9 @@ async function experimentDetail(row) {
       `<dt>${esc(label(key))}</dt><dd>${esc(display(value, key))}</dd>`).join("")}</dl>`);
 }
 
-/** 功能：渲染业务表格和详情入口。输入：resource、rows。
- * 输出：无。逻辑：显示共享实验归属标签，点击共享行进入带维护链接的详情；普通行仍使用原业务详情。
- * 约束：不在浏览器伪造数据，共享行的维护委托专用实验入口；业务内容全部转义。 */
+/** Function: Render business tables and detail entries. Inputs: resource and rows.
+ * Outputs: None. Logic: Label shared experiment ownership; shared rows open details with maintenance links, while ordinary rows retain their original detail flow.
+ * Constraints: Never fabricate browser data; delegate shared-row maintenance to the dedicated experiment entry and escape all business content. */
 function renderRows(resource, rows) {
   if (!rows.length) {
     $("business-content").innerHTML =
@@ -978,9 +978,9 @@ function renderRows(resource, rows) {
       }, button);
 }
 
-/** 功能：显示当前权限范围内统计。输入：overview 后端汇总。
- * 输出：无。逻辑：客户、工单及跟进计数包含去重后的共享实验行，并列出实验数量；金额仍为原业务范围。
- * 约束：不把不同币种相加，不将确认订单净额标记为实际收入。 */
+/** Function: Display statistics within current permissions. Inputs: overview is the backend aggregate.
+ * Outputs: None. Logic: Customer, ticket, and follow-up counts include deduplicated shared experiment rows and show experiment counts separately; amounts retain the original business scope.
+ * Constraints: Never sum different currencies or label confirmed order net amounts as realized revenue. */
 function renderStats(overview) {
   $("business-stats").innerHTML = [
     [t("全部可见客户"), overview.customers, overview.shared_counts.customers],
@@ -1004,9 +1004,9 @@ function renderStats(overview) {
   document.querySelector(".footnote").textContent += language === "en" ? " Amounts use your original business access scope." : " 金额沿用原业务权限范围，不加入额外共享的模拟交易。";
 }
 
-/** 功能：初始化登录态、元数据及页面交互。输入：无参数，读取当前路由。
- * 输出：无。逻辑：读取能力开关与两种目录，URL 可定位共享实验客户；只读客户不自动打开新建表单。
- * 约束：初始化仅执行读取；用户数据不保存到浏览器本地存储。 */
+/** Function: Initialize authentication, metadata, and page interactions. Inputs: None; reads the current route.
+ * Outputs: None. Logic: Load capabilities and both directories; URLs can identify shared experiment customers, whose read-only status prevents automatic create forms.
+ * Constraints: Initialization performs reads only; never save user data in browser local storage. */
 async function boot() {
   const session = await request("session/");
   if (!session.authenticated) {

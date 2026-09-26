@@ -1,12 +1,12 @@
-"""职责：为文件工具提供有界 JSON 传输，不放宽全站请求限制。
-实现：从请求流最多读取文件 Base64 信封上限，再交给 DRF JSON 解析；非上传工具继续受原 JSON 大小限制。
-关联：仅 CallView 使用；support 的文件大小及 Schema 校验仍独立执行。
-目录：
-- ToolJSONParser：受限工具 JSON 解析器。
-- ToolJSONParser.parse：检查载荷大小并解析结构。
-变量索引：
-- MAX_ENVELOPE_BYTES：5 MiB 文件的 Base64 长度加 64 KiB JSON 信封空间。
-- ToolJSONParser.media_type：只匹配 application/json。
+"""Responsibility: Provide bounded JSON transport for file tools without relaxing site-wide request limits.
+Implementation: Read at most the Base64 file-envelope bound from the request stream, then hand it to DRF JSON parsing; non-upload tools remain subject to the original JSON size limit.
+Relationships: Used only by ``CallView``; ``support`` continues to independently enforce file size and Schema validation.
+Directory:
+- ToolJSONParser: Restricted tool JSON parser.
+- ToolJSONParser.parse: Check payload size and parse structure.
+Variable index:
+- MAX_ENVELOPE_BYTES: Base64 length for a 5 MiB file plus 64 KiB JSON envelope space.
+- ToolJSONParser.media_type: Matches only ``application/json``.
 """
 
 import io
@@ -18,17 +18,17 @@ from apps.accounts.onboarding import MAX_BYTES
 MAX_ENVELOPE_BYTES = 4 * ((MAX_BYTES + 2) // 3) + 64 * 1024
 
 
-# 功能：解析有界文件工具信封。
-# 逻辑：组合既有 JSONParser，先限制读取长度，避免把大文件请求整体缓存到 HttpRequest.body。
-# 约束：不修改全局 Django 大小设置，不禁用字段、文件和身份校验。
+# Function: Parse a bounded file-tool envelope.
+# Logic: Compose the existing ``JSONParser`` and bound read length first to avoid caching a large file request in full in ``HttpRequest.body``.
+# Constraints: Does not change global Django size settings or disable field, file, or identity validation.
 class ToolJSONParser(BaseParser):
     media_type = "application/json"
 
-    # 功能：读取并解析一份工具 JSON。
-    # 输入：`stream` 请求流、`media_type` 媒体类型、`parser_context` DRF 编码和请求上下文。
-    # 输出：JSON 对象；超限或格式错误抛 ParseError。
-    # 逻辑：最多读取上限加一字节；只有明确 setup_documents.upload 可使用文件信封上限，其余沿用全局限制。
-    # 约束：不回显原文；接收仍需工具授权和业务校验；不自动重试或截断成功。
+    # Function: Read and parse one tool JSON payload.
+    # Inputs: Request stream ``stream``, media type ``media_type``, and DRF encoding and request context ``parser_context``.
+    # Outputs: JSON object; an over-limit or malformed payload raises ``ParseError``.
+    # Logic: Read at most the bound plus one byte; only explicit ``setup_documents.upload`` can use the file-envelope bound, while others retain the global limit.
+    # Constraints: Does not echo original content; acceptance still requires tool authorization and business validation; does not retry automatically or treat truncation as success.
     def parse(self, stream, media_type=None, parser_context=None):
         content = stream.read(MAX_ENVELOPE_BYTES + 1)
         if len(content) > MAX_ENVELOPE_BYTES:

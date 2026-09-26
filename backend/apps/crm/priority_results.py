@@ -1,15 +1,15 @@
-"""职责：验证正式 L4 结果及解释的结构、对账关系和邮件证据。
-实现：仅检查 Agent 输出契约，不重算权重；接收暂定分的明确空解释；保存前在当前公司和输入快照内定位来源。
-关联：serializers 调用结构校验，results 在版本及租约验证后调用来源校验。
-目录：
-- validate_priority_score：检查 score-v2 的贡献及可选解释。
-- validate_details：检查解释分项、前三原因和证据列表。
-- validate_priority_sources：确认解释引用当前公司输入内的可见原文。
-变量索引：
-- FEATURES：正式评分贡献字段的固定集合。
-- BREAKDOWN_FIELDS：解释分项必须包含的字段集合。
-- EMPTY_DETAILS：明确未提供分项依据的完整空解释结构。
-- DETAIL_FIELDS：可选解释对象的完整字段集合。
+"""Responsibility: Validate formal L4 result and explanation structure, reconciliation relationships, and email evidence.
+Implementation: Check Agent output contract only and do not recompute weights; accept explicit empty explanations for tentative scores; locate sources in the current company and input snapshot before saving.
+Relationships: serializers calls structural validation, and results calls source validation after version and lease validation.
+Directory:
+- validate_priority_score: Check score-v2 contributions and optional explanation.
+- validate_details: Check explanation breakdown, top three reasons, and evidence list.
+- validate_priority_sources: Confirm explanations cite visible source text in current company input.
+Variable index:
+- FEATURES: Fixed set of formal scoring contribution fields.
+- BREAKDOWN_FIELDS: Fields required in explanation breakdown.
+- EMPTY_DETAILS: Complete empty explanation structure explicitly providing no breakdown basis.
+- DETAIL_FIELDS: Complete field set for optional explanation object.
 """
 
 import re
@@ -22,11 +22,11 @@ EMPTY_DETAILS = {"score_breakdown": None, "top_reasons": [], "evidence": [], "re
 DETAIL_FIELDS = frozenset({"score_breakdown", "top_reasons", "evidence", "recommended_next_action"})
 
 
-# 功能：检查 score-v2 的贡献及可选解释。
-# 输入：`data` 为经基础 ScoreSerializer 转换的评分字典。
-# 输出：无；不符合正式契约时抛 ValidationError。
-# 逻辑：非空分数要求三种唯一非负整数贡献；解释只允许正式版本提交。
-# 约束：旧版本沿用原校验；不把缺失解释或空分补成虚构数据，不访问数据库。
+# Function: Check score-v2 contributions and optional explanation.
+# Inputs: `data` is a score dictionary transformed by base ScoreSerializer.
+# Outputs: None; raises ValidationError when the formal contract is not met.
+# Logic: Nonempty score requires three unique non-negative integer contributions; explanations are allowed only for the formal version.
+# Constraints: Legacy versions retain original validation; does not invent data for missing explanations or empty scores and does not access the database.
 def validate_priority_score(data):
     if data["score_version"] != "score-v2":
         if "score_details" in data:
@@ -44,11 +44,11 @@ def validate_priority_score(data):
         validate_details(data["score_details"], data)
 
 
-# 功能：检查解释分项、前三原因和证据列表。
-# 输入：`details` 为解释字典，`score` 为对应的完整评分载荷。
-# 输出：无；结构、范围或贡献关系错误时抛 ValidationError。
-# 逻辑：空分必须使用空解释；暂定分也可显式无解释；其余非空解释完整检查分项、排序、证据及贡献。
-# 约束：不验证模型推理真实性，不执行评分算法；来源归属由保存事务另行检查。
+# Function: Check explanation breakdown, top three reasons, and evidence list.
+# Inputs: `details` is an explanation dictionary and `score` is its complete score payload.
+# Outputs: None; raises ValidationError for incorrect structure, range, or contribution relationship.
+# Logic: Empty score must use empty explanation, and tentative scores may explicitly have no explanation; every other nonempty explanation fully validates breakdown, ordering, evidence, and contributions.
+# Constraints: Does not validate model-reasoning truth or execute the scoring algorithm; the save transaction separately checks source ownership.
 def validate_details(details, score):
     if not isinstance(details, dict) or set(details) != DETAIL_FIELDS:
         raise ValidationError("score_details 必须包含分项、原因、证据和建议动作四个字段。")
@@ -94,11 +94,11 @@ def validate_details(details, score):
         raise ValidationError("有分值的解释必须提供建议动作。")
 
 
-# 功能：确认解释引用当前公司输入内的可见原文。
-# 输入：`data` 为已校验评分，`company` 为已锁定授权公司，`analysis` 为当前成功分析。
-# 输出：无；越界或无法定位的证据抛 ValidationError。
-# 逻辑：取快照成员与当前业务邮件交集，再按 Agent 的空白归一规则定位原文。
-# 约束：调用前须完成版本、权限和租约校验；不记录邮件内容，不修改数据库。
+# Function: Confirm explanations cite visible source text in current company input.
+# Inputs: `data` is validated score, `company` is a locked authorized company, and `analysis` is current successful analysis.
+# Outputs: None; raises ValidationError for out-of-scope or unlocatable evidence.
+# Logic: Intersect snapshot members with current business emails, then locate source text using the Agent whitespace-normalization rule.
+# Constraints: Version, authorization, and lease validation must complete before calling; does not log email content or modify the database.
 def validate_priority_sources(data, company, analysis):
     details = data.get("score_details")
     if not details:

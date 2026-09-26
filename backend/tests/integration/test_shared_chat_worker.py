@@ -1,15 +1,15 @@
-"""职责：回归验证无固定服务令牌的新员工也能获得聊天回答。
-实现：真实数据库、HTTP 认证及共享命令；只在模型边界使用模拟输出。
-关联：chat_worker、crm.dispatch.scoped_backend 和 Agent process_chat_once。
-目录：
-- SharedChatWorkerTests：多员工聊天调度验收。
-- SharedChatWorkerTests.setUp：创建两位未配置服务凭证的员工及待回答请求。
-- SharedChatWorkerTests.test_round_robin_and_inactive：轮转发现与停用隔离。
-- SharedChatWorkerTests.test_command_answers_both_owners：真实命令处理两位员工且撤销凭证。
-- SharedChatWorkerTests.test_command_answers_both_owners.execute：在模型边界提供合成回答。
-- SharedChatWorkerTests.test_identity_cannot_access_other_request：临时身份不能读取另一员工请求。
-变量索引：
-- 无
+"""Responsibility: Regression-verify that new workers without fixed service tokens can receive chat answers.
+Implementation: Use real database, HTTP authentication, and shared command; use mocked output only at the model boundary.
+Relationships: Covers `chat_worker`, `crm.dispatch.scoped_backend`, and Agent `process_chat_once`.
+Directory:
+- SharedChatWorkerTests: Multi-worker chat-scheduling acceptance tests.
+- SharedChatWorkerTests.setUp: Create two workers without configured service credentials and requests awaiting answers.
+- SharedChatWorkerTests.test_round_robin_and_inactive: Round-robin discovery and inactive-user isolation.
+- SharedChatWorkerTests.test_command_answers_both_owners: Real command handles both workers and revokes credentials.
+- SharedChatWorkerTests.test_command_answers_both_owners.execute: Provide a synthetic answer at the model boundary.
+- SharedChatWorkerTests.test_identity_cannot_access_other_request: Temporary identity cannot read another worker's request.
+Variable index:
+- None
 """
 
 import json
@@ -30,16 +30,16 @@ from apps.crm.models import AgentCredential
 from apps.sales.models import Conversation
 
 
-# 功能：验证聊天调度覆盖所有有效员工且保留权限边界。
-# 逻辑：两个零客户、无服务凭证员工通过同一常驻命令的单轮入口处理。
-# 约束：只连本地测试 HTTP；模型模拟不作为真实模型验收证据。
+# Function: Verify chat scheduling covers every active worker while retaining permission boundaries.
+# Logic: Two zero-customer workers without service credentials are handled through one iteration of the same resident command.
+# Constraints: Connect only to local test HTTP; model mocks do not prove real-model acceptance.
 @override_settings(ALLOWED_HOSTS=["localhost", "127.0.0.1", "testserver"])
 class SharedChatWorkerTests(LiveServerTestCase):
-    # 功能：复现旧固定员工 Worker 遗漏的新用户任务。
-    # 输入：无外部参数；隔离数据库和 LiveServer 地址。
-    # 输出：owners、requests 及自动恢复的连接环境。
-    # 逻辑：两个账户各自提交 ping，不配置永久 AgentCredential；环境故意放入无效旧身份。
-    # 约束：不读取真实凭证，不预先领取请求。
+    # Function: Reproduce a new-user task omitted by the former fixed-worker Worker.
+    # Inputs: No external parameters; isolated database and LiveServer URL.
+    # Outputs: `owners`, `requests`, and automatically restored connection environment.
+    # Logic: Each account submits ping without a permanent AgentCredential; environment intentionally contains an invalid old identity.
+    # Constraints: Do not read real credentials or claim requests in advance.
     def setUp(self):
         self.owners = [
             get_user_model().objects.create_user(username=f"shared-chat-{i}")
@@ -69,11 +69,11 @@ class SharedChatWorkerTests(LiveServerTestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    # 功能：验证轮转公平性、停用排除及非 pending 请求不再被选择。
-    # 输入：两个保持 pending 的请求及员工状态变更。
-    # 输出：先后选择两位员工，到末尾回绕；停用和 processing 均不被调度。
-    # 逻辑：发现阶段只读队列，不需要预配置令牌。
-    # 约束：不自动重置 processing，也不触发模型。
+    # Function: Verify round-robin fairness, inactive exclusion, and exclusion of non-pending requests.
+    # Inputs: Two pending requests and worker-state changes.
+    # Outputs: Select the two workers in sequence and wrap at the end; inactive and processing requests are not scheduled.
+    # Logic: Discovery reads the queue only and needs no preconfigured token.
+    # Constraints: Do not automatically reset processing or trigger the model.
     def test_round_robin_and_inactive(self):
         first, second = self.owners
         self.assertEqual(next_owner().pk, first.pk)
@@ -85,21 +85,21 @@ class SharedChatWorkerTests(LiveServerTestCase):
         services.claim(second)
         self.assertIsNone(next_owner())
 
-    # 功能：验证真实命令为不同员工各处理一次问题。
-    # 输入：两条 pending 请求、模拟模型和真实 HTTP。
-    # 输出：两条 completed、答案正确、无临时凭证残留，旧环境身份不变。
-    # 逻辑：模型返回工作空间 action=answer；两次 --once 各处理一个任务，第三次空队列不调用模型。
-    # 约束：模型之外的领取、上下文、保存和认证均执行真实实现。
+    # Function: Verify the real command handles one question for each different worker.
+    # Inputs: Two pending requests, mocked model, and real HTTP.
+    # Outputs: Two completed requests with correct answers, no temporary credential remains, and old environment identity is unchanged.
+    # Logic: Model returns workspace `action=answer`; two `--once` calls each handle one task, and a third empty-queue call does not call the model.
+    # Constraints: Claiming, context, saving, and authentication outside the model use real implementations.
     def test_command_answers_both_owners(self):
         provider = Mock(
             return_value=json.dumps({"action": "answer", "assistant_text": "pong", "citations": []})
         )
 
-        # 功能：仅替换模型调用以保持测试确定性。
-        # 输入：`backend` 为命令创建的独立员工客户端。
-        # 输出：原工作流回报结果。
-        # 逻辑：领取及回报访问真实测试服务，只有 provider 使用 Mock。
-        # 约束：不绕过认证，不模拟持久化。
+        # Function: Replace only the model call to retain test determinism.
+        # Inputs: `backend` is an independent worker client created by the command.
+        # Outputs: The original workflow report result.
+        # Logic: Claiming and reporting access the real test service; only provider uses a Mock.
+        # Constraints: Do not bypass authentication or mock persistence.
         def execute(backend):
             return process_chat_once(backend=backend, chat_provider=provider)
 
@@ -120,11 +120,11 @@ class SharedChatWorkerTests(LiveServerTestCase):
         )
         self.assertEqual(os.environ["SALESMATE_MAILBOX_ID"], "unused-old-mailbox")
 
-    # 功能：验证共享进程不会授予跨用户请求访问权。
-    # 输入：第一员工临时客户端和第二员工的请求 ID。
-    # 输出：只领取本人的请求，跨用户上下文 404，凭证离开上下文后撤销。
-    # 逻辑：真实 AgentAuthentication 与 request_for 共同验证隔离。
-    # 约束：不调用模型；对方请求保持 pending。
+    # Function: Verify that a shared process does not grant access to cross-user requests.
+    # Inputs: First worker's temporary client and second worker's request ID.
+    # Outputs: Claims only the owner's request, cross-user context returns 404, and credential is revoked after leaving context.
+    # Logic: Real AgentAuthentication and `request_for` jointly verify isolation.
+    # Constraints: Do not call the model; the other request remains pending.
     def test_identity_cannot_access_other_request(self):
         with scoped_backend(self.owners[0]) as backend:
             claimed = backend.claim_answer_request()

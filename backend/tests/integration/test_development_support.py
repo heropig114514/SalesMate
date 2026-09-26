@@ -1,17 +1,17 @@
-"""职责：验证数据库占位、全球聚合、商机结果和开发权限。
-实现：隔离 PostgreSQL 中验证公共活动共享和私人商机隔离，以及正式/实验模式差异；不连接模型和外部服务。
-关联：sales.world、algorithm_views、seed_development_support 及现有 Tool 鉴权。
-目录：
-- DevelopmentSupportTests：端到端支持层测试。
-- DevelopmentSupportTests.setUp：创建隔离账号和虚拟批次。
-- DevelopmentSupportTests.test_seed_is_idempotent_and_does_not_rewrite：确认显式占位稳定。
-- DevelopmentSupportTests.test_world_deduplicates_and_keeps_currencies：验证重复商机和币种。
-- DevelopmentSupportTests.test_partial_results_context_and_latest_score：验证最小提交和上下文。
-- DevelopmentSupportTests.test_formal_public_events_keep_private_business：验证公共活动共享而商机仍隔离。
-- DevelopmentSupportTests.test_lab_tools_omit_credentials_versions_and_source：验证放宽规则。
-- DevelopmentSupportTests.test_essential_boundaries_remain：验证必要边界。
-变量索引：
-- 无
+"""Responsibility: Verify database placeholders, global aggregation, opportunity results, and development permissions.
+Implementation: Use isolated PostgreSQL to verify shared public events, private opportunity isolation, and formal/lab-mode differences; do not connect to models or external services.
+Relationships: Covers `sales.world`, `algorithm_views`, `seed_development_support`, and existing Tool authorization.
+Directory:
+- DevelopmentSupportTests: End-to-end support-layer tests.
+- DevelopmentSupportTests.setUp: Create isolated accounts and fictional batch.
+- DevelopmentSupportTests.test_seed_is_idempotent_and_does_not_rewrite: Confirm explicit placeholders remain stable.
+- DevelopmentSupportTests.test_world_deduplicates_and_keeps_currencies: Verify duplicate opportunities and currencies.
+- DevelopmentSupportTests.test_partial_results_context_and_latest_score: Verify minimum submission and context.
+- DevelopmentSupportTests.test_formal_public_events_keep_private_business: Verify public events are shared while opportunities remain isolated.
+- DevelopmentSupportTests.test_lab_tools_omit_credentials_versions_and_source: Verify relaxed rules.
+- DevelopmentSupportTests.test_essential_boundaries_remain: Verify essential boundaries.
+Variable index:
+- None
 """
 
 from datetime import timedelta
@@ -23,16 +23,16 @@ from apps.sales.models import Opportunity, OpportunityPriority, WorldEvent
 from apps.sales.management.commands.seed_development_support import seed_support
 
 
-# 功能：验证新增支持层而非算法计算。
-# 逻辑：使用数据库占位和真实 API，模式显式覆盖避免本地配置影响结论。
-# 约束：无真实客户数据、凭证或网络。
+# Function: Verify the added support layer rather than algorithm calculation.
+# Logic: Use database placeholders and real APIs with explicit mode overrides to prevent local configuration from affecting conclusions.
+# Constraints: No real customer data, credentials, or network.
 @override_settings(DEBUG=True, LAB_OPEN_ACCESS=False, WORKSPACE_OWNER_ONLY=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class DevelopmentSupportTests(TestCase):
-    # 功能：建立两个隔离账号。
-    # 输入：无外部参数。
-    # 输出：测试用户、客户端和批次。
-    # 逻辑：本人导入占位，另一账号用于越权验证。
-    # 约束：使用 Django 测试数据库。
+    # Function: Establish two isolated accounts.
+    # Inputs: No external parameters.
+    # Outputs: Test users, client, and batch.
+    # Logic: Owner imports placeholders; other account verifies unauthorized access.
+    # Constraints: Uses Django test database.
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="support-lab")
         self.other = get_user_model().objects.create_user(username="support-other")
@@ -41,11 +41,11 @@ class DevelopmentSupportTests(TestCase):
         self.client.force_login(self.user)
         self.opportunity = Opportunity.objects.get(pk=self.manifest["opportunities"][0])
 
-    # 功能：检查占位重复执行和已有编辑保留。
-    # 输入：已有导入清单和修改后的活动标题。
-    # 输出：记录不重复，日期和修改内容不被重写。
-    # 逻辑：重复调用真实初始化函数。
-    # 约束：不把占位误当实时新闻。
+    # Function: Check repeated placeholder execution and retention of existing edits.
+    # Inputs: Existing import manifest and modified event title.
+    # Outputs: Records are not duplicated and dates and edits are not rewritten.
+    # Logic: Repeatedly call the real initialization function.
+    # Constraints: Do not mistake placeholders for live news.
     def test_seed_is_idempotent_and_does_not_rewrite(self):
         event = WorldEvent.objects.get(pk=self.manifest["events"][0])
         event.title = "人工已编辑"
@@ -55,11 +55,11 @@ class DevelopmentSupportTests(TestCase):
         self.assertEqual(event.title, "人工已编辑")
         self.assertEqual(WorldEvent.objects.count(), 8)
 
-    # 功能：验证地图金额与私有活动权限。
-    # 输入：同坐标重复关联和同客户另一币种商机。
-    # 输出：金额去重、币种分列、国家计数正确。
-    # 逻辑：调用真实 world API。
-    # 约束：不验证地理服务或真实交易。
+    # Function: Verify map amounts and private-event permissions.
+    # Inputs: Duplicate association at the same coordinates and another-currency opportunity for the same customer.
+    # Outputs: Deduplicated amounts, separate currencies, and correct country count.
+    # Logic: Call the real world API.
+    # Constraints: Do not verify geography services or real transactions.
     def test_world_deduplicates_and_keeps_currencies(self):
         event = WorldEvent.objects.get(pk=self.manifest["events"][1])
         event.opportunity_ids.append(str(self.opportunity.pk))
@@ -72,11 +72,11 @@ class DevelopmentSupportTests(TestCase):
         self.assertEqual(response.data["results"][0]["map_amounts"], {"SGD": "145000.00", "USD": "20.00"})
         self.assertEqual(next(row for row in response.data["countries"] if row["code"] == "SG")["event_count"], 2)
 
-    # 功能：验证商机结果无需完整解释即可提交。
-    # 输入：显式商机、分数和自定义信号类型。
-    # 输出：公司自动归属、最新结果进入列表、上下文包含原资料。
-    # 逻辑：通过原 CRUD 创建，再通过板块及上下文查询。
-    # 约束：未执行评分算法；公司级分数不被修改。
+    # Function: Verify that opportunity results can be submitted without complete explanation.
+    # Inputs: Explicit opportunity, score, and custom signal type.
+    # Outputs: Automatic company ownership, latest result in list, and original material in context.
+    # Logic: Create through existing CRUD, then query board and context.
+    # Constraints: No scoring algorithm executes and company-level score is unchanged.
     def test_partial_results_context_and_latest_score(self):
         response = self.client.post("/api/v1/sales/records/opportunity-priorities/", {"opportunity": str(self.opportunity.pk), "priority_score": 99}, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -91,11 +91,11 @@ class DevelopmentSupportTests(TestCase):
         self.assertEqual(len(context.data["signals"]), 2)
         self.assertTrue(context.data["seller_context"]["sales_setup"]["products"])
 
-    # 功能：验证公共活动共享与正式业务隔离。
-    # 输入：无外部参数；实例中的匿名及另一登录账号。
-    # 输出：匿名拒绝，已登录员工看到公共活动但看不到私人关联和上下文。
-    # 逻辑：使用真实 Session 请求同时检查活动数量、字段投影和商机权限。
-    # 约束：不模拟权限、不扩大客户和商机读取。
+    # Function: Verify shared public events and formal-business isolation.
+    # Inputs: No external parameters; anonymous and another logged-in account in the fixture.
+    # Outputs: Anonymous access is rejected; logged-in worker sees public events but not private associations or context.
+    # Logic: Use real Session requests to check event counts, field projections, and opportunity permissions together.
+    # Constraints: Do not mock permissions or expand customer or opportunity reads.
     def test_formal_public_events_keep_private_business(self):
         other = APIClient()
         self.assertEqual(other.get("/api/v1/sales/world/").status_code, 403)
@@ -106,11 +106,11 @@ class DevelopmentSupportTests(TestCase):
             self.assertEqual((row["opportunity_ids"], row["customers"], row["amounts"], row["map_amounts"]), ([], [], {}, {}))
         self.assertEqual(other.get(f"/api/v1/sales/opportunity-context/{self.opportunity.pk}/").status_code, 404)
 
-    # 功能：验证实验模式无需凭据、版本和来源。
-    # 输入：匿名 Tool HTTP 调用、公开所选身份和跨账号商机关联。
-    # 输出：读写成功且归属不被伪造。
-    # 逻辑：显式覆盖实验设置，保留业务服务和数据校验。
-    # 约束：不执行外部发送或日历动作。
+    # Function: Verify lab mode omits credentials, versions, and sources.
+    # Inputs: Anonymous Tool HTTP calls, publicly selected identity, and cross-account opportunity association.
+    # Outputs: Reads and writes succeed without fabricated ownership.
+    # Logic: Explicitly override lab settings while retaining business services and data validation.
+    # Constraints: Do not execute external sends or calendar actions.
     @override_settings(LAB_OPEN_ACCESS=True, WORKSPACE_OWNER_ONLY=False)
     def test_lab_tools_omit_credentials_versions_and_source(self):
         client = APIClient()
@@ -125,11 +125,11 @@ class DevelopmentSupportTests(TestCase):
         context = client.post("/api/v1/agent-tools/call/", {"name": "opportunity_context.get", "arguments": {"opportunity_id": str(self.opportunity.pk)}}, format="json")
         self.assertEqual(context.status_code, 200, context.data)
 
-    # 功能：保留必要数值及来源安全边界。
-    # 输入：超范围分数和不安全链接。
-    # 输出：400 且无错误结果写入。
-    # 逻辑：开放模式也执行可显示和可存储的数据边界。
-    # 约束：不验证算法公式。
+    # Function: Retain essential numeric and source safety boundaries.
+    # Inputs: Out-of-range score and unsafe link.
+    # Outputs: 400 and no erroneous result write.
+    # Logic: Open mode still applies data boundaries that can be displayed and stored.
+    # Constraints: Do not verify algorithm formulas.
     @override_settings(LAB_OPEN_ACCESS=True, WORKSPACE_OWNER_ONLY=False)
     def test_essential_boundaries_remain(self):
         response = self.client.post("/api/v1/sales/records/opportunity-priorities/", {"opportunity": str(self.opportunity.pk), "priority_score": 101}, format="json")

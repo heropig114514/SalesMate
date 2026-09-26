@@ -1,29 +1,29 @@
-"""职责：编排 Gmail 同步、并发 L1、逐封提交和可选进度观察。
-实现：保留既有默认参数及逐封处理辅助函数；Worker 使用持久检查点编排，网页领取的 CLI 批次严格执行冻结范围，底层旧游标接口异常强失败。
-关联：软件 Worker 使用本模块，Gmail 工具提供原文，后端 HTTP 客户端保存业务数据。
-目录：
-- sync_gmail：同步一个邮箱并逐封保存 L1 结果。
-- sync_gmail.observe：转发进度并收集读取失败 ID。
-- _extract_new_or_retryable_emails：复用完成抽取或执行逐封重做。
-- _process_email_candidates：按完成顺序产出并发 L1。
-- _process_email_candidates.run：执行一封候选邮件的抽取。
-- _submit_emails_individually：隔离逐封后端提交失败。
-- _merge_submission_totals：合并提交汇总。
-- _email_message_id：读取标准邮件 Gmail ID。
-- _email_error：将异常转换为现有 Agent 错误对象。
-- _email_result_error：组装逐封错误表示。
-- _can_reuse_stored_extraction：判断同版本可信终态是否可复用。
-- _is_current_failed_extraction：判断当前版本失败事实。
-- _get_sync_state：读取兼容后端的同步游标。
-- _read_email_batch：选择增量或首次同步范围。
-- _save_sync_state：保存游标和待处理消息清单。
-- _message_ids：读取合法消息数组。
-- _unique_message_ids：稳定去重 Gmail 消息标识。
-- _failed：构造批次失败汇总。
-变量索引：
-- logger：同步阶段安全日志。
-- EMAIL_EXTRACTION_WORKERS：既定最多四路 L1 并发。
-- __all__：公开 sync_gmail 接口。
+"""Responsibility: Orchestrate Gmail synchronization, concurrent L1, individual submissions, and optional progress observation.
+Implementation: Preserve defaults and per-email helpers; workers orchestrate durable checkpoints, web-claimed CLI batches strictly enforce frozen scope, and legacy cursor failures remain explicit failures.
+Relationships: Software workers use this module; Gmail tools provide raw content and backend HTTP clients persist business data.
+Directory:
+- sync_gmail: Synchronize one mailbox and persist L1 results per email.
+- sync_gmail.observe: Forward progress and collect IDs of read failures.
+- _extract_new_or_retryable_emails: Reuse completed extractions or reprocess individual emails.
+- _process_email_candidates: Yield concurrent L1 results in completion order.
+- _process_email_candidates.run: Extract facts from one candidate email.
+- _submit_emails_individually: Isolate individual backend submission failures.
+- _merge_submission_totals: Merge submission summaries.
+- _email_message_id: Read the Gmail ID from a standard email.
+- _email_error: Convert an exception to the existing agent error object.
+- _email_result_error: Assemble an individual email error representation.
+- _can_reuse_stored_extraction: Determine whether a trusted terminal state at the same version is reusable.
+- _is_current_failed_extraction: Identify failed facts at the current version.
+- _get_sync_state: Read the synchronization cursor from a compatible backend.
+- _read_email_batch: Select incremental or initial synchronization scope.
+- _save_sync_state: Save the cursor and pending message list.
+- _message_ids: Read a valid message array.
+- _unique_message_ids: Stably deduplicate Gmail message identifiers.
+- _failed: Build a batch failure summary.
+Variable index:
+- logger: Safe synchronization-stage logs.
+- EMAIL_EXTRACTION_WORKERS: Existing maximum L1 concurrency of four.
+- __all__: Public sync_gmail interface.
 """
 
 from __future__ import annotations
@@ -57,11 +57,11 @@ EMAIL_EXTRACTION_WORKERS = 4
 logger = logging.getLogger("salesmate.agent.gmail_sync")
 
 
-# 功能：同步一个邮箱并逐封保存 L1 结果。
-# 输入：`authorization` 为授权或邮箱同步请求对象；`backend` 为业务后端协议客户端；`gmail_factory` 为令牌到 SDK 的构造函数；`extraction_provider` 为单封邮件事实抽取函数；`progress` 为可选阶段回调；`message_ids` 为指定 Gmail ID 数组，None 表示既有扫描范围。
-# 输出：Gmail 同步汇总字典。
-# 逻辑：有冻结范围时执行默认 50 封或已批准上限，明确重试也校验封数；读取前按已存天然键去重，保留范围外失败状态但不计入本批失败数；否则沿底层游标协议，四路抽取逐封提交。
-# 约束：不执行 L2–L4；旧汇总状态兼容，软件 Worker 另行计算 partial；配置和评分不变。
+# Function: Synchronize one mailbox and persist L1 results per email.
+# Inputs: `authorization`: authorization or mailbox synchronization request object; `backend`: business backend protocol client; `gmail_factory`: token-to-SDK factory; `extraction_provider`: single-email fact extraction function; `progress`: optional stage callback; `message_ids`: selected Gmail IDs, or None for the existing scan scope.
+# Outputs: Gmail synchronization summary dictionary.
+# Logic: For frozen scopes, enforce the default 50 or approved limit, including explicit retries; deduplicate by stored natural keys before reads and preserve out-of-scope failures without counting them in this batch; otherwise use the legacy cursor protocol with four-way extraction and individual submissions.
+# Constraints: Do not run L2-L4; preserve legacy summary states while software workers compute partial separately; configuration and scoring remain unchanged.
 def sync_gmail(
     authorization: Mapping[str, Any],
     *,
@@ -71,7 +71,7 @@ def sync_gmail(
     progress=None,
     message_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """读取最近邮件、执行 L1 并提交；不在此函数内运行 L2-L4。"""
+    """Read recent emails, run L1, and submit results; do not run L2-L4 inside this function."""
     mailbox_id = authorization.get("mailbox_id")
     access_token = authorization.get("access_token")
     mailbox_address = authorization.get("mailbox_address")
@@ -91,11 +91,11 @@ def sync_gmail(
     read_failures = []
     skipped_before_read = 0
 
-    # 功能：转发进度并收集读取失败 ID。
-    # 输入：`stage` 为当前处理阶段；`data` 为阶段关联数据。
-    # 输出：无。
-    # 逻辑：记录 fetching 失败供游标重试，再调用外部观察者。
-    # 约束：回调错误不吞掉，不携带授权字段。
+    # Function: Forward progress and collect IDs of read failures.
+    # Inputs: `stage`: current processing stage; `data`: associated stage data.
+    # Outputs: Outputs: None.
+    # Logic: Record fetching failures for cursor retries, then invoke the external observer.
+    # Constraints: Do not swallow callback errors or include authorization fields.
     def observe(stage, data):
         if stage == "failed" and data.get("stage") == "fetching":
             read_failures.append(data["gmail_message_id"])
@@ -222,11 +222,11 @@ def sync_gmail(
     }
 
 
-# 功能：复用完成抽取或执行逐封重做。
-# 输入：`emails` 为已读取的标准邮件数组；`mailbox_address` 为授权账号完整地址；`mailbox_id` 为后端邮箱标识；`backend` 为业务后端协议客户端；`extraction_provider` 为单封邮件事实抽取函数；`progress` 为可选阶段回调。
-# 输出：统计、跳过数、三类失败 ID、错误数组及处理数。
-# 逻辑：先查同版本终态，再并发抽取和逐封提交，分别回报处理阶段。
-# 约束：失败事实只允许补为成功，不覆盖既有完成记录。
+# Function: Reuse completed extractions or reprocess individual emails.
+# Inputs: `emails`: already-read standard email array; `mailbox_address`: authorized account's complete address; `mailbox_id`: backend mailbox identifier; `backend`: business backend protocol client; `extraction_provider`: single-email fact extraction function; `progress`: optional stage callback.
+# Outputs: Statistics, skipped count, three categories of failed IDs, error array, and processed count.
+# Logic: Check terminal states at the same version, then extract concurrently and submit individually, reporting each stage.
+# Constraints: Failed facts may only be upgraded to success; do not overwrite completed records.
 def _extract_new_or_retryable_emails(
     emails: list[dict],
     mailbox_address: str,
@@ -243,7 +243,7 @@ def _extract_new_or_retryable_emails(
     list[dict[str, Any]],
     int,
 ]:
-    """同版本完成记录直接复用；其余邮件并发抽取并在完成后立即逐封提交。"""
+    """Reuse completed records at the same version; extract remaining emails concurrently and submit each immediately on completion."""
     reader = getattr(backend, "get_stored_email", None)
     if not callable(reader):
         candidates = [(email, None) for email in emails]
@@ -316,8 +316,8 @@ def _extract_new_or_retryable_emails(
             _is_current_failed_extraction(stored)
             and submission.get("extract_status") != "completed"
         ):
-            # 后端只允许同版本 failed → completed。再次失败时保留原记录，
-            # 同时把 message ID 留在游标状态中，供下一轮继续重试。
+            # The backend permits only failed -> completed at the same version. Repeated failure preserves the original record
+            # and retains the message ID in cursor state for retry in the next pass.
             skipped_existing_count += 1
             if message_id is not None:
                 retry_message_ids.append(message_id)
@@ -374,26 +374,26 @@ def _extract_new_or_retryable_emails(
     )
 
 
-# 功能：按完成顺序产出并发 L1。
-# 输入：`candidates` 为邮件与已有记录的候选数组；`mailbox_address` 为授权账号完整地址；`extraction_provider` 为单封邮件事实抽取函数；`progress` 为可选阶段回调。
-# 输出：包含邮件、原记录、提交对象或异常的迭代器。
-# 逻辑：主线程顺序回报抽取开始，线程池最多四路执行模型，单封完成即产出。
-# 约束：不并发操作 Gmail SDK 或进度观察器；只有模型调用在线程池中并发。
+# Function: Yield concurrent L1 results in completion order.
+# Inputs: `candidates`: array of emails and existing records; `mailbox_address`: authorized account's complete address; `extraction_provider`: single-email fact extraction function; `progress`: optional stage callback.
+# Outputs: Iterator containing email, original record, and submission object or exception.
+# Logic: The main thread reports extraction starts sequentially; the pool runs at most four model calls and yields each completed email.
+# Constraints: Do not concurrently access the Gmail SDK or progress observer; only model calls run concurrently in the pool.
 def _process_email_candidates(
     candidates: list[tuple[dict, object]],
     mailbox_address: str,
     extraction_provider: Callable[[str, str], str],
     progress=None,
 ) -> Iterator[tuple[dict, object, dict | None, Exception | None]]:
-    """最多四路并发执行 L1，按完成顺序产出结果并隔离单封异常。"""
+    """Run L1 with at most four concurrent calls, yielding completion-order results and isolating individual exceptions."""
     if not candidates:
         return
 
-    # 功能：执行一封候选邮件的抽取。
-    # 输入：`candidate` 为一封邮件与原记录元组。
-    # 输出：邮件与抽取结果或异常四元组。
-    # 逻辑：调用 process_email，捕获本封异常；进度由提交线程统一回报。
-    # 约束：不从工作线程调用可能写数据库的观察器。
+    # Function: Extract facts from one candidate email.
+    # Inputs: `candidate`: tuple of one email and its original record.
+    # Outputs: Four-tuple containing email, extraction result, or exception.
+    # Logic: Call process_email and capture that email's exception; the submission thread reports progress centrally.
+    # Constraints: Do not call observers that may write to the database from worker threads.
     def run(candidate: tuple[dict, object]):
         email, stored = candidate
         try:
@@ -417,16 +417,16 @@ def _process_email_candidates(
             yield future.result()
 
 
-# 功能：隔离逐封后端提交失败。
-# 输入：`backend` 为业务后端协议客户端；`submissions` 为标准邮件提交数组。
-# 输出：汇总、待重试 ID 与错误数组。
-# 逻辑：每次提交单元素数组，错误记录后继续其他邮件。
-# 约束：保持后端批量事务契约，不隐式修改已保存事实。
+# Function: Isolate individual backend submission failures.
+# Inputs: `backend`: business backend protocol client; `submissions`: standard email submission array.
+# Outputs: Summary, retry IDs, and error array.
+# Logic: Submit one-element arrays, recording errors and continuing other emails.
+# Constraints: Preserve the backend batch transaction contract; do not implicitly modify stored facts.
 def _submit_emails_individually(
     backend: BackendClient,
     submissions: list[dict],
 ) -> tuple[dict[str, Any], list[str], list[dict[str, Any]]]:
-    """逐封提交邮件，避免单封冲突或校验错误回滚整批。"""
+    """Submit emails individually so one conflict or validation failure does not roll back the whole batch."""
     totals: dict[str, Any] = {
         "created_count": 0,
         "updated_count": 0,
@@ -458,13 +458,13 @@ def _submit_emails_individually(
     return totals, _unique_message_ids(retry_message_ids), errors
 
 
-# 功能：合并提交汇总。
-# 输入：`target` 为可修改的目标汇总；`source` 为来源汇总。
-# 输出：无，修改目标字典。
-# 逻辑：累计数量并去重受影响公司。
-# 约束：仅内存更新，不改业务记录。
+# Function: Merge submission summaries.
+# Inputs: `target`: mutable target summary; `source`: source summary.
+# Outputs: None; mutate the target dictionary.
+# Logic: Accumulate counts and deduplicate affected companies.
+# Constraints: Update memory only, not business records.
 def _merge_submission_totals(target: dict[str, Any], source: Mapping[str, Any]) -> None:
-    """把一封邮件的后端结果合并进本轮统计。"""
+    """Merge one email's backend result into this pass's statistics."""
     for field in ("created_count", "updated_count", "duplicate_count"):
         target[field] += int(source.get(field, 0))
     affected = target["affected_company_ids"]
@@ -473,21 +473,21 @@ def _merge_submission_totals(target: dict[str, Any], source: Mapping[str, Any]) 
             affected.append(company_id)
 
 
-# 功能：读取标准邮件 Gmail ID。
-# 输入：`email` 为标准邮件映射。
-# 输出：有效字符串或 None。
-# 逻辑：验证类型并去掉两端空白。
-# 约束：不创造缺失 ID。
+# Function: Read the Gmail ID from a standard email.
+# Inputs: `email`: standard email mapping.
+# Outputs: Valid string or None.
+# Logic: Validate type and strip surrounding whitespace.
+# Constraints: Do not invent missing IDs.
 def _email_message_id(email: Mapping[str, Any]) -> str | None:
     value = email.get("gmail_message_id")
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-# 功能：将异常转换为现有 Agent 错误对象。
-# 输入：`message_id` 为指定 Gmail 消息 ID；`stage` 为当前处理阶段；`code` 为错误代码；`error` 为异常对象。
-# 输出：错误字典。
-# 逻辑：保留异常类型和文本后委托结构组装。
-# 约束：软件进度接口只保存受控代码和安全说明，不转发该原异常文本。
+# Function: Convert an exception to the existing agent error object.
+# Inputs: `message_id`: selected Gmail message ID; `stage`: current processing stage; `code`: error code; `error`: exception object.
+# Outputs: Error dictionary.
+# Logic: Preserve exception type and text, then delegate structure assembly.
+# Constraints: Software progress endpoints persist only controlled codes and safe details, never this raw exception text.
 def _email_error(
     message_id: str | None,
     stage: str,
@@ -502,11 +502,11 @@ def _email_error(
     )
 
 
-# 功能：组装逐封错误表示。
-# 输入：`message_id` 为指定 Gmail 消息 ID；`stage` 为当前处理阶段；`code` 为错误代码；`message` 为错误描述原值。
-# 输出：带消息 ID、阶段、代码和说明的字典。
-# 逻辑：统一字符串消息与缺省错误说明。
-# 约束：此函数不记录日志或写数据库。
+# Function: Assemble an individual email error representation.
+# Inputs: `message_id`: selected Gmail message ID; `stage`: current processing stage; `code`: error code; `message`: original error description.
+# Outputs: Dictionary containing message ID, stage, code, and details.
+# Logic: Normalize string messages and default error details.
+# Constraints: This function neither logs nor writes to the database.
 def _email_result_error(
     message_id: str | None,
     stage: str,
@@ -521,13 +521,13 @@ def _email_result_error(
     }
 
 
-# 功能：判断同版本可信终态是否可复用。
-# 输入：`stored` 为已保存抽取表示。
-# 输出：布尔值。
-# 逻辑：检查提取版本和 completed/skipped_non_business 状态。
-# 约束：None 不可复用，非法非对象抛 TypeError。
+# Function: Determine whether a trusted terminal state at the same version is reusable.
+# Inputs: `stored`: persisted extraction representation.
+# Outputs: Boolean.
+# Logic: Check extraction version and completed/skipped_non_business status.
+# Constraints: None is not reusable; invalid non-objects raise TypeError.
 def _can_reuse_stored_extraction(stored: object) -> bool:
-    """只有当前 Prompt 的可信终态可跳过；failed 必须继续抽取。"""
+    """Skip only trusted terminal states for the current prompt; failed records must be extracted again."""
     if stored is None:
         return False
     if not isinstance(stored, Mapping):
@@ -538,13 +538,13 @@ def _can_reuse_stored_extraction(stored: object) -> bool:
     )
 
 
-# 功能：判断当前版本失败事实。
-# 输入：`stored` 为已保存抽取表示。
-# 输出：布尔值。
-# 逻辑：匹配版本和 failed 状态。
-# 约束：无网络和存储副作用。
+# Function: Identify failed facts at the current version.
+# Inputs: `stored`: persisted extraction representation.
+# Outputs: Boolean.
+# Logic: Match the version and failed status.
+# Constraints: No network or storage side effects.
 def _is_current_failed_extraction(stored: object) -> bool:
-    """判断后端是否已保存当前 Prompt 的失败结果。"""
+    """Check whether the backend has saved a failed result for the current prompt."""
     return bool(
         isinstance(stored, Mapping)
         and stored.get("extract_prompt_version") == EXTRACT_PROMPT_VERSION
@@ -552,15 +552,15 @@ def _is_current_failed_extraction(stored: object) -> bool:
     )
 
 
-# 功能：读取兼容后端的同步游标。
-# 输入：`backend` 为业务后端协议客户端；`mailbox_id` 为后端邮箱标识。
-# 输出：状态字典或 None。
-# 逻辑：确认读写方法存在并验证版本类型。
-# 约束：只有旧后端未实现游标协议才返回 None；读写协议存在时的错误与非法状态必须失败。
+# Function: Read the synchronization cursor from a compatible backend.
+# Inputs: `backend`: business backend protocol client; `mailbox_id`: backend mailbox identifier.
+# Outputs: State dictionary or None.
+# Logic: Verify read/write methods exist and validate the version type.
+# Constraints: Return None only for legacy backends without the cursor protocol; errors and invalid state must fail when the protocol exists.
 def _get_sync_state(
     backend: BackendClient, mailbox_id: str
 ) -> dict[str, Any] | None:
-    """读取支持游标的后端状态；读取失败不能伪装为首次同步。"""
+    """Read state from a cursor-capable backend; never disguise a read failure as initial synchronization."""
     reader = getattr(backend, "get_sync_state", None)
     writer = getattr(backend, "save_sync_state", None)
     if not callable(reader) or not callable(writer):
@@ -571,18 +571,18 @@ def _get_sync_state(
     return dict(state)
 
 
-# 功能：选择增量或首次同步范围。
-# 输入：`service` 为已授权 Gmail SDK 客户端；`limit` 为调用方明确的数量上限；`sync_state` 为后端同步状态或 None；`progress` 为可选阶段回调。
-# 输出：邮件、下一游标、剩余 ID、模式四元组。
-# 逻辑：先选 pending/新增/failed，按上限读取；游标失效合并已持久化清单与最近扫描。
-# 约束：保持历史过期处理的现有边界；进度回调只扩展观察和单封读取隔离。
+# Function: Select incremental or initial synchronization scope.
+# Inputs: `service`: authorized Gmail SDK client; `limit`: explicit caller-specified count limit; `sync_state`: backend synchronization state or None; `progress`: optional stage callback.
+# Outputs: Four-tuple of emails, next cursor, remaining IDs, and mode.
+# Logic: Select pending/new/failed IDs first and read within the limit; on cursor expiration, merge persisted lists with a recent scan.
+# Constraints: Preserve existing history-expiration boundaries; progress callbacks extend only observation and individual read-failure isolation.
 def _read_email_batch(
     service,
     limit: int,
     sync_state: Mapping[str, Any] | None,
     progress=None,
 ) -> tuple[list[dict], str | None, list[str], str]:
-    """按历史游标读取新增与待重试邮件；无游标时执行一次最近邮件扫描。"""
+    """Read new and retry emails from the history cursor; without a cursor, perform one recent-email scan."""
     if sync_state is None:
         return (read_sync_emails(service, limit=limit, progress=progress) if progress else read_sync_emails(service, limit=limit)), None, [], "recent_fallback"
 
@@ -613,17 +613,17 @@ def _read_email_batch(
                     next_cursor, candidates[limit:], "recovered",
                 )
 
-    # 先取得游标再列邮件，避免扫描期间到达的新邮件被跳过；极端情况下
-    # 同一封邮件会在下一轮再次出现，但后端 dedupe_key 仍保证保存幂等。
+    # Obtain the cursor before listing emails so arrivals during the scan are not skipped. In edge cases,
+    # the same email may appear in the next pass, but backend dedupe_key still guarantees idempotent persistence.
     next_cursor = get_profile_history_id(service)
     return (read_sync_emails(service, limit=limit, progress=progress) if progress else read_sync_emails(service, limit=limit)), next_cursor, [], "initial"
 
 
-# 功能：保存游标和待处理消息清单。
-# 输入：`backend` 为业务后端协议客户端；`mailbox_id` 为后端邮箱标识；`previous` 为读取时的同步状态及版本；`cursor` 为待保存的 Gmail 游标；`pending_message_ids` 为尚未处理的消息 ID；`failed_message_ids` 为待重试消息 ID。
-# 输出：是否保存成功的布尔值。
-# 逻辑：采用先读版本执行乐观锁保存。
-# 约束：未配置游标协议返回 False；已配置协议的写入异常向上传播，不声明同步成功。
+# Function: Save the cursor and pending message list.
+# Inputs: `backend`: business backend protocol client; `mailbox_id`: backend mailbox identifier; `previous`: previously read state/version; `cursor`: Gmail cursor to save; `pending_message_ids`: unprocessed IDs; `failed_message_ids`: retry IDs.
+# Outputs: Boolean indicating successful persistence.
+# Logic: Save with optimistic locking using the previously read version.
+# Constraints: Return False if the cursor protocol is absent; propagate write failures when configured and do not claim successful synchronization.
 def _save_sync_state(
     backend: BackendClient,
     mailbox_id: str,
@@ -632,7 +632,7 @@ def _save_sync_state(
     pending_message_ids: list[str],
     failed_message_ids: list[str],
 ) -> bool:
-    """提交成功后保存 Gmail 增量游标，写入异常必须向调用方报告。"""
+    """Save the Gmail incremental cursor after successful submission; report write failures to the caller."""
     writer = getattr(backend, "save_sync_state", None)
     if previous is None or cursor is None or not callable(writer):
         return False
@@ -651,25 +651,25 @@ def _save_sync_state(
     return True
 
 
-# 功能：读取合法消息数组。
-# 输入：`value` 为待验证原值。
-# 输出：去重字符串列表。
-# 逻辑：非数组为空，其余交统一规范化。
-# 约束：不修改输入对象。
+# Function: Read a valid message array.
+# Inputs: `value`: original value to validate.
+# Outputs: Deduplicated string list.
+# Logic: Treat non-arrays as empty; otherwise delegate to shared normalization.
+# Constraints: Do not mutate the input object.
 def _message_ids(value: object) -> list[str]:
-    """从同步 scope 中只保留合法且不重复的 Gmail message ID。"""
+    """Retain only valid, distinct Gmail message IDs from synchronization scope."""
     if not isinstance(value, list):
         return []
     return _unique_message_ids(value)
 
 
-# 功能：稳定去重 Gmail 消息标识。
-# 输入：`values` 为待规范化原值数组。
-# 输出：按首次出现排序的字符串列表。
-# 逻辑：去空白并排除非字符串和重复 ID。
-# 约束：纯内存转换，无网络副作用。
+# Function: Stably deduplicate Gmail message identifiers.
+# Inputs: `values`: original value array to normalize.
+# Outputs: String list in first-appearance order.
+# Logic: Strip whitespace and exclude non-strings and duplicate IDs.
+# Constraints: Pure in-memory transformation without network side effects.
 def _unique_message_ids(values: list[object]) -> list[str]:
-    """按出现顺序规范化 Gmail message ID。"""
+    """Normalize Gmail message IDs in appearance order."""
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -682,11 +682,11 @@ def _unique_message_ids(values: list[object]) -> list[str]:
     return result
 
 
-# 功能：构造批次失败汇总。
-# 输入：`mailbox_id` 为后端邮箱标识；`code` 为错误代码；`message` 为错误描述原值；`fetched_count` 为已读取邮件数量。
-# 输出：带 code/message 的失败对象。
-# 逻辑：保持原 HTTP/CLI 汇总字段与零值。
-# 约束：不把失败报告当作邮件保存证明。
+# Function: Build a batch failure summary.
+# Inputs: `mailbox_id`: backend mailbox identifier; `code`: error code; `message`: original error description; `fetched_count`: number of emails read.
+# Outputs: Failure object containing code/message.
+# Logic: Preserve original HTTP/CLI summary fields and zero values.
+# Constraints: Do not treat a failure report as proof of email persistence.
 def _failed(
     mailbox_id: str,
     code: str,

@@ -1,13 +1,13 @@
-"""职责：集中声明工作空间 Agent 可以请求发现的读取及实验维护工具名称。
-实现：使用不可变名称集合；实际参数和授权始终由后端目录决定。
-关联：chat.tool_reads、Agent HTTP 客户端及聊天工作流共同使用；不依赖 Django。
-目录：
-- 无
-变量索引：
-- EXPERIMENT_TOOLS：经过批准的合成批次读取工具。
-- EXPERIMENT_WRITE_TOOLS：共享虚构记录的三种维护工具。
-- WORKSPACE_TOOLS：读取与实验维护的完整工作空间白名单。
-- WORKSPACE_READ_TOOLS：客户读取与实验读取的固定工作空间白名单。
+"""Responsibility: Declare read and experiment-maintenance tool names discoverable by the workspace Agent.
+Implementation: Immutable name sets; backend catalogs always determine actual arguments and authorization.
+Relationships: Shared by chat.tool_reads, the Agent HTTP client, and chat workflows; independent of Django.
+Directory:
+- None
+Variable index:
+- EXPERIMENT_TOOLS: Approved synthetic-batch read tools.
+- EXPERIMENT_WRITE_TOOLS: Three maintenance tools for shared synthetic records.
+- WORKSPACE_TOOLS: Complete workspace allowlist for reads and experiment maintenance.
+- WORKSPACE_READ_TOOLS: Fixed workspace allowlist for customer and experiment reads.
 """
 
 EXPERIMENT_TOOLS = frozenset({"experiments.catalog", "experiments.rows", "experiments.file_read"})

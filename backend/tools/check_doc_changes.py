@@ -1,23 +1,23 @@
-"""职责：检查 backend Python 快照的注释结构，并定位实现变化后说明未更新的声明。
-实现：只读 Git 基准、暂存区或工作区；复用 check_docs，按 AST 比较模块、类及函数。
-关联：供 pre-commit 与 CI 调用；只检查 backend/ 下 Python，不执行源码或调用外部模型。
+"""Responsibility: Check backend Python snapshot documentation and locate changed implementations with unchanged explanations.
+Implementation: Read Git baselines, staging, or working trees; reuse check_docs and compare module/class/function ASTs.
+Relationships: Used by pre-commit and CI; backend Python only, without source execution or external models.
 
-目录：
-- CodeShape：去除说明和嵌套声明，提取当前作用域的代码结构。
-- CodeShape.visit_Expr：去除独立字符串表达式。
-- CodeShape.visit_FunctionDef：隔离嵌套函数变化。
-- CodeShape.visit_AsyncFunctionDef：隔离嵌套异步函数变化。
-- CodeShape.visit_ClassDef：隔离嵌套类变化。
-- git：只读调用 Git 并把失败转为明确诊断。
-- decode_source：按 Python 编码声明解码源码。
-- snapshot：读取指定 Git 树、暂存区或工作区的 backend Python 文件。
-- records：提取每个声明的代码结构、说明与行号。
-- compare_sources：发现代码结构变化但说明未变的复核项。
-- inspect_changes：执行全量结构检查及基准差异检查。
-- main：解析命令行并分别输出错误与待复核项。
+Directory:
+- CodeShape: Extract scope-local code structure without documentation or nested declarations.
+- CodeShape.visit_Expr: Remove standalone string expressions.
+- CodeShape.visit_FunctionDef: Isolate nested function changes.
+- CodeShape.visit_AsyncFunctionDef: Isolate nested asynchronous function changes.
+- CodeShape.visit_ClassDef: Isolate nested class changes.
+- git: Invoke Git read-only with explicit failure diagnostics.
+- decode_source: Decode source according to Python encoding declarations.
+- snapshot: Read backend Python from a Git tree, index, or working tree.
+- records: Extract declaration structure, documentation, and line numbers.
+- compare_sources: Identify changed code with unchanged documentation for review.
+- inspect_changes: Run complete structural and baseline-difference checks.
+- main: Parse CLI arguments and report errors/review items separately.
 
-变量索引：
-- REPO_ROOT：由脚本路径定位 SalesMate 仓库。
+Variable index:
+- REPO_ROOT: Locate the SalesMate repository from the script path.
 """
 
 import argparse
@@ -34,75 +34,75 @@ import check_docs
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-# 功能：为单个作用域提取不包含注释和嵌套声明的 AST。
-# 逻辑：根节点由 generic_visit 处理；内部声明独立比较，不把方法修改误报为类体修改。
-# 约束：这是语法差异而非行为等价判定；不展开导入、动态调用或继承。
+# Function: Extract one scope's AST without documentation or nested declarations.
+# Logic: generic_visit handles the root; compare inner declarations separately to avoid reporting method edits as class-body edits.
+# Constraints: This detects syntax differences, not behavioral equivalence; never expand imports, dynamic calls, or inheritance.
 class CodeShape(ast.NodeTransformer):
-    # 功能：排除 docstring 和其他独立字符串表达式。
-    # 输入：`node` 为表达式语句。
-    # 输出：字符串语句返回 None，其余返回递归处理后的节点。
-    # 逻辑：避免仅修改说明触发代码变更告警。
-    # 约束：普通赋值、返回值和调用参数中的字符串仍参与比较。
+    # Function: Exclude docstrings and other standalone string expressions.
+    # Inputs: `node` is an expression statement.
+    # Outputs: None for string statements; otherwise the recursively processed node.
+    # Logic: Prevent documentation-only edits from triggering code-change warnings.
+    # Constraints: Strings in assignments, returns, and call arguments remain in comparisons.
     def visit_Expr(self, node):
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             return None
         return self.generic_visit(node)
 
-    # 功能：从父作用域比较中排除嵌套函数。
-    # 输入：`node` 为嵌套函数声明。
-    # 输出：None，使该声明从父节点中移除。
-    # 逻辑：函数的签名、装饰器和实现由它自己的记录覆盖。
-    # 约束：新增、删除声明由当前快照结构检查约束目录，不推断调用关系。
+    # Function: Exclude nested functions from parent-scope comparisons.
+    # Inputs: `node` is a nested function declaration.
+    # Outputs: None, removing the declaration from its parent.
+    # Logic: Its own record covers signature, decorators, and implementation.
+    # Constraints: Current-snapshot structural checks cover added/deleted declarations; do not infer call relationships.
     def visit_FunctionDef(self, node):
         return None
 
-    # 功能：从父作用域比较中排除嵌套异步函数。
-    # 输入：`node` 为异步函数声明。
-    # 输出：None。
-    # 逻辑：与同步函数保持相同作用域隔离规则。
-    # 约束：不会执行或等待协程。
+    # Function: Exclude nested asynchronous functions from parent comparisons.
+    # Inputs: `node` is an asynchronous declaration.
+    # Outputs: None.
+    # Logic: Apply the same scope isolation as synchronous functions.
+    # Constraints: Never execute or await coroutines.
     def visit_AsyncFunctionDef(self, node):
         return None
 
-    # 功能：从父作用域比较中排除嵌套类。
-    # 输入：`node` 为类声明。
-    # 输出：None。
-    # 逻辑：类基类、装饰器及类属性由该类记录单独比较。
-    # 约束：不收集继承但未实现的方法。
+    # Function: Exclude nested classes from parent comparisons.
+    # Inputs: `node` is a class declaration.
+    # Outputs: None.
+    # Logic: The class's own record compares bases, decorators, and class attributes.
+    # Constraints: Never collect inherited methods without local implementations.
     def visit_ClassDef(self, node):
         return None
 
 
-# 功能：执行参数化的只读 Git 命令。
-# 输入：`repo` 为仓库目录；`args` 为独立 Git 参数。
-# 输出：原始 stdout 字节；Git 错误、不可用或超时抛 ValueError。
-# 逻辑：不用 shell，失败时只报告子命令，不回显源码或 Git stderr。
-# 约束：调用点仅使用读取命令；单次最多 30 秒，不自动重试。
+# Function: Execute parameterized read-only Git commands.
+# Inputs: `repo` is the repository directory; `args` contains separate Git arguments.
+# Outputs: Raw stdout bytes; Git failures, unavailability, or timeouts raise ValueError.
+# Logic: Avoid the shell; errors identify subcommands without echoing source or Git stderr.
+# Constraints: Call sites use read operations only, with a 30-second limit and no automatic retries.
 def git(repo, *args):
     try:
         result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(f"Git {args[0]} 无法执行（{type(exc).__name__}）") from None
+        raise ValueError(f"Git {args[0]} could not execute ({type(exc).__name__})") from None
     if result.returncode:
-        raise ValueError(f"Git {args[0]} 失败（退出码 {result.returncode}）；检查仓库、基准提交及 Git 历史是否完整")
+        raise ValueError(f"Git {args[0]} failed (exit {result.returncode}); check the repository, baseline commit, and history completeness")
     return result.stdout
 
 
-# 功能：解码文件或 Git blob 中的 Python 源码。
-# 输入：`raw` 为原始字节。
-# 输出：源码字符串；编码错误由调用方报告。
-# 逻辑：使用 tokenize.detect_encoding 支持编码声明及 UTF-8 BOM。
-# 约束：不执行源码、不读取外部配置。
+# Function: Decode Python source from files or Git blobs.
+# Inputs: `raw` contains source bytes.
+# Outputs: A source string; callers report encoding errors.
+# Logic: tokenize.detect_encoding supports encoding declarations and UTF-8 BOM.
+# Constraints: No code execution or external configuration reads.
 def decode_source(raw):
     encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
     return raw.decode(encoding)
 
 
-# 功能：读取限定在 backend 的 Python 源码快照。
-# 输入：`repo` 为仓库；`revision` 为已解析提交哈希或 None；`staged` 指定当前快照来自暂存区。
-# 输出：相对路径到源码字符串的字典；读取或未合并状态异常由上层明确报告。
-# 逻辑：历史用 ls-tree，暂存区用 ls-files --stage，工作区包含未忽略的新文件并跳过已删除文件。
-# 约束：拒绝符号链接和未合并 Python 文件；不读取 .env、agent 或前端，不修改暂存区。
+# Function: Read a Python source snapshot restricted to backend.
+# Inputs: `repo` is the repository; `revision` is a resolved commit hash or None; `staged` selects the index snapshot.
+# Outputs: Relative paths mapped to source strings; callers explicitly report read/unmerged-state failures.
+# Logic: Use ls-tree for history, ls-files --stage for the index, and include nonignored new files while skipping deletions in the working tree.
+# Constraints: Reject symlinks and unmerged Python files; never read .env, agent, or frontend, or modify the index.
 def snapshot(repo, revision=None, staged=False):
     files = {}
     if revision or staged:
@@ -116,7 +116,7 @@ def snapshot(repo, revision=None, staged=False):
                 continue
             mode, middle, last = metadata.decode("ascii").split()
             if mode not in {"100644", "100755"} or (staged and not revision and last != "0"):
-                raise ValueError(f"{path}: 暂存冲突或不支持的文件模式；请先解决再检查")
+                raise ValueError(f"{path}: Index conflict or unsupported file mode; resolve it before checking")
             blob = last if revision else middle
             files[path] = decode_source(git(repo, "cat-file", "blob", blob))
     else:
@@ -127,17 +127,17 @@ def snapshot(repo, revision=None, staged=False):
                 continue
             target = repo / path
             if target.is_symlink() or not target.resolve().is_relative_to((repo / "backend").resolve()):
-                raise ValueError(f"{path}: 不允许通过链接读取检查范围外文件")
+                raise ValueError(f"{path}: Linked paths outside the check scope are not allowed")
             if target.exists():
                 files[path] = decode_source(target.read_bytes())
     return files
 
 
-# 功能：为源码中的模块及实际声明建立可比较记录。
-# 输入：`source` 为 Python 文本。
-# 输出：以限定名称和同名声明序号为键，值为 AST 文本、规范化说明及行号的字典。
-# 逻辑：保留签名、装饰器、默认值和当前作用域实现；排除行号、格式及嵌套声明。
-# 约束：同名条件声明按出现顺序配对；语法错误抛出，不推断函数跨文件移动。
+# Function: Build comparable records for modules and implemented declarations.
+# Inputs: `source` is Python text.
+# Outputs: A dictionary keyed by qualified name/occurrence, containing AST text, normalized documentation, and line number.
+# Logic: Retain signatures, decorators, defaults, and scope-local implementations; omit positions, formatting, and nested declarations.
+# Constraints: Pair repeated conditional names by occurrence; syntax errors propagate. Do not infer cross-file function moves.
 def records(source):
     tree = ast.parse(source)
     inventory = check_docs.Inventory()
@@ -154,11 +154,11 @@ def records(source):
     return result
 
 
-# 功能：定位实现发生变化但对应说明未变的作用域。
-# 输入：`before`、`after` 为基准与当前源码；`path` 为诊断路径。
-# 输出：待复核消息列表；不宣称这些项目必然违反规范。
-# 逻辑：仅比较两边都存在的声明，AST 变化且说明相同时提示检查默认值、副作用与约束。
-# 约束：改动注释文本不证明内容正确；新增与删除声明由结构检查处理，不分析跨文件影响。
+# Function: Locate changed implementations with unchanged corresponding documentation.
+# Inputs: `before` and `after` are baseline/current source; `path` labels diagnostics.
+# Outputs: Review messages, without claiming definite violations.
+# Logic: Compare shared declarations only; AST changes with identical documentation request review of defaults, effects, and constraints.
+# Constraints: Editing prose does not prove accuracy; structural checks cover additions/deletions without cross-file impact analysis.
 def compare_sources(before, after, path):
     previous, current = records(before), records(after)
     reviews = []
@@ -166,15 +166,15 @@ def compare_sources(before, after, path):
         old_code, old_doc, _ = previous[key]
         code, doc, line = current[key]
         if old_code != code and old_doc == doc:
-            reviews.append(f"{path}:{line}: {key[0]} 实现或签名变化，但说明未变；请复核输入输出、默认值、副作用和约束")
+            reviews.append(f"{path}:{line}: {key[0]} Implementation or signature changed but documentation did not; review inputs, outputs, defaults, side effects, and constraints")
     return reviews
 
 
-# 功能：检查当前完整快照并与明确基准比较。
-# 输入：`repo` 为仓库；`base` 为基准 ref；`staged` 选择暂存区而非工作区。
-# 输出：文件数量、结构或读取错误列表、待复核列表。
-# 逻辑：先解析基准提交再读取两份快照，对当前全部文件应用相同结构标准。
-# 约束：基准不存在、文件不可读或扫描为空明确失败；不把读取失败当成无变更。
+# Function: Check a complete current snapshot against an explicit baseline.
+# Inputs: `repo` is the repository; `base` is a baseline ref; `staged` selects the index instead of the working tree.
+# Outputs: File count, structural/read errors, and review items.
+# Logic: Resolve the baseline commit, read both snapshots, and apply identical structural standards to all current files.
+# Constraints: Missing baselines, unreadable files, and empty scans fail explicitly; failed reads never mean no changes.
 def inspect_changes(repo, base, staged):
     errors, reviews = [], []
     try:
@@ -182,7 +182,7 @@ def inspect_changes(repo, base, staged):
         previous = snapshot(repo, revision=revision)
         current = snapshot(repo, staged=staged)
         if not current:
-            return 0, ["backend/: 没有可检查的 Python 文件"], []
+            return 0, ["backend/: No Python files to check"], []
         for path, source in sorted(current.items()):
             issues = check_docs.check_source(source, path)
             errors.extend(issues)
@@ -190,31 +190,31 @@ def inspect_changes(repo, base, staged):
                 try:
                     reviews.extend(compare_sources(previous[path], source, path))
                 except (SyntaxError, ValueError):
-                    errors.append(f"{path}: 基准源码无法解析，不能执行变更比较")
+                    errors.append(f"{path}: Baseline source cannot be parsed; change comparison is unavailable")
         return len(current), errors, reviews
     except (ValueError, OSError, UnicodeError, SyntaxError, LookupError) as exc:
-        # 只展示安全的读取诊断；编码/语法异常消息可能包含源码，故仅显示异常类型。
-        message = str(exc) if type(exc) is ValueError else f"快照读取失败（{type(exc).__name__}）"
+        # Show safe read diagnostics only; encoding/syntax messages may contain source, so expose only their exception types.
+        message = str(exc) if type(exc) is ValueError else f"Snapshot read failed ({type(exc).__name__})"
         return 0, [message], []
 
 
-# 功能：提供工作区、暂存区和 CI 共用的检查入口。
-# 输入：`argv` 为参数序列或 None；默认以 HEAD 对比工作区。
-# 输出：结构错误返回 1；显式严格模式存在待复核项返回 2；其余返回 0 并展示复核数量。
-# 逻辑：分开展示确定性错误与语义复核提示，--fail-on-review 可将后者作为门槛。
-# 约束：默认提示不阻断合法重构；退出 0 只表示结构检查成功，不表示语义已审核。
+# Function: Provide one entry point for working-tree, staging, and CI checks.
+# Inputs: `argv` is an argument sequence or None; defaults to comparing the working tree with HEAD.
+# Outputs: Return 1 for structural errors, 2 for review items in explicit strict mode, otherwise 0 with review counts.
+# Logic: Separate deterministic errors from semantic-review notices; --fail-on-review may enforce the latter.
+# Constraints: Default notices do not block valid refactoring; exit 0 indicates structural success, not reviewed semantics.
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="backend 注释结构与变更检查；不执行业务代码。")
-    parser.add_argument("--base", default="HEAD", help="明确的基准提交，默认 HEAD；必须存在")
-    parser.add_argument("--staged", action="store_true", help="检查实际暂存 blob，不读取工作区修正")
-    parser.add_argument("--fail-on-review", action="store_true", help="待复核项目也返回非零；不代表自动语义判断")
+    parser = argparse.ArgumentParser(description="Check backend documentation structure and changes without executing business code.")
+    parser.add_argument("--base", default="HEAD", help="Explicit existing baseline commit; defaults to HEAD")
+    parser.add_argument("--staged", action="store_true", help="Check actual staged blobs without working-tree corrections")
+    parser.add_argument("--fail-on-review", action="store_true", help="Return nonzero for review items; this does not automate semantic judgment")
     args = parser.parse_args(argv)
     count, errors, reviews = inspect_changes(REPO_ROOT, args.base, args.staged)
     for error in errors:
         print(f"ERROR {error}", file=sys.stderr)
     for review in reviews:
         print(f"REVIEW {review}")
-    print(f"backend 注释检查：{count} 个文件，{len(errors)} 项错误，{len(reviews)} 项待复核；自然语言语义未自动验证。")
+    print(f"Backend documentation check: {count} files, {len(errors)} errors, {len(reviews)} review items; natural-language semantics are not automatically verified.")
     return 1 if errors else 2 if reviews and args.fail_on_review else 0
 
 

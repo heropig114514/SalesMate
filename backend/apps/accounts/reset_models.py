@@ -1,23 +1,23 @@
-"""职责：保存账户重置的最小协调状态，不保存业务内容。
-实现：版本隔离旧页面；文件清单支持数据库提交后显式恢复附件清理。
-关联：reset、reset_middleware 和后台工作锁；由 accounts.models 导入注册。
-目录：
-- AccountReset：账号数据版本及附件清理进度。
-变量索引：
-- AccountReset.owner：保留的登录身份。
-- AccountReset.generation：每次数据库清理递增的数据版本。
-- AccountReset.key：最近一次成功提交的幂等键。
-- AccountReset.keys：已提交操作键清单，阻止较早请求重放再次删除新数据。
-- AccountReset.pending_files：尚需处理的私有存储键，不包含文件正文。
-- AccountReset.cleaning：数据库已清空但文件或会话仍需清理。
+"""Responsibility: Persist the minimum coordination state for account reset without business content.
+Implementation: Versions isolate stale pages; a file list supports explicit recovery of attachment cleanup after a database commit.
+Relationships: ``reset``, ``reset_middleware``, and background-work locks; imported and registered by ``accounts.models``.
+Directory:
+- AccountReset: Account data version and attachment-cleanup progress.
+Variable index:
+- AccountReset.owner: Retained login identity.
+- AccountReset.generation: Data version incremented for every database cleanup.
+- AccountReset.key: Idempotency key of the most recently successful submission.
+- AccountReset.keys: Submitted-operation key list that prevents an earlier request replay from deleting new data again.
+- AccountReset.pending_files: Private-storage keys still requiring processing, excluding file content.
+- AccountReset.cleaning: Database is cleared but files or session still require cleanup.
 """
 from django.conf import settings
 from django.db import models
 
 
-# 功能：协调账号数据清理及旧请求隔离。
-# 逻辑：一账号一条元数据，文件成功清理后清空清单；不改变 User 或密码。
-# 约束：状态不作为身份授权；仅在账号独占锁下修改。
+# Function: Coordinate account-data cleanup and stale-request isolation.
+# Logic: One metadata record per account; clear the list after successful file cleanup without changing ``User`` or passwords.
+# Constraints: State is not identity authorization and is modified only under the account exclusive lock.
 class AccountReset(models.Model):
     owner = models.OneToOneField(settings.AUTH_USER_MODEL, primary_key=True, on_delete=models.CASCADE)
     generation = models.PositiveBigIntegerField(default=0)

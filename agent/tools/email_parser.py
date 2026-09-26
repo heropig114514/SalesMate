@@ -1,4 +1,24 @@
-"""Gmail raw MIME 邮件解析工具，不调用 LLM。"""
+"""Responsibility: Gmail raw MIME email parser without LLM calls.
+Implementation: Decode raw MIME, normalize nullable address/time metadata, choose visible body content, and identify current-message evidence.
+Relationships: Gmail and QQ readers share this parser; L1 consumes its normalized email dictionaries.
+
+Directory:
+- parse_raw_email: Fully decode Gmail Base64URL raw MIME into normalized internal email data.
+- _decode_raw_message: Strictly decode Base64URL while hiding low-level decoding or MIME parsing details.
+- _header_text: Decode RFC-encoded headers through the email header registry.
+- _header_addresses: Extract basically valid bare mailboxes in original header order.
+- _is_valid_mailbox: Accept mailboxes with one @, nonempty local/domain parts, and no whitespace.
+- _sent_at: Normalize MIME Date to ISO8601 only when reliably parsed with an explicit timezone.
+- _extract_body_text: Exclude attachments; prefer the first nonempty plain-text body, otherwise use the first readable HTML body.
+- _eligible_body_text: Conservatively exclude explicit quoted lines and recognizable history blocks without changing the full public body.
+- _is_attachment: MIME parts with attachment disposition or a filename are not body content.
+- _html_to_visible_text: Remove invisible HTML regions and convert to plain text suitable for extraction.
+
+Variable index:
+- _HISTORY_BOUNDARY_PATTERNS: Recognizable quoted-message history boundaries.
+- _QUOTED_LINE_PATTERN: Explicit quoted-line marker.
+- _REQUIRED_HEADERS: Mail classification headers retained by MIME normalization.
+"""
 
 import base64
 import binascii
@@ -28,7 +48,7 @@ def parse_raw_email(
     thread_id: str | None,
     received_at: str | None = None,
 ) -> dict:
-    """完整解码 Gmail Base64URL raw MIME，并返回内部标准化邮件。"""
+    """Fully decode Gmail Base64URL raw MIME into normalized internal email data."""
     message = _decode_raw_message(raw)
     body_text = _extract_body_text(message)
 
@@ -52,7 +72,7 @@ def parse_raw_email(
 
 
 def _decode_raw_message(raw: str) -> Message:
-    """严格解码 Base64URL，并隐藏底层解码或 MIME 解析细节。"""
+    """Strictly decode Base64URL while hiding low-level decoding or MIME parsing details."""
     try:
         encoded = raw.encode("ascii")
         encoded += b"=" * (-len(encoded) % 4)
@@ -67,13 +87,13 @@ def _decode_raw_message(raw: str) -> Message:
 
 
 def _header_text(message: Message, name: str) -> str:
-    """使用 email header registry 解码 RFC 编码头字段。"""
+    """Decode RFC-encoded headers through the email header registry."""
     value = message.get(name)
     return str(value) if value is not None else ""
 
 
 def _header_addresses(message: Message, name: str) -> list[str]:
-    """按头字段原始顺序提取基本合法的 bare mailbox。"""
+    """Extract basically valid bare mailboxes in original header order."""
     values = message.get_all(name, [])
     decoded_values = [str(value) for value in values]
     return [
@@ -84,7 +104,7 @@ def _header_addresses(message: Message, name: str) -> list[str]:
 
 
 def _is_valid_mailbox(value: str) -> bool:
-    """接受含单个 @、非空 local/domain 且无空白的 mailbox。"""
+    """Accept mailboxes with one @, nonempty local/domain parts, and no whitespace."""
     address = value.strip()
     if address.count("@") != 1:
         return False
@@ -97,7 +117,7 @@ def _is_valid_mailbox(value: str) -> bool:
 
 
 def _sent_at(message: Message) -> str | None:
-    """仅将可可靠解析且明确带时区的 MIME Date 规范化为 ISO8601。"""
+    """Normalize MIME Date to ISO8601 only when reliably parsed with an explicit timezone."""
     value = message.get("Date")
     if value is None:
         return None
@@ -112,7 +132,7 @@ def _sent_at(message: Message) -> str | None:
 
 
 def _extract_body_text(message: Message) -> str:
-    """排除附件后优先首个非空纯文本，否则回退到首个可读 HTML。"""
+    """Exclude attachments; prefer the first nonempty plain-text body, otherwise use the first readable HTML body."""
     html_candidates: list[str] = []
 
     for part in message.walk():
@@ -143,7 +163,7 @@ def _extract_body_text(message: Message) -> str:
 
 
 def _eligible_body_text(body_text: str) -> str:
-    """保守排除明确引用行及可识别历史块，不改变对外完整正文。"""
+    """Conservatively exclude explicit quoted lines and recognizable history blocks without changing the full public body."""
     eligible_lines: list[str] = []
     changed = False
 
@@ -162,12 +182,12 @@ def _eligible_body_text(body_text: str) -> str:
 
 
 def _is_attachment(part: Message) -> bool:
-    """带 attachment disposition 或文件名的 MIME part 均不属于正文。"""
+    """MIME parts with attachment disposition or a filename are not body content."""
     return part.get_content_disposition() == "attachment" or bool(part.get_filename())
 
 
 def _html_to_visible_text(content: str) -> str:
-    """删除 HTML 非可见区域并转换为适合抽取的纯文本。"""
+    """Remove invisible HTML regions and convert to plain text suitable for extraction."""
     html = BeautifulSoup(content, "html.parser")
     for element in html.find_all(("script", "style", "head")):
         element.decompose()

@@ -1,7 +1,27 @@
-"""向开发者自己的 Gmail 插入 SalesMate 合成测试邮件。
+"""Responsibility: Insert synthetic SalesMate test mail into the developer's own Gmail inbox for local end-to-end validation.
 
-该工具使用独立的 Gmail insert OAuth token，只用于本地全链路测试。它不会
-调用后端，也不会把邮件发送给外部地址；插入后的邮件由现有只读同步流程读取。
+Implementation: Validates a JSON test plan, constructs RFC 2822 messages, obtains a dedicated Gmail insert OAuth token, inserts only into the authenticated inbox, and emits structured command results. It neither calls the backend nor sends mail to external addresses; the existing read-only synchronization flow consumes inserted mail.
+
+Relationships: Uses Google OAuth and Gmail APIs; consumes `gmail_test_messages.template.json`; is exercised manually by developers and is separate from backend synchronization.
+
+Directory:
+- main: Parse command arguments, build test messages, and optionally insert them.
+- connect_injector: Load or obtain the dedicated Gmail OAuth credentials and build a service.
+- load_test_plan: Read and validate the mailbox and message scenarios from JSON.
+- build_test_messages: Construct RFC 2822 messages for a test run.
+- _sender: Validate a scenario sender representation.
+- _required_text: Validate required nonempty template text.
+- insert_message: Insert one encoded RFC 2822 message through Gmail.
+- _mailbox: Validate and normalize a complete mailbox address.
+- _summary: Build a body-free dry-run message summary.
+- _print_json: Emit UTF-8-friendly JSON command output.
+
+Variable index:
+- INJECT_SCOPES: Gmail OAuth scopes required for insert and profile reads.
+- TOOL_DIR: Directory containing this developer tool and its default files.
+- DEFAULT_CREDENTIALS_PATH: Default Desktop OAuth client configuration path.
+- DEFAULT_TOKEN_PATH: Default dedicated local injector token path.
+- DEFAULT_MESSAGES_PATH: Default synthetic-message template path.
 """
 
 from __future__ import annotations
@@ -32,8 +52,13 @@ DEFAULT_TOKEN_PATH = TOOL_DIR / "gmail_inject_token.json"
 DEFAULT_MESSAGES_PATH = TOOL_DIR / "gmail_test_messages.template.json"
 
 
+# Function: Parse command arguments, validate a synthetic mail plan, and either preview or insert the generated messages.
+# Inputs: `argv` optionally supplies command-line arguments; otherwise argparse reads the process arguments.
+# Outputs: Returns 0 for a completed or dry-run operation and 1 after a validation, OAuth, profile, or insertion failure; writes a JSON status object to stdout.
+# Logic: Loads the plan, generates a run identifier and RFC 2822 messages, returns a body-free preview for `--dry-run`, or authorizes Gmail, verifies the selected mailbox, and inserts every message.
+# Constraints: Uses a dedicated local token, never calls the backend, and reports failures without continuing to insertion.
 def main(argv: list[str] | None = None) -> int:
-    """解析参数，生成测试邮件并插入当前开发者 Gmail。"""
+    """Parse arguments, generate test mail, and insert it into the current developer Gmail."""
     parser = argparse.ArgumentParser(
         description="向自己的 Gmail 插入 SalesMate 全链路合成测试邮件"
     )
@@ -128,8 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+# Function: Load or obtain dedicated Gmail OAuth credentials and create the local test-injection service.
+# Inputs: `credentials_path` identifies Desktop OAuth client JSON; `token_path` stores the dedicated authorized-user token.
+# Outputs: Returns a configured Gmail v1 service or raises `RuntimeError` for invalid configuration or expired authorization.
+# Logic: Validates a Desktop client document, reuses or refreshes its token when valid, otherwise runs a local OAuth callback flow, persists the token, and constructs the Gmail client.
+# Constraints: Requires `INJECT_SCOPES`; rejects web-client configuration and never substitutes backend web OAuth credentials.
 def connect_injector(credentials_path: Path, token_path: Path):
-    """建立只供测试注入使用的 Gmail Service，并保存独立 token。"""
+    """Create the Gmail Service used only for test injection and save its separate token."""
     if not credentials_path.is_file():
         raise RuntimeError(
             f"测试注入 OAuth 配置不存在：{credentials_path}。"
@@ -170,8 +200,13 @@ def connect_injector(credentials_path: Path, token_path: Path):
     return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
 
+# Function: Read and strictly validate the mailbox and synthetic message scenarios from a JSON plan.
+# Inputs: `path` is the JSON file containing mailbox_address and a nonempty messages array.
+# Outputs: Returns the normalized mailbox address and validated sender, subject, and body scenarios; raises `RuntimeError` or `ValueError` for invalid input.
+# Logic: Parses JSON, validates the top-level schema and exact message fields, rejects newline-bearing subjects, and normalizes each sender and required text value.
+# Constraints: Does not read Gmail or construct OAuth credentials; every scenario must contain only the declared fields.
 def load_test_plan(path: Path) -> tuple[str, list[dict[str, str]]]:
-    """读取并校验测试人员编写的邮箱和邮件场景 JSON。"""
+    """Read and validate the mailbox and mail-scenario JSON written for testing."""
     if not path.is_file():
         raise RuntimeError(f"测试邮件 JSON 文件不存在：{path}")
     try:
@@ -218,13 +253,18 @@ def load_test_plan(path: Path) -> tuple[str, list[dict[str, str]]]:
     return mailbox_address, scenarios
 
 
+# Function: Construct RFC 2822 messages from validated synthetic scenarios for one run.
+# Inputs: `mailbox_address` is the destination inbox; `run_id` identifies the test run; `scenarios` supplies validated sender, subject, and body values.
+# Outputs: Returns one `EmailMessage` per scenario with deterministic run headers and incrementing date offsets.
+# Logic: Assigns From, To, run-tagged Subject, Date, Message-ID, X-SalesMate-Test-Run, and plaintext body for each scenario.
+# Constraints: Uses the developer mailbox as the only recipient and leaves insertion to `insert_message`.
 def build_test_messages(
     mailbox_address: str,
     *,
     run_id: str,
     scenarios: list[dict[str, str]],
 ) -> list[EmailMessage]:
-    """根据已校验的 JSON 场景构造 RFC 2822 测试邮件。"""
+    """Build RFC 2822 test mail from validated JSON scenarios."""
     now = datetime.now().astimezone()
     result: list[EmailMessage] = []
     for index, scenario in enumerate(scenarios):
@@ -244,8 +284,13 @@ def build_test_messages(
     return result
 
 
+# Function: Validate a template sender expressed as a bare address or `Name <address>` form.
+# Inputs: `value` is the candidate sender; `location` identifies its JSON location in validation errors.
+# Outputs: Returns trimmed sender text or raises `ValueError`.
+# Logic: Requires nonempty text, parses the address, and checks exactly one at-sign plus nonempty, whitespace-free local and domain components.
+# Constraints: Preserves a valid display-name representation but does not normalize or verify external mailbox ownership.
 def _sender(value: object, *, location: str) -> str:
-    """校验模板中的发件人，允许纯邮箱或“名称 <邮箱>”格式。"""
+    """Validate a template sender, allowing a bare address or a Name <address> form."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{location}.from 必须是非空字符串。")
     candidate = value.strip()
@@ -258,15 +303,25 @@ def _sender(value: object, *, location: str) -> str:
     return candidate
 
 
+# Function: Validate and normalize a required nonempty text field in the test plan.
+# Inputs: `value` is the candidate field value; `location` identifies the field in validation errors.
+# Outputs: Returns trimmed text or raises `ValueError`.
+# Logic: Accepts only strings containing non-whitespace characters and strips surrounding whitespace.
+# Constraints: Performs no schema inference, escaping, or external I/O.
 def _required_text(value: object, location: str) -> str:
-    """读取模板中的必填文本。"""
+    """Read required text from a template."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{location} 必须是非空字符串。")
     return value.strip()
 
 
+# Function: Insert one RFC 2822 test message into the authenticated Gmail inbox.
+# Inputs: `service` is the configured Gmail client; `message` is the generated EmailMessage.
+# Outputs: Returns Gmail's response dictionary with a nonempty message ID or raises `RuntimeError`.
+# Logic: URL-safe-base64 encodes message bytes, requests Gmail insertion into INBOX and UNREAD using the Date header, and validates the response ID.
+# Constraints: Always targets the authenticated `me` mailbox and never sends through SMTP.
 def insert_message(service, message: EmailMessage) -> dict[str, Any]:
-    """把一封 RFC 2822 测试邮件插入当前 Gmail 的收件箱。"""
+    """Insert one RFC 2822 test message into the current Gmail inbox."""
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
     response = (
         service.users()
@@ -284,8 +339,13 @@ def insert_message(service, message: EmailMessage) -> dict[str, Any]:
     return response
 
 
+# Function: Validate and normalize one complete mailbox address without a display name.
+# Inputs: `value` is the candidate mailbox value.
+# Outputs: Returns the normalized address or raises `ValueError`.
+# Logic: Requires a string, parses it, rejects display names or malformed addresses, and checks local/domain components for whitespace.
+# Constraints: Validates syntax only and does not query Gmail or external DNS.
 def _mailbox(value: object) -> str:
-    """校验并规范单个完整邮箱地址。"""
+    """Validate and normalize one complete mailbox address."""
     if not isinstance(value, str):
         raise ValueError("邮箱地址无效。")
     display_name, address = parseaddr(value.strip())
@@ -297,8 +357,13 @@ def _mailbox(value: object) -> str:
     return address
 
 
+# Function: Build a body-free summary for dry-run output.
+# Inputs: `message` is a generated EmailMessage.
+# Outputs: Returns its From, To, and Subject headers as strings.
+# Logic: Reads only display headers needed to preview planned insertion.
+# Constraints: Deliberately excludes the body and does not mutate the message.
 def _summary(message: EmailMessage) -> dict[str, str]:
-    """生成 dry-run 使用的无正文邮件摘要。"""
+    """Generate a body-free mail summary for dry-run output."""
     return {
         "from": str(message["From"]),
         "to": str(message["To"]),
@@ -306,8 +371,13 @@ def _summary(message: EmailMessage) -> dict[str, str]:
     }
 
 
+# Function: Emit one UTF-8-friendly formatted JSON command result.
+# Inputs: `value` is a JSON-serializable command result.
+# Outputs: Writes indented JSON to standard output and returns `None`.
+# Logic: Serializes with non-ASCII characters preserved for developer-readable status output.
+# Constraints: Does not write files, log secrets independently, or handle serialization errors.
 def _print_json(value: object) -> None:
-    """以 UTF-8 友好的格式输出命令结果。"""
+    """Print command output in a UTF-8-friendly format."""
     print(json.dumps(value, ensure_ascii=False, indent=2))
 
 
