@@ -1,6 +1,6 @@
 /**
  * 职责：显示同步批次进度、按邮箱核对原文及邮件人工复核。
- * 实现：按邮箱查询全部已保存邮件并标明来源、时间与分类；请求代次隔离旧响应；复核保持人工确认与版本约束。
+ * 实现：按邮箱查询全部已保存邮件并标明来源、时间与分类；请求代次隔离旧响应及旧错误；复核保持人工确认与版本约束。
  * 国际化：i18n.js 仅翻译显式标记的静态文案；动态业务正文和接口值保持原样。
  * 关联：0919 界面及共享语言资源统一缓存版本；共享语言/API 资源随需求界面统一版本；app.js 提供列表刷新和轮询入口；api.js 管理 Session/CSRF；index.html 提供对话框。
  * 目录：refreshReviewBadge、openMailboxEmails、loadReviews、updateRunProgress、initProcessingUI。
@@ -39,19 +39,24 @@ export async function openMailboxEmails(mailboxId = null, address = '') {
 }
 
 /** 功能：加载当前页复核邮件。输入：无，读取筛选器和 reviewState.page。输出：无。
- * 逻辑：按 reviewState.mailboxId 查询，按当前语言格式化接收时间，渲染来源/分类/原文，保存 revision；刷新全局待复核徽标。约束：不可信文本转义，过时响应不替换当前邮箱内容。 */
+ * 逻辑：按 reviewState.mailboxId 查询，按当前语言格式化接收时间，渲染来源/分类/原文，保存 revision；刷新全局待复核徽标。约束：不可信文本转义，过时响应及错误不替换当前邮箱内容；当前请求失败仍抛出，成功后清除旧提示，不自动重试。 */
 async function loadReviews() {
   const sequence = ++reviewState.sequence;
-  const status = document.getElementById('review-filter').value;
-  const prefix = reviewState.mailboxId ? `mailboxes/${encodeURIComponent(reviewState.mailboxId)}/` : '';
-  const data = await request(`${prefix}email-reviews/?status=${encodeURIComponent(status)}&page=${reviewState.page}`);
-  if (sequence !== reviewState.sequence) return;
-  reviewState.records = data.results;
-  document.getElementById('review-items').innerHTML = data.results.map((item, index) => h`<article class="review-card"><h3>${e(item.subject || t('无主题'))}</h3><p>${e(mailSourceLabel(item.source))} · ${e(classificationLabels[item.classification] || item.classification || t("分类未知"))}</p><p class="muted">接收时间：${e(item.received_at ? new Date(item.received_at).toLocaleString(locale, { hour12: false }) : t("暂无记录"))}</p><p class="muted">${e(item.sender)} · ${e(item.reason)}</p>${item.repair_status ? h`<p>事实补抽取：${e(({pending: t('等待处理'), running: t('正在处理'), completed: t('已完成，画像将自动更新'), failed: t('失败，可再次点击确认业务重试'), skipped: t('已取消或已被后续任务替代')})[item.repair_status] || item.repair_status)}</p>` : ''}<details><summary>查看邮件原文与证据</summary><pre>${e(item.body_text)}</pre><p>判断证据：${item.intent_evidences.map(e).join('；') || t('规则判断或暂无模型证据')}</p></details><div class="review-actions"><button type="button" class="primary" data-review-index="${index}" data-decision="confirmed_business">确认业务</button><button type="button" class="secondary" data-review-index="${index}" data-decision="confirmed_non_business">确认非业务</button></div></article>`).join('') || h('<p class="muted">当前没有符合条件的邮件。</p>');
-  document.getElementById('review-page').textContent = t`${data.page} / ${Math.max(1, Math.ceil(data.count / data.page_size))} · 共 ${data.count} 封`;
-  document.getElementById('review-prev').disabled = data.page === 1;
-  document.getElementById('review-next').disabled = data.page * data.page_size >= data.count;
-  await refreshReviewBadge();
+  try {
+    const status = document.getElementById('review-filter').value;
+    const prefix = reviewState.mailboxId ? `mailboxes/${encodeURIComponent(reviewState.mailboxId)}/` : '';
+    const data = await request(`${prefix}email-reviews/?status=${encodeURIComponent(status)}&page=${reviewState.page}`);
+    if (sequence !== reviewState.sequence) return;
+    document.getElementById('review-error').textContent = '';
+    reviewState.records = data.results;
+    document.getElementById('review-items').innerHTML = data.results.map((item, index) => h`<article class="review-card"><h3>${e(item.subject || t('无主题'))}</h3><p>${e(mailSourceLabel(item.source))} · ${e(classificationLabels[item.classification] || item.classification || t("分类未知"))}</p><p class="muted">接收时间：${e(item.received_at ? new Date(item.received_at).toLocaleString(locale, { hour12: false }) : t("暂无记录"))}</p><p class="muted">${e(item.sender)} · ${e(item.reason)}</p>${item.repair_status ? h`<p>事实补抽取：${e(({pending: t('等待处理'), running: t('正在处理'), completed: t('已完成，画像将自动更新'), failed: t('失败，可再次点击确认业务重试'), skipped: t('已取消或已被后续任务替代')})[item.repair_status] || item.repair_status)}</p>` : ''}<details><summary>查看邮件原文与证据</summary><pre>${e(item.body_text)}</pre><p>判断证据：${item.intent_evidences.map(e).join('；') || t('规则判断或暂无模型证据')}</p></details><div class="review-actions"><button type="button" class="primary" data-review-index="${index}" data-decision="confirmed_business">确认业务</button><button type="button" class="secondary" data-review-index="${index}" data-decision="confirmed_non_business">确认非业务</button></div></article>`).join('') || h('<p class="muted">当前没有符合条件的邮件。</p>');
+    document.getElementById('review-page').textContent = t`${data.page} / ${Math.max(1, Math.ceil(data.count / data.page_size))} · 共 ${data.count} 封`;
+    document.getElementById('review-prev').disabled = data.page === 1;
+    document.getElementById('review-next').disabled = data.page * data.page_size >= data.count;
+    await refreshReviewBadge();
+  } catch (error) {
+    if (sequence === reviewState.sequence) throw error;
+  }
 }
 
 /** 功能：渲染整个批次的实时计数。输入：runs 为后端批次数组，省略时重绘最近批次。输出：无。

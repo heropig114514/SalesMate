@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 职责：将已有单实例安装转换为共享数据和双 Web 发布布局。
-# 实现：保留原版本启动新 Gunicorn，检查后切换入口；配置 Redis 身份及 vector 扩展，原目录归档。
+# 实现：保留原版本启动新 Gunicorn，检查后切换入口；配置 Redis 身份及 vector 扩展，原目录归档；预建服务用户的私有 Gunicorn 控制套接字目录。
 # 关联：首次由管理员执行；后续使用 root 安装的 deploy-from-git.sh，不能重复初始化。
 # 目录：无函数；嵌入 Python 只处理固定配置和目录，不访问外部业务。
 # 变量索引：source 为已审查代码目录；backup 为初始化备份；legacy 为原代码的候选副本；
@@ -23,6 +23,8 @@ cp /usr/local/sbin/salesmate-deploy-from-git "$backup/deploy-from-git.sh"
 sudo -u postgres pg_dump -Fc salesmate > "$backup/database.dump"
 install -d -m 755 /opt/salesmate/releases /opt/salesmate/slots/8001 /opt/salesmate/slots/8002
 install -d -m 750 -o root -g salesmate /opt/salesmate/shared /etc/salesmate
+# Gunicorn 在服务用户 HOME 下创建控制套接字；部署根保持 root 所有，仅此私有目录允许服务用户写入。
+install -d -m 700 -o salesmate -g salesmate /opt/salesmate/.gunicorn
 python3 - <<'PY'
 from pathlib import Path
 import secrets, shutil, os, grp

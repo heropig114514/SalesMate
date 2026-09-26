@@ -1,5 +1,5 @@
 """职责：保存分析输入、判断与评分并验证并发和 CRM／实验来源。
-实现：在公司行锁下验证 revision、租约、引用及不可变键及实验资料新鲜度；正式评分解释与分数原子保存并核验邮件证据。
+实现：以安全原因码区分版本、快照及不可变载荷冲突；在公司行锁下验证 revision、租约、引用及不可变键及实验资料新鲜度；正式评分解释与分数原子保存并核验邮件证据。
 关联：API 与规则占位共用该入口，selectors 从这些快照投影页面。
 目录：
 - save_input：保存 L2 原始输入快照。
@@ -20,7 +20,8 @@ from django.db import transaction
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import ValidationError
 
-from .access import Conflict, InvalidState, check_version, company_for, plain
+from .access import InvalidState, company_for, plain
+from .analysis_errors import analysis_conflict, check_analysis_version
 from .jobs import require_lease
 from .models import Analysis, AnalysisInput, Score
 from .priority_results import validate_priority_sources
@@ -39,7 +40,7 @@ DEAL_PROBABILITY_PATTERN = re.compile(
 
 # 功能：保存 L2 原始输入快照。
 # 输入：`owner` 为认证用户；`payload` 为 AnalysisInput；`expected` 为读取版本；`job_id`、`token` 为租约凭证。
-# 输出：原始快照载荷。
+# 输出：原始快照载荷；冲突包含可区分的安全原因码及阶段日志。
 # 逻辑：核查当前成员、外部版本、未解析数量与事实全集，复核独立实验资料及其输入版本，并登记精确抽取来源边。
 # 约束：启用补充资料时核验包含其内容的 input_version；旧客户端保持原协议；built_at 不参与实质内容比较。
 @transaction.atomic
@@ -48,12 +49,12 @@ def save_input(owner, payload, expected, job_id, token):
     serializer.is_valid(raise_exception=True)
     data = plain(serializer.validated_data)
     company = company_for(owner, data["company_id"], lock=True)
-    check_version(expected, company.revision)
+    check_analysis_version(expected, company, job_id, "save_input", data["input_version"])
     require_lease(company, job_id, token)
     grouping, context = context_pair(company)
     members = data["member_dedupe_keys"]
     if len(members) != len(set(members)) or set(members) != set(grouping["member_dedupe_keys"]) or data["external_snapshot_version"] != context["external_snapshot_version"]:
-        raise Conflict("输入成员范围或外部快照版本已变化。")
+        raise analysis_conflict("analysis_snapshot_changed", company, job_id, "save_input", expected, data["input_version"])
     emails = {item["dedupe_key"]: item for item in context["emails"]}
     if data["unparsed_message_count"] != sum(item["extract_status"] != "completed" for item in emails.values()):
         raise ValidationError("未解析数量与上下文不一致。")
@@ -72,9 +73,9 @@ def save_input(owner, payload, expected, job_id, token):
     if "company_enrichment" in data["business_context"]:
         expected_business["company_enrichment"] = context["company_enrichment"]
         if data["input_version"] != input_version(context["emails"], data["merge_version"], context["external_snapshot_version"], context["company_enrichment"]):
-            raise Conflict("补充资料或输入版本已变化，请重新读取公司上下文。")
+            raise analysis_conflict("analysis_snapshot_changed", company, job_id, "save_input", expected, data["input_version"])
     if data["company"] != expected_company or data["business_context"] != expected_business:
-        raise Conflict("L2 公司资料或业务上下文与当前后端快照不一致。")
+        raise analysis_conflict("analysis_snapshot_changed", company, job_id, "save_input", expected, data["input_version"])
     completed_emails = [item for item in emails.values() if item["extract_status"] == "completed"]
     latest_summary = None
     if completed_emails:
@@ -121,7 +122,7 @@ def save_input(owner, payload, expected, job_id, token):
         raise ValidationError("L2 必须完整保留已完成抽取的事实，不得遗漏或重复。")
     snapshot, created = AnalysisInput.objects.get_or_create(company=company, input_version=data["input_version"], revision=company.revision, defaults={"payload": data})
     if not created and (snapshot.revision != company.revision or {k: v for k, v in snapshot.payload.items() if k != "built_at"} != {k: v for k, v in data.items() if k != "built_at"}):
-        raise Conflict("相同 input_version 对应不同内容或后端 revision。")
+        raise analysis_conflict("analysis_input_conflict", company, job_id, "save_input", expected, data["input_version"])
     from .lineage import bind_sources
     bind_sources(snapshot, company)
     logger.info("analysis_input_saved company_id=%s revision=%s created=%s enrichment_status=%s", company.pk, company.revision, created,
@@ -149,7 +150,7 @@ def validate_refs(value, allowed):
 
 # 功能：保存经验证的 L3 分析。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 指定用户、分析、版本与任务；`provider` 标识 rules 或 agent。
-# 输出：已保存 Analysis 原始载荷。
+# 输出：已保存 Analysis 原始载荷；版本、快照、不可变载荷冲突分别说明原因。
 # 逻辑：当前 revision 与仍有效的实验快照一致后检查来源、时间、缺失信息和强信号；允许独立实验人数，保留其来源标签。
 # 约束：失败不覆盖成功，不接受未知来源或详情中的成交概率；原文业务百分比可以保留。
 @transaction.atomic
@@ -158,14 +159,14 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
     serializer.is_valid(raise_exception=True)
     data = plain(serializer.validated_data)
     company = company_for(owner, data["company_id"], lock=True)
-    check_version(expected, company.revision)
+    check_analysis_version(expected, company, job_id, "save_analysis", data["input_version"])
     require_lease(company, job_id, token)
     snapshot = company.inputs.filter(input_version=data["input_version"], revision=company.revision, invalidation__isnull=True).first()
     if snapshot is None:
-        raise Conflict("请先保存当前 revision 的 AnalysisInput。")
+        raise analysis_conflict("analysis_snapshot_changed", company, job_id, "save_analysis", expected, data["input_version"])
     _, context = context_pair(company)
     if not snapshot_current(snapshot, company, context["company_enrichment"]):
-        raise Conflict("补充资料已变化，请重新构建 AnalysisInput。")
+        raise analysis_conflict("analysis_snapshot_changed", company, job_id, "save_analysis", expected, data["input_version"])
     base_time = parse_datetime(data["analysis_base_time"])
     if any(
         item["sent_at"] is not None and parse_datetime(item["sent_at"]) > base_time
@@ -215,14 +216,14 @@ def save_analysis(owner, payload, expected, job_id, token, provider="agent"):
             result.payload, result.provider = data, provider
             result.save(update_fields=["payload", "provider"])
         else:
-            raise Conflict("同一分析提示词与输入版本的成功结果不可覆盖。")
+            raise analysis_conflict("analysis_result_conflict", company, job_id, "save_analysis", expected, data["input_version"])
     logger.info("analysis_saved company_id=%s revision=%s status=%s provider=%s", company.pk, company.revision, data["status"], provider)
     return result.payload
 
 
 # 功能：保存与当前成功分析对应的评分。
 # 输入：`owner`、`payload`、`expected`、`job_id`、`token` 为身份、Score、后端版本与任务凭证。
-# 输出：Score 原始载荷。
+# 输出：Score 原始载荷；版本及同键不同评分冲突分别说明原因。
 # 逻辑：绑定当前输入及实验来源仍有效的成功分析；正式结果独立于旧特征，解释来源验证后与分数原子保存；按规则版本和 scored_at 去重。
 # 约束：无有效分析不接收分数；只有旧版本继续校验旧特征，相同键的解释也不可覆盖。
 @transaction.atomic
@@ -231,7 +232,7 @@ def save_score(owner, payload, expected, job_id, token):
     serializer.is_valid(raise_exception=True)
     data = plain(serializer.validated_data)
     company = company_for(owner, data["company_id"], lock=True)
-    check_version(expected, company.revision)
+    check_analysis_version(expected, company, job_id, "save_score", data["input_version"])
     require_lease(company, job_id, token)
     analysis = Analysis.objects.filter(snapshot__company=company, snapshot__revision=company.revision, snapshot__invalidation__isnull=True,
                                        snapshot__input_version=data["input_version"], payload__status="completed").order_by("-id").first()
@@ -244,7 +245,7 @@ def save_score(owner, payload, expected, job_id, token):
     existing = analysis.scores.filter(score_version=data["score_version"], payload__scored_at=data["scored_at"]).first()
     if existing:
         if existing.payload != data:
-            raise Conflict("相同评分版本与时间的内容不可修改。")
+            raise analysis_conflict("analysis_score_conflict", company, job_id, "save_score", expected, data["input_version"])
         return existing.payload
     Score.objects.create(analysis=analysis, payload=data, score_version=data["score_version"], value=data["score"])
     logger.info("score_saved company_id=%s revision=%s score_version=%s", company.pk, company.revision, data["score_version"])
