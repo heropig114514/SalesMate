@@ -104,6 +104,7 @@ async function start() {
     $('timeline-heading').textContent = text('产业动态与活动', 'Industry updates and events');
     $('news-type-option').textContent = text('产业新闻', 'Industry news');
     $('event-type-label').textContent = text('内容类型', 'Content type');
+    $('timeline-30-option').textContent = text('近 / 未来 30 天', 'Past / upcoming 30 days');
     $('world-map-panel').setAttribute('aria-label', text('新闻与活动地图', 'News and event map'));
     $('world-map').setAttribute('aria-label', text('可缩放的新闻与活动地图', 'Zoomable news and event map'));
     $('event-detail').setAttribute('aria-label', text('新闻与活动详情', 'News and event details'));

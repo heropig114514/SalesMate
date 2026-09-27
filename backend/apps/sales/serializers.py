@@ -1058,8 +1058,8 @@ class WorldEventSerializer(StrictModelSerializer):
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
-# Function: Validate industry news, public sales leads, and exact source amounts.
-# Logic: New fields are optional and never automatically linked to CRM; merge to validate amount evidence/combinations, with globally deduplicated Agent sources.
+# Function: Validate industry news, public sales leads, exact source amounts and optional map locations.
+# Logic: Merge partial fields to validate complete amount/location evidence groups; optional geography never infers a location or links CRM. Agent sources are globally deduplicated.
 # Constraints: Disable DRF automatic source uniqueness checks; insights returns 409 for duplicates and the database handles concurrency. No fetching or summary generation.
 class WorldNewsSerializer(StrictModelSerializer):
     latitude = s.FloatField(min_value=-85, max_value=85, allow_null=True, required=False)
