@@ -1,9 +1,10 @@
 /** Responsibility: Display public sales leads, source amounts, qualifiers and evidence in news and events.
- * Implementation: Separate facts/inferences and retain currency, amount type, and scope; group decimal strings as text without floating-point conversion.
+ * Implementation: Separate facts/inferences and retain currency, amount type, and scope; group original decimal strings without floating-point conversion; show separately labeled approximate SGD references from world-currency.js.
  * Relationships: world-news.js calls this for cards/details; source amounts also label event maps; never aggregate them into CRM amounts.
- * Directory: text, label, formatSourceAmount, sourceAmountText, sourceAmountDetail, signalSummary, signalDetail.
+ * Directory: text, label, formatSourceAmount, sourceAmountText, sgdReferenceText, sourceAmountDetail, signalSummary, signalDetail.
  * Variable index: signalLabels describes event types; amountLabels describes amount definitions; scopeLabels describes amount coverage; qualifierLabels preserves upper/lower bounds and approximations.
  */
+import { amountInSgd, FX_REFERENCE } from './world-currency.js?v=20260927-sgd';
 import { language } from './i18n.js?v=20260921-product';
 import { escapeHtml as e } from './api.js?v=20260921-product';
 
@@ -32,11 +33,20 @@ export function sourceAmountText(item) {
   const qualifier = qualifierLabels[item.amount_qualifier]?.[language === 'en' ? 1 : 0] || '';
   return `${label(amountLabels, item.amount_type)} · ${qualifier}${item.currency} ${formatSourceAmount(item.amount)}`;
 }
+/** Function: Describe the fixed-rate SGD reference. Inputs: item is a source news/event record. Outputs: Plain text or empty text for missing amounts.
+ * Logic: Convert through the shared static table, round display to two decimals and retain source upper/lower-bound qualifiers.
+ * Constraints: Explicitly approximate; never replace the original amount or evidence. */
+export function sgdReferenceText(item) {
+  const value = amountInSgd(item);
+  if (value === null) return '';
+  const qualifier = qualifierLabels[item.amount_qualifier]?.[language === 'en' ? 1 : 0] || '';
+  return text('SGD 参考：', 'SGD reference: ') + qualifier + '≈ SGD ' + value.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 /** Function: Render monetary context. Inputs: item is a news/event record. Outputs: Escaped HTML.
- * Logic: Display the reported amount, scope and verbatim evidence together. Constraints: Source amounts never denote our order or CRM value. */
+ * Logic: Display original amount, separately rounded and dated SGD reference, scope and verbatim evidence together. Constraints: Source amounts never denote our order or CRM value. */
 export function sourceAmountDetail(item) {
   const known = item.amount !== null && item.amount !== undefined;
-  return `<section class="news-reported-amount"><h3>${text('来源披露金额', 'Reported amount')}</h3><p class="news-source-amount">${e(sourceAmountText(item))}</p>${known ? `<p>${e(label(scopeLabels, item.amount_scope))}</p><blockquote>${e(item.amount_evidence)}</blockquote><p>${text('按来源口径记录，不代表我们的订单金额。', 'Recorded in the source context; not our sales order value.')}</p>` : ''}</section>`;
+  return `<section class="news-reported-amount"><h3>${text('来源披露金额', 'Reported amount')}</h3><p class="news-source-amount">${e(sourceAmountText(item))}</p>${known ? `<p class="news-sgd-reference">${e(sgdReferenceText(item))}<br>${text('固定参考汇率：', 'Fixed reference rates: ')}${FX_REFERENCE.date}</p><p>${e(label(scopeLabels, item.amount_scope))}</p><blockquote>${e(item.amount_evidence)}</blockquote><p>${text('按来源口径记录，不代表我们的订单金额。', 'Recorded in the source context; not our sales order value.')}</p>` : ''}</section>`;
 }
 /** Function: Build a news-card lead summary. Inputs: item is a news record. Outputs: Escaped HTML. Logic: Show company, event, and source-amount definitions. Constraints: Never fabricate leads without structured data or display estimated orders. */
 export function signalSummary(item) {

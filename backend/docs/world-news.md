@@ -12,10 +12,10 @@ Public news adds one structured set of company, demand, project, amount, and evi
 - `opportunity_ids` remains permission-filtered context only. Event monetary fields are source-disclosed amounts, independent of linked CRM opportunities.
 - Event titles, description, onsite, and suggested_actions are public, not private notes. Review historical manually entered internal-company information before production sharing. The backend neither infers sensitivity from keywords nor rewrites source text.
 - News remains eligible for 90 days after publication; events until 30 days after their end. Future events are retained. The mixed map list sorts by distance from now (ongoing events first), without monetary ranking. News cards sort publication time descending. Type/country/time filters preserve ordering.
-- Each record retains its own decimal-string amount, currency, type, scope, quote and qualifier (exact/up_to/at_least/more_than/approximate). Missing amounts are null with empty metadata; known zero remains zero. No currency switch or conversion is applied.
+- Each record retains its own decimal-string amount, currency, type, scope, quote and qualifier (exact/up_to/at_least/more_than/approximate). Missing amounts are null with empty metadata; known zero remains zero. Source values remain unchanged. A separate approximate SGD reference uses a fixed 2026-09-21 table covering all 13 supported currencies, with ECB cross-rates and CBC TWD/USD; no live FX requests.
 - News with complete source-evidenced city/country/coordinates joins events on the map. Unlocated news stays in the news list; country centroids are never substituted.
 - Events and news sharing country/coordinates share a location marker. The selected record supplies its label; tooltips list each event and its own amount without summation.
-- All location markers have an 18px diameter; dashed borders identify news and solid borders events; circle size carries no financial meaning. Projection centers, mouse/keyboard selection and translucent missing-amount styling remain supported.
+- Known amounts use diameter = min(80, 18 + 6*log10(1 + SGD/100)) pixels; unknown amounts use 14px white markers; dashed borders identify news and solid borders events; size encodes the displayed record’s reference amount on a fixed logarithmic scale, not proportional area or expected sales value. The legend, dated note and expandable rate table explain the mapping. Projection centers, mouse/keyboard selection and translucent missing-amount styling remain supported.
 - Known-amount bubbles use 20% ordinary and 30% selected fill opacity, with clear borders/center markers to preserve basemap/neighbor visibility.
 - News/exhibition/sales type, 30-day/current-quarter, and country filters link event lists/region counts. Global/Asia-Pacific/Europe views change map center/zoom. URL `type/time/country/view/event` stores selections.
 - Provenance labels identify `synthetic` placeholders. Stored news retains original publication times; expired data displays empty without date refresh.
@@ -31,6 +31,7 @@ Public news adds one structured set of company, demand, project, amount, and evi
 | `assets/world-news.js` | Database pagination, filters, details, calendars, invitation templates |
 | `assets/world-signals.js` | Public leads, exact source-amount formatting, evidence/inference separation |
 | `assets/world-dates.js` | Date precision, filter boundaries, all-day ICS properties |
+| `assets/world-currency.js` | Frozen SGD rates, reference sources and pure logarithmic marker sizing |
 | `assets/world-map.js` | Real borders, company-country highlights, amount bubbles, views |
 | `assets/world-countries.geojson`, `assets/vendor/` | Local basemap, Leaflet, licenses |
 | `apps/sales/world.py` | Authorized events with source monetary fields and country counts |
@@ -55,8 +56,10 @@ See [collection operations](world-insights-operations.md) for scheduled deployme
 
 `python backend/manage.py test tests.integration.test_shared_insights tests.integration.test_support_tools tests.integration.test_development_support --noinput` uses isolated PostgreSQL for two-account sharing, relation projections across entry points, write isolation, anonymous/Tool restrictions, date compatibility, historical migrations, concurrent uniqueness, and 409 responses. It neither migrates development databases nor deploys collection tasks.
 
-`node backend/tools/browser_world_map.cjs` uses the same Playwright/Chrome environment with an isolated static server to check actual Leaflet projection/DOM centers, fixed-size markers, colocated event labels, translucent fills, zero/unknown amounts, mouse/keyboard interaction, views, zoom, and mobile sizes. Mocked full-page APIs additionally cover source currencies, URLs/refresh, empty events, and—in Pacific/Kiritimati and America/Los_Angeles—inclusive dates, downloaded all-day/ordinary-time ICS, invitation dates, and mobile layout. Browser fixtures do not verify production databases or external Agent integration.
+`node backend/tools/browser_world_map.cjs` uses the same Playwright/Chrome environment with an isolated static server to check actual Leaflet projection/DOM centers, SGD-scaled markers, colocated event labels, translucent fills, zero/unknown amounts, mouse/keyboard interaction, views, zoom, and mobile sizes. Mocked full-page APIs additionally cover source currencies, URLs/refresh, empty events, and—in Pacific/Kiritimati and America/Los_Angeles—inclusive dates, downloaded all-day/ordinary-time ICS, invitation dates, and mobile layout. Browser fixtures do not verify production databases or external Agent integration.
 
 In `backend/`, run `python tools/check_docs.py` and `python tools/check_doc_changes.py --base HEAD --fail-on-review`. Manually review JS/CSS/HTML top-level descriptions/directories.
 
 Pure timeline checks: `node backend/tools/test_world_timeline.mjs` covers mixed chronological order, exact retention boundaries, future/ongoing events and missing/zero coordinates without browser or network mocks. News location integration: `python backend/manage.py test tests.integration.test_news_locations` verifies real persistence, partial-update consistency and generated Tool schema.
+
+`node backend/tools/test_world_currency.mjs` verifies all supported currencies, independently calculated cross-rates, zero/missing values, malformed/unsupported input rejection, unchanged source values, monotonic sizes and maximum-size protection.

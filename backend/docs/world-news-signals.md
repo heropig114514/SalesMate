@@ -58,7 +58,7 @@ Example additions to `arguments.data`, to combine with existing title, category,
 
 ## Pages and release
 
-News cards show entities, events, and source-amount meaning. Details separate source facts, evidence, amount type/scope, and inferred needs explicitly labeled as unconfirmed procurement. Amounts use string-based thousands grouping and trim insignificant trailing fractional zeros, without floats, significant-digit truncation, or currency conversion. Missing structured data is distinct from known zero.
+News cards show entities, events, and source-amount meaning. Details separate source facts, evidence, amount type/scope, and inferred needs explicitly labeled as unconfirmed procurement. Amounts use string-based thousands grouping and trim insignificant trailing fractional zeros, without floats or significant-digit truncation in the original amount. A separate approximate SGD reference uses the frozen 2026-09-21 rates in `world-currency.js`; map diameters use that SGD value, while source strings and qualifiers remain unchanged. Missing structured data is distinct from known zero.
 
 Events use the same source amount fields; neither news nor event money increases internal opportunity totals. News maps only after city, latitude, longitude, location_evidence and location_source_url are explicitly verified; unlocated news is still displayed below the map.
 

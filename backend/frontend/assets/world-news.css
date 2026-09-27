@@ -1,8 +1,8 @@
 /* Responsibility: Lay out global-insight event lists, amount maps, details, and industry news.
- * Implementation: Events without source amounts use small translucent white bubbles, remaining white when selected. News leads separate facts, source-amount definitions, and inferences; evidence/long amounts wrap. Dashed news marker outlines distinguish news from events. Shared theme, three desktop columns, and stacked narrow layout. Bubble fill opacity is 20% normally and 30% selected; centers stay at geographic anchors. Labels show each event's source amount and bound without currency conversion.
+ * Implementation: Events without source amounts use small translucent white bubbles, remaining white when selected. News leads separate facts, source-amount definitions, and inferences; evidence/long amounts wrap. Dashed news marker outlines distinguish news from events. Shared theme, three desktop columns, and stacked narrow layout. Bubble fill opacity is 20% normally and 30% selected; centers stay at geographic anchors. Labels retain source amounts/bounds alongside approximate SGD references; the dated fixed-rate table and size legend explain the scale.
  * Relationships: Shared language/API versions follow the interface; world.html, world-news.js, and world-map.js reuse navigation and local Leaflet resources.
  * Directory: No functions or classes; sections cover header, filters, event column, map, details, news, and responsive layout.
- * Variable index: --bubble-size is the individual diameter derived from square-root amount scaling; other values use shared theme variables. */
+ * Variable index: --bubble-size is the individual diameter derived from fixed-rate SGD logarithmic scaling; other values use shared theme variables. */
 .world-workspace {
   background: var(--bg);
   color: var(--ink);
@@ -320,7 +320,7 @@
   background: color-mix(in srgb, var(--accent) 30%, transparent);
   outline: 4px solid color-mix(in srgb, var(--accent) 15%, transparent);
 }
-/* Fixed location bubbles do not encode amounts; they share click, hover, and keyboard events with existing bubbles. */
+/* Unknown amounts retain small white geographic markers; known amounts use the SGD scale without changing pointer or keyboard behavior. */
 .event-pin.amount-missing .event-bubble {
   border-color: rgb(255 255 255 / 65%);
   background: rgb(255 255 255 / 22%);
@@ -711,3 +711,13 @@
 
 /* News uses an evidenced geographic location; a dashed outline distinguishes it without encoding monetary size. */
 .news-pin .event-bubble { border-style: dashed; }
+
+/* Shared map/legend diameters encode reference amounts; the source date and expandable table remain legible on narrow screens. */
+.map-size-legend { display: flex; justify-content: center; align-items: flex-end; gap: 20px; padding: 10px; color: var(--muted); font-size: 10px; }
+.map-size-legend > span { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.map-size-legend i { display: block; border: 2px solid var(--accent); border-radius: 50%; box-sizing: border-box; background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.map-fx-details { margin: 10px 16px; color: var(--muted); font-size: 11px; }
+.map-fx-details summary { cursor: pointer; }
+.map-fx-details table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.map-fx-details th, .map-fx-details td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.news-sgd-reference { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }

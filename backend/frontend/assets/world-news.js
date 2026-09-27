@@ -1,16 +1,17 @@
 /** Responsibility: Display database-backed event maps, news, and invitation templates.
- * Implementation: Location markers remain interactive; event/news amounts come directly from source fields, with no CRM aggregation. News cards/details show public leads, source-amount definitions, and inference labels. Shared events use backend date precision for display/filtering/all-day calendar export. Read pagination explicitly; all news pages in the 90-day window are loaded, with evidenced news on the map and events retained until 30 days after ending. Mark synthetic placeholders, display failures, and provide no static fallback.
+ * Implementation: Location markers remain interactive; event/news amounts come directly from source fields, with separate fixed-rate SGD references and logarithmic map sizes, without CRM aggregation. News cards/details show public leads, source-amount definitions, and inference labels. Shared events use backend date precision for display/filtering/all-day calendar export. Read pagination explicitly; all news pages in the 90-day window are loaded, with evidenced news on the map and events retained until 30 days after ending. Mark synthetic placeholders, display failures, and provide no static fallback.
  * Relationships: Map-anchor/amount-label fixes use updated resources; navigation versions reflect removal of sidebar priority/experiment entries; uses sales/world, world-news, seller-context, and WorldMap.
- * Directory: $, text, countryName, loadPages, eventRows, render, selectEvent, renderDetail, renderNews, renderArticle, foldLine, calendarText, calendarText.escape, calendarText.instant, downloadItinerary, inviteDraft, start.
+ * Directory: $, text, countryName, loadPages, eventRows, render, selectEvent, renderDetail, renderNews, renderArticle, renderMoneyLegend, foldLine, calendarText, calendarText.escape, calendarText.instant, downloadItinerary, inviteDraft, start.
  * Variable index: RECENCY_POLICY defines the explicit 90-day news and 30-day ended-event windows; $ queries DOM; state holds snapshots/filters; categories classifies events; regionNames supplies region labels; map is the map instance.
  */
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { mountWorkspace } from './workspace.js?v=20260922-sidebar';
 import { eventDates, eventWindow, calendarBounds } from './world-dates.js?v=20260924-insights';
-import { signalSummary, signalDetail, sourceAmountText, sourceAmountDetail } from './world-signals.js?v=20260927-timeline';
-import { timelineItems, filterTimeline, timelineDate } from './world-timeline.js?v=20260927-timeline';
-import { WorldMap } from './world-map.js?v=20260927-timeline';
+import { signalSummary, signalDetail, sourceAmountText, sourceAmountDetail } from './world-signals.js?v=20260927-sgd';
+import { FX_REFERENCE, SGD_RATES, bubbleDiameter } from './world-currency.js?v=20260927-sgd';
+import { timelineItems, filterTimeline, timelineDate } from './world-timeline.js?v=20260927-sgd';
+import { WorldMap } from './world-map.js?v=20260927-sgd';
 const RECENCY_POLICY = { newsDays: 90, eventHistoryDays: 30 };
 const $ = id => document.getElementById(id);
 const state = { events: [], news: [], countries: [], selected: null, country: 'all', type: 'all', time: 'all', view: 'global', seller: null };
@@ -67,6 +68,15 @@ function renderDetail(item) {
 function renderNews() { $('industry-news').innerHTML = state.news.map(item => `<a class="industry-news-card" href="/world/news/${e(item.id)}/"><span>${e((categories[item.category] || ['', ''])[language === 'en' ? 1 : 0])}${item.data_source === 'synthetic' ? text(' · 虚拟', ' · Synthetic') : ''}</span><h3>${e(item.title)}</h3>${signalSummary(item)}<time>${e(item.published_at.slice(0, 10))}</time></a>`).join('') || `<p>${text('近 90 天暂无资讯。', 'No news in the last 90 days.')}</p>`; }
 /** Function: Display article details. Inputs: id. Outputs: Promise. Logic: Read complete public leads by ID, finish loading state, and distinguish facts, inferences, source amounts, and evidence. Constraints: Never link private opportunities or fall back after errors. */
 async function renderArticle(id) { const item = await request('sales/records/world-news/' + encodeURIComponent(id) + '/'); $('world-data-status').textContent = text('数据库记录 · 资讯', 'Database record · News'); $('news-detail').innerHTML = `<a href="/world/">← ${text('返回全球洞察', 'Back')}</a><article><p>${e(item.data_source)} · ${e(item.published_at.slice(0, 10))}</p><h1>${e(item.title)}</h1><p>${e(item.summary)}</p>${signalDetail(item)}${item.content.split('\n').map(line => `<p>${e(line)}</p>`).join('')}${item.source_url ? `<a href="${e(item.source_url)}" target="_blank" rel="noopener noreferrer">${text('原始来源', 'Source')}</a>` : `<p>${text('虚拟或待补充来源', 'Synthetic or source pending')}</p>`}</article>`; }
+/** Function: Explain map amount sizing and the fixed exchange-rate table. Inputs: language and immutable currency metadata.
+ * Outputs: Legend, dated note and expandable table DOM; one initialization log with rate date/count. Logic: Sample circles use the exact map scale; list SGD per currency unit and link primary sources.
+ * Constraints: No fetching or currency conversion of stored data; the reference date is fixed rather than today's date. */
+function renderMoneyLegend() {
+  console.info('world_amount_scale_ready', { referenceDate: FX_REFERENCE.date, currencies: Object.keys(SGD_RATES).length });
+  $('map-size-legend').innerHTML = [100, 1000000, 100000000].map(value => `<span><i style="width:${bubbleDiameter(value)}px;height:${bubbleDiameter(value)}px"></i>SGD ${value.toLocaleString('en-SG', { notation: 'compact' })}</span>`).join('');
+  $('map-fx-note').textContent = text(`圆圈按 SGD 参考金额对数缩放（最大 80px），白色小点为金额未知。固定汇率参考 ${FX_REFERENCE.date}，仅供参考。`, `Circles use a logarithmic SGD reference scale (max 80px); small white dots mean amount unknown. Fixed rates as of ${FX_REFERENCE.date}, for reference only.`);
+  $('map-fx-details').innerHTML = `<summary>${text('查看固定汇率表', 'View fixed exchange rates')}</summary><p>${text('每 1 单位原币折合 SGD；来源：', 'SGD per 1 unit of source currency; sources: ')}<a href="${e(FX_REFERENCE.ecb)}" target="_blank" rel="noopener noreferrer">ECB</a> · <a href="${e(FX_REFERENCE.twd)}" target="_blank" rel="noopener noreferrer">CBC (TWD)</a></p><table><thead><tr><th>${text('币种', 'Currency')}</th><th>SGD</th></tr></thead><tbody>${Object.entries(SGD_RATES).map(([currency, rate]) => `<tr><td>${e(currency)}</td><td>${rate.toFixed(8)}</td></tr>`).join('')}</tbody></table>`;
+}
 /** Function: Fold ICS lines. Inputs: line. Outputs: Text. Logic: Limit each UTF-8 line to 75 bytes. Constraints: Never split characters. */
 function foldLine(line) { let result = '', count = 0; for (const character of line) { const size = new TextEncoder().encode(character).length; if (count + size > 75) { result += '\r\n '; count = 1; } result += character; count += size; } return result; }
 /** Function: Generate a calendar entry. Inputs: item. Outputs: ICS. Logic: date emits all-day VALUE=DATE; datetime retains actual instants; preserve text escaping/folding. Constraints: No external calendar calls. */
@@ -81,7 +91,7 @@ function downloadItinerary(item) { const url = URL.createObjectURL(new Blob([cal
 function inviteDraft(item) { const person = state.seller?.sales_setup?.personal || {}; $('invite-subject').value = text('邀约交流：', 'Invitation: ') + item.title; $('invite-body').value = text(`您好，\n\n希望与您在 ${eventDates(item).start} 的“${item.title}”（${item.city}）期间预约交流。请告知方便的时间。\n\n`, `Hello,\n\nWould you be available to meet during ${item.title} in ${item.city} on ${eventDates(item).start}?\n\n`) + [person.name, person.title, person.email].filter(Boolean).join('\n') + (item.data_source === 'synthetic' ? text('\n\n注意：活动为虚拟占位。', '\n\nThis event is synthetic.') : ''); $('invite-dialog').showModal(); }
 /** Function: Initialize the database-backed page. Inputs: DOM and URL filters. Outputs: Promise.
  * Logic: Read every event page and 90-day news page, merge verified news locations with event locations by temporal proximity, initialize map and filter controls, and show request errors explicitly.
- * Constraints: Never create placeholders, retry, convert source amounts or read CRM amounts; invitation/calendar actions remain user-triggered. */
+ * Constraints: Never create placeholders, retry, overwrite source amounts or read CRM amounts; invitation/calendar actions remain user-triggered. */
 async function start() {
   mountWorkspace('world');
   const article = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
@@ -115,7 +125,7 @@ async function start() {
     $('region-filters').onclick = event => { const button = event.target.closest('[data-country]'); if (button) { state.country = button.dataset.country; render(); } }; $('event-list').onclick = event => { const button = event.target.closest('[data-select]'); if (button) selectEvent(button.dataset.select); };
     $('map-views').onclick = event => { const button = event.target.closest('[data-view]'); if (button) { state.view = button.dataset.view; map.setView(state.view); document.querySelectorAll('[data-view]').forEach(node => node.setAttribute('aria-pressed', node.dataset.view === state.view)); render(); } };
     $('invite-close').onclick = () => $('invite-dialog').close(); $('invite-copy').onclick = async () => { try { await navigator.clipboard.writeText($('invite-subject').value + '\n\n' + $('invite-body').value); $('invite-status').textContent = text('已复制', 'Copied'); } catch (error) { console.error('invite_copy_failed', { type: error.name }); $('invite-status').textContent = text('请手动复制。', 'Copy manually.'); } };
-    render(); renderNews();
+    renderMoneyLegend(); render(); renderNews();
   } catch (error) { console.error('world_load_failed', { type: error.name, status: error.status }); $('world-error').hidden = false; $('world-error').textContent = text('加载失败，请检查登录或接口后刷新：', 'Load failed. Check access and refresh: ') + error.message; $('world-data-status').textContent = text('加载失败', 'Load failed'); }
 }
 start();

@@ -1,5 +1,5 @@
 /** Responsibility: Verify event location markers, shared-event dates, and all-day calendars.
- * Implementation: Check fixed 18px translucent-white missing-event location markers and mouse/keyboard selection for every source amount. Mock APIs also cover public news leads, exact amounts, fact/inference separation, and mobile layout. Isolated serving loads real pages to test geometry, source amounts, date precision, and ICS without real business endpoints.
+ * Implementation: Check fixed-rate SGD-scaled markers and 14px translucent-white unknown amounts and mouse/keyboard selection for every source amount. Mock APIs also cover public news leads, exact amounts, fact/inference separation, and mobile layout. Isolated serving loads real pages to test geometry, source amounts, date precision, and ICS without real business endpoints.
  * Relationships: world-map.js, world-news.js/css, world.html; explicit environment Playwright/Chrome paths.
  * Directory: geometry, checkGeometry, checkSourceAmounts, checkDates, checkNewsSignals, main.
  * Variable index: ASSETS is the static-resource root; OUTPUT is the ignored screenshot directory.
@@ -24,20 +24,20 @@ async function geometry(page) {
   }));
 }
 
-/** Function: Assert center alignment and fixed location-marker size. Inputs: page. Outputs: None; throw on failure.
- * Logic: Allow at most one pixel of coordinate error; all markers are 18px regardless of amount. Colocated records share one location marker. Constraints: Allow browser subpixel rounding without changing business thresholds. */
+/** Function: Assert center alignment and SGD-scaled location-marker size. Inputs: page. Outputs: None; throw on failure.
+ * Logic: Allow at most one pixel of coordinate error; larger SGD values have larger diameters while missing amounts remain 14px. Colocated records share one location marker. Constraints: Allow browser subpixel rounding without changing business thresholds. */
 async function checkGeometry(page) {
   const rows = await geometry(page);
   for (const row of rows) assert.ok(Math.abs(row.dx) <= 1 && Math.abs(row.dy) <= 1, `${row.id} center offset: ${JSON.stringify(row)}`);
   const small = rows.find(row => row.id === 'small'), large = rows.find(row => row.id === 'large');
-  assert.equal(large.diameter, small.diameter);
-  assert.equal(large.diameter, 18);
-  assert.equal(rows.find(row => row.id === 'unknown').diameter, 18);
+  assert.ok(large.diameter > small.diameter);
+  assert.ok(small.diameter > 18);
+  assert.equal(rows.find(row => row.id === 'unknown').diameter, 14);
   assert.equal(rows.length, 4);
 }
 
 /** Function: Verify source currencies and amount semantics in the complete page. Inputs: browser and base identify the isolated browser/static server. Outputs: None; throw on failure.
- * Logic: Mock mixed currencies, zero/null amounts, and no events. Preserve source currencies across reloads and use fixed location markers without currency controls or conversion.
+ * Logic: Mock mixed currencies, zero/null amounts, and no events. Preserve source currencies across reloads and show separate approximate SGD references with dated fixed rates and scaled location markers.
  * Constraints: All endpoints are explicit read-only fixtures; unknown endpoints/writes fail tests, with no production-record access. */
 async function checkSourceAmounts(browser, base) {
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } });
@@ -72,6 +72,8 @@ async function checkSourceAmounts(browser, base) {
   await page.reload();
   await page.locator('.event-pin').first().waitFor();
   assert.match(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), /SGD 100/);
+  assert.match(await page.locator('#map-fx-note').textContent(), /2026-09-21/);
+  assert.match(await page.locator('[data-event-id="usd"] .event-pin-amount').textContent(), /≈ SGD 254.95/);
   records = [];
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#world-data-status').textContent.startsWith('Database records'));
@@ -114,7 +116,7 @@ async function checkDates(browser, base) {
     assert.match(await page.inputValue('#invite-body'), /2026-10-27/);
     await page.click('#invite-close');
     const timed = await page.evaluate(async row => {
-      const { calendarText } = await import('/static/world-news.js?v=20260927-timeline');
+      const { calendarText } = await import('/static/world-news.js?v=20260927-sgd');
       return calendarText({ ...row, time_precision: 'datetime', starts_at: '2026-10-27T09:00:00+08:00', ends_at: '2026-10-27T17:00:00+08:00' });
     }, fixture);
     assert.match(timed, /DTSTART:20261027T010000Z/);
@@ -158,7 +160,7 @@ async function checkNewsSignals(browser, base) {
   assert.equal(await page.locator('#world-data-status').innerText(), '数据库记录 · 资讯');
   const detail = await page.locator('.news-signal').innerText();
   for (const value of ['测试公司', '新建工厂', '测试基地', '建设生产线', '2027 年投产', '项目总投资', '整个项目', '推断 · 非已确认采购需求', '可能需要检测设备', '生产线可能涉及检测环节', '不代表我们的订单金额']) assert.ok(detail.includes(value), value);
-  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), 'CNY 999,999,999,999,999,999,999,999.123456');
+  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), '项目总投资 · CNY 999,999,999,999,999,999,999,999.123456');
   assert.equal(await page.locator('.news-signal img').count(), 0);
   assert.equal(await page.evaluate(() => window.newsXss), undefined);
   fs.mkdirSync(OUTPUT, { recursive: true });
@@ -275,7 +277,7 @@ async function main() {
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-mobile.png') });
     assert.deepEqual(errors, []);
     await checkSourceAmounts(browser, `http://127.0.0.1:${server.address().port}`);
-    console.log('World checks passed: news signals/exact decimal/source types/inference/escaping/mobile/legacy;  shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, fixed location size, translucency, source currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
+    console.log('World checks passed: news signals/exact decimal/source types/inference/escaping/mobile/legacy;  shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, SGD-scaled location size, translucency, source currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
