@@ -1,5 +1,5 @@
 /** Responsibility: Verify actual four-step onboarding form/interaction contracts in a browser.
- * Implementation: Local static serving, mocked APIs, and real DOM verify preservation of backend-assigned product IDs and transaction relations; integration tests separately verify backend permissions.
+ * Implementation: Local static serving, mocked APIs, and real DOM verify product IDs, transaction relations, and the personal-step password form; integration tests separately verify backend permissions, password hashing, and session invalidation.
  * Relationships: onboarding.js, company-settings.js, and their templates/styles; screenshots go to an ignored directory.
  * Directory: main.
  * Variable index: ROOT is the frontend directory; OUTPUT is the screenshot directory.
@@ -12,7 +12,7 @@ const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const ROOT = path.resolve(__dirname, "../frontend"),
   OUTPUT = path.resolve(__dirname, "../artifacts/browser");
 /** Function: Run onboarding UI acceptance. Inputs: Browser environment variables. Outputs: Assertions/screenshots.
- * Logic: Cover personal saves, company size, CSV validation, manual products, private attachments, solutions, version conflicts, preserved product links, and inbox navigation after completion.
+ * Logic: Cover personal saves, company size, CSV validation, products/files/solutions, conflicts, preserved links, completion, and password confirmation/error/success with existing desktop/mobile form styles.
  * Constraints: Mock APIs do not verify external services; never change the workspace database. */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -88,6 +88,14 @@ async function main() {
           onboarding_required: !setup.completed,
           debug_auto_login: true,
         };
+      else if (endpoint === "accounts/me/password/") {
+        assert.equal(req.method(), "POST");
+        const passwords = req.postDataJSON();
+        assert.deepEqual(Object.keys(passwords).sort(), ["current_password", "new_password", "password_confirmation"]);
+        assert.equal(passwords.new_password, passwords.password_confirmation);
+        if (passwords.current_password !== "synthetic-current") return route.fulfill({ status: 400, json: { error: { detail: { current_password: ["Current password is incorrect."] } } } });
+        return route.fulfill({ status: 204 });
+      }
       else if (endpoint === "accounts/company-profile/") {
         if (req.method() === "PATCH") {
           assert.equal(req.headers()["if-match"], String(profile.revision));
@@ -301,9 +309,39 @@ async function main() {
       await page.locator("#personal-form").textContent(),
       /Make every conversation yours/,
     );
+    await page.locator('#password-form').waitFor();
+    const profileBeforePassword = JSON.stringify(setup);
+    const passwordForm = page.locator('#password-form');
+    const passwordWritesBefore = writes.filter(value => value === 'accounts/me/password/').length;
+    await passwordForm.locator('[name=current_password]').fill('incorrect-current');
+    await passwordForm.locator('[name=new_password]').fill('synthetic-replacement');
+    await passwordForm.locator('[name=password_confirmation]').fill('different-replacement');
+    await passwordForm.locator('[type=submit]').click();
+    await page.locator('#password-status').filter({ hasText: 'New passwords do not match.' }).waitFor();
+    assert.equal(writes.filter(value => value === 'accounts/me/password/').length, passwordWritesBefore);
+    await passwordForm.locator('[name=password_confirmation]').fill('synthetic-replacement');
+    await passwordForm.locator('[type=submit]').click();
+    await page.locator('#password-status').filter({ hasText: 'Current password is incorrect.' }).waitFor();
+    assert.equal(await passwordForm.locator('[name=new_password]').inputValue(), 'synthetic-replacement');
+    await passwordForm.locator('[name=current_password]').fill('synthetic-current');
+    await passwordForm.locator('[type=submit]').click();
+    await page.locator('#password-status').filter({ hasText: 'Password changed.' }).waitFor();
+    assert.equal(writes.filter(value => value === 'accounts/me/password/').length, passwordWritesBefore + 2);
+    for (const name of ['current_password', 'new_password', 'password_confirmation']) assert.equal(await passwordForm.locator(`[name=${name}]`).inputValue(), '');
+    assert.equal(await passwordForm.locator('[data-language-dirty]').count(), 0);
+    assert.equal(JSON.stringify(setup), profileBeforePassword);
+    await page.locator('[data-step="1"]').click();
+    assert.equal(await passwordForm.isVisible(), false);
+    await page.locator('[data-step="0"]').click();
+    await passwordForm.waitFor();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({ path: path.join(OUTPUT, 'password-settings-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(OUTPUT, 'password-settings-mobile.png'), fullPage: true });
     assert.deepEqual(errors, []);
     console.log(
-      "Onboarding browser checks passed: four steps, CSV, editing, conflict, private file links, persistence, completion, mobile and English.",
+      "Onboarding browser checks passed: four steps, CSV, editing, conflict, private file links, persistence, completion, mobile/English, and password confirmation/error/success/isolation.",
     );
   } finally {
     await browser.close();

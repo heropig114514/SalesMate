@@ -4,6 +4,8 @@ Django serves the pages and browser ES Modules retain the business logic. The pr
 
 ## Login and Logout
 
+Profile → Company Setting → Your profile also includes a minimal password form: current password, new password, confirmation, and save. It reuses onboarding form styles, stays on the page after success, and clears password inputs. `password-settings.js` submits only to `accounts/me/password/`; password updates never save or overwrite the profile form. The onboarding browser check covers this form with mocked APIs, while `tests.integration.test_password_change` verifies real database/session/CSRF behavior.
+
 `/login` and `/login/` reuse the existing login/registration forms. Anonymous workspace, business, company-settings, and global-insight visitors enter `/login/`. Authenticated login visitors return to the workspace, or to required onboarding. The login entry reads `/api/v1/session/?auto_login=false` so local automatic login does not bypass the form; it does not log out an existing session.
 
 Every workspace sidebar exposes **Profile → 退出登录 / Sign out**. This sends the existing CSRF-protected `DELETE /api/v1/session/` and returns to `/login/` only after success. Failures remain visible and require an explicit retry. Successful logout invalidates the old session and retains an anonymous suppression marker so local debug login cannot immediately sign the browser back in. Password login clears that marker. Global defaults, accounts, business records, and independent Agent/mailbox credentials are unchanged.

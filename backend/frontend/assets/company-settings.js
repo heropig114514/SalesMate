@@ -1,10 +1,11 @@
-/** Responsibility: Read, edit, and save the company step of four-step onboarding per account.
- * Implementation: Shared navigation/bottom assistant; explicit saves include a version, failures preserve input, and conflicts require reloading.
- * Relationships: The 20260927-auth entry loads shared Profile logout. Navigation cache versions reflect removal of sidebar priority/experiment entries and opportunity-priority support. Profile item identifiers, chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. Uses company-settings.html/css, accounts/company-profile API, and api.js for CSRF/errors.
+/** Responsibility: Coordinate account profile settings, company editing, four-step onboarding, and personal password editing.
+ * Implementation: Shared navigation/bottom assistant; explicit profile saves include a version, failures preserve input, and conflicts require reloading. The personal step mounts a separate password form through password-settings.js.
+ * Relationships: The 20260927-password page loads password-settings.js; shared navigation uses 20260927-auth. Uses company-settings.html/css, onboarding.js, accounts/company-profile, and api.js for CSRF/errors; workspace.js supplies Profile logout and shared navigation.
  * Directory: text, showStatus, renderForm, loadProfile, saveProfile, boot.
  * Variable index: choices holds industry/size options; fields holds fields and bilingual names; revision is the observed version; busy prevents overlapping operations; $ queries the DOM.
  */
 import { mountOnboarding } from './onboarding.js?v=20260921-support';
+import { mountPasswordSettings } from './password-settings.js?v=20260927-password';
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { mountWorkspace } from './workspace.js?v=20260927-auth';
@@ -96,7 +97,7 @@ async function saveProfile(event) {
 }
 
 /** Function: Authenticate and mount the separate settings page. Inputs: Current session and page DOM. Outputs: Asynchronous completion.
- * Logic: Redirect anonymous users to login; authenticated users see the account, shared navigation, and bilingual form. Read the profile before mounting four-step onboarding.
+ * Logic: Redirect anonymous users to login; authenticated users see the account, shared navigation, and bilingual form. Read the profile, mount four-step onboarding, then mount password editing in the personal step.
  * Constraints: Write APIs only on explicit submission; display session diagnostics without assuming authentication. */
 async function boot() {
   $('company-description').textContent = text('管理本公司的基本资料。资料保存在当前账号的工作空间中。', 'Manage your company details, saved in your current account workspace.');
@@ -111,6 +112,7 @@ async function boot() {
     $('company-reload').addEventListener('click', loadProfile);
     await loadProfile();
     await mountOnboarding();
+    mountPasswordSettings();
   } catch (error) {
     console.error('company_settings_boot_failed', { status: error.status });
     showStatus(error.message, true);

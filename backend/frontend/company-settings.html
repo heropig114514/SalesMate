@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- Responsibility: Provide semantic structure for four-step onboarding and company profiles.
-Implementation: Shared navigation and bottom Profile; authenticated users load their account data and save explicitly.
-Relationships: The 20260927-auth entry loads shared Profile logout. Entry versions reflect sidebar-priority/experiment removal, opportunity-priority support, and profile item identifiers. Chat Markdown, 0919 interface, shared language/API, and workspace-chat resources use coordinated versions. Uses company-settings.js/css, workspace.js/css, accounts/company-profile, and the bottom assistant.
+Implementation: Shared navigation and bottom Profile; authenticated users save account data explicitly. The page controller mounts password-settings.js in the personal step using existing form styles.
+Relationships: The 20260927-password entry loads the personal password form and existing shared Profile logout. Uses company-settings.js/css, password-settings.js, onboarding.js/css, workspace.js/css, accounts/company-profile, accounts/me/password, and the bottom assistant.
 Directory: No functions or classes; setup-root hosts onboarding; company-step is step two; company-form holds profile data; company-controls manages busy state; company-fields holds fields; company-status shows saving/errors.
 Variable index: No script variables; page controllers reference DOM ids. -->
 <html lang="zh-CN">
@@ -34,6 +34,6 @@ Variable index: No script variables; page controllers reference DOM ids. -->
 <p id="company-status" role="status" aria-live="polite"></p>
 </section>
 </main>
-<script type="module" src="/static/company-settings.js?v=20260927-auth"></script>
+<script type="module" src="/static/company-settings.js?v=20260927-password"></script>
 </body>
 </html>
