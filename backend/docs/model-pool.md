@@ -5,12 +5,14 @@
 ## 配置
 
 ```dotenv
-BAILIAN_MODELS=qwen3.7-max,qwen3.7-max-2026-06-08,qwen3.7-max-2026-05-20,qwen3.7-plus-2026-05-26,qwen3.7-max-2026-05-17
+BAILIAN_MODELS=qwen3.7-max,qwen3.7-max-2026-06-08,qwen3.7-max-2026-05-20,qwen3.7-plus-2026-05-26,qwen3.7-max-2026-05-17,qwen3.7-plus,qwen3.7-flash-2026-07-15,qwen3.7-flash,qwen3.8-flash,qwen3.8-2.4t-a95b,qwen3.8-max-0902,qwen3.8-max
 BAILIAN_MODEL_STATE_DB=/opt/salesmate/shared/llm/model-pool.sqlite3
 BAILIAN_ENABLE_THINKING=true
 ```
 
 模型按列表顺序选择。未设置 `BAILIAN_MODELS` 时保留原有 `BAILIAN_MODEL` 单模型行为；设置模型池后该旧值不参与选模。列表拒绝空项和重复项。状态文件必须为绝对路径，父目录须事先创建并允许服务用户写入。所有相关进程应使用同一文件；将其放在 shared 中可跨发布保留。目录应由服务用户持有并设置为 0700。
+
+2026-09-27 按控制台截图追加 7 个新模型，已有 3 个截图条目不重复添加。追加保留此前 5 个候选的顺序及持久禁用记录；新增名称尚未逐个调用验证，不改变既有思考设置、输出预算或计费设置。
 
 不可用状态以端点和 API Key 的摘要分组，文件不保存原始 API Key、提示词或响应正文。独立 SQLite 事务保证同机多进程写入不会覆盖彼此的记录。数据库不可访问或损坏时明确失败，不静默退回内存列表。已在途的请求可能与另一个进程的标记重叠，后续选模会重新读取共享状态。
 
