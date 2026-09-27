@@ -424,6 +424,32 @@ class WorkspaceChatTests(unittest.TestCase):
         self.assertIn("[Excerpt; full source not provided]", prompt)
         self.assertLess(len(prompt), 8000)
 
+    def test_customer_excerpt_retains_later_revision_within_budget(self):
+        from agent.workflows.chat import _workspace_excerpt
+        content = ("2026-09-17: Budget approval pending. " + "Earlier technical notes. " * 200
+                   + "2026-09-25: Budget approved at SGD 75,000; quantity remains 500.")
+        excerpt = _workspace_excerpt(content, "Summarize requirements and budget", 1200)
+        self.assertIn("Budget approval pending", excerpt)
+        self.assertIn("Budget approved at SGD 75,000", excerpt)
+        self.assertIn("[Excerpt; full source not provided]", excerpt)
+        self.assertLessEqual(len(excerpt), 1200)
+
+    def test_plain_email_draft_can_drop_unused_authorized_citations(self):
+        from agent.workflows.chat import parse_model_candidate, ChatValidationError
+        evidence = detail_evidence(COMPANY_ID, "BioTech", "Requested 500 sensors.")
+        draft = "Dear Daniel,\nThank you for your inquiry.\nBest regards"
+        result = parse_model_candidate(
+            {"assistant_text": draft, "citations": [citation(evidence)]},
+            allowed_context_items=[evidence],
+        )
+        self.assertEqual(result, {"assistant_text": draft, "citations": []})
+        with self.assertRaises(ChatValidationError):
+            parse_model_candidate({"assistant_text": draft + " [2]", "citations": [citation(evidence)]},
+                                  allowed_context_items=[evidence])
+        with self.assertRaises(ChatValidationError):
+            parse_model_candidate({"assistant_text": draft, "citations": [citation(evidence)]},
+                                  allowed_context_items=[])
+
     def test_search_page_evidence_survives_many_results(self):
         rows = [
             (str(uuid.uuid5(uuid.NAMESPACE_DNS, str(index))), f"公司{index}")

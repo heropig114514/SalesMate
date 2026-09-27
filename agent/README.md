@@ -10,6 +10,8 @@ Known legacy Eurostat indicator URLs matching `/eurostat/product?code=4-<eight d
 
 The news model extracts company hints, demand rationale and source evidence. News and eligible events both emit `amount`, `currency`, `amount_type`, `amount_scope`, `amount_evidence`, and `amount_qualifier`; evidence validation is independent of company hints. Null means unknown, with empty monetary metadata. Exact, upper/lower-bound and approximate values remain distinct. Backend serializers and generated Tool schemas accept these fields; maps and details display this source money without CRM aggregation. Event date-only sources explicitly emit `time_precision=date`. `--dry-run` previews complete payloads without writes. URL deduplication does not enrich legacy records; maintenance requires an explicit reviewed backfill.
 
+News JSON/schema or provenance failures from the default model receive one correction attempt with the validation reason. Transport failures and backend writes are not retried by this correction step. The news category is separate from its sales signal type, and opportunity explanations refer to the configured input industry rather than assuming a seller product catalog.
+
 Install `agent/requirements.txt` from the project root and configure the existing Bailian environment variables plus separate `SALESMATE_TOOLS_URL` and `SALESMATE_TOOLS_TOKEN`. The tool credential must allow at least `world_news.list/create` and `world_events.list/create`; Gmail/chat worker Agent credentials cannot substitute for it. In production, place tool settings in `/opt/salesmate/shared/world-insights.env`, readable only by the `salesmate` service user, and exclude it from Git.
 
 ```bash
@@ -306,7 +308,7 @@ Processing order:
 4. Select the primary external contact.
 5. Skip the LLM for automatic, marketing, and no-reply emails.
 6. Call Bailian for business-email facts.
-7. Verify evidence is locatable in the current subject/body. If default Bailian output fails only JSON-structure or evidence validation, retry once immediately with the validation reason.
+7. Verify evidence is locatable in the current subject/body. If default Bailian output fails only JSON-structure or evidence validation, retry once immediately with the validation reason and previous output. The correction must copy contiguous source excerpts, never abbreviated or stitched quotations. Overlong model-generated summaries are shortened to an at-most-80-character display prefix with an ellipsis before validation; original email text, facts, and evidence are unchanged.
 
 Main `EmailSubmission` fields:
 
@@ -557,6 +559,8 @@ generate_analysis(
 One Bailian call generates the Agent fields required by pages A and B. Before calling, construct a reduced inference view from complete `AnalysisInput`: retain company, business context, fact values/times/sources, metrics, and analysis reference time; remove cache-only version fields, duplicate member lists, and copies of original evidence already validated by L1. Complete L2 remains available for result validation and backend persistence.
 
 `list_view` contains the main company signal and evidence, per-ticket signals, industry, size band, latest summary, and three scoring features valued 0-3 or `null`.
+
+The Agent deterministically derives both size band and size source from the existing CRM-first verified headcount rule. A conflicting model-authored band is corrected before business validation, avoiding rejection of the entire profile. Email self-reported headcount remains in the sourced facts and does not become authoritative CRM headcount.
 
 Main signal enum:
 
@@ -813,6 +817,8 @@ SALESMATE_BACKEND_TIMEOUT=30
 ```
 
 Django reads web Gmail OAuth `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, and callback configuration from the same root `.env`; the agent needs no duplicate settings.
+
+The tested `qwen3.7-max-preview` endpoint requires `BAILIAN_ENABLE_THINKING=true`; sending `false` returns HTTP 400. Model smoke tests can override this setting in the test process without changing `.env`. Thinking mode can increase latency, so check actual workflow completion and output limits before changing the deployed model.
 
 ```powershell
 # Read real backend company data and only build/output L2

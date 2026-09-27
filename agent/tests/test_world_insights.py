@@ -106,6 +106,31 @@ def model(_system, _user, *, max_tokens):
 # Logic: Test collector contracts with mocked HTTP, model, geocoding and tool boundaries; no external services are verified.
 # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
 class WorldInsightsTests(unittest.TestCase):
+    def test_default_model_repairs_news_category_once(self):
+        good = json.loads(model("", "", max_tokens=1400))
+        bad = {**good, "category": "procurement"}
+        candidate = Candidate("news", "equipment", "New inspection equipment",
+                              NEWS_URL, "", NOW)
+        excerpt = "A manufacturer in the United States announced new inspection equipment for semiconductor production."
+        with patch("agent.world_insights.generate_json", side_effect=[json.dumps(bad), json.dumps(good)]) as generate:
+            result = summarize_news(candidate, excerpt, generate)
+        self.assertEqual(result["category"], "industry")
+        self.assertEqual(generate.call_count, 2)
+        self.assertIn("Invalid news relevance or category", generate.call_args.args[0])
+        self.assertEqual(generate.call_args_list[0].args[1], generate.call_args_list[1].args[1])
+
+    def test_news_repair_is_bounded_and_does_not_retry_transport_errors(self):
+        candidate = Candidate("news", "equipment", "New inspection equipment", NEWS_URL, "", NOW)
+        excerpt = "A manufacturer in the United States announced new inspection equipment for semiconductor production."
+        with patch("agent.world_insights.generate_json", return_value="not JSON") as generate:
+            with self.assertRaises(InsightError):
+                summarize_news(candidate, excerpt, generate)
+            self.assertEqual(generate.call_count, 2)
+        with patch("agent.world_insights.generate_json", side_effect=RuntimeError("offline")) as generate:
+            with self.assertRaises(RuntimeError):
+                summarize_news(candidate, excerpt, generate)
+            generate.assert_called_once()
+
     # Function: Verify a related article cannot replace the main source story.
     # Inputs: Public-shaped URL and mocked HTTP/DNS responses with a main story plus a related article card.
     # Outputs: Exact main-story excerpt containing its source amount.

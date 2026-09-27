@@ -18,7 +18,8 @@ Directory:
 - search_gdelt: Read a bounded GDELT article list and retain public source URLs and titles; publisher country is not event geography.
 - read_feed: Read a bounded configured RSS/Atom feed with no redirects, normalize entry metadata and return candidates.
 - fetch_page: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract main content before standalone articles so related-card articles cannot replace the story; close the response on every path.
-- summarize_news: Call the injected model once, validate relevance and country evidence, then compose separate company hints and source amounts; return None for irrelevant or insufficient source text.
+- summarize_news: Generate a news item; correct default-provider contract failures once without repeating source retrieval or writes.
+- _news_payload: Validate news structure, provenance, and source amounts before constructing the write payload.
 - Geocoder: Resolve verified city/country coordinates using a rate-limited persistent Nominatim cache; cache unsuccessful lookups too.
 - Geocoder.__init__: Initialize injected clock/sleep hooks and cache path; missing or malformed cache starts empty under existing behavior.
 - Geocoder.lookup: Use cached results or request at most once after 1.1-second spacing; require city/country agreement and bounded coordinates, then atomically replace the cache file.
@@ -521,18 +522,35 @@ def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
     return _plain(excerpt), published, events
 
 
-# Function: Call the injected model once, validate relevance and country evidence, then compose separate company hints and source amounts; return None for irrelevant or insufficient source text.
+# Function: Generate and validate a sourced news item with one bounded default-provider correction attempt.
 # Inputs: `candidate`, `excerpt`, `model` are the explicit source, configuration or injected dependency parameters.
 # Outputs: See the annotated return type; validation and transport failures propagate as documented.
-# Logic: Call the injected model once, validate relevance and country evidence, then compose separate company hints and source amounts; return None for irrelevant or insufficient source text.
+# Logic: Validate the model result and correct a default-provider contract failure once; never retry network calls or writes here.
 # Constraints: Source text is untrusted; no CRM association or monetary conversion is inferred.
 def summarize_news(candidate: Candidate, excerpt: str, model: Callable[..., str]) -> dict[str, Any] | None:
     evidence = "\n".join(part for part in (candidate.title, candidate.excerpt, excerpt[:3500]) if part)
     if len(evidence) < 60:
         return None
-    raw = model(_SKILL.instructions, json.dumps({"industry": candidate.industry,
-                                                  "title": candidate.title, "excerpt": evidence},
-                                                 ensure_ascii=False), max_tokens=_SKILL.max_tokens)
+    user_text = json.dumps({"industry": candidate.industry,
+                            "title": candidate.title, "excerpt": evidence}, ensure_ascii=False)
+    instructions = _SKILL.instructions
+    for attempt in range(2):
+        raw = model(instructions, user_text, max_tokens=_SKILL.max_tokens)
+        try:
+            return _news_payload(candidate, evidence, raw)
+        except InsightError as error:
+            if attempt or model is not generate_json:
+                raise
+            logger.warning("world_news_model_retry source_host=%s reason=%s",
+                           urlsplit(candidate.url).hostname, error)
+            instructions = (_SKILL.instructions + "\nThe previous output failed validation: "
+                            + str(error) + "\nRegenerate the complete JSON from the same source. "
+                            "Use only category regulation, industry, competition, or price; "
+                            "tender is a signal_type, not a category. Keep summary within 300 characters.")
+
+
+def _news_payload(candidate: Candidate, evidence: str, raw: str) -> dict[str, Any] | None:
+    """Validate a single model response without fetching sources or making writes."""
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):
@@ -544,7 +562,8 @@ def summarize_news(candidate: Candidate, excerpt: str, model: Callable[..., str]
         raise InsightError("News summary fields do not match the contract.")
     if parsed["relevant"] is False:
         return None
-    if parsed["relevant"] is not True or parsed["category"] not in _CATEGORIES:
+    if (parsed["relevant"] is not True or not isinstance(parsed["category"], str)
+            or parsed["category"] not in _CATEGORIES):
         raise InsightError("Invalid news relevance or category.")
     for key, max_length in (("industry", 100), ("summary", 300), ("content", 1200)):
         if not isinstance(parsed[key], str) or not 0 < len(parsed[key].strip()) <= max_length:

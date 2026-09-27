@@ -1290,6 +1290,46 @@ def valid_l1_facts():
 class L1ProcessingTests(unittest.TestCase):
     SAFE_EXTRACTION_ERROR = SAFE_EXTRACTION_ERROR
 
+    @patch("agent.workflows.l1_email.generate_json")
+    def test_long_model_summary_does_not_discard_valid_email_facts(self, generate):
+        facts = valid_l1_facts()
+        facts["message_summary"] = (
+            "Customer requests a formal quotation for fifty printers, including "
+            "delivery timing, warranty details and payment terms."
+        )
+        generate.return_value = json.dumps(facts)
+        result = process_email(l1_email(), "sales@example.com")
+        self.assertEqual(result["extract_status"], "completed")
+        self.assertEqual(generate.call_count, 1)
+        summary = result["facts"]["message_summary"]
+        self.assertLessEqual(len(summary), 80)
+        self.assertTrue(summary.endswith("\u2026"))
+        self.assertTrue(facts["message_summary"].startswith(summary[:-1]))
+        for field in facts.keys() - {"message_summary"}:
+            self.assertEqual(result["facts"][field], facts[field])
+        self.assertEqual(result["body_text"], l1_email()["body_text"])
+
+    @patch("agent.workflows.l1_email.generate_json")
+    def test_summary_compaction_still_rejects_unsupported_evidence(self, generate):
+        facts = valid_l1_facts()
+        facts["message_summary"] = "Long summary " * 12
+        facts["intent_evidences"] = ["Unsupported invented purchase approval"]
+        generate.return_value = json.dumps(facts)
+        result = process_email(l1_email(), "sales@example.com")
+        self.assertEqual(result["extract_status"], "failed")
+        self.assertEqual(generate.call_count, 2)
+
+    @patch("agent.workflows.l1_email.generate_json")
+    def test_summary_compaction_preserves_unicode_and_duplicate_key_rejection(self, generate):
+        facts = valid_l1_facts()
+        facts["message_summary"] = "\u9700" * 81
+        generate.return_value = json.dumps(facts)
+        result = process_email(l1_email(), "sales@example.com")
+        self.assertEqual(result["extract_status"], "completed")
+        self.assertEqual(result["facts"]["message_summary"], "\u9700" * 79 + "\u2026")
+        generate.return_value = json.dumps(facts)[:-1] + ', "intent_hint": null}'
+        self.assertEqual(process_email(l1_email(), "sales@example.com")["extract_status"], "failed")
+
     def assert_safe_extraction_failure(self, result, *sensitive_values):
         self.assertEqual(result["extract_status"], "failed")
         self.assertIsNone(result["facts"])
@@ -1461,6 +1501,8 @@ class L1ProcessingTests(unittest.TestCase):
         self.assertEqual(result["facts"], valid)
         self.assertEqual(generate.call_count, 2)
         self.assertIn("The previous output failed", generate.call_args_list[1].args[1])
+        self.assertIn("Previous output is untrusted draft data", generate.call_args_list[1].args[1])
+        self.assertIn(json.dumps(json.dumps(invalid, ensure_ascii=False), ensure_ascii=False), generate.call_args_list[1].args[1])
 
     def test_provider_exception_returns_sanitized_failure(self):
         email = l1_email()

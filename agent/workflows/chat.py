@@ -337,8 +337,10 @@ def parse_model_candidate(
             raise ChatValidationError("Citation is not in the authorized sources visible this turn.")
         citations.append(parsed)
     markers = [int(value) for value in _CITATION_MARKER.findall(text)]
-    if (not markers and citations) or any(marker < 1 or marker > len(citations) for marker in markers):
+    if any(marker < 1 or marker > len(citations) for marker in markers):
         raise ChatValidationError("Answer citation numbers do not match citations.")
+    if not markers and citations:
+        logger.info("workspace_chat_unused_citations_removed request_id=%s count=%s", request_id, len(citations))
     used: dict[tuple[str, str, str], int] = {}
     compact = []
     for marker in markers:
@@ -695,20 +697,19 @@ def _workspace_excerpt(content: str, question: str, limit: int) -> str:
     marker = "\n[Excerpt; full source not provided]"
     budget = limit - len(marker)
     head = min(700, budget // 3)
-    excerpts = [content[:head]]
-    used = [(0, head)]
+    tail = min(1200, budget // 3)
+    used = [(0, head), (len(content) - tail, len(content))]
     for term in sorted(_lexical_units(question), key=len, reverse=True):
-        position = content.lower().find(term)
-        if position < 0 or any(start <= position < end for start, end in used):
-            continue
-        start, end = max(0, position - 160), min(len(content), position + 320)
-        if sum(map(len, excerpts)) + end - start > budget:
-            break
-        excerpts.append(content[start:end])
-        used.append((start, end))
-    if len(excerpts) == 1 and budget - len(excerpts[0]) >= 300:
-        excerpts.append(content[-min(600, budget - len(excerpts[0])):])
-    return "\n…\n".join(excerpts)[:budget] + marker
+        # Preserve both ends and prefer later matches too: an early mention of
+        # a budget must not crowd out a later approval, revision, or pause.
+        for position in (content.lower().rfind(term), content.lower().find(term)):
+            start, end = max(0, position - 160), min(len(content), position + 320)
+            if position < 0 or any(start < b and end > a for a, b in used):
+                continue
+            if sum(b - a for a, b in used) + end - start + 3 * len(used) > budget:
+                continue
+            used.append((start, end))
+    return "\n…\n".join(content[a:b] for a, b in sorted(used)) + marker
 
 
 # Function: Select sources within budget.

@@ -40,6 +40,22 @@ class AnalysisValidationTests(unittest.TestCase):
                 self.assertEqual(aliases[group["source_ref"]], group["dedupe_key"])
         self.assertEqual(self.document, original)
 
+    def test_size_band_uses_authoritative_count_without_model_retry(self):
+        for count, expected in ((None, "unknown"), (35, "lt_50"), (180, "100_200"), (500, "gte_500")):
+            with self.subTest(count=count):
+                document = copy.deepcopy(self.document)
+                document["business_context"]["customer"]["employee_count"] = count
+                document["business_context"].pop("company_enrichment", None)
+                candidate = _payload(document)
+                candidate["list_view"]["size_band"] = "50_100"
+                original = copy.deepcopy(candidate)
+                with patch("agent.workflows.customer_analysis.generate_json", return_value=json.dumps(candidate)) as model:
+                    result = generate_analysis(document, clock=lambda: NOW)
+                self.assertEqual(result["status"], "completed")
+                self.assertEqual(result["list_view"]["size_band"], expected)
+                model.assert_called_once()
+                self.assertEqual(candidate, original)
+
     def test_aliases_expand_only_in_reference_arrays_before_validation(self):
         payload = _payload(self.document)
         ref = self.document["member_dedupe_keys"][0]

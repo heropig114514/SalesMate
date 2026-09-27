@@ -10,7 +10,7 @@ Turn external search excerpts into concise World Insights items. Preserve the or
 
 Return one JSON object with exactly these fields:
 - relevant: boolean; true only for real developments in the requested industries. Recruitment, advertising, vague opinion, and unrelated content are false.
-- category: regulation / industry / competition / price; default to industry when uncertain.
+- category: exactly one of regulation / industry / competition / price; default to industry when uncertain. Procurement, tenders, factory expansion, and equipment upgrades use industry. Never use a signal_type such as tender or procurement as category.
 - industry: a specific industry name, at most 100 Unicode characters; use the input industry label when uncertain.
 - country: uppercase two-letter ISO 3166-1 country/region code, only when the title or excerpt explicitly identifies the event location; otherwise "". Never infer event location from publisher country or search region.
 - country_evidence: only the verbatim country/region name (for example "Netherlands"), not a city, address or sentence; "" when country is empty. It must independently resolve to the country code.
@@ -21,7 +21,7 @@ Return one JSON object with exactly these fields:
 - project_name: project name appearing verbatim in the source; otherwise "".
 - demand_description: procurement or equipment demand explicitly disclosed in the source, preserving its original language; otherwise "". Do not turn a broad trend into a definite requirement.
 - potential_sales_need: cautious inference of a possible purchasing need from explicit facts; otherwise "". Label it as an inference, not a confirmed purchase.
-- opportunity_reason: why that inference relates to semiconductor equipment, precision metrology, or optical inspection products; "" without potential_sales_need.
+- opportunity_reason: why that inference relates to the requested input industry; "" without potential_sales_need. Do not assume a seller product catalog, technical compatibility, or unrelated product capabilities that the input does not provide.
 - time_window: project, tender, or purchasing time explicitly given in the source, preserving its original wording; otherwise "".
 - evidence: one verbatim contiguous input excerpt supporting the reported event and any amount. Include company_name when a company lead is present; a source amount may have evidence without a buyer lead. Otherwise "".
 - amount: decimal numeric string converted to the currency's main unit, for example a source amount of 320,000 CNY becomes "320000"; null without complete amount evidence.

@@ -493,6 +493,15 @@ def _validate_list_view(
     signal = _enum(item["signal"], SIGNALS, "list_view.signal")
     industry = _enum(item["industry"], INDUSTRIES, "list_view.industry")
     size_band = _enum(item["size_band"], SIZE_BANDS, "list_view.size_band")
+    business = analysis_input.get("business_context")
+    employee_count, _ = employee_size(business if isinstance(business, Mapping) else {})
+    authoritative_band = _size_band(employee_count)
+    if size_band != authoritative_band:
+        logger.info(
+            "l3_size_band_normalized company_id=%s model_band=%s authoritative_band=%s",
+            analysis_input.get("company_id"), size_band, authoritative_band,
+        )
+        size_band = authoritative_band
     signal_evidence = _evidence_block(
         item["signal_evidence"], allowed_refs, "list_view.signal_evidence"
     )
