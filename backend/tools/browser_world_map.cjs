@@ -1,7 +1,7 @@
-/** Responsibility: Verify amount bubbles, shared-event dates, and all-day calendars.
- * Implementation: Check fixed 18px translucent-white missing-amount bubbles and mouse/keyboard selection while preserving known-value proportions. Mock APIs also cover public news leads, exact amounts, fact/inference separation, and mobile layout. Isolated serving loads real pages to test geometry, currencies, date precision, and ICS without real business endpoints.
+/** Responsibility: Verify event location markers, shared-event dates, and all-day calendars.
+ * Implementation: Check fixed 18px translucent-white missing-event location markers and mouse/keyboard selection for every source amount. Mock APIs also cover public news leads, exact amounts, fact/inference separation, and mobile layout. Isolated serving loads real pages to test geometry, source amounts, date precision, and ICS without real business endpoints.
  * Relationships: world-map.js, world-news.js/css, world.html; explicit environment Playwright/Chrome paths.
- * Directory: geometry, checkGeometry, checkCurrencies, checkDates, checkNewsSignals, main.
+ * Directory: geometry, checkGeometry, checkSourceAmounts, checkDates, checkNewsSignals, main.
  * Variable index: ASSETS is the static-resource root; OUTPUT is the ignored screenshot directory.
  */
 const assert = require('node:assert/strict');
@@ -24,38 +24,38 @@ async function geometry(page) {
   }));
 }
 
-/** Function: Assert center alignment and amount proportions. Inputs: page. Outputs: None; throw on failure.
- * Logic: Allow at most one pixel of coordinate error; values 400 and 100 have a four-to-one area ratio. Duplicate colocated records must not double-count amounts; missing bubbles remain 18px. Constraints: Allow browser subpixel rounding without changing business thresholds. */
+/** Function: Assert center alignment and fixed location-marker size. Inputs: page. Outputs: None; throw on failure.
+ * Logic: Allow at most one pixel of coordinate error; all markers are 18px regardless of amount. Colocated records share one location marker. Constraints: Allow browser subpixel rounding without changing business thresholds. */
 async function checkGeometry(page) {
   const rows = await geometry(page);
   for (const row of rows) assert.ok(Math.abs(row.dx) <= 1 && Math.abs(row.dy) <= 1, `${row.id} center offset: ${JSON.stringify(row)}`);
   const small = rows.find(row => row.id === 'small'), large = rows.find(row => row.id === 'large');
-  assert.ok(Math.abs(large.diameter ** 2 / small.diameter ** 2 - 4) < 0.01);
-  assert.equal(large.diameter, 62);
+  assert.equal(large.diameter, small.diameter);
+  assert.equal(large.diameter, 18);
   assert.equal(rows.find(row => row.id === 'unknown').diameter, 18);
   assert.equal(rows.length, 4);
 }
 
-/** Function: Verify currency sources and amount semantics in the complete page. Inputs: browser and base identify the isolated browser/static server. Outputs: None; throw on failure.
- * Logic: Mock SGD-only, mixed currencies, zero/unknown amounts, and no events. Exclude unrelated currencies, preserve known amounts across URL/selection changes, and use 18px location bubbles for missing selected currencies without fabricated exchange rates.
+/** Function: Verify source currencies and amount semantics in the complete page. Inputs: browser and base identify the isolated browser/static server. Outputs: None; throw on failure.
+ * Logic: Mock mixed currencies, zero/null amounts, and no events. Preserve source currencies across reloads and use fixed location markers without currency controls or conversion.
  * Constraints: All endpoints are explicit read-only fixtures; unknown endpoints/writes fail tests, with no production-record access. */
-async function checkCurrencies(browser, base) {
+async function checkSourceAmounts(browser, base) {
   const page = await browser.newPage({ locale: 'en-US', viewport: { width: 1440, height: 1000 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   let records = [
-    { id: 'sgd', city: 'Singapore', country: 'SG', latitude: 1.352, longitude: 103.819, map_amounts: { SGD: '100.00' } },
-    { id: 'usd', city: 'San Francisco', country: 'US', latitude: 37.775, longitude: -122.419, map_amounts: { SGD: '200.00' } },
-    { id: 'zero', city: 'Tokyo', country: 'JP', latitude: 35.676, longitude: 139.65, map_amounts: { SGD: '0.00' } },
-    { id: 'unknown', city: 'Munich', country: 'DE', latitude: 48.135, longitude: 11.582, map_amounts: {} },
+    { id: 'sgd', city: 'Singapore', country: 'SG', latitude: 1.352, longitude: 103.819, amount: '100.00', currency: 'SGD' },
+    { id: 'usd', city: 'San Francisco', country: 'US', latitude: 37.775, longitude: -122.419, amount: '200.00', currency: 'USD' },
+    { id: 'zero', city: 'Tokyo', country: 'JP', latitude: 35.676, longitude: 139.65, amount: '0.00', currency: 'SGD' },
+    { id: 'unknown', city: 'Munich', country: 'DE', latitude: 48.135, longitude: 11.582, amount: null, currency: '' },
   ];
   await page.route('**/*', route => {
     const req = route.request(), url = new URL(req.url());
     if (url.origin !== base || req.method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
     if (!url.pathname.startsWith('/api/')) return route.continue();
     if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: {
-      count: records.length, countries: [], currencies: ['CNY', 'SGD', 'USD'], unmapped_customer_count: 0,
-      results: records.map(row => ({ ...row, title: row.city, amounts: row.map_amounts, event_type: 'exhibition', starts_at: '2027-01-01T12:00:00Z', ends_at: '2027-01-02T12:00:00Z', data_source: 'synthetic', customers: [], onsite: [], suggested_actions: [] })),
+      count: records.length, countries: [], unmapped_customer_count: 0,
+      results: records.map(row => ({ ...row, title: row.city, amount_type: 'registration_fee', amount_scope: 'other', event_type: 'exhibition', starts_at: '2027-01-01T12:00:00Z', ends_at: '2027-01-02T12:00:00Z', data_source: 'synthetic', onsite: [], suggested_actions: [] })),
     } });
     if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 0, results: [] } });
     if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
@@ -64,26 +64,14 @@ async function checkCurrencies(browser, base) {
   });
   await page.goto(base + '/world/?currency=USD');
   await page.locator('.event-pin').first().waitFor();
-  assert.deepEqual(await page.locator('#map-currency option').allTextContents(), ['SGD']);
-  assert.equal(await page.inputValue('#map-currency'), 'SGD');
-  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
-  assert.equal(await page.locator('[data-event-id="zero"] .event-pin-amount').textContent(), 'SGD 0');
-  assert.equal(await page.locator('[data-event-id="unknown"] .event-pin-amount').textContent(), 'Amount unknown');
-  records[1].map_amounts = { USD: '200.00' };
+  assert.equal(await page.locator('#map-currency').count(), 0);
+  assert.match(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), /SGD 100/);
+  assert.match(await page.locator('[data-event-id="usd"] .event-pin-amount').textContent(), /USD 200/);
+  assert.match(await page.locator('[data-event-id="zero"] .event-pin-amount').textContent(), /SGD 0/);
+  assert.match(await page.locator('[data-event-id="unknown"] .event-pin-amount').textContent(), /No structured amount disclosed/);
   await page.reload();
   await page.locator('.event-pin').first().waitFor();
-  assert.deepEqual(await page.locator('#map-currency option').allTextContents(), ['SGD', 'USD']);
-  assert.equal(await page.locator('[data-event-id="usd"] .event-pin-amount').textContent(), 'USD 200');
-  assert.equal(await page.locator('[data-event-id="usd"] .event-pin-currency-note').textContent(), 'No SGD amount');
-  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '18px');
-  await page.selectOption('#map-currency', 'USD');
-  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
-  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-currency-note').textContent(), 'No USD amount');
-  assert.equal(await page.locator('[data-event-id="usd"]').evaluate(node => node.style.getPropertyValue('--bubble-size')), '62px');
-  await page.reload();
-  await page.locator('.event-pin').first().waitFor();
-  assert.equal(await page.inputValue('#map-currency'), 'USD');
-  assert.equal(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), 'SGD 100');
+  assert.match(await page.locator('[data-event-id="sgd"] .event-pin-amount').textContent(), /SGD 100/);
   records = [];
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#world-data-status').textContent.startsWith('Database records'));
@@ -101,13 +89,13 @@ async function checkDates(browser, base) {
   for (const timezoneId of ['Pacific/Kiritimati', 'America/Los_Angeles']) {
     const context = await browser.newContext({ locale: 'en-US', timezoneId, acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(), errors = [];
-    const fixture = { id: 'date-expo', title: 'Shared date-only expo', city: 'Singapore', country: 'SG', latitude: 1.3, longitude: 103.8, event_type: 'exhibition', data_source: 'agent', time_precision: 'date', starts_at: '2026-10-27T12:00:00Z', ends_at: '2026-10-30T12:00:00Z', starts_on: '2026-10-27', ends_on: '2026-10-29', amounts: {}, map_amounts: {}, customers: [], opportunity_ids: [], onsite: [], suggested_actions: [], description: 'Public exhibition. Exact time is not supplied.', source_url: 'https://example.org/expo' };
+    const fixture = { id: 'date-expo', title: 'Shared date-only expo', city: 'Singapore', country: 'SG', latitude: 1.3, longitude: 103.8, event_type: 'exhibition', data_source: 'agent', time_precision: 'date', starts_at: '2026-10-27T12:00:00Z', ends_at: '2026-10-30T12:00:00Z', starts_on: '2026-10-27', ends_on: '2026-10-29', amount: null, currency: '', opportunity_ids: [], onsite: [], suggested_actions: [], description: 'Public exhibition. Exact time is not supplied.', source_url: 'https://example.org/expo' };
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => {
       const url = new URL(route.request().url());
       if (url.origin !== base || route.request().method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
       if (!url.pathname.startsWith('/api/')) return route.continue();
-      if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 1, results: [fixture], countries: [], currencies: [], unmapped_customer_count: 0 } });
+      if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 1, results: [fixture], countries: [], unmapped_customer_count: 0 } });
       if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 0, results: [] } });
       if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
       errors.push('Unexpected API: ' + url.pathname); return route.abort();
@@ -126,7 +114,7 @@ async function checkDates(browser, base) {
     assert.match(await page.inputValue('#invite-body'), /2026-10-27/);
     await page.click('#invite-close');
     const timed = await page.evaluate(async row => {
-      const { calendarText } = await import('/static/world-news.js?v=20260924-insights');
+      const { calendarText } = await import('/static/world-news.js?v=20260927-source-amounts');
       return calendarText({ ...row, time_precision: 'datetime', starts_at: '2026-10-27T09:00:00+08:00', ends_at: '2026-10-27T17:00:00+08:00' });
     }, fixture);
     assert.match(timed, /DTSTART:20261027T010000Z/);
@@ -144,7 +132,7 @@ async function checkDates(browser, base) {
 
 /** Function: Verify structured public leads in the actual news page. Inputs: browser and base isolated-server address. Outputs: Assertions/screenshots.
  * Logic: Mock new/legacy news APIs and check all fields, amount types/exact characters, inference labels, XSS escaping, and no horizontal mobile overflow.
- * Constraints: No real Agent/database; source amounts cannot enter event-map currencies or opportunity aggregates. */
+ * Constraints: No real Agent/database; source amounts cannot enter opportunity aggregates. */
 async function checkNewsSignals(browser, base) {
   const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
   const errors = [];
@@ -154,7 +142,7 @@ async function checkNewsSignals(browser, base) {
     const url = new URL(route.request().url());
     if (url.origin !== base || route.request().method() !== 'GET') { errors.push('Unexpected request: ' + url.pathname); return route.abort(); }
     if (!url.pathname.startsWith('/api/')) return route.continue();
-    if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 0, results: [], countries: [], currencies: [], unmapped_customer_count: 0 } });
+    if (url.pathname === '/api/v1/sales/world/') return route.fulfill({ json: { count: 0, results: [], countries: [], unmapped_customer_count: 0 } });
     if (url.pathname === '/api/v1/sales/records/world-news/') return route.fulfill({ json: { count: 1, results: [record] } });
     if (url.pathname === `/api/v1/sales/records/world-news/${record.id}/`) return route.fulfill({ json: record });
     if (url.pathname === '/api/v1/sales/seller-context/') return route.fulfill({ json: { sales_setup: { personal: {} } } });
@@ -180,10 +168,10 @@ async function checkNewsSignals(browser, base) {
   await page.screenshot({ path: path.join(OUTPUT, 'world-news-signal-mobile.png'), fullPage: true });
   record = { ...record, amount: '0.000000' };
   await page.reload(); await page.locator('.news-signal').waitFor();
-  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), 'CNY 0');
+  assert.equal(await page.locator('.news-reported-amount .news-source-amount').innerText(), '项目总投资 · CNY 0');
   record = { ...record, amount: null, currency: '', amount_type: '', amount_scope: '', amount_evidence: '' };
   await page.reload(); await page.locator('.news-signal').waitFor();
-  assert.match(await page.locator('.news-reported-amount').innerText(), /暂无结构化金额信息/);
+  assert.match(await page.locator('.news-reported-amount').innerText(), /来源未披露结构化金额/);
   record = { id: record.id, title: '旧新闻', category: 'industry', published_at: record.published_at, source_url: record.source_url, data_source: 'agent', summary: '', content: '保留旧正文' };
   await page.reload(); await page.locator('.news-signal').waitFor();
   assert.match(await page.locator('.news-signal').innerText(), /暂无结构化线索信息/);
@@ -193,7 +181,7 @@ async function checkNewsSignals(browser, base) {
 }
 
 /** Function: Run isolated map regression checks. Inputs: Playwright/Chrome environment. Outputs: Summary/screenshots.
- * Logic: Verify projections, currencies, and interactions; display shared dates across time zones/mobile and download actual all-day ICS; capture script errors.
+ * Logic: Verify projections, source amounts, and interactions; display shared dates across time zones/mobile and download actual all-day ICS; capture script errors.
  * Constraints: Local static network only; amounts are browser fixtures, without database writes or Agent calls. */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -226,12 +214,12 @@ async function main() {
     await page.evaluate(async () => {
       const { WorldMap } = await import('/static/world-map.js');
       window.fixture = [
-        { id: 'small', country: 'SG', city: '新加坡', lat: 1.352, lng: 103.819, amount: 100 },
-        { id: 'large', country: 'US', city: 'San Francisco long label', lat: 37.775, lng: -122.419, amount: 400 },
-        { id: 'duplicate', country: 'US', city: 'San Francisco long label', lat: 37.775, lng: -122.419, amount: 400 },
+        { id: 'small', country: 'SG', city: '新加坡', lat: 1.352, lng: 103.819, amount: '100' },
+        { id: 'large', country: 'US', city: 'San Francisco long label', lat: 37.775, lng: -122.419, amount: '400' },
+        { id: 'duplicate', country: 'US', city: 'San Francisco long label', lat: 37.775, lng: -122.419, amount: '400' },
         { id: 'unknown', country: 'DE', city: '慕尼黑', lat: 48.135, lng: 11.582, amount: null },
-        { id: 'zero', country: 'JP', city: '东京', lat: 35.676, lng: 139.65, amount: 0 },
-      ].map(row => ({ ...row, title: row.city, en: row.city, currency: 'SGD', map_amounts: row.amount === null ? {} : { SGD: String(row.amount) } }));
+        { id: 'zero', country: 'JP', city: '东京', lat: 35.676, lng: 139.65, amount: '0' },
+      ].map(row => ({ ...row, title: row.city, en: row.city, currency: 'SGD', amount_type: 'registration_fee', amount_scope: 'other' }));
       window.fixtureMap = new WorldMap(document.querySelector('#world-map'), id => { window.selected = id; window.fixtureMap.setItems(window.fixture, id); });
       window.fixtureMap.setCountries(['SG', 'US', 'DE', 'JP']);
       await window.fixtureMap.load();
@@ -255,7 +243,7 @@ async function main() {
     await page.locator('[data-event-id="large"] .event-bubble').click();
     assert.equal(await page.evaluate(() => window.selected), 'large');
     await checkGeometry(page);
-    assert.match(await page.locator('[data-event-id="unknown"]').getAttribute('aria-label'), /金额未知/);
+    assert.match(await page.locator('[data-event-id="unknown"]').getAttribute('aria-label'), /来源未披露结构化金额/);
     assert.match(await page.locator('[data-event-id="unknown"]').getAttribute('class'), /amount-missing/);
     assert.equal(await page.locator('[data-event-id="unknown"] .event-bubble').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(255, 255, 255, 0.22)');
     await page.locator('[data-event-id="unknown"] .event-bubble').hover();
@@ -286,8 +274,8 @@ async function main() {
     await checkGeometry(page);
     await page.screenshot({ path: path.join(OUTPUT, 'world-map-geometry-mobile.png') });
     assert.deepEqual(errors, []);
-    await checkCurrencies(browser, `http://127.0.0.1:${server.address().port}`);
-    console.log('World checks passed: news signals/exact decimal/source types/inference/escaping/mobile/legacy;  shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, 4:1 area, translucency, currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
+    await checkSourceAmounts(browser, `http://127.0.0.1:${server.address().port}`);
+    console.log('World checks passed: news signals/exact decimal/source types/inference/escaping/mobile/legacy;  shared date ranges in two timezones, downloaded all-day ICS, timed ICS, invitations/mobile; map centers, fixed location size, translucency, source currencies/zero/unknown, URL/reload, views/zoom/resize, mouse/keyboard.');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

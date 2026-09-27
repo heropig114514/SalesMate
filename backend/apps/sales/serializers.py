@@ -82,6 +82,9 @@ Variable index:
 - WorldNewsSerializer.amount: Nonnegative decimal string with 24 integer and 6 fractional digits; return a fixed-precision string or null.
 - WorldNewsSerializer.evidence: Preserve original whitespace; at most 600 characters.
 - WorldNewsSerializer.amount_evidence: Preserve original amount whitespace; at most 400 characters.
+- WorldEventSerializer.amount: Exact source amount, nullable and independent of CRM.
+- WorldEventSerializer.evidence: Public source excerpt, whitespace preserved.
+- WorldEventSerializer.amount_evidence: Verbatim monetary excerpt.
 - WorldEventSerializer.Meta.model: Declare the corresponding model.
 - WorldEventSerializer.Meta.fields: Declare public fields.
 - WorldEventSerializer.Meta.read_only_fields: Declare server-maintained fields.
@@ -996,6 +999,9 @@ class ZonedDateTimeField(s.DateTimeField):
 # Logic: Validate date precision on writes; all read entry points filter invisible opportunity IDs. Date-only output includes the final day in its date range.
 # Constraints: Original event text is shared fact data; opportunities, companies, and amounts gain no permissions through events. No external site access.
 class WorldEventSerializer(StrictModelSerializer):
+    amount = NewsAmountField(max_digits=30, decimal_places=6, min_value=0, allow_null=True, required=False, coerce_to_string=True)
+    evidence = s.CharField(max_length=600, allow_blank=True, required=False, trim_whitespace=False)
+    amount_evidence = s.CharField(max_length=400, allow_blank=True, required=False, trim_whitespace=False)
     source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     starts_on = s.DateField(read_only=True, allow_null=True)
     ends_on = s.DateField(read_only=True, allow_null=True)
@@ -1012,11 +1018,11 @@ class WorldEventSerializer(StrictModelSerializer):
     # Function: Validate cross-field relationships.
     # Inputs: `attrs`: fields.
     # Outputs: Validated attrs.
-    # Logic: Delegate source, date, ownership, and cross-account duplicate checks to insights, supporting the explicit Agent date-placeholder protocol.
+    # Logic: Validate source amount metadata and evidence, then delegate dates, ownership and duplicate checks to insights.
     # Constraints: Preserve original text/timestamps; duplicates return 409 without overwriting records.
     def validate(self, attrs):
         from .insights import validate_insight
-        return validate_insight(self, attrs)
+        return validate_insight(self, validate_news_signal(self, attrs))
 
     # Function: Project shared events for the current viewer.
     # Inputs: `instance`: event record; implicitly read request.user and opportunity links for the current batch.
@@ -1044,7 +1050,7 @@ class WorldEventSerializer(StrictModelSerializer):
     class Meta:
         model = models.WorldEvent
         validators = []
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'time_precision', 'starts_on', 'ends_on', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids', 'data_source']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'event_type', 'country', 'city', 'latitude', 'longitude', 'starts_at', 'ends_at', 'time_precision', 'starts_on', 'ends_on', 'registration_deadline', 'source_url', 'description', 'onsite', 'suggested_actions', 'opportunity_ids', 'data_source', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence', 'amount_qualifier']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 
@@ -1076,7 +1082,7 @@ class WorldNewsSerializer(StrictModelSerializer):
     class Meta:
         model = models.WorldNews
         validators = []
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source', 'company_name', 'signal_type', 'project_name', 'demand_description', 'potential_sales_need', 'opportunity_reason', 'time_window', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source', 'company_name', 'signal_type', 'project_name', 'demand_description', 'potential_sales_need', 'opportunity_reason', 'time_window', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence', 'amount_qualifier']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 

@@ -1,11 +1,12 @@
-/** Responsibility: Project events and opportunity amounts onto a real world map.
- * Implementation: Local Natural Earth GeoJSON highlights followed customer countries. Known amounts produce proportional circles; missing selected-currency values use fixed translucent white location bubbles retaining interaction. Centers stay at geographic anchors and labels retain all known currencies.
+/** Responsibility: Project events and their source amounts onto a real world map.
+ * Implementation: Local Natural Earth GeoJSON highlights followed customer countries. Fixed-size location markers display the selected event’s source amount and qualifier; unrelated amounts are never summed. Centers remain at geographic anchors.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; world-news.js supplies filters/selection callbacks, and backend customer country codes control highlights. No online tiles.
  * Directory: WorldMap, WorldMap.constructor, WorldMap.load, WorldMap.setView, WorldMap.setCountries, WorldMap.setItems, WorldMap.draw, WorldMap.destroy.
- * Variable index: MISSING_AMOUNT_DIAMETER defines location-bubble diameter when the selected currency has no amount and does not encode value; WorldMap.map is Leaflet; layer contains event markers; items/selectedId describes current display; onSelect is the callback; countries contains highlighted country names; view is the current perspective; resizeObserver watches container dimensions.
+ * Variable index: LOCATION_DIAMETER defines a fixed location-bubble diameter and does not encode financial value; WorldMap.map is Leaflet; layer contains event markers; items/selectedId describes current display; onSelect is the callback; countries contains highlighted country names; view is the current perspective; resizeObserver watches container dimensions.
  */
 import { language } from "./i18n.js?v=20260921-product";
-const MISSING_AMOUNT_DIAMETER = 18;
+import { sourceAmountText } from "./world-signals.js?v=20260927-source-amounts";
+const LOCATION_DIAMETER = 18;
 /** Function: Manage the map and accessible event bubbles. Logic: Filtering preserves perspective; explicit perspective changes update center/zoom together. Constraints: Business records come from the API; never locate the user. */
 export class WorldMap {
   /** Function: Initialize the map. Inputs: element and onSelect callback. Outputs: An instance. Logic: Real geographic projection and local map data. Constraints: Missing Leaflet raises an explicit error. */
@@ -114,7 +115,8 @@ export class WorldMap {
     this.selectedId = selectedId;
     this.draw();
   }
-  /** Function: Draw city-aggregated event bubbles. Inputs: Instance snapshot; map_amounts contains backend-deduplicated amounts, and amount is the selected-currency value or null. Outputs: None. Logic: Positive-value diameters equal the square root of their ratio to the maximum, multiplied by 62. Missing values use fixed 18px translucent white bubbles with the same mouse/keyboard selection callbacks. Show all known currencies and explicitly label a missing selected-currency amount. Constraints: Location bubbles represent neither zero nor estimated amounts; known zero retains its semantics, no currency conversion occurs, and selection does not change data-driven diameter. */
+  /** Function: Draw location-grouped events. Inputs: Instance source records and selection. Outputs: Accessible Leaflet markers.
+   * Logic: Use fixed geographic markers; show the selected record’s amount and list each grouped record in the tooltip separately. Constraints: Do not sum grants, fees, budgets, or currencies; null never becomes zero. */
   draw() {
     this.layer.clearLayers();
     const groups = new Map();
@@ -124,10 +126,8 @@ export class WorldMap {
       groups.get(key).push(item);
     }
     for (const items of groups.values()) {
-      const knownAmounts = items.map(value => value.amount).filter(Number.isFinite);
-      const item = items.find((v) => v.id === this.selectedId) || items[0],
-        amount = knownAmounts.length ? Math.max(...knownAmounts) : null,
-        size = amount === null ? MISSING_AMOUNT_DIAMETER : Math.sqrt(amount / Math.max(1, ...this.items.map(value => value.amount).filter(Number.isFinite))) * 62;
+      const item = items.find((v) => v.id === this.selectedId) || items[0];
+      const amount = item.amount, size = LOCATION_DIAMETER;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "event-pin";
@@ -140,14 +140,11 @@ export class WorldMap {
         items.some((v) => v.id === this.selectedId),
       );
       const name = language === "en" ? item.en : item.title;
-      const amounts = Object.entries(item.map_amounts).sort(([a], [b]) => Number(b === item.currency) - Number(a === item.currency) || a.localeCompare(b));
-      const amountText = amounts.map(([currency, value]) => `${currency} ${Number(value).toLocaleString()}`).join('\n') || (language === 'en' ? 'Amount unknown' : '金额未知');
-      const currencyNote = amount === null && amounts.length ? (language === 'en' ? `No ${item.currency} amount` : `无 ${item.currency} 金额`) : '';
-      button.title = `${item.city} · ${language === 'en' ? 'Local pipeline' : '当地关联商机'}: ${amountText}`;
-      if (currencyNote) button.title += `\n${currencyNote}`;
+      const amountText = sourceAmountText(item);
+      button.title = items.map(row => `${row.title}: ${sourceAmountText(row)}`).join('\n');
       button.setAttribute(
         "aria-label",
-        `${name}, ${amountText.replaceAll('\n', ', ')}, ${currencyNote ? currencyNote + ', ' : ''}${items.length}`,
+        `${name}, ${amountText.replaceAll('\n', ', ')}, ${items.length}`,
       );
       const bubble = document.createElement("span");
       bubble.className = "event-bubble";
@@ -159,12 +156,6 @@ export class WorldMap {
       value.className = "event-pin-amount";
       value.textContent = amountText;
       label.append(value);
-      if (currencyNote) {
-        const note = document.createElement("span");
-        note.className = "event-pin-currency-note";
-        note.textContent = currencyNote;
-        label.append(note);
-      }
       button.append(bubble, label);
       button.addEventListener("click", () => this.onSelect(item.id));
       L.marker([item.lat, item.lng], {

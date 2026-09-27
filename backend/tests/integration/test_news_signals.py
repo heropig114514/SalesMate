@@ -213,7 +213,7 @@ class NewsSignalMigrationTests(TransactionTestCase):
             user = get_user_model().objects.create_user(username="news-signal-migration")
             row = old.get_model("sales", "WorldNews").objects.create(owner_id=user.pk, title="旧新闻", category="industry", content="旧正文有金额但不应自动解析", published_at=timezone.now(), source_url="https://example.org/old", revision=3)
             MigrationExecutor(connection).migrate([("sales", "0010_news_signal_fields")])
-            updated = WorldNews.objects.get(pk=row.pk)
+            updated = MigrationExecutor(connection).loader.project_state([("sales", "0010_news_signal_fields")]).apps.get_model("sales", "WorldNews").objects.get(pk=row.pk)
             self.assertEqual((updated.content, updated.revision, updated.source_url), (row.content, 3, row.source_url))
             for field in SIGNAL_FIELDS:
                 self.assertEqual(getattr(updated, field), None if field == "amount" else "")

@@ -5,7 +5,7 @@ Directory:
 - DevelopmentSupportTests: End-to-end support-layer tests.
 - DevelopmentSupportTests.setUp: Create isolated accounts and fictional batch.
 - DevelopmentSupportTests.test_seed_is_idempotent_and_does_not_rewrite: Confirm explicit placeholders remain stable.
-- DevelopmentSupportTests.test_world_deduplicates_and_keeps_currencies: Verify duplicate opportunities and currencies.
+- DevelopmentSupportTests.test_world_does_not_use_crm_amounts: Verify private CRM values cannot populate event source amounts.
 - DevelopmentSupportTests.test_partial_results_context_and_latest_score: Verify minimum submission and context.
 - DevelopmentSupportTests.test_formal_public_events_keep_private_business: Verify public events are shared while opportunities remain isolated.
 - DevelopmentSupportTests.test_lab_tools_omit_credentials_versions_and_source: Verify relaxed rules.
@@ -57,10 +57,10 @@ class DevelopmentSupportTests(TestCase):
 
     # Function: Verify map amounts and private-event permissions.
     # Inputs: Duplicate association at the same coordinates and another-currency opportunity for the same customer.
-    # Outputs: Deduplicated amounts, separate currencies, and correct country count.
+    # Outputs: Null source amounts despite linked CRM values, and correct country count.
     # Logic: Call the real world API.
     # Constraints: Do not verify geography services or real transactions.
-    def test_world_deduplicates_and_keeps_currencies(self):
+    def test_world_does_not_use_crm_amounts(self):
         event = WorldEvent.objects.get(pk=self.manifest["events"][1])
         event.opportunity_ids.append(str(self.opportunity.pk))
         usd = Opportunity.objects.create(owner=self.user, company=self.opportunity.company, title="美元商机", currency="USD", amount="20", status="proposal")
@@ -69,7 +69,8 @@ class DevelopmentSupportTests(TestCase):
         response = self.client.get("/api/v1/sales/world/?country=SG")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["count"], 2)
-        self.assertEqual(response.data["results"][0]["map_amounts"], {"SGD": "145000.00", "USD": "20.00"})
+        self.assertIsNone(response.data["results"][0]["amount"])
+        self.assertNotIn("map_amounts", response.data["results"][0])
         self.assertEqual(next(row for row in response.data["countries"] if row["code"] == "SG")["event_count"], 2)
 
     # Function: Verify that opportunity results can be submitted without complete explanation.
@@ -103,7 +104,8 @@ class DevelopmentSupportTests(TestCase):
         world = other.get("/api/v1/sales/world/").data
         self.assertEqual(world["count"], 8)
         for row in world["results"]:
-            self.assertEqual((row["opportunity_ids"], row["customers"], row["amounts"], row["map_amounts"]), ([], [], {}, {}))
+            self.assertEqual(row["opportunity_ids"], [])
+            self.assertIsNone(row["amount"])
         self.assertEqual(other.get(f"/api/v1/sales/opportunity-context/{self.opportunity.pk}/").status_code, 404)
 
     # Function: Verify lab mode omits credentials, versions, and sources.

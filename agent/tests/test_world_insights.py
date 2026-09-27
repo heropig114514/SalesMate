@@ -1,4 +1,33 @@
-"""Offline contract tests for the World Insights collector."""
+"""Responsibility: Offline collector contract regression tests.
+Implementation: Fixed dates, temporary caches, injected model/tool responses and mocked network dependencies.
+Relationships: Exercise agent.world_insights without real API writes or LLM calls.
+Directory:
+- FakeTools: Record isolated tool writes and return paginated fixture receipts.
+- FakeTools.__init__: Initialize empty test record lists and captured writes.
+- FakeTools.call: Return sliced list receipts or capture a write with its idempotency key.
+- model: Return deterministic news or empty-event-amount JSON according to the extraction prompt.
+- WorldInsightsTests: Test collector contracts with mocked HTTP, model, geocoding and tool boundaries; no external services are verified.
+- WorldInsightsTests.test_response_limit_rejects_stream_before_full_download: Verify response limit rejects stream before full download.
+- WorldInsightsTests.test_response_limit_rejects_stream_before_full_download.StreamingResponse: Yield bounded chunks then fail if the reader consumes past its byte limit.
+- WorldInsightsTests.test_response_limit_rejects_stream_before_full_download.StreamingResponse.iter_content: Yield two fixture chunks and raise if iteration continues.
+- WorldInsightsTests.test_existing_urls_reads_all_pages_including_archived: Verify existing urls reads all pages including archived.
+- WorldInsightsTests.test_publish_news_and_map_event_then_skip_existing_sources: Verify publish news and map event then skip existing sources.
+- WorldInsightsTests.test_reject_unverified_geography_dates_and_urls: Verify reject unverified geography dates and urls.
+- WorldInsightsTests.test_source_backed_sales_signal_and_amount_are_submitted: Verify source backed sales signal and amount are submitted.
+- WorldInsightsTests.test_source_backed_sales_signal_and_amount_are_submitted.signal_model: Add evidence-backed company and procurement fields to the news fixture.
+- WorldInsightsTests.test_source_backed_sales_signal_and_amount_are_submitted.unsupported_amount: Change only the amount to contradict the quoted procurement budget.
+- WorldInsightsTests.test_source_backed_sales_signal_and_amount_are_submitted.malformed_signal: Return malformed company signal fields to exercise rejection.
+- WorldInsightsTests.test_dated_feed_excerpt_survives_article_redirect: Verify dated feed excerpt survives article redirect.
+- WorldInsightsTests.test_date_only_exhibition_is_marked_as_scheduled_date_without_claimed_clock_time: Verify date only exhibition is marked as scheduled date without claimed clock time.
+- WorldInsightsTests.test_one_source_failure_does_not_fail_another_empty_source: Verify one source failure does not fail another empty source.
+- WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved: Verify rejected write is visible and exits nonzero when nothing was saved.
+- WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved.RejectingTools: Model an explicit tool-write rejection with no successful receipt.
+- WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved.RejectingTools.call: Return a rejected write receipt while retaining fixture list behavior.
+Variable index:
+- NOW: Fixed aware test clock.
+- NEWS_URL: Public-shaped fixture news URL.
+- EVENT_URL: Public-shaped fixture exhibition URL.
+"""
 
 import json
 import tempfile
@@ -26,11 +55,24 @@ NEWS_URL = "https://example.org/news/inspection"
 EVENT_URL = "https://events.example.org/semiconductor-expo"
 
 
+# Function: Record isolated tool writes and return paginated fixture receipts.
+# Logic: Record isolated tool writes and return paginated fixture receipts.
+# Constraints: Network and model behavior are mocked; passing tests do not verify live services.
 class FakeTools:
+    # Function: Initialize empty test record lists and captured writes.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Fixture state, iterator or protocol response described above.
+    # Logic: Initialize empty test record lists and captured writes.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def __init__(self):
         self.records = {"world_news.list": [], "world_events.list": []}
         self.writes = []
 
+    # Function: Return sliced list receipts or capture a write with its idempotency key.
+    # Inputs: `name`, `arguments`, `idempotency_key` are fixture protocol arguments.
+    # Outputs: Fixture state, iterator or protocol response described above.
+    # Logic: Return sliced list receipts or capture a write with its idempotency key.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def call(self, name, arguments, idempotency_key=None):
         if name.endswith(".list"):
             rows = self.records[name]
@@ -41,8 +83,15 @@ class FakeTools:
         return {"status": "completed", "data": {"id": "saved"}}
 
 
+# Function: Return deterministic news or empty-event-amount JSON according to the extraction prompt.
+# Inputs: `_system`, `_user`, `max_tokens` are fixture protocol arguments.
+# Outputs: Fixture state, iterator or protocol response described above.
+# Logic: Return deterministic news or empty-event-amount JSON according to the extraction prompt.
+# Constraints: Network and model behavior are mocked; passing tests do not verify live services.
 def model(_system, _user, *, max_tokens):
     assert max_tokens > 0
+    if _system.startswith("Extract one amount"):
+        return json.dumps({"amount": None, "currency": "", "amount_type": "", "amount_scope": "", "amount_qualifier": "", "evidence": "", "amount_evidence": ""})
     return json.dumps({
         "relevant": True, "category": "industry", "industry": "semiconductor equipment",
         "country": "US", "country_evidence": "United States",
@@ -51,9 +100,25 @@ def model(_system, _user, *, max_tokens):
     })
 
 
+# Function: Test collector contracts with mocked HTTP, model, geocoding and tool boundaries; no external services are verified.
+# Logic: Test collector contracts with mocked HTTP, model, geocoding and tool boundaries; no external services are verified.
+# Constraints: Network and model behavior are mocked; passing tests do not verify live services.
 class WorldInsightsTests(unittest.TestCase):
+    # Function: Verify response limit rejects stream before full download.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify response limit rejects stream before full download.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_response_limit_rejects_stream_before_full_download(self):
+        # Function: Yield bounded chunks then fail if the reader consumes past its byte limit.
+        # Logic: Yield bounded chunks then fail if the reader consumes past its byte limit.
+        # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
         class StreamingResponse:
+            # Function: Yield two fixture chunks and raise if iteration continues.
+            # Inputs: `_size` are fixture protocol arguments.
+            # Outputs: Fixture state, iterator or protocol response described above.
+            # Logic: Yield two fixture chunks and raise if iteration continues.
+            # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
             def iter_content(self, _size):
                 yield b"a" * 64
                 yield b"b" * 64
@@ -62,6 +127,11 @@ class WorldInsightsTests(unittest.TestCase):
         with self.assertRaises(InsightError):
             _read_limited(StreamingResponse(), 100)
 
+    # Function: Verify existing urls reads all pages including archived.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify existing urls reads all pages including archived.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_existing_urls_reads_all_pages_including_archived(self):
         tools = FakeTools()
         tools.records["world_news.list"] = [
@@ -71,6 +141,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(len(urls), 101)
         self.assertIn("https://example.org/news/100", urls)
 
+    # Function: Verify publish news and map event then skip existing sources.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify publish news and map event then skip existing sources.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_publish_news_and_map_event_then_skip_existing_sources(self):
         tools = FakeTools()
         news = Candidate("news", "semiconductor equipment", "United States inspection technology",
@@ -115,6 +190,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual((result["news"], result["events"]), (0, 0))
         fetch.assert_not_called()
 
+    # Function: Verify reject unverified geography dates and urls.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify reject unverified geography dates and urls.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_reject_unverified_geography_dates_and_urls(self):
         for url in ("http://example.org", "https://localhost/a", "https://127.0.0.1/a",
                     "https://user:token@example.org/a", "https://example.org:invalid/a"):
@@ -132,6 +212,11 @@ class WorldInsightsTests(unittest.TestCase):
                          NEWS_URL, "", NOW)
         self.assertIsNone(summarize_news(news, "Short", model))
 
+    # Function: Verify source backed sales signal and amount are submitted.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify source backed sales signal and amount are submitted.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_source_backed_sales_signal_and_amount_are_submitted(self):
         tools = FakeTools()
         candidate = Candidate("news", "optical inspection", "启明光学新建检测基地",
@@ -139,6 +224,11 @@ class WorldInsightsTests(unittest.TestCase):
         excerpt = ("启明光学计划在 2027 年新建检测基地，总投资 2 亿元，"
                    "其中设备采购预算 5000 万元，预计 2027 年投产。")
 
+        # Function: Add evidence-backed company and procurement fields to the news fixture.
+        # Inputs: `system`, `user`, `max_tokens` are fixture protocol arguments.
+        # Outputs: Fixture state, iterator or protocol response described above.
+        # Logic: Add evidence-backed company and procurement fields to the news fixture.
+        # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
         def signal_model(system, user, *, max_tokens):
             parsed = json.loads(model(system, user, max_tokens=max_tokens))
             parsed.update(country="", country_evidence="", company_name="启明光学",
@@ -165,6 +255,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(data["currency"], "CNY")
         self.assertEqual(data["amount_scope"], "equipment_procurement")
 
+        # Function: Change only the amount to contradict the quoted procurement budget.
+        # Inputs: `system`, `user`, `max_tokens` are fixture protocol arguments.
+        # Outputs: Fixture state, iterator or protocol response described above.
+        # Logic: Change only the amount to contradict the quoted procurement budget.
+        # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
         def unsupported_amount(system, user, *, max_tokens):
             parsed = json.loads(signal_model(system, user, max_tokens=max_tokens))
             parsed["amount"] = "200000000"
@@ -174,6 +269,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertIsNone(unsupported["amount"])
         self.assertEqual(unsupported["amount_evidence"], "")
 
+        # Function: Return malformed company signal fields to exercise rejection.
+        # Inputs: `system`, `user`, `max_tokens` are fixture protocol arguments.
+        # Outputs: Fixture state, iterator or protocol response described above.
+        # Logic: Return malformed company signal fields to exercise rejection.
+        # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
         def malformed_signal(system, user, *, max_tokens):
             parsed = json.loads(signal_model(system, user, max_tokens=max_tokens))
             parsed["signal_type"] = ["new_factory"]
@@ -183,6 +283,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(preserved_news["company_name"], "")
         self.assertEqual(preserved_news["title"], candidate.title)
 
+    # Function: Verify dated feed excerpt survives article redirect.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify dated feed excerpt survives article redirect.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_dated_feed_excerpt_survives_article_redirect(self):
         tools = FakeTools()
         candidate = Candidate("news", "equipment", "United States inspection technology",
@@ -196,6 +301,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(result["news"], 1)
         self.assertEqual(result["item_errors"], 0)
 
+    # Function: Verify date only exhibition is marked as scheduled date without claimed clock time.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify date only exhibition is marked as scheduled date without claimed clock time.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_date_only_exhibition_is_marked_as_scheduled_date_without_claimed_clock_time(self):
         candidate = Candidate("event", "semiconductors", "NEPCON ASIA 2026", EVENT_URL,
                               "Electronics manufacturing exhibition in Shenzhen, China.")
@@ -209,6 +319,11 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertIn("The source provides a date only", payload["description"])
         self.assertEqual(payload["starts_at"], "2026-10-27T12:00:00+00:00")
 
+    # Function: Verify one source failure does not fail another empty source.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify one source failure does not fail another empty source.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_one_source_failure_does_not_fail_another_empty_source(self):
         sources = {"feeds": [{"kind": "news", "industry": "equipment", "url": NEWS_URL}],
                    "searches": [{"kind": "news", "industry": "equipment", "query": "equipment"}]}
@@ -219,8 +334,21 @@ class WorldInsightsTests(unittest.TestCase):
         self.assertEqual(result["source_errors"], 1)
         self.assertEqual((result["news"], result["events"]), (0, 0))
 
+    # Function: Verify rejected write is visible and exits nonzero when nothing was saved.
+    # Inputs: Isolated fixture state; no production credentials or data.
+    # Outputs: Assertions raise on a contract mismatch; no return value.
+    # Logic: Verify rejected write is visible and exits nonzero when nothing was saved.
+    # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
     def test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved(self):
+        # Function: Model an explicit tool-write rejection with no successful receipt.
+        # Logic: Model an explicit tool-write rejection with no successful receipt.
+        # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
         class RejectingTools(FakeTools):
+            # Function: Return a rejected write receipt while retaining fixture list behavior.
+            # Inputs: `name`, `arguments`, `idempotency_key` are fixture protocol arguments.
+            # Outputs: Fixture state, iterator or protocol response described above.
+            # Logic: Return a rejected write receipt while retaining fixture list behavior.
+            # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
             def call(self, name, arguments, idempotency_key=None):
                 if name == "world_news.create":
                     raise InsightError("unsupported fields")

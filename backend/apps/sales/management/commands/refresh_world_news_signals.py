@@ -1,5 +1,5 @@
 """Responsibility: Explicitly re-extract public sales leads for selected historical news.
-Implementation: Explicitly choose original-page extraction or existing Agent dry-run imports. Preview by default; only --apply saves thirteen fields through the versioned service.
+Implementation: Explicitly choose original-page extraction or existing Agent dry-run imports. Preview by default; only --apply saves fourteen fields through the versioned service.
 Relationships: Use world_insights source/model logic, WorldNewsSerializer, and save_record; preserve collection deduplication and do not write CRM or exhibition records.
 Directory:
 - refresh_one: Extract and validate one selected news record, optionally saving it.
@@ -8,7 +8,7 @@ Directory:
 - Command.add_arguments: Define record IDs and the application switch.
 - Command.handle: Precheck all targets, extract once, and report each result.
 Variable index:
-- SIGNAL_FIELDS: The only thirteen public lead fields allowed for writeback.
+- SIGNAL_FIELDS: The only fourteen public lead fields allowed for writeback.
 - logger: Log target, stage, and error type without raw model responses or credentials.
 - Command.help: Command purpose and write constraints.
 """
@@ -25,14 +25,14 @@ from apps.sales.models import WorldNews
 from apps.sales.serializers import WorldNewsSerializer
 from apps.sales.services import save_record
 
-SIGNAL_FIELDS = ("company_name", "signal_type", "project_name", "demand_description", "potential_sales_need", "opportunity_reason", "time_window", "evidence", "amount", "currency", "amount_type", "amount_scope", "amount_evidence")
+SIGNAL_FIELDS = ("company_name", "signal_type", "project_name", "demand_description", "potential_sales_need", "opportunity_reason", "time_window", "evidence", "amount", "currency", "amount_type", "amount_scope", "amount_evidence", "amount_qualifier")
 logger = logging.getLogger("salesmate.news_refresh")
 
 
 # Function: Use the existing Agent to re-extract selected news and optionally write back leads.
 # Inputs: `record`: unarchived Agent news snapshot; `apply`: whether to save; `payload`: explicitly imported Agent news payload or None.
 # Outputs: Execution results containing public summaries only; callers report source, model, validation, or version-conflict exceptions.
-# Logic: Without an external payload, read and extract the original page; with a payload, verify source equality first. Never use the old summary as source text. Validate thirteen fields and update against the old revision only if changed.
+# Logic: Without an external payload, read and extract the original page; with a payload, verify source equality first. Never use the old summary as source text. Validate fourteen fields and update against the old revision only if changed.
 # Constraints: Preserve title, body, publication time, and source; do not generate CRM. Original-page failures never switch automatically to imports, retry, or fall back to old summaries.
 def refresh_one(record, apply, payload=None):
     from agent import world_insights
@@ -97,7 +97,7 @@ class Command(BaseCommand):
     # Constraints: Reject arbitrary source URLs, model overrides, or an all switch that expands scope.
     def add_arguments(self, parser):
         parser.add_argument("news_ids", nargs="+", type=uuid.UUID)
-        parser.add_argument("--apply", action="store_true", help="保存经过证据校验的十三个线索字段。")
+        parser.add_argument("--apply", action="store_true", help="保存经过证据校验的十四个线索字段。")
         parser.add_argument("--agent-preview", type=Path, help="使用原 Agent --dry-run 的 JSON 结果，不重新调用模型。")
 
     # Function: Execute one news refresh within an explicit scope.

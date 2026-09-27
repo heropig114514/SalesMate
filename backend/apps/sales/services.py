@@ -1,5 +1,5 @@
 """Responsibility: Execute authorized sales transactions, amount validation, state transitions, and Agent snapshot synchronization.
-Implementation: Public news may omit currency when amount is unknown; retain other transaction currency/amount/state constraints. The database resolves cross-account shared-source uniqueness. Serialize writes by business owner, propagate opportunity/seller scoring dependencies, and commit audits, versions, and tasks atomically.
+Implementation: Public news/events may omit currency when amount is unknown; retain other transaction currency/amount/state constraints. The database resolves cross-account shared-source uniqueness. Serialize writes by business owner, propagate opportunity/seller scoring dependencies, and commit audits, versions, and tasks atomically.
 Internationalization: translate parameterized field errors when raised using the current language; preserve field names, validation conditions, states, and write behavior.
 Relationships: views serializes first, permissions controls scope, and crm.jobs retains existing analysis-trigger semantics.
 Directory:
@@ -148,7 +148,7 @@ def company_of(instance):
 # Function: Validate cross-entity relations, amounts, drafts, and assignee constraints.
 # Inputs: `instance`: model to save; `actor`: user; `changed`: current field set; `creating`: whether this is creation.
 # Outputs: None; violated constraints raise ValidationError/PermissionDenied, with parameterized amount errors in the current language.
-# Logic: News may omit currency only when amount=null and currency is empty; transaction currency requirements remain unchanged. Experiment mode skips owner/manager checks and permits cross-account products, but retains frozen-document, same-currency, quantity/discount, and company-relation constraints. New conversations still have no preselected company.
+# Logic: News/events may omit currency only when amount=null and currency is empty; transaction currency requirements remain unchanged. Experiment mode skips owner/manager checks and permits cross-account products, but retains frozen-document, same-currency, quantity/discount, and company-relation constraints. New conversations still have no preselected company.
 # Constraints: Call only within authorized transactions; no automatic repricing, currency conversion, or transaction inference.
 def validate_record(instance, actor, changed, creating):
     if creating and isinstance(instance, models.Conversation) and instance.company_id is not None:
@@ -221,7 +221,7 @@ def validate_record(instance, actor, changed, creating):
             raise ValidationError("归组键必须是 domain:完整域名 或 contact:邮箱。")
         instance.group_key = key
     if hasattr(instance, "currency") and not (
-        isinstance(instance, models.WorldNews) and instance.amount is None and instance.currency == ""
+        isinstance(instance, (models.WorldNews, models.WorldEvent)) and instance.amount is None and instance.currency == ""
     ):
         if not re.fullmatch(r"[A-Z]{3}", instance.currency):
             raise ValidationError("currency 必须使用大写三字母币种代码。")

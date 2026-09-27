@@ -1,5 +1,5 @@
 /** Responsibility: Verify actual local global-insight pages/APIs and opportunity-priority page retirement.
- * Implementation: Use explicitly imported synthetic database batches; test event currency selection, filters, details, ICS, templates, mobile layout, and request failures; require no priority link and a 404 for the retired page.
+ * Implementation: Use explicitly imported synthetic database batches; test source amounts, filters, details, ICS, templates, mobile layout, and request failures; require no priority link and a 404 for the retired page.
  * Relationships: Running local Django; no external news, Agent, or sending calls.
  * Directory: main.
  * Variable index: BASE is the explicit local test address; OUTPUT is the screenshot directory.
@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const BASE = process.env.SALESMATE_TEST_URL;
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
-/** Function: Run actual browser checks. Inputs: Explicit local URL and Playwright/browser environment paths. Outputs: Summary/screenshots. Logic: Read synthetic data with an experiment identity, verify default event currencies/error states, and confirm the removed priority entry and route. Constraints: Database reads only; no sending or third-party requests. */
+/** Function: Run actual browser checks. Inputs: Explicit local URL and Playwright/browser environment paths. Outputs: Summary/screenshots. Logic: Read synthetic data with an experiment identity, verify source amount absence/error states, and confirm the removed priority entry and route. Constraints: Database reads only; no sending or third-party requests. */
 async function main() {
   if (!BASE || new URL(BASE).hostname !== '127.0.0.1') throw new Error('Set an explicit loopback SALESMATE_TEST_URL.');
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });
@@ -27,7 +27,7 @@ async function main() {
     assert.ok(await page.locator('.event-card').count() >= 8);
     assert.equal(await page.locator('.industry-news-card').count(), 4);
     assert.match(await page.locator('#world-data-status').innerText(), /数据库记录/);
-    assert.equal(await page.inputValue('#map-currency'), 'SGD');
+    assert.equal(await page.locator('#map-currency').count(), 0);
     await page.locator('[data-country=SG]').click();
     assert.equal(await page.locator('.event-card').count(), 2);
     assert.equal(await page.locator('.event-pin').count(), 1);

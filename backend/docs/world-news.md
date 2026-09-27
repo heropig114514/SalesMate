@@ -2,20 +2,20 @@
 
 Entry point: `/world/`; news details: `/world/news/<UUID>/`. Pages read the backend database. Original static demonstration sources and unconnected browser push modules were removed. Fictional data requires explicit `seed_development_support` imports; pages never create it automatically or fall back to demonstrations on API failure. See [integration support](development-support.md).
 
-Public news adds one structured set of company, demand, project, amount, and evidence fields; see the [news lead contract](world-news-signals.md). Source amounts retain their own meaning and display separately from internal opportunity-map amounts below.
+Public news adds one structured set of company, demand, project, amount, and evidence fields; see the [news lead contract](world-news-signals.md). News and events use the same source monetary fields; CRM amounts never populate this interface.
 
 ## Data and interaction
 
-- Events explicitly load all pages from `/api/v1/sales/world/`. News loads at most 4 items from the last 14 days through `records/world-news/`; details query IDs directly.
+- Events explicitly load all pages from `/api/v1/sales/world/`. News loads all pages of items from the last 14 days through `records/world-news/`; details query IDs directly.
 - Explicit company-country fields determine map highlights. Unrecognized countries count as missing, never inferred from email/addresses.
 - Manual, Agent, and synthetic events/news are shared facts. In production and under `WORKSPACE_OWNER_ONLY=true`, authenticated employees may read them while anonymous access is rejected. Only owners may update/archive; team administrators gain no implicit rights. Open experiment mode retains existing rules.
-- Events link real opportunities through `opportunity_ids`; lists, details, maps, and Tools return only viewer-authorized IDs. Company names/amounts come from visible unarchived companies' unarchived active opportunities, deduplicated by UUID and summed per currency. Unknown amounts remain unknown. Currency switching performs no conversion.
+- `opportunity_ids` remains permission-filtered context only. Event monetary fields are source-disclosed amounts, independent of linked CRM opportunities.
 - Event titles, description, onsite, and suggested_actions are public, not private notes. Review historical manually entered internal-company information before production sharing. The backend neither infers sensitivity from keywords nor rewrites source text.
-- Currency choices include only currencies actually present in event `map_amounts`, excluding unrelated opportunities. Bubble area uses the selected currency; labels retain all known amounts at that location and identify absent selected currencies, e.g. `No USD amount`. Only entirely unknown amounts show `Amount unknown`. Other currencies never determine selected-currency area or convert automatically.
-- Events sharing country/coordinates share bubbles. The backend unions linked opportunities across all matching events at that location to avoid double counting; event details show that event's linked amount. Frontend type/time filters hide events, while map amounts remain the location snapshot's linked open totals.
-- Positive bubble areas scale with displayed amounts, maximum diameter 62 pixels; maxima adjust to filtered results. Centers remain at event coordinates, independent of city labels. Center dots (counts for multiple events) identify locations. Selection, hover, or keyboard focus displays known city totals per currency without enlarging area. Known zero retains its zero-value location marker. Missing selected-currency amounts use fixed 18px translucent white bubbles (22% ordinary, 32% selected), retaining click/hover/keyboard interaction; this size encodes no amount. Other known currencies and missing-currency notices remain visible.
+- Each record retains its own decimal-string amount, currency, type, scope, quote and qualifier (exact/up_to/at_least/more_than/approximate). Missing amounts are null with empty metadata; known zero remains zero. No currency switch or conversion is applied.
+- Events sharing country/coordinates share a location marker. The selected record supplies its label; tooltips list each event and its own amount without summation.
+- All location markers have an 18px diameter; circle size carries no financial meaning. Projection centers, mouse/keyboard selection and translucent missing-amount styling remain supported.
 - Known-amount bubbles use 20% ordinary and 30% selected fill opacity, with clear borders/center markers to preserve basemap/neighbor visibility.
-- Type, 30-day/current-quarter, and country filters link event lists/region counts. Global/Asia-Pacific/Europe views change map center/zoom. URL `type/time/country/view/currency/event` stores selections.
+- Type, 30-day/current-quarter, and country filters link event lists/region counts. Global/Asia-Pacific/Europe views change map center/zoom. URL `type/time/country/view/event` stores selections.
 - Provenance labels identify `synthetic` placeholders. Stored news retains original publication times; expired data displays empty without date refresh.
 - Itinerary export uses actual UTC ICS times for `datetime` and `VALUE=DATE` all-day ICS for `date`. UI `starts_on/ends_on` includes the final day; ICS excludes its end date. An October 27–29 source displays through the 29th with DTEND on the 30th, without UTC-noon placeholder times. Text remains escaped/folded and fictional titles include Synthetic; no external calendar connection.
 - Invitation generation opens editable templates signed from the selected identity's profile, with no automatic recipients, model calls, or sending.
@@ -31,7 +31,7 @@ Public news adds one structured set of company, demand, project, amount, and evi
 | `assets/world-dates.js` | Date precision, filter boundaries, all-day ICS properties |
 | `assets/world-map.js` | Real borders, company-country highlights, amount bubbles, views |
 | `assets/world-countries.geojson`, `assets/vendor/` | Local basemap, Leaflet, licenses |
-| `apps/sales/world.py` | Authorized event queries, opportunity deduplication, currency aggregation |
+| `apps/sales/world.py` | Authorized events with source monetary fields and country counts |
 | `apps/sales/insights.py` | Basic event/news relation, source, and time validation |
 | `apps/sales/insight_dates.py` | Compatibility with explicit existing Agent date placeholders, without Agent changes |
 
@@ -53,6 +53,6 @@ See [collection operations](world-insights-operations.md) for scheduled deployme
 
 `python backend/manage.py test tests.integration.test_shared_insights tests.integration.test_support_tools tests.integration.test_development_support --noinput` uses isolated PostgreSQL for two-account sharing, relation projections across entry points, write isolation, anonymous/Tool restrictions, date compatibility, historical migrations, concurrent uniqueness, and 409 responses. It neither migrates development databases nor deploys collection tasks.
 
-`node backend/tools/browser_world_map.cjs` uses the same Playwright/Chrome environment with an isolated static server to check actual Leaflet projection/DOM centers, 4:1 amount-area ratios, colocated aggregation, translucent fills, zero/unknown amounts, mouse/keyboard interaction, views, zoom, and mobile sizes. Mocked full-page APIs additionally cover currencies, URLs/refresh, empty events, and—in Pacific/Kiritimati and America/Los_Angeles—inclusive dates, downloaded all-day/ordinary-time ICS, invitation dates, and mobile layout. Browser fixtures do not verify production databases or external Agent integration.
+`node backend/tools/browser_world_map.cjs` uses the same Playwright/Chrome environment with an isolated static server to check actual Leaflet projection/DOM centers, fixed-size markers, colocated event labels, translucent fills, zero/unknown amounts, mouse/keyboard interaction, views, zoom, and mobile sizes. Mocked full-page APIs additionally cover source currencies, URLs/refresh, empty events, and—in Pacific/Kiritimati and America/Los_Angeles—inclusive dates, downloaded all-day/ordinary-time ICS, invitation dates, and mobile layout. Browser fixtures do not verify production databases or external Agent integration.
 
 In `backend/`, run `python tools/check_docs.py` and `python tools/check_doc_changes.py --base HEAD --fail-on-review`. Manually review JS/CSS/HTML top-level descriptions/directories.

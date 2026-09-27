@@ -1,5 +1,5 @@
 """Responsibility: Define relational schemas for sales business, team sharing, and assistant operations.
-Implementation: News stores one set of public leads, exact amounts, and evidence without automatic CRM links. Events/news share facts while retaining owner write attribution. Agent sources deduplicate by URL, plus event start time. Events explicitly store date precision; other records use UUIDs, revisions, and archival state.
+Implementation: News and events store source amounts and qualifiers independently of CRM links. Events/news share facts while retaining owner write attribution. Agent sources deduplicate by URL, plus event start time. Events explicitly store date precision; other records use UUIDs, revisions, and archival state.
 Relationships: sales.services handles transactions and validation; CRM retains private email and Agent analysis contracts.
 Directory:
 - WorldNews: Industry news facts, one set of public sales leads, source amounts, and evidence.
@@ -49,7 +49,15 @@ Variable index:
 - NEWS_SIGNAL_TYPES: Public news event types.
 - NEWS_CURRENCIES: Currencies supported by the collaboration contract.
 - NEWS_AMOUNT_TYPES: Business meaning of source amounts.
+- INSIGHT_AMOUNT_QUALIFIERS: Distinguish exact values, upper/lower bounds, and approximations.
 - NEWS_AMOUNT_SCOPES: Coverage of source amounts.
+- WorldEvent.evidence: Public source evidence; never derived from CRM.
+- WorldEvent.amount: Public source amount; never derived from CRM.
+- WorldEvent.currency: Public source currency; never derived from CRM.
+- WorldEvent.amount_type: Public source amount_type; never derived from CRM.
+- WorldEvent.amount_scope: Public source amount_scope; never derived from CRM.
+- WorldEvent.amount_evidence: Public source amount_evidence; never derived from CRM.
+- WorldEvent.amount_qualifier: Public source amount_qualifier; never derived from CRM.
 - WorldEvent.time_precision: datetime denotes an exact instant; date denotes UTC date boundaries with an exclusive end date.
 - WorldEvent.Meta.constraints: Unique nonempty Agent source URL/start-time pairs, including archived records.
 - WorldNews.Meta.constraints: Unique Agent sources; amounts are nonnegative and jointly present or absent with currency, type, scope, and evidence.
@@ -71,6 +79,7 @@ Variable index:
 - WorldNews.opportunity_reason: Explanation linking potential demand and products, not confirmed procurement.
 - WorldNews.time_window: Project/procurement milestones supplied by the source.
 - WorldNews.evidence: Original excerpt from the public source.
+- WorldNews.amount_qualifier: Source value qualifier; blank for unclassified legacy records.
 - WorldNews.amount: Source amount with up to 24 integer and 6 fractional digits; null when unknown.
 - WorldNews.currency: Source currency without conversion.
 - WorldNews.amount_type: Amount meaning, such as investment, budget, tender, or contract.
@@ -232,7 +241,8 @@ from django.db import models
 
 NEWS_SIGNAL_TYPES = [(value, value) for value in ("expansion", "new_factory", "tender", "equipment_upgrade", "procurement", "other")]
 NEWS_CURRENCIES = [(value, value) for value in ("CNY", "USD", "EUR", "GBP", "JPY", "KRW", "SGD", "TWD", "HKD", "INR", "CAD", "AUD", "CHF")]
-NEWS_AMOUNT_TYPES = [(value, value) for value in ("total_investment", "procurement_budget", "tender_amount", "contract_amount", "other")]
+NEWS_AMOUNT_TYPES = [(value, value) for value in ("total_investment", "procurement_budget", "tender_amount", "contract_amount", "grant", "registration_fee", "exhibition_fee", "other")]
+INSIGHT_AMOUNT_QUALIFIERS = [(value, value) for value in ("exact", "up_to", "at_least", "more_than", "approximate")]
 NEWS_AMOUNT_SCOPES = [(value, value) for value in ("whole_project", "equipment_procurement", "other")]
 
 
@@ -739,10 +749,17 @@ class Connection(Record):
         ]
 
 
-# Function: Store event facts and explicit opportunity links.
+# Function: Store event facts, source amounts, and optional private opportunity links.
 # Logic: Retain creator, public event facts, and date precision; keep one Agent record per URL/start time.
 # Constraints: Filter linked opportunities by viewer; date-only end boundaries exclude the day after the final included date and do not denote an actual clock time.
 class WorldEvent(Record):
+    evidence = models.CharField(max_length=600, blank=True, default="")
+    amount = models.DecimalField(max_digits=30, decimal_places=6, null=True, blank=True)
+    currency = models.CharField(max_length=3, choices=NEWS_CURRENCIES, blank=True, default="")
+    amount_type = models.CharField(max_length=30, choices=NEWS_AMOUNT_TYPES, blank=True, default="")
+    amount_scope = models.CharField(max_length=30, choices=NEWS_AMOUNT_SCOPES, blank=True, default="")
+    amount_evidence = models.CharField(max_length=400, blank=True, default="")
+    amount_qualifier = models.CharField(max_length=16, choices=INSIGHT_AMOUNT_QUALIFIERS, blank=True, default="")
     time_precision = models.CharField(max_length=8, choices=[("datetime", "确切时间"), ("date", "仅日期")], default="datetime")
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
@@ -764,13 +781,16 @@ class WorldEvent(Record):
     # Logic: Constrain URL/start time only for Agent records with sources; archival does not release uniqueness.
     # Constraints: Allow different editions at the same URL; manual records are exempt from collection deduplication.
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start")]
+        constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start"),
+            models.CheckConstraint(condition=(models.Q(amount__isnull=True, currency="", amount_type="", amount_scope="", amount_evidence="", amount_qualifier="") | (models.Q(amount__isnull=False, amount__gte=0, currency__in=[value for value, _ in NEWS_CURRENCIES], amount_type__in=[value for value, _ in NEWS_AMOUNT_TYPES], amount_scope__in=[value for value, _ in NEWS_AMOUNT_SCOPES]) & ~models.Q(amount_evidence=""))), name="world_event_amount_consistent")]
+
 
 
 # Function: Store industry news, one set of public sales leads, source amounts, and evidence.
 # Logic: New text fields on old records remain empty and amounts null; preserve monetary meaning separately without adding amounts to CRM opportunities.
 # Constraints: Archived records still block recollection; do not create/link private records by company name, fetch external sites, or generate inferences.
 class WorldNews(Record):
+    amount_qualifier = models.CharField(max_length=16, choices=INSIGHT_AMOUNT_QUALIFIERS, blank=True, default="")
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)
     category = models.CharField(max_length=20, choices=[("regulation", "监管"), ("industry", "产业"), ("competition", "竞争"), ("price", "价格")])

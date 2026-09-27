@@ -1,5 +1,5 @@
 /* Responsibility: Lay out global-insight event lists, amount maps, details, and industry news.
- * Implementation: Events without selected-currency amounts use small translucent white bubbles, remaining white when selected. News leads separate facts, source-amount definitions, and inferences; evidence/long amounts wrap. Shared theme, three desktop columns, and stacked narrow layout. Bubble fill opacity is 20% normally and 30% selected; centers stay at geographic anchors. Labels separately show known currency amounts and missing selected-currency information.
+ * Implementation: Events without source amounts use small translucent white bubbles, remaining white when selected. News leads separate facts, source-amount definitions, and inferences; evidence/long amounts wrap. Shared theme, three desktop columns, and stacked narrow layout. Bubble fill opacity is 20% normally and 30% selected; centers stay at geographic anchors. Labels show each event's source amount and bound without currency conversion.
  * Relationships: Shared language/API versions follow the interface; world.html, world-news.js, and world-map.js reuse navigation and local Leaflet resources.
  * Directory: No functions or classes; sections cover header, filters, event column, map, details, news, and responsive layout.
  * Variable index: --bubble-size is the individual diameter derived from square-root amount scaling; other values use shared theme variables. */
@@ -350,16 +350,9 @@
   font-variant-numeric: tabular-nums;
   white-space: pre;
 }
-.event-pin-currency-note {
-  display: none;
-  color: var(--muted);
-}
 .event-pin:hover .event-pin-amount,
 .event-pin:focus-visible .event-pin-amount,
-.event-pin.selected .event-pin-amount,
-.event-pin:hover .event-pin-currency-note,
-.event-pin:focus-visible .event-pin-currency-note,
-.event-pin.selected .event-pin-currency-note {
+.event-pin.selected .event-pin-amount {
   display: block;
 }
 .event-pin:focus-visible {

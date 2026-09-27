@@ -1,6 +1,6 @@
-"""Responsibility: Validate consistency between one exact public-news amount and its evidence.
+"""Responsibility: Validate consistency between one exact public news/event amount and its evidence.
 Implementation: Use nonnegative decimal strings; merge existing/update values to validate monetary metadata and source-excerpt inclusion without generating leads.
-Relationships: WorldNewsSerializer uses the amount field and validation; no database-model, CRM, or Agent imports.
+Relationships: WorldNewsSerializer and WorldEventSerializer use the amount field and validation; no database-model, CRM, or Agent imports.
 Directory:
 - NewsAmountField: Accept only contract-defined amount strings.
 - NewsAmountField.to_internal_value: Reject floating-point values, exponential notation, and negative values.
@@ -36,13 +36,15 @@ class NewsAmountField(serializers.DecimalField):
 # Function: Validate public-news monetary and evidence constraints.
 # Inputs: `serializer`: optional existing instance; `attrs`: create/partial-update data after field validation.
 # Outputs: Original attrs; contradictory combinations raise field-level ValidationError.
-# Logic: Merge existing records and patches. With an amount, all four metadata fields require nonblank content; without one, all must be empty. Amount evidence must appear verbatim in evidence.
+# Logic: Merge existing records and patches. With an amount, all four metadata fields require nonblank content; without one, monetary metadata and qualifier must be empty. Qualifiers preserve bounds and approximations; blank remains valid for legacy amounts. Amount evidence must appear verbatim in evidence.
 # Constraints: No source access, missing-information inference, or CRM links; excerpt inclusion proves internal consistency only, not external news authenticity.
 def validate_news_signal(serializer, attrs):
-    names = ("amount", "currency", "amount_type", "amount_scope", "amount_evidence", "evidence")
+    names = ("amount", "currency", "amount_type", "amount_scope", "amount_evidence", "evidence", "amount_qualifier")
     record = {name: attrs.get(name, getattr(serializer.instance, name, None if name == "amount" else "")) for name in names}
     metadata = ("currency", "amount_type", "amount_scope", "amount_evidence")
     errors = {}
+    if record["amount"] is None and record["amount_qualifier"]:
+        errors["amount_qualifier"] = "未提供金额时不得提供金额限定词。"
     for name in metadata:
         if record["amount"] is None and record[name]:
             errors[name] = "amount 为 null 时金额元数据必须为空。"

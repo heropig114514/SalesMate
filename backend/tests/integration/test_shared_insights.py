@@ -135,7 +135,8 @@ class SharedInsightsTests(TestCase):
                 self.assertEqual(tool_world["count"], 2)
                 self.assertNotIn(str(opportunity.pk), str(tool_world))
                 for row in world.data["results"]:
-                    self.assertEqual((row["amounts"], row["map_amounts"], row["customers"]), ({}, {}, []))
+                    self.assertIsNone(row["amount"])
+                    self.assertNotIn("map_amounts", row)
                 self.assertEqual(self.human_b.get("/api/v1/sales/records/opportunities/").data["count"], 0)
         own = self.call(self.tool_a, "world_events.get", {"id": event["id"]})["data"]
         self.assertEqual(own["opportunity_ids"], [str(opportunity.pk)])
@@ -238,7 +239,7 @@ class InsightMigrationTests(TransactionTestCase):
             duplicate.delete()
             duplicate = None
             MigrationExecutor(connection).migrate(current)
-            migrated = models.WorldEvent.objects.get(pk=sample.pk)
+            migrated = MigrationExecutor(connection).loader.project_state(current).apps.get_model("sales", "WorldEvent").objects.get(pk=sample.pk)
             self.assertEqual((migrated.time_precision, migrated.starts_at.hour, migrated.ends_at.day), ("date", 12, 30))
         finally:
             if duplicate is not None:

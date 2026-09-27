@@ -59,7 +59,7 @@ Scores may append history. Select latest results by descending `scored_at`, crea
 
 ## Pages and boundaries
 
-- `/world/` reads events, news, company countries, and opportunity amounts from the database. Same-coordinate amounts deduplicate linked opportunities, display currencies separately, and never fabricate unknown totals. Fictional events are labeled; missing sources may remain placeholders, while existing links still require HTTPS without credentials.
+- `/world/` reads shared events/news and company-country highlights. Source monetary fields supply event/news labels; linked opportunities never supply or aggregate displayed money. Colocated events share fixed-size location markers. Synthetic fixtures stay explicitly labeled and archived records are hidden.
 - The standalone `/priorities/` page and its Global Insights entry were retired on 2026-09-27. The old page URL returns 404; dedicated frontend assets are removed. Opportunity context, signals, score APIs, and stored results remain available for algorithm integration.
 - `/business/#opportunity-signals` and `#opportunity-priorities` maintain records through existing generic forms.
 - News displays at most 4 items from the last 14 days; expired dates are never silently refreshed. Events/news require explicit maintenance; initialization is not background news collection.
