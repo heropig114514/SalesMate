@@ -1,5 +1,5 @@
 """Responsibility: Map the minimal BackendClient workflow protocol to the Django Agent HTTP API.
-Implementation: Maintain identity, ETag, and lease context; chat writes carry a resumable checkpoint and can return approval_required without execution. Email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
+Implementation: Customer creation uses the same checkpointed browser decision as experiment writes. Maintain identity, ETag, and lease context; chat writes carry a resumable checkpoint and can return approval_required without execution. Email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
 Relationships: Gmail/QQ workers share this transport; L2-L4 retain their protocols, parameters, and prompt versions.
 Directory:
 - BackendClient: Declare the minimal L1-L4 backend protocol.
@@ -88,7 +88,7 @@ from urllib.parse import quote, urlencode
 import requests
 
 from agent.skills import load_skill
-from agent.clients.chat_actions import ACTION_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS, validate_action_arguments
+from agent.clients.chat_actions import ACTION_TOOLS, WORKSPACE_WRITE_TOOLS, WORKSPACE_TOOLS, validate_action_arguments
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
@@ -238,7 +238,7 @@ class BackendClient(Protocol):
     # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
-    # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
+    # Function: Read workspace data or suspend customer/experiment writes for explicit browser approval.
     # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` for suspended writes; instance authentication supplies identity.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Declare the protocol only; concrete clients implement transport.
@@ -881,10 +881,10 @@ class DjangoBackendClient:
             raise BackendContractError("Chat request status does not match this request.")
         return document
 
-    # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
+    # Function: Read workspace data or suspend customer/experiment writes for explicit browser approval.
     # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` holding Agent loop state; instance credentials supply identity.
     # Outputs: Completed read receipt or approval_required with a frozen proposal; transport/contract errors propagate.
-    # Logic: Send one request, check request/tool bindings, and distinguish approval suspension from actual completion.
+    # Logic: Require a checkpoint for every workspace write, send once, and verify request/tool bindings without accepting immediate write completion.
     # Constraints: Never approve, retry, or interpret a pending proposal as successful business execution.
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any], *, continuation: Mapping[str, Any] | None = None
@@ -895,10 +895,10 @@ class DjangoBackendClient:
             raise BackendContractError("Chat tools allow registered reads and confirmation proposals, never direct writes or approval.")
         if not isinstance(arguments, Mapping):
             raise BackendContractError("Chat tool arguments must be an object.")
-        if name in EXPERIMENT_WRITE_TOOLS and not isinstance(continuation, Mapping):
+        if name in WORKSPACE_WRITE_TOOLS and not isinstance(continuation, Mapping):
             raise BackendContractError("A chat write requires a continuation checkpoint and browser approval.")
-        if name not in EXPERIMENT_WRITE_TOOLS and continuation is not None:
-            raise BackendContractError("Only browser-approved experiment writes accept a continuation checkpoint.")
+        if name not in WORKSPACE_WRITE_TOOLS and continuation is not None:
+            raise BackendContractError("Only browser-approved workspace writes accept a continuation checkpoint.")
         if name in ACTION_TOOLS:
             try:
                 validate_action_arguments(name, dict(arguments))
@@ -914,13 +914,13 @@ class DjangoBackendClient:
         if document.get("request_id") != request_id or document.get("tool") != name:
             raise BackendContractError("Chat tool response does not match this request or tool.")
         if document.get("status") == "approval_required":
-            if name not in EXPERIMENT_WRITE_TOOLS:
+            if name not in WORKSPACE_WRITE_TOOLS:
                 raise BackendContractError("This tool does not use the suspended-write approval contract.")
             proposal = self._object(document.get("approval"), "Chat approval")
             if proposal.get("request_id") != request_id or proposal.get("tool") != name or proposal.get("status") != "pending" or not proposal.get("id"):
                 raise BackendContractError("Chat approval does not match the pending operation.")
             return document
-        if name in EXPERIMENT_WRITE_TOOLS:
+        if name in WORKSPACE_WRITE_TOOLS:
             raise BackendContractError("A chat write cannot return immediate execution; browser approval is required.")
         if document.get("status") != "completed":
             raise BackendContractError("Chat tool did not confirm completion.")

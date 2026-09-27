@@ -1,11 +1,13 @@
 /**
  * Responsibility: Store the English catalog for Simplified Chinese interface source text.
- * Implementation: Includes independent chat action review/status, experiment approval, Channel previews, onboarding, and password guidance. Exact source keys contain no runtime customer data.
+ * Implementation: Includes customer-only registration approval, separate email review/status, experiment approval, Channel previews, onboarding, and password guidance. Exact source keys contain no runtime customer data.
  * Relationships: Shared language/API resources follow the interface cache version; i18n.js t/h reads this catalog for static data-i18n markers and explicitly marked JavaScript literals.
  * Directory: No functions or classes.
  * Variable index: EN is the read-only map from Chinese source text to English translations.
  */
 export const EN = Object.freeze({
+  "客户名称：": "Customer name:",
+  "本次仅录入客户。邮件会另行展示，确认后才会发送。": "This approval only creates the customer. The email will be shown separately and sent only after confirmation.",
   "确认执行": "Confirm execution",
   "确认截止时间": "Confirmation deadline",
   "待确认，尚未执行": "Awaiting confirmation; not executed",

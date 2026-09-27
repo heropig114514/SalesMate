@@ -1,6 +1,6 @@
 /**
  * Responsibility: Verify the real chat approval dialog, cancellation, and resumption in a browser.
- * Implementation: Serve repository assets and mock only HTTP responses; exercise Session decision payloads, duplicate clicks, conflicts, refresh recovery, escaping, and desktop/mobile layout.
+ * Implementation: Review real customer names separately from synthetic record previews; serve repository assets and mock only HTTP responses; exercise Session decision payloads, duplicate clicks, conflicts, refresh recovery, escaping, and desktop/mobile layout.
  * Relationships: assistant-widget.js, assistant.js, and assistant-widget.css; test_chat_approvals.py separately exercises real PostgreSQL and authentication.
  * Directory: main runs the browser checks; anonymous callbacks serve files and fixture responses.
  * Variable index: FRONTEND locates real assets; OUTPUT stores ignored screenshots; other top-level bindings import test dependencies.
@@ -15,7 +15,7 @@ const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** Function: Run actual DOM interactions against controlled approval states.
  * Inputs: Environment Playwright/browser paths and repository assets. Outputs: Assertions, screenshots, and a pass line.
- * Logic: Pause browser time for polling, allow only localhost, and count every submitted decision.
+ * Logic: Pause polling time, allow only localhost, count decisions, and verify customer creation never renders experimental fields or implies email sending.
  * Constraints: HTTP/model execution is mocked here; no real writes, accounts, or external network calls. */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -120,8 +120,23 @@ async function main() {
     await page.waitForFunction(() => window.chatTest.answers[0].status === 'completed');
     await page.waitForFunction(() => document.getElementById('assistant-history').textContent.includes('操作已完成'));
     assert.equal(await page.locator('#assistant-submit').isEnabled(), true);
+    // Registration has its own frozen-name preview, not the experiment deletion fallback.
+    answer.status = 'awaiting_approval';
+    answer.approval = { id: 'approval-3', tool: 'customers.create', status: 'pending',
+      arguments: { name: 'heropig <img src=x onerror="window.injected=true">' } };
+    await page.evaluate(async () => { window.chatTest.close(); await window.chatTest.open(); });
+    await dialog.waitFor({ state: 'visible' });
+    assert.match(await dialog.textContent(), /heropig/);
+    assert.match(await dialog.textContent(), /本次仅录入客户/);
+    assert.doesNotMatch(await dialog.textContent(), /实验批次|数据表|将删除/);
+    assert.equal(await dialog.locator('img').count(), 0);
+    assert.equal(await page.evaluate(() => window.injected), undefined);
+    assert.deepEqual(decisions, ['approve', 'reject', 'approve']);
+    await dialog.locator('[data-decision="approve"]').click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.deepEqual(decisions, ['approve', 'reject', 'approve', 'approve']);
     assert.deepEqual(errors, []);
-    console.log('Chat approval browser checks passed: review, escaping, conflict, rejection, resume, duplicate clicks, and mobile layout.');
+    console.log('Chat approval browser checks passed: review, escaping, conflict, rejection, resume, duplicate clicks, mobile layout, and separate customer-registration review.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

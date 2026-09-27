@@ -1,14 +1,14 @@
-"""Responsibility: Provide chat requests with read and experiment-maintenance tool discovery, execution, and stable evidence registration.
-Implementation: Employee and request locks protect workspace processing; order/email tools prepare independent proposals, while experiment writes retain checkpointed browser approval, including in laboratory mode.
+"""Responsibility: Discover workspace reads and approved customer/experiment writes with canonical evidence.
+Implementation: Employee and request locks protect processing; order/email tools prepare independent proposals, while customer creation and experiment writes use checkpointed browser approval, including in laboratory mode.
 Relationships: ``tool_views`` exposes Agent HTTP; ``services.save_answer`` attaches citation content only from this request context and ``ToolRead``.
 Directory:
 - processing_request: Authorize and lock a request being processed.
-- catalog_for: Return the request's available read and experiment-maintenance tool catalog.
+- catalog_for: Publish private customer creation and business proposals only to their actual request owner.
 - evidence_for: Project actual business response into complete four-field sources.
 - read_tool: Execute one data operation and register returned evidence.
 - read_business_tool: Register strict business reads and independent proposal receipts.
 Variable index:
-- ALLOWED_TOOLS: Fixed tool set for customer reads and shared experiment reads and maintenance.
+- ALLOWED_TOOLS: Fixed customer read/creation and shared experiment tool set; writes require approval.
 - CONTRACT_VERSION: Tool-integration contract identifier that does not limit answer prompt version.
 - CALL_SCHEMA: Closed JSON Schema for request-bound tool invocation.
 - CATALOG_SCHEMA: UUID and pagination Schema for catalog query.
@@ -29,7 +29,7 @@ from apps.agent_tools.registry import build_registry
 from apps.agent_tools.schemas import PAGE, UUID, object_schema, validate
 from apps.crm.access import InvalidState, plain
 
-from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS, EXPERIMENT_WRITE_TOOLS
+from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS, EXPERIMENT_WRITE_TOOLS, CUSTOMER_WRITE_TOOLS, WORKSPACE_WRITE_TOOLS
 
 from .models import ToolRead
 from .services import lock_owner, request_for, require_workspace
@@ -68,8 +68,8 @@ def processing_request(owner, request_id):
 # Function: Discover tools allowed for this request and their exact parameter Schema.
 # Inputs: Authenticated employee ``owner`` and ``query`` containing request_id and optional integer page and page_size.
 # Outputs: Version, request ID, tools, count, page, and page_size without business data.
-# Logic: Validate request, reuse original catalog, filter twice by fixed allowlist and per-tool expected execution mode, then paginate.
-# Constraints: New confirm tools create only independent proposals; ordinary business writes remain unpublished and experiment approvals remain unchanged.
+# Logic: Filter the registry by fixed names/modes and remove private creation for borrowed laboratory requests; paginate after adding eligible independent proposals.
+# Constraints: Only customer creation joins checkpointed writes; other ordinary business writes remain unpublished and experiment permissions stay unchanged.
 @transaction.atomic
 def catalog_for(owner, query):
     validate(query, CATALOG_SCHEMA)
@@ -77,12 +77,14 @@ def catalog_for(owner, query):
     entries = [
         entry
         for entry in tool_services.catalog(owner)
-        if entry["name"] in ALLOWED_TOOLS and entry["executionMode"] == ("write" if entry["name"] in EXPERIMENT_WRITE_TOOLS else "read")
+        if entry["name"] in ALLOWED_TOOLS and entry["executionMode"] == ("write" if entry["name"] in WORKSPACE_WRITE_TOOLS else "read")
     ]
     if (request.owner_id == owner.pk and request.requested_by_id in (None, owner.pk)
             and request.conversation.owner_id == owner.pk):
         action_services.require_request(owner, request)
         entries.extend(action_contract.catalog().values())
+    else:
+        entries = [entry for entry in entries if entry["name"] not in CUSTOMER_WRITE_TOOLS]
     entries.sort(key=lambda entry: entry["name"])
     page, size = query.get("page", 1), query.get("page_size", 30)
     return {
@@ -98,7 +100,7 @@ def catalog_for(owner, query):
 # Function: Create sources from actual returned query data without conflicts with other reads.
 # Inputs: New-read UUID ``read_id``, allowed tool name ``name``, and JSON business result ``data``.
 # Outputs: Evidence array containing source_id, source_type, title_or_label, and content.
-# Logic: Customer search and experiment tables split row/page evidence; business reads register credential-free snapshots, proposals register complete frozen JSON under proposal IDs, and experiment writes register mutation receipts.
+# Logic: Split search/table evidence; register credential-free business snapshots, frozen proposals, and separate real-customer or synthetic mutation receipts.
 # Constraints: Sources differ by read UUID and record identifier; proposal evidence records preparation rather than execution, and later status reads never overwrite earlier evidence.
 def evidence_for(read_id, name, data):
     prefix = f"chat-tool:{read_id}"
@@ -136,6 +138,8 @@ def evidence_for(read_id, name, data):
                   "虚构实验 · 批次目录" if name.endswith("catalog") else "虚构实验 · 文件内容块", data)]
     elif name in EXPERIMENT_WRITE_TOOLS:
         parts = [(f"{prefix}:mutation", "experiment_mutation", "虚构实验 · 维护回执", data)]
+    elif name in CUSTOMER_WRITE_TOOLS:
+        parts = [(f"{prefix}:company:{data['id']}", "customer_creation", f"{data['name']} · 客户录入回执", data)]
     else:
         parts = [
             (
@@ -160,8 +164,8 @@ def evidence_for(read_id, name, data):
 
 # Function: Execute data-tool invocation authorized for this request and register stable evidence.
 # Inputs: ``owner`` is the employee determined by the Agent credential and ``payload`` matches the call schema.
-# Outputs: Reads return data/evidence; business preparation returns 201 pending proposals; experiment writes return 202 approval_required without mutation; tool errors retain HTTP status.
-# Logic: Strict business tools lock genuine owners and use independent proposals; legacy tools retain registry validation and checkpointed approvals under the request lock.
+# Outputs: Reads return evidence; independent proposals return 201; customer/experiment writes return 202 approval_required without mutation; errors retain HTTP status.
+# Logic: Enforce private identity for customer creation and business tools; validate registry writes and suspend for a browser decision under the request lock.
 # Constraints: Request errors propagate; business ``APIException`` returns scope=tool without ending chat; unknown exceptions roll back and propagate without retry or fabricated empty information.
 def read_tool(owner, payload):
     validate(payload, CALL_SCHEMA)
@@ -170,10 +174,12 @@ def read_tool(owner, payload):
     stage = "request"
     try:
         with transaction.atomic():
-            if name in action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS:
+            if name in action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS | CUSTOMER_WRITE_TOOLS:
                 action_services.require_request(owner, request_for(owner, request_id))
                 action_services.lock_operation_owners(owner, name, payload["arguments"])
             request = processing_request(owner, request_id)
+            if name in CUSTOMER_WRITE_TOOLS:
+                action_services.require_request(owner, request)
             if name in action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS:
                 action_services.require_request(owner, request)
                 if "continuation" in payload:
@@ -184,7 +190,7 @@ def read_tool(owner, payload):
             if (
                 name not in ALLOWED_TOOLS
                 or spec is None
-                or spec["executionMode"] != ("write" if name in EXPERIMENT_WRITE_TOOLS else "read")
+                or spec["executionMode"] != ("write" if name in WORKSPACE_WRITE_TOOLS else "read")
             ):
                 raise PermissionDenied("聊天入口不允许此工具。")
             tool_services.authorize(owner, None, name)

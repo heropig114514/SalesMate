@@ -1,6 +1,6 @@
 /**
  * Responsibility: Provide workspace chat, Markdown answers, source citations, persisted conversations, and editable drafts.
- * Implementation: Render persisted answers and independent order/email proposal cards for Session-owned conversations, disabling their controls during panel operations; laboratory browsing retains ordinary chat without private proposal requests. Poll answer and send status. Experiment approval retains its existing dialog. Account/conversation changes discard stale responses.
+ * Implementation: Render persisted answers and independent order/email proposal cards for Session-owned conversations, disabling their controls during panel operations; laboratory browsing retains ordinary chat without private proposal requests. Poll answer and send status. Customer creation and experiment writes use a persisted review dialog with operation-specific content. Account/conversation changes discard stale responses.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; assistant-widget.js mounts the single workspace entry and provides history, draft, and save controls; sales-api.js handles communication.
  * Directory: AssistantPanel, AssistantPanel.constructor, AssistantPanel.initializeView, AssistantPanel.open,
@@ -464,7 +464,7 @@ export class AssistantPanel {
 
   /** Function: Refresh answers while preserving text being edited. Inputs: Current customer, conversation, and epoch.
    * Outputs: None. Logic: Read request status before messages to avoid mixing terminal states with old message snapshots; check bindings and observation generation, and offer explicit recovery if either read fails.
-   * Constraints: Preserve drafts and scroll position; read proposals only with server-declared Session ownership. An explicit pending experiment approval may move focus into its review dialog. */
+   * Constraints: Preserve drafts and scroll position; read proposals only with server-declared Session ownership. An explicit pending customer/experiment approval may move focus into its review dialog. */
   async refreshAnswers() {
     this.stopPolling();
     const conversation = this.conversation?.id, epoch = this.epoch, observation = this.pollEpoch;
@@ -570,7 +570,7 @@ export class AssistantPanel {
 
   /** Function: Show the exact pending mutation. Inputs: answer is a backend request with its approval.
    * Outputs: None; opens a native dialog with approve/reject buttons and escaped parameters.
-   * Logic: Bind the dialog to a request and proposal; no decision is inferred from chat text or a polling result.
+   * Logic: Bind frozen customer-name or experimental record content to the approval; customer review explicitly separates registration from a later email confirmation.
    * Constraints: Escape cannot approve or silently reject; closing the panel leaves approval pending on the server. */
   showApproval(answer) {
     const approval = answer.approval;
@@ -582,7 +582,10 @@ export class AssistantPanel {
     dialog.setAttribute("aria-labelledby", "assistant-approval-title");
     const operation = { create: t("新增记录"), update: t("修改记录"), delete: t("删除记录") }[approval.tool.split(".").at(-1)] || approval.tool;
     const args = approval.arguments;
-    dialog.innerHTML = h`<h3 id="assistant-approval-title">允许执行这项操作？</h3><p>这项操作会实际修改数据。请核对操作、目标和内容。</p><strong>${esc(operation)}</strong><p>实验批次：${esc(args.batch)}<br>数据表：${esc(args.model)}${args.pk ? h`<br>记录：${esc(args.pk)}` : ""}</p>${args.data ? `<pre>${esc(JSON.stringify(args.data, null, 2))}</pre>` : h`<p>将删除上面指定的记录。</p>`}<p>拒绝将取消待执行操作并返回聊天，之前已完成的操作会保留。</p><p class="assistant-approval-error" role="alert"></p><div class="actions"><button type="button" data-decision="reject">拒绝并返回聊天</button><button type="button" data-decision="approve">同意并继续</button></div>`;
+    const details = approval.tool === "customers.create"
+      ? h`<p>客户名称：${esc(args.name)}</p><p>本次仅录入客户。邮件会另行展示，确认后才会发送。</p>`
+      : h`<p>实验批次：${esc(args.batch)}<br>数据表：${esc(args.model)}${args.pk ? h`<br>记录：${esc(args.pk)}` : ""}</p>${args.data ? `<pre>${esc(JSON.stringify(args.data, null, 2))}</pre>` : h`<p>将删除上面指定的记录。</p>`}`;
+    dialog.innerHTML = h`<h3 id="assistant-approval-title">允许执行这项操作？</h3><p>这项操作会实际修改数据。请核对操作、目标和内容。</p><strong>${esc(operation)}</strong>${details}<p>拒绝将取消待执行操作并返回聊天，之前已完成的操作会保留。</p><p class="assistant-approval-error" role="alert"></p><div class="actions"><button type="button" data-decision="reject">拒绝并返回聊天</button><button type="button" data-decision="approve">同意并继续</button></div>`;
     dialog.addEventListener("cancel", (event) => event.preventDefault());
     dialog.addEventListener("click", (event) => {
       const decision = event.target.closest("[data-decision]")?.dataset.decision;

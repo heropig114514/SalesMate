@@ -1,5 +1,5 @@
 """Responsibility: Verify the complete backend path for workspace chat read-only interfaces, stable evidence, and original business permissions.
-Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the expanded fifteen-tool catalog without changing legacy registry-mode enforcement; simulate failures and concurrent waits only at explicit boundaries.
+Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the sixteen-tool catalog with customer creation requiring browser approval and unchanged registry-mode enforcement; simulate failures and concurrent waits only at explicit boundaries.
 Relationships: chat.tool_reads/tool_views, the agent_tools registry, and chat.services; no external model or mailbox calls.
 Directory:
 - ChatToolTests: Integration tests for request-bound tool services.
@@ -9,7 +9,7 @@ Directory:
 - ChatToolTests.test_search_context_answer_round_trip: Search, details for two companies, context compatibility, and citation persistence.
 - ChatToolTests.test_search_pagination_and_empty: Pagination completeness and empty-result evidence.
 - ChatToolTests.test_shared_search_does_not_grant_detail: Shared directory visibility with private-detail rejection while chat can still complete.
-- ChatToolTests.test_schema_and_tool_whitelist: Reject identity injection, invalid arguments, write tools, and confirmation tools.
+- ChatToolTests.test_schema_and_tool_whitelist: Reject identity injection, malformed registered tools and unexposed writes.
 - ChatToolTests.test_auth_request_and_terminal_boundaries: Credential isolation, request ownership, and terminal-state rejection.
 - ChatToolTests.test_read_versions_are_immutable: Repeated reads do not overwrite old evidence.
 - ChatToolTests.test_failure_rolls_back_and_hides_internal_error: Exception rollback, safe errors, and retained state.
@@ -111,16 +111,16 @@ class ChatToolTests(TestCase):
 
     # Function: Verify the catalog reflects the current allowlist and original argument contracts accurately.
     # Inputs: Processing request, pagination parameters, and invalid query variants.
-    # Outputs: Fifteen permitted tools with exact modes, original or independent-proposal schemas, and 400 for invalid query arguments.
-    # Logic: Traverse pages and compare against the business registry plus the seven strict chat capabilities.
-    # Constraints: Only three experiment tools use checkpointed writes; the two confirm tools prepare without executing.
+    # Outputs: Sixteen tools with exact read/write/confirm modes and 400 for invalid queries.
+    # Logic: Compare paginated registry schemas, including private customer creation and seven independent business capabilities.
+    # Constraints: Customer creation and three experiment writes require checkpoints; confirmation proposals never execute immediately.
     def test_catalog_and_schema(self):
         response = self.client.get(
             BASE + "tools/", {"request_id": str(self.request.pk)}
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response["Cache-Control"], "no-store")
-        self.assertEqual(response.data["count"], 15)
+        self.assertEqual(response.data["count"], 16)
         self.assertEqual(
             {row["name"] for row in response.data["tools"]},
             tool_reads.ALLOWED_TOOLS | action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS,
@@ -133,7 +133,7 @@ class ChatToolTests(TestCase):
             BASE + "tools/",
             {"request_id": str(self.request.pk), "page": 2, "page_size": 1},
         )
-        self.assertEqual((page.data["count"], len(page.data["tools"])), (15, 1))
+        self.assertEqual((page.data["count"], len(page.data["tools"])), (16, 1))
         for query in (
             {},
             {"page": "x"},
@@ -258,11 +258,11 @@ class ChatToolTests(TestCase):
     # Function: Verify the tool allowlist and argument schema prevent unauthorized access through identity parameters.
     # Inputs: Additional identity/idempotency fields, missing locator arguments, invalid pagination, and names outside the allowlist.
     # Outputs: Structural errors return 400, tool-scope errors return 403, and no read records are created.
-    # Logic: Cover write tools, confirmation tools, and other unavailable read-only tools.
+    # Logic: Reject unexposed customer deletion/analysis; distinguish malformed published customer creation from unauthorized tool names.
     # Constraints: Do not guess customers by removing company_id locator requirements.
     def test_schema_and_tool_whitelist(self):
         for name in (
-            "customers.create",
+            "customers.delete",
             "customers.analyze",
             "mailboxes.sync",
             "knowledge.get",
@@ -270,6 +270,7 @@ class ChatToolTests(TestCase):
         ):
             self.assertEqual(self.read(name, {}).status_code, 403)
         for name, args in (
+            ("customers.create", {}),
             ("customers.context", {}),
             ("customers.context", {"company_id": "bad"}),
             ("customers.search", {"owner_id": self.other.pk}),

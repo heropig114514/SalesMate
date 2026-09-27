@@ -1,5 +1,5 @@
 """Responsibility: Orchestrate request-scoped customer and shared experiment tools, validating model answer citations.
-Implementation: Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
+Implementation: Customer creation resumes from a canonical real-customer receipt, alongside existing experimental approvals. Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
 Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
 Directory:
 - ChatValidationError: Represent workspace contract validation failure.
@@ -64,7 +64,7 @@ from typing import Any, Mapping
 
 from agent.clients.backend_api import BackendContractError, BackendRequestError
 from agent.skills import load_skill
-from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS
+from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, CUSTOMER_WRITE_TOOLS, WORKSPACE_WRITE_TOOLS
 from agent.clients.chat_actions import (
     ACTION_TOOLS, BUSINESS_READ_TOOLS, CONFIRMATION_CONTRACT, PREPARE_TOOLS,
     WORKSPACE_TOOLS, action_answer, require_observed_targets,
@@ -427,7 +427,7 @@ def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
 # Function: Validate fixed read/confirmation proposal tools and model arguments.
 # Inputs: `name`: model-selected tool name; `value`: model-generated argument object.
 # Outputs: Strictly validate customer arguments and preserve the 20-item experiment pagination limit; return the name and a copy of arguments.
-# Logic: Strictly validate customer arguments and preserve the 20-item experiment pagination limit; return the name and a copy of arguments.
+# Logic: Validate customer creation as an explicit name-only input; preserve existing read validation and 20-item experiment pagination.
 # Constraints: The live backend schema validates complete experiment argument types; do not guess model or batch names.
 def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, Any]]:
     """Validate customer arguments and experiment pagination budgets; the live backend schema still validates experiment field types."""
@@ -463,6 +463,10 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
                 raise ChatValidationError("Invalid business search page size.")
             arguments.setdefault("page", 1)
             arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+        return name, arguments
+    if name in CUSTOMER_WRITE_TOOLS:
+        if set(arguments) != {"name"} or not isinstance(arguments["name"], str) or not arguments["name"].strip() or len(arguments["name"]) > 240:
+            raise ChatValidationError("Customer creation requires only an explicit name of 1–240 characters.")
         return name, arguments
     if name in EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS:
         if name == "experiments.rows":
@@ -516,8 +520,8 @@ def _workspace_uuid(value: object) -> None:
 # Function: Parse the data tool catalog actually published for the request.
 # Inputs: `raw`: backend catalog response; `request_id`: currently claimed request identifier.
 # Outputs: Validate protocol and request, filter fixed candidates, and check closed schemas, returning an index by name.
-# Logic: Validate protocol and request, filter fixed candidates, and check closed schemas, returning an index by name.
-# Constraints: Unpublished tools cannot execute; proposal tools require confirm mode and the explicit confirmation contract; other tools require read.
+# Logic: Validate protocol and request, fixed candidates, closed schemas and read/confirm/checkpointed-write modes before indexing by name.
+# Constraints: Unpublished tools cannot execute; independent proposals require confirm/contract, checkpointed writes require write, and other tools require read.
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
     """Use only fixed candidates actually published for this processing request with matching execution modes."""
     if not isinstance(raw, Mapping) or (
@@ -536,7 +540,7 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
         schema = entry.get("inputSchema")
         if (
             name in catalog
-            or entry.get("executionMode") != ("confirm" if name in PREPARE_TOOLS else "write" if name in EXPERIMENT_WRITE_TOOLS else "read")
+            or entry.get("executionMode") != ("confirm" if name in PREPARE_TOOLS else "write" if name in WORKSPACE_WRITE_TOOLS else "read")
             or (name in ACTION_TOOLS and entry.get("confirmationContract") != CONFIRMATION_CONTRACT)
             or not isinstance(schema, Mapping)
             or schema.get("type") != "object"
@@ -593,7 +597,7 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
 # Function: Validate a read receipt and generate a prompt summary.
 # Inputs: `raw`: backend read receipt; `request_id`: current request identifier; `name`: expected executed tool name.
 # Outputs: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
-# Logic: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
+# Logic: Validate request/tool/source bindings; accept a 201 customer-creation receipt only with a valid returned UUID/name, separately from synthetic mutation evidence.
 # Constraints: Summaries do not expand attachment bodies; apply shared budgets to source bodies.
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
@@ -602,7 +606,7 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
         raise ChatValidationError("Tool response does not belong to this request.")
     if (
         raw.get("status") != "completed"
-        or raw.get("http_status") not in ({200, 201} if name in PREPARE_TOOLS else {200})
+        or raw.get("http_status") not in ({200, 201} if name in PREPARE_TOOLS | CUSTOMER_WRITE_TOOLS else {200})
         or not isinstance(raw.get("data"), Mapping)
     ):
         raise ChatValidationError("Tool did not return completed query data.")
@@ -652,6 +656,10 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
                               for row in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]]
     elif name in EXPERIMENT_WRITE_TOOLS:
         summary = {key: data[key] for key in ("batch", "model", "pk", "operation", "synthetic", "audit")}
+    elif name in CUSTOMER_WRITE_TOOLS:
+        _workspace_uuid(data.get("id"))
+        _nonblank(data.get("name"), "created customer name")
+        summary = {"id": data["id"], "name": data["name"]}
     elif name in ACTION_TOOLS | BUSINESS_READ_TOOLS:
         summary = data
     elif name == "experiments.file_read":
@@ -758,7 +766,7 @@ def _workspace_prompt_evidence(
 # Function: Process a workspace question and the read/confirmation proposal tool loop.
 # Inputs: `request`: backend claim object; `backend`: request-bound client; `chat_provider`: one-call model function.
 # Outputs: Final answer, stage failure, or awaiting_approval suspension; the complete request still has at most six tool turns.
-# Logic: Persist observations and loop position with each proposed write; after approval restore canonical evidence and append its receipt, then continue from the next turn without replaying tools.
+# Logic: Checkpoint customer creation and experiment writes alike; resume their canonical receipts and unchanged loop position, then require fresh customer/mailbox reads before any email proposal.
 # Constraints: backend is the real service boundary and chat_provider the model boundary; the backend persists evidence, with parameters and budgets unchanged.
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
     """At most six data tool calls, each selected by the model; the final answer cites only backend-registered evidence."""
@@ -801,7 +809,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             # target reads before a later order/email proposal in this request.
             signatures = {item for item in signatures if item[0] not in {"orders.get", "connections.get", "customers.context"}}
             name = resume["tool_result"].get("tool")
-            if name not in EXPERIMENT_WRITE_TOOLS:
+            if name not in WORKSPACE_WRITE_TOOLS:
                 raise ChatValidationError("Unexpected approved tool.")
             summary, _ = _workspace_tool_result(resume["tool_result"], request_id, name)
             _workspace_append_evidence(evidence, [_source(item, "resume.evidence") for item in resume["evidence_items"]])
@@ -886,7 +894,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             signatures.add(signature)
             code = "context_unavailable"
             try:
-                if name in EXPERIMENT_WRITE_TOOLS:
+                if name in WORKSPACE_WRITE_TOOLS:
                     raw_result = backend.read_chat_tool(request_id, name, arguments, continuation={
                         "next_turn": turn + 1, "observations": observations,
                         "signatures": [list(item) for item in sorted(signatures)],
@@ -903,7 +911,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     }
                 if (
                     error.scope != "tool"
-                    or error.status_code not in ({400, 404, 409, 422} if name in ACTION_TOOLS else {400, 404})
+                    or error.status_code not in ({400, 404, 409, 422} if name in ACTION_TOOLS | CUSTOMER_WRITE_TOOLS else {400, 404})
                 ):
                     raise
                 if error.status_code == 409 and name in PREPARE_TOOLS and "order_id" in arguments:
@@ -921,11 +929,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                 )
                 continue
             if raw_result.get("status") == "approval_required":
-                if name not in EXPERIMENT_WRITE_TOOLS or raw_result.get("request_id") != request_id or raw_result.get("tool") != name:
+                if name not in WORKSPACE_WRITE_TOOLS or raw_result.get("request_id") != request_id or raw_result.get("tool") != name:
                     raise ChatValidationError("Approval response does not match this write.")
                 logger.info("workspace_chat_suspended request_id=%s tool=%s next_turn=%s", request_id, name, turn + 1)
                 return {"request_id": request_id, "status": "awaiting_approval", "error": None}
-            if name in EXPERIMENT_WRITE_TOOLS:
+            if name in WORKSPACE_WRITE_TOOLS:
                 raise ChatValidationError("A proposed write must await browser approval; only a resumed claim may contain its execution receipt.")
             summary, items = _workspace_tool_result(raw_result, request_id, name)
             if name in ACTION_TOOLS:

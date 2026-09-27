@@ -1,11 +1,12 @@
 """Responsibility: Verify the shipped Agent HTTP client and concurrent employee confirmations.
-Implementation: A Django live server and independent PostgreSQL connections test real transport and locking; synthetic fixtures reuse the action integration setup.
+Implementation: Real HTTP and PostgreSQL test transport, locking and a six-tool new-customer-to-email chain with two separate browser decisions; only model choices are simulated.
 Relationships: DjangoBackendClient calls actual chat endpoints; action_services serializes competing decisions; Gmail networking is never invoked here.
 Directory:
 - ChatActionLiveTests: Real HTTP and concurrency coverage.
 - ChatActionLiveTests.setUp: Create committed synthetic business and chat fixtures.
 - ChatActionLiveTests.test_agent_http_prepare_browser_decision_and_status: Verify Agent-to-backend proposal lifecycle through sockets.
 - ChatActionLiveTests.test_agent_workflow_reports_preview_without_execution: Run the actual Agent tool loop and answer reporting against live HTTP.
+- ChatActionLiveTests.test_new_customer_resume_to_email_within_budget: Create once after approval, then prepare the original email through actual Agent HTTP.
 - ChatActionLiveTests.test_competing_email_approvals_create_one_task: Race two real database transactions against the same proposal.
 - ChatActionLiveTests.test_competing_email_approvals_create_one_task.approve: Approve using an independent database connection.
 Variable index:
@@ -25,6 +26,7 @@ from agent.clients.chat_actions import validate_action_receipt
 from agent.workflows.chat import answer_workspace_request
 from agent.tests.test_workspace_chat import QueueProvider
 from apps.chat import tool_reads, action_services
+from apps.crm.models import Company
 from apps.chat.action_contract import PREPARE_ORDER, PREPARE_EMAIL, GET_ACTION
 from apps.sales import models
 from tests.integration import test_chat_actions as fixtures
@@ -92,6 +94,59 @@ class ChatActionLiveTests(LiveServerTestCase):
         self.assertEqual(self.request.status, "completed")
         self.assertEqual(self.request.action_proposals.get().status, "pending_confirmation")
         self.assertEqual(self.order.notes, "")
+
+    # Function: Verify the user's new-company registration and email flow end to end.
+    # Inputs: Real HTTP Agent client, stored recipient/company history and deterministic tool choices.
+    # Outputs: One confirmed customer, resumed original history, pending exact email and no send.
+    # Logic: Search/create consumes two turns; after Session approval, context/list/get/prepare
+    # consumes the remaining four. Replaying approval cannot create another customer.
+    # Constraints: Only model planning is mocked; HTTP, database, validation, evidence and
+    # employee decisions are real. Email confirmation is deliberately cancelled, not sent.
+    def test_new_customer_resume_to_email_within_budget(self):
+        backend = DjangoBackendClient(self.live_server_url + "/api/v1/agent/", "chat-actions-test")
+        self.addCleanup(backend.close)
+        history = [{"role": "user", "content": "请给 buyer@example.com 发邮件询问有没有业务需求"},
+                   {"role": "user", "content": "这是新公司，名为 heropig 测试公司"}]
+        self.request.recent_history = history
+        self.request.user_message.content = "帮我把这个公司录入系统"
+        self.request.user_message.save(update_fields=["content"])
+        self.request.save(update_fields=["recent_history"])
+        provider = QueueProvider(
+            {"action": "tool", "name": "customers.search", "arguments": {"q": "heropig 测试公司"}},
+            {"action": "tool", "name": "customers.create", "arguments": {"name": "heropig 测试公司"}})
+        result = answer_workspace_request({"request_id": str(self.request.pk), "conversation_id": str(self.conversation.pk),
+            "user_message_id": str(self.request.user_message_id), "question": self.request.user_message.content,
+            "recent_history": history}, backend=backend, chat_provider=provider)
+        self.assertEqual(result["status"], "awaiting_approval", result)
+        self.assertFalse(Company.objects.filter(name="heropig 测试公司").exists())
+        approval = self.request.approvals.get()
+        decision_path = f"/api/v1/sales/chat/requests/{self.request.pk}/approvals/{approval.pk}/decision/"
+        self.assertEqual(self.browser.post(decision_path, {"decision": "approve"}, format="json").status_code, 200)
+        self.assertEqual(self.browser.post(decision_path, {"decision": "approve"}, format="json").status_code, 200)
+        created = Company.objects.get(name="heropig 测试公司", owner=self.user)
+        resumed = backend.claim_answer_request()
+        self.assertEqual(resumed["recent_history"], history)
+        self.assertEqual(resumed["resume"]["continuation"]["next_turn"], 2)
+        args = {**self.email_args, "company_id": str(created.pk), "cc": [], "bcc": [],
+                "subject": "业务需求咨询", "body_text": "您好，请问贵公司近期是否有业务需求？期待您的回复。"}
+        provider = QueueProvider(
+            {"action": "tool", "name": "customers.context", "arguments": {"company_id": str(created.pk)}},
+            {"action": "tool", "name": "connections.list", "arguments": {}},
+            {"action": "tool", "name": "connections.get", "arguments": {"id": str(self.connection.pk)}},
+            {"action": "tool", "name": PREPARE_EMAIL, "arguments": args})
+        result = answer_workspace_request(resumed, backend=backend, chat_provider=provider)
+        self.assertEqual(result["status"], "completed", result)
+        backend.report_answer(result)
+        proposal = self.request.action_proposals.get()
+        self.assertEqual(proposal.arguments, args)
+        self.assertEqual(proposal.status, "pending_confirmation")
+        self.assertEqual(self.request.tool_reads.count(), 6)
+        self.assertFalse(models.Draft.objects.exists())
+        self.assertFalse(models.ToolAction.objects.exists())
+        result = self.browser.post(f"/api/v1/sales/chat/action-proposals/{proposal.pk}/decision/",
+            {"decision": "cancel", "revision": proposal.revision}, format="json")
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertFalse(models.ToolAction.objects.exists())
 
     # Function: Verify concurrent confirmation cannot create duplicate drafts or sends.
     # Inputs: One committed email proposal and two independent database connections released together.

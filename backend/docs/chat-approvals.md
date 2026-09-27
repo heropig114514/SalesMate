@@ -1,6 +1,6 @@
 # Chat write approval
 
-All writes exposed through `/api/v1/agent/chat/tool-reads/` require an explicit browser decision. Currently these are `experiments.create`, `experiments.update`, and `experiments.delete`, including fictional data. Reads remain immediate. This change does not expose new real-CRM, sending, calendar, or scheduler tools to chat and does not alter background jobs or ordinary non-chat Tool/MCP calls.
+All writes exposed through `/api/v1/agent/chat/tool-reads/` require an explicit browser decision. These include private `customers.create` and `experiments.create/update/delete` for synthetic data. Reads remain immediate. Customer creation uses the existing directory handler with only an explicit company name; no guessed domains, contacts or other CRM facts. Order/email proposals retain their separate [action confirmation contract](chat-actions.md). Background jobs and ordinary non-chat Tool/MCP calls are unchanged.
 
 ## State and user experience
 
@@ -66,3 +66,13 @@ python backend/manage.py spectacular --file backend/contracts/openapi.yaml --val
 ```
 
 Run `python tools/check_docs.py` from `backend/`. Browser verification uses `node backend/tools/browser_chat_approvals.cjs` with `SALESMATE_PLAYWRIGHT_MODULE` and `SALESMATE_BROWSER_PATH` pointing to installed Playwright/Chromium. Browser HTTP/model results are mocked; backend integration tests cover real database operations and authenticated HTTP. Neither establishes production deployment or real-model planning quality.
+
+## New customer followed by email
+
+The workspace catalog now publishes `customers.create` (write mode, `{ "name": "company name" }`) only for the real employee's private workspace request. It requires the same continuation checkpoint and Session/CSRF review as above. Laboratory access never authorizes creating a customer for another conversation owner. The server rejects an active owned exact-name match, including one created while review was pending; it never silently merges or substitutes a record. Ordinary directory creation keeps its existing behavior.
+
+Approval executes once with the approval UUID as the generic tool idempotency key and records `customer_creation` evidence with the real returned company UUID and HTTP 201. Rejection, stale definitions, identity failures and evidence persistence failures do not create customers or email tasks. No database migration is needed for this extension.
+
+For the user's sequence “send an inquiry → this is a new company → register it”, workspace-chat-v5 preserves the original recipient and purpose in recent history. Search, create, approved continuation, customer context, connection list/get, and email preparation consume the existing six-tool budget. The browser shows the exact company name first; after registration the Agent can prepare the email for a separate full-content confirmation. Customer registration alone never creates a Draft or ToolAction, and a pending email proposal is not a send.
+
+Regression: `tests.integration.test_chat_customers`, `tests.integration.test_chat_actions_live`, the existing approval/action/experiment suites, and `backend/tools/browser_chat_approvals.cjs`. The new live test uses real HTTP and PostgreSQL with deterministic model choices, not a real model or mailbox provider. Production planning verification must be reported separately.

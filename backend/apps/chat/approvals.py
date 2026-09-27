@@ -1,5 +1,5 @@
 """Responsibility: Enforce user approval for request-bound chat writes and resume the suspended answer.
-Implementation: Freeze tool arguments, target version, and Agent loop state before any mutation; a Session-only decision executes once in the request transaction. Laboratory mode never skips this gate.
+Implementation: Freeze customer creation or experimental arguments and Agent loop state; a Session-only decision executes once. Real customers additionally require private request ownership and no active exact-name duplicate, even in laboratory mode.
 Relationships: tool_reads proposes writes; services claims continuations and projects status; ApprovalDecisionView accepts browser decisions, independently of background jobs and ordinary Tool/MCP calls.
 Directory:
 - approval_data: Project reviewable operation content without the Agent checkpoint.
@@ -33,7 +33,9 @@ from apps.agent_tools.registry import build_registry
 from apps.agent_tools.schemas import object_schema, validate
 from apps.crm.access import Conflict
 from apps.sales.experiments import load_batch, table_rows
+from integrations.salesmate_tools.read_contract import CUSTOMER_WRITE_TOOLS
 from . import services
+from .customer_actions import validate_creation
 from .models import ChatApproval, ToolRead
 
 logger = logging.getLogger("salesmate.chat.approvals")
@@ -77,10 +79,12 @@ def target_fingerprint(name, arguments):
 # Function: Freeze a chat mutation without executing any business handler.
 # Inputs: Locked processing ``request``, live ``spec``, exact ``arguments``, and Agent ``continuation``.
 # Outputs: HTTP-202 receipt with approval_required and reviewable operation.
-# Logic: Validate the checkpoint and target version, then atomically suspend the request and create its pending approval.
+# Logic: Validate the checkpoint, target version, and private customer name before atomically suspending the request with a frozen approval.
 # Constraints: Requires caller's transaction; no fallback for older Agents without resumable state and no laboratory bypass.
 def propose(request, spec, arguments, continuation):
     validate(continuation, CONTINUATION_SCHEMA)
+    if spec["name"] in CUSTOMER_WRITE_TOOLS:
+        validate_creation(request, arguments)
     fingerprint = target_fingerprint(spec["name"], arguments)
     if fingerprint and arguments.get("expected", fingerprint) != fingerprint:
         raise Conflict("记录已变化，请重新读取后申请审批。")
@@ -115,7 +119,7 @@ def resume_data(request):
 # Function: Apply a browser user's decision to one frozen chat write.
 # Inputs: Session-authenticated ``actor``, ``request_id``, ``approval_id``, and approve/reject ``decision``.
 # Outputs: Locked AnswerRequest after cancellation or successful execution and requeue.
-# Logic: Lock original owner then request and approval, verify the initiating user, expiration, live schema, and target version; execute and register evidence in the same transaction as approval and resume state.
+# Logic: Lock owner/request/approval; recheck submitter, expiry, schema, version and customer-name conflicts; execute once with the approval UUID as idempotency key and persist canonical evidence plus resume state atomically.
 # Constraints: No model calls, external sends, automatic retries, changed arguments, or rollback of earlier approved writes; execution failures roll back this decision and leave it reviewable.
 @transaction.atomic
 def decide(actor, request_id, approval_id, decision):
@@ -147,6 +151,8 @@ def decide(actor, request_id, approval_id, decision):
             raise Conflict("工具定义已变化，请拒绝本次操作后重新提问。")
         tool_services.authorize(request.owner, None, approval.tool)
         validate(approval.arguments, spec["inputSchema"])
+        if approval.tool in CUSTOMER_WRITE_TOOLS:
+            validate_creation(request, approval.arguments)
         if target_fingerprint(approval.tool, approval.arguments) != approval.target_fingerprint:
             raise Conflict("待审批记录已变化，本次批准不能执行；请拒绝后重新提问。")
         # Lock the manifest through execution so a concurrent experimental writer cannot invalidate the reviewed version.

@@ -1,9 +1,30 @@
-"""Agent-only contract for employee-confirmed order changes and outgoing email.
-
-The backend must publish these capabilities before they are usable. Preparation
-stores a proposal only; no tool in this module approves or executes it. Existing
-customer/experiment reads remain available. Experiment writes use the backend's
-checkpointed browser-approval flow; they cannot execute directly.
+"""Responsibility: Validate frozen order/email proposals independently of model assertions.
+Implementation: Closed argument/receipt checks and current-request target evidence;
+customer creation and experiments instead use resumable browser-approved writes.
+Relationships: workflows.chat enforces these contracts; backend_api transports calls;
+shared read_contract declares checkpointed writes, never Agent approval authority.
+Directory:
+- _object: Reject extra or missing object fields.
+- _uuid: Validate a string UUID.
+- _revision: Validate nonnegative integer versions.
+- _text: Require string content, optionally blank.
+- _addresses: Validate explicit bounded recipient arrays.
+- validate_action_arguments: Validate order/email/status request content.
+- require_observed_targets: Require current target and sender reads.
+- _expected_changes: Flatten submitted order changes for preview comparison.
+- validate_action_receipt: Check exact frozen content and authoritative state.
+- action_answer: Render deterministic proposal/status text.
+Variable index:
+- PREPARE_ORDER: Order proposal tool name.
+- PREPARE_EMAIL: Email proposal tool name.
+- GET_ACTION: Proposal status tool name.
+- PREPARE_TOOLS: Independent unexecuted proposal tools.
+- ACTION_TOOLS: Independent proposal and status tools.
+- BUSINESS_READ_TOOLS: Private mailbox and authorized order reads.
+- WORKSPACE_TOOLS: Reads, independent proposals and browser-approved workspace writes.
+- CONFIRMATION_CONTRACT: Independent proposal protocol version.
+- ORDER_FIELDS: Editable order header fields.
+- LINE_FIELDS: Editable existing order line fields.
 """
 
 from datetime import datetime
@@ -11,7 +32,7 @@ from decimal import Decimal
 import re
 import uuid
 
-from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS, EXPERIMENT_WRITE_TOOLS
+from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 PREPARE_ORDER = "chat_actions.prepare_order_update"
 PREPARE_EMAIL = "chat_actions.prepare_email"
@@ -19,33 +40,58 @@ GET_ACTION = "chat_actions.get"
 PREPARE_TOOLS = frozenset({PREPARE_ORDER, PREPARE_EMAIL})
 ACTION_TOOLS = PREPARE_TOOLS | {GET_ACTION}
 BUSINESS_READ_TOOLS = frozenset({"orders.list", "orders.get", "connections.list", "connections.get"})
-WORKSPACE_TOOLS = WORKSPACE_READ_TOOLS | BUSINESS_READ_TOOLS | ACTION_TOOLS | EXPERIMENT_WRITE_TOOLS
+WORKSPACE_TOOLS = WORKSPACE_READ_TOOLS | BUSINESS_READ_TOOLS | ACTION_TOOLS | WORKSPACE_WRITE_TOOLS
 CONFIRMATION_CONTRACT = "chat-actions-v1"
 ORDER_FIELDS = frozenset({"number", "currency", "notes"})
 LINE_FIELDS = frozenset({"description", "quantity", "unit_price", "discount"})
 
 
+# Function: Validate a closed dictionary.
+# Inputs: `value` candidate object, `allowed` keys, and `required` keys.
+# Outputs: None or ValueError.
+# Logic: Check dictionary type, unknown keys and required keys.
+# Constraints: Does not coerce values or mutate the input.
 def _object(value, allowed, required):
     if not isinstance(value, dict) or set(value) - set(allowed) or set(required) - set(value):
         raise ValueError("Confirmation arguments do not match the contract.")
 
 
+# Function: Validate a target identifier.
+# Inputs: `value` expected UUID string.
+# Outputs: None or ValueError from type/UUID validation.
+# Logic: Parse only strings through uuid.UUID.
+# Constraints: Identifier validity grants no access.
 def _uuid(value):
     if not isinstance(value, str):
         raise ValueError("An action target must be a UUID.")
     uuid.UUID(value)
 
 
+# Function: Validate an observed row version.
+# Inputs: `value` expected nonnegative integer.
+# Outputs: None or ValueError.
+# Logic: Reject booleans and negative/noninteger values.
+# Constraints: Does not establish freshness; backend checks current versions.
 def _revision(value):
     if type(value) is not int or value < 0:
         raise ValueError("A current nonnegative integer revision is required.")
 
 
+# Function: Validate action text.
+# Inputs: `value` string and keyword `blank` allowing whitespace-only content when true.
+# Outputs: None or ValueError.
+# Logic: Check type and required stripped content without changing original text.
+# Constraints: No normalization or business write occurs.
 def _text(value, *, blank=False):
     if not isinstance(value, str) or (not blank and not value.strip()):
         raise ValueError("Action text must be a string with the required content.")
 
 
+# Function: Validate explicit recipient arrays.
+# Inputs: `values` address list and keyword `required` requiring at least one address.
+# Outputs: None or ValueError.
+# Logic: Enforce the existing 50-address bound, syntax and uniqueness.
+# Constraints: No address inference, display names or header newlines; no provider call.
 def _addresses(values, *, required=False):
     if not isinstance(values, list) or len(values) > 50 or (required and not values):
         raise ValueError("Email recipients must be an explicit bounded array.")
@@ -56,6 +102,11 @@ def _addresses(values, *, required=False):
         raise ValueError("Duplicate recipients are not allowed.")
 
 
+# Function: Validate unexecuted proposal or status inputs.
+# Inputs: `name` tool and `args` closed argument dictionary.
+# Outputs: None or ValueError for an unsupported or malformed request.
+# Logic: Validate UUIDs, versions, field sets, decimal strings and complete email content.
+# Constraints: No approval field, target guessing or state mutation; established size limits remain unchanged.
 def validate_action_arguments(name, args):
     """Validate proposal inputs without accepting approval or execution fields."""
     if name == GET_ACTION:
@@ -109,6 +160,11 @@ def validate_action_arguments(name, args):
         raise ValueError("Unsupported confirmation tool.")
 
 
+# Function: Require authoritative reads before proposing writes.
+# Inputs: `name` proposal tool, validated `args`, and `records` keyed by tool and target UUID.
+# Outputs: None or ValueError naming the missing/stale prerequisite.
+# Logic: Compare order/line revisions or require customer context and an active Gmail snapshot.
+# Constraints: Reads belong to this request; backend still checks ownership and scopes.
 def require_observed_targets(name, args, records):
     """Require current-request reads of the order/version or customer/mailbox."""
     if name == PREPARE_ORDER:
@@ -128,6 +184,11 @@ def require_observed_targets(name, args, records):
             raise ValueError("Call connections.get with id set to connection_id and verify an active Gmail account before preparing email. connections.list is discovery only; repeating prepare_email cannot satisfy this requirement.")
 
 
+# Function: Flatten the proposed order edits.
+# Inputs: `args` validated order arguments.
+# Outputs: New dictionary mapping header/qualified line fields to proposed values.
+# Logic: Copy headers and prefix each existing line field with its UUID.
+# Constraints: No mutation of arguments and no total calculation.
 def _expected_changes(args):
     changes = dict(args["changes"])
     for line in args["line_changes"]:
@@ -135,6 +196,11 @@ def _expected_changes(args):
     return changes
 
 
+# Function: Verify the frozen proposal and execution state.
+# Inputs: `data` backend receipt, `name` requested tool, and `args` submitted parameters.
+# Outputs: None or ValueError on any contract mismatch.
+# Logic: Check identity, revisions, expiry, status/confirmation consistency and exact preview content.
+# Constraints: Success is a backend status, never inferred from a model statement or preparation.
 def validate_action_receipt(data, name, args):
     """Accept frozen previews and explicit server state, never inferred approval."""
     _object(data, {"id", "kind", "status", "revision", "expires_at", "confirmed_by_employee", "arguments", "preview"},
@@ -196,6 +262,11 @@ def validate_action_receipt(data, name, args):
         _addresses([preview["from_address"]], required=True)
 
 
+# Function: Render the verified proposal or status for the employee.
+# Inputs: `data` validated backend proposal receipt.
+# Outputs: Plain text containing status and a complete pending preview when relevant.
+# Logic: Select exact state wording; show sender/recipients/body or before/after order values.
+# Constraints: Provider acceptance is not recipient delivery; rendering never executes the action.
 def action_answer(data):
     """Render an exact backend proposal/status without an LLM success claim."""
     status, kind = data["status"], data["kind"]
