@@ -94,6 +94,24 @@ class ActionBackend(ToolBackend):
 
 
 class ChatActionTests(unittest.TestCase):
+    def test_missing_connection_get_reports_required_read_before_preparation(self):
+        args = email_arguments()
+        customer = detail_result(COMPANY_ID, "Acme", detail_evidence(COMPANY_ID, "Acme", "Contact buyer@example.com"))
+        backend = self.backend([customer, connection_read(), receipt(PREPARE_EMAIL, proposal('email_send'))])
+        provider = QueueProvider(
+            tool('customers.context', company_id=COMPANY_ID),
+            tool(PREPARE_EMAIL, **args),
+            tool('connections.get', id=CONNECTION_ID),
+            tool(PREPARE_EMAIL, **args),
+        )
+        result = process_chat_once(backend=backend, chat_provider=provider)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual([row[1] for row in backend.tool_calls], ['customers.context', 'connections.get', PREPARE_EMAIL])
+        correction_prompt = provider.calls[2][0][-1]['content']
+        self.assertIn('connections.get', correction_prompt)
+        self.assertIn('discovery only', correction_prompt)
+        self.assertIn('Nothing has been changed or sent', result['assistant_text'])
+
     def backend(self, replies, question="Change order SO-100 to five units at 1200 each and note delivery in October."):
         return ActionBackend(request=conversation_request(question=question), replies=replies)
 

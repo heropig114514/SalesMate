@@ -75,6 +75,7 @@ from typing import Any, Callable, Mapping
 from integrations.extraction_contract import compatible_extraction
 from agent.clients.backend_api import BackendClient
 from agent.skills import load_skill
+from agent.workflows.priority_signals import deadline_signals
 from integrations.company_enrichment import input_version as enrichment_input_version
 
 
@@ -283,6 +284,7 @@ def build_analysis_input(
         and email["facts"]["intent_hint"] in INTENT_HINTS - {None}
         and email["facts"]["intent_evidences"]
     ]
+    priority_context["signals"].extend(deadline_signals(recent_emails))
 
     return AnalysisInput(
         company_id=company_id,

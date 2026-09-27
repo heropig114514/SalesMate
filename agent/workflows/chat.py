@@ -878,6 +878,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     require_observed_targets(name, arguments, records)
                 except ValueError as error:
                     observations.append({"tool": name, "status": "invalid_arguments", "reason": str(error)})
+                    logger.info("workspace_chat_proposal_prerequisite request_id=%s tool=%s reason=%s", request_id, name, error)
                     continue
             signature = (name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
             if signature in signatures:

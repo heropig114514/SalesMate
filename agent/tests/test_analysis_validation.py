@@ -131,7 +131,9 @@ class AnalysisValidationTests(unittest.TestCase):
             result = generate_analysis(self.document, clock=lambda: NOW)
         self.assertEqual(result["status"], "completed")
         repair = model.call_args_list[1].args[1]
-        self.assertIn(json.dumps(previous, ensure_ascii=False), repair)
+        self.assertIn(json.dumps(bad, ensure_ascii=False), repair)
+        self.assertNotIn(json.dumps(previous, ensure_ascii=False), repair)
+        self.assertIn("not a JSON string, array, patch", repair)
         self.assertIn("profile.intent.facts[0].source_refs", repair)
         self.assertIn("SOURCE_CATALOG", repair)
         self.assertEqual(model.call_count, 2)

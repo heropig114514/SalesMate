@@ -122,10 +122,10 @@ def require_observed_targets(name, args, records):
                 raise ValueError("Read the target order line and its current revision first.")
     elif name == PREPARE_EMAIL:
         if ("customers.context", args["company_id"]) not in records:
-            raise ValueError("Read the target customer's context before preparing email.")
+            raise ValueError("Call customers.context with company_id before preparing email; a search result is not a context read.")
         connection = records.get(("connections.get", args["connection_id"]))
         if not connection or connection.get("provider") != "gmail" or connection.get("archived") is not False:
-            raise ValueError("Read an active employee Gmail connection before preparing email.")
+            raise ValueError("Call connections.get with id set to connection_id and verify an active Gmail account before preparing email. connections.list is discovery only; repeating prepare_email cannot satisfy this requirement.")
 
 
 def _expected_changes(args):
