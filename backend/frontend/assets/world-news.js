@@ -1,12 +1,12 @@
 /** Responsibility: Display database-backed event maps, news, and invitation templates.
  * Implementation: Location markers remain interactive; event/news amounts come directly from source fields, with separate fixed-rate SGD references and logarithmic map sizes, without CRM aggregation. News cards/details show public leads, source-amount definitions, and inference labels. Shared events use backend date precision for display/filtering/all-day calendar export. Read pagination explicitly; all news pages in the 90-day window are loaded, with evidenced news on the map and events retained until 30 days after ending. Mark synthetic placeholders, display failures, and provide no static fallback.
- * Relationships: Map-anchor/amount-label fixes use updated resources; navigation versions reflect removal of sidebar priority/experiment entries; uses sales/world, world-news, seller-context, and WorldMap.
+ * Relationships: The 20260927-auth entry loads shared Profile logout. Map-anchor/amount-label fixes use updated resources; navigation versions reflect removal of sidebar priority/experiment entries; uses sales/world, world-news, seller-context, and WorldMap.
  * Directory: $, text, countryName, loadPages, eventRows, render, selectEvent, renderDetail, renderNews, renderArticle, renderMoneyLegend, foldLine, calendarText, calendarText.escape, calendarText.instant, downloadItinerary, inviteDraft, start.
  * Variable index: RECENCY_POLICY defines the explicit 90-day news and 30-day ended-event windows; $ queries DOM; state holds snapshots/filters; categories classifies events; regionNames supplies region labels; map is the map instance.
  */
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
-import { mountWorkspace } from './workspace.js?v=20260922-sidebar';
+import { mountWorkspace } from './workspace.js?v=20260927-auth';
 import { eventDates, eventWindow, calendarBounds } from './world-dates.js?v=20260924-insights';
 import { signalSummary, signalDetail, sourceAmountText, sourceAmountDetail } from './world-signals.js?v=20260927-sgd';
 import { FX_REFERENCE, SGD_RATES, bubbleDiameter } from './world-currency.js?v=20260927-sgd';
@@ -90,13 +90,15 @@ function downloadItinerary(item) { const url = URL.createObjectURL(new Blob([cal
 /** Function: Fill an invitation template. Inputs: item. Outputs: A dialog. Logic: Use explicit event dates and the user's profile for the signature. Constraints: No AI calls, inferred recipients, or sending. */
 function inviteDraft(item) { const person = state.seller?.sales_setup?.personal || {}; $('invite-subject').value = text('邀约交流：', 'Invitation: ') + item.title; $('invite-body').value = text(`您好，\n\n希望与您在 ${eventDates(item).start} 的“${item.title}”（${item.city}）期间预约交流。请告知方便的时间。\n\n`, `Hello,\n\nWould you be available to meet during ${item.title} in ${item.city} on ${eventDates(item).start}?\n\n`) + [person.name, person.title, person.email].filter(Boolean).join('\n') + (item.data_source === 'synthetic' ? text('\n\n注意：活动为虚拟占位。', '\n\nThis event is synthetic.') : ''); $('invite-dialog').showModal(); }
 /** Function: Initialize the database-backed page. Inputs: DOM and URL filters. Outputs: Promise.
- * Logic: Read every event page and 90-day news page, merge verified news locations with event locations by temporal proximity, initialize map and filter controls, and show request errors explicitly.
+ * Logic: Redirect anonymous visitors to /login/ before mounting Profile logout, then read events/news, merge verified locations, initialize filters, and surface request errors.
  * Constraints: Never create placeholders, retry, overwrite source amounts or read CRM amounts; invitation/calendar actions remain user-triggered. */
 async function start() {
-  mountWorkspace('world');
   const article = location.pathname.match(/^\/world\/news\/([a-z0-9-]+)\/$/);
   $('world-explorer').hidden = Boolean(article); $('news-detail').hidden = !article;
   try {
+    const session = await request('session/');
+    if (!session.authenticated) { location.replace('/login/'); return; }
+    mountWorkspace('world');
     if (article) { await renderArticle(article[1]); return; }
     $('world-data-status').textContent = text('正在读取数据库…', 'Loading database…');
     const [world, news, seller] = await Promise.all([loadPages('sales/world/'), loadPages('sales/records/world-news/?to=' + encodeURIComponent(new Date().toISOString()) + '&from=' + encodeURIComponent(new Date(Date.now() - RECENCY_POLICY.newsDays * 86400000).toISOString())), request('sales/seller-context/')]);

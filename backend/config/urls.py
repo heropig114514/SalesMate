@@ -1,5 +1,5 @@
 """Responsibility: Declare workspace, business, company settings, world, experiment, administration, health-check, and API-documentation routes.
-Implementation: The read-only graph API exposes current facts and version lineage; urlpatterns dispatches requests without the retired opportunity-priority page; experiment pages expose approved synthetic batches; dispatched views perform business authorization.
+Implementation: Both /login and /login/ reuse the workspace authentication template; the read-only graph API exposes current facts and version lineage; experiment pages expose approved synthetic batches; dispatched views perform business authorization.
 Relationships: Combines common.views, apps.accounts, apps.crm, apps.sales, apps.chat, apps.agent_tools, and backend/frontend; local static assets are served only when DEBUG is enabled.
 
 Directory:
@@ -20,6 +20,8 @@ from common.views import LivenessView, ReadinessView
 from apps.sales.experiments import ExperimentView, ExperimentCatalogView, ExperimentExportView, ExperimentFileView
 
 urlpatterns = [
+    path("login", TemplateView.as_view(template_name="index.html"), name="login-no-slash"),
+    path("login/", TemplateView.as_view(template_name="index.html"), name="login"),
     path("experiments/", TemplateView.as_view(template_name="experiments.html"), name="experiments"),
     path("api/v1/experiments/", ExperimentCatalogView.as_view(), name="experiment-catalog"),
     path("api/v1/experiments/<str:batch>/export/", ExperimentExportView.as_view(), name="experiment-export"),

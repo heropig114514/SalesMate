@@ -138,7 +138,7 @@ Entry points:
 - Liveness: `http://127.0.0.1:8000/api/v1/health/live/`
 - Default database readiness: `http://127.0.0.1:8000/api/v1/health/ready/`
 
-`LOCAL_DEBUG_AUTO_LOGIN=True` establishes an ordinary `LOCAL_DEBUG_USER` session only with DEBUG/loopback requests. Set False/restart to test login. Browser writes retain CSRF; Agent uses independent service tokens.
+`LOCAL_DEBUG_AUTO_LOGIN=True` establishes an ordinary `LOCAL_DEBUG_USER` session only with DEBUG/loopback requests. Open `/login/` to use manual login without changing that default; an existing authenticated session still returns to the workspace. Profile logout invalidates the session and keeps this browser anonymous until explicit login, even when automatic login is configured. Set False/restart to disable automatic login globally. Browser writes retain CSRF; Agent uses independent service tokens.
 
 ## Agent integration
 

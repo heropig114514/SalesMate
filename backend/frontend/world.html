@@ -2,7 +2,7 @@
 
 <!-- Responsibility: Provide structure for global event maps, linked event details, industry news, and separate article-detail URLs.
 Implementation: Interactive location markers scale logarithmically with fixed-rate SGD reference amounts; source amounts remain distinct from CRM values. News displays public leads, exact source amounts, and evidence separated into facts/inferences. Shared events use explicit date ranges/all-day calendars, with entry versions following date support. Leaflet renders source-evidenced news/event locations, ordered by proximity to now; news stays 90 days and ended events 30 days; map markers never aggregate unrelated monetary scopes. world-news.js handles filters, calendar downloads, and invitation drafts; synthetic sources are labeled individually.
-Relationships: The retired opportunity-priority page has no entry in this template. Chat Markdown, 0919 interface, language/API, and workspace-chat resources use coordinated versions. assistant-widget.js/css supplies bottom chat, product-header.js the header, and design-system.css Nocturne tokens. The backend stores/validates news; world-map.js draws bubbles; Django /world/ and /world/news/<id>/ share this template.
+Relationships: The 20260927-auth entry loads shared Profile logout. The retired opportunity-priority page has no entry in this template. Chat Markdown, 0919 interface, language/API, and workspace-chat resources use coordinated versions. assistant-widget.js/css supplies bottom chat, product-header.js the header, and design-system.css Nocturne tokens. The backend stores/validates news; world-map.js draws bubbles; Django /world/ and /world/news/<id>/ share this template.
 Directory: No functions or classes; workspace-profile provides company/mail settings; world-map is the map, event-detail news/event details, map-size-legend/map-fx-note/map-fx-details the amount scale and dated exchange rates, industry-news news listing, news-detail the article, world-status accessible status, and world-error errors.
 Internationalization: data-i18n marks static text/attributes; language-bar offers selection and i18n.js initializes marked nodes only. Explicit option values retain protocol values.
 Variable index: No script variables; page modules manage filtering and linked DOM state. -->
@@ -17,7 +17,7 @@ Variable index: No script variables; page modules manage filtering and linked DO
 <link href="/static/vendor/leaflet-1.9.4/leaflet.css" rel="stylesheet"/>
 <link href="/static/world-news.css?v=20260927-sgd" rel="stylesheet"/>
 <script defer="" src="/static/vendor/leaflet-1.9.4/leaflet.js"></script>
-<script type="module" src="/static/world-news.js?v=20260927-sgd"></script>
+<script type="module" src="/static/world-news.js?v=20260927-auth"></script>
 <script type="module" src="/static/i18n.js?v=20260921-product"></script></head>
 <body class="world-workspace"><div class="language-bar"><label for="interface-language"><span data-i18n="界面语言">界面语言</span></label><select aria-label="界面语言" data-i18n-aria-label="界面语言" id="interface-language"><option data-i18n="跟随系统" value="auto">跟随系统</option><option value="zh-hans">简体中文</option><option value="en">English</option></select></div>
 <a class="world-skip" href="#world-content"><span data-i18n="跳到世界消息">跳到世界消息</span></a>

@@ -1,8 +1,8 @@
 /**
  * Responsibility: Implement native browser interactions for employee Gmail/QQ inboxes, authorization management, and customer workspaces.
- * Implementation: Registration/login, hash routing, compact mail-group cards, and continuous reads for one customer. Details are read-only by default; analysis and fact upgrades require separate explicit submissions. The shared floating entry preserves the current conversation. Mail settings use a separate page, and only explicit connection actions open authorization popups. Each sync asks for scope; QQ capabilities control access, stale responses are isolated, and drafts remain separate.
+ * Implementation: Dedicated /login routes reuse registration/login forms and shared Profile logout. The workspace uses hash routing, compact mail-group cards, and continuous reads for one customer. Details are read-only by default; analysis and fact upgrades require separate explicit submissions. The shared floating entry preserves the current conversation. Mail settings use a separate page, and only explicit connection actions open authorization popups. Each sync asks for scope; QQ capabilities control access, stale responses are isolated, and drafts remain separate.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
- * Relationships: v1.2.1 refreshes the review module cache for asynchronous error isolation. Navigation cache versions reflect removal of the sidebar priority and experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, shared language/API, and account-reset navigation resources use coordinated cache versions. workspace.js shares navigation and the bottom Profile entry; assistant-widget.js manages floating chat; api.js handles communication; qq.js manages QQ; gmail-scope.js manages Gmail scope; runtime qq_enabled controls entry points, synchronization, and polling; mail-source.js labels sources; assistant.js manages chat/drafts; notice.js manages notifications.
+ * Relationships: The 20260927-auth entry loads shared Profile logout. v1.2.1 refreshes the review module cache for asynchronous error isolation. Navigation cache versions reflect removal of the sidebar priority and experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, shared language/API, and account-reset navigation resources use coordinated cache versions. workspace.js shares navigation and the bottom Profile entry; assistant-widget.js manages floating chat; api.js handles communication; qq.js manages QQ; gmail-scope.js manages Gmail scope; runtime qq_enabled controls entry points, synchronization, and polling; mail-source.js labels sources; assistant.js manages chat/drafts; notice.js manages notifications.
  * Directory: $, date, companyName, pill, notice, busy, renderStats, renderRow, loadList,
  * renderDimension, renderDetail, renderEmails, revealSource, setDetailLiveStatus, loadDetail, upgradeFacts, navigate, loadMailboxes, renderGmailAccounts, openEmailSettings, showGmailAuthorization,
  * startGmailAuthorization, pollGmailSync, requestGmailSync, refreshInbox,
@@ -19,7 +19,7 @@ import { t, h, locale, language } from './i18n.js?v=20260921-product';
 import { initProcessingUI, updateRunProgress, refreshReviewBadge, openMailboxEmails } from './processing.js?v=1.2.1';
 import { mailSourceLabel } from './mail-source.js?v=20260921-product';
 import { initQQ, renderQQAccounts, chooseQQScope } from './qq.js?v=20260921-product';
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260922-sidebar';
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from './workspace.js?v=20260927-auth';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { DetailObserver, patchHTML, preserveReading } from './live-detail.js?v=20260921-product';
 import { getAssistant, enableAssistant, openAssistantLink } from './assistant-widget.js?v=20260921-markdown';
@@ -489,7 +489,7 @@ async function signupSubmit(event) {
 }
 
 /** Function: Submit session login. Inputs: event is the form event. Outputs: None.
- * Logic: Clear password fields and initialize the workspace after API success.
+ * Logic: Clear password fields and initialize after API success; the dedicated login entry then navigates to the workspace or required onboarding.
  * Constraints: No automatic login retries or password storage. */
 async function loginSubmit(event) {
   event.preventDefault();
@@ -531,17 +531,23 @@ async function registerSubmit(event) {
 }
 
 /** Function: Initialize session and service capabilities. Inputs: Current browser session. Outputs: None.
- * Logic: Cancel old detail reads before checking the session; on account changes immediately clear mailbox markers, search, chat, and customer content. New users enter persisted onboarding. Authenticated users load capabilities, hide disabled entries, and mount the workspace; anonymous users clear the widget and restore login.
+ * Logic: /login and /login/ explicitly skip debug auto-login. Anonymous visitors see the existing login form at /login/; authenticated login visitors enter home or required onboarding. Other workspace initialization clears stale account state before reading capabilities and business data.
  * Constraints: Keep failures visible and never show false synchronization success when Gmail is disconnected. */
 async function initialize() {
   closeEvidence();
   detailObserver.stop();
   ++state.navigation;
-  const session = await request('session/');
+  const loginEntry = /^\/login\/?$/.test(location.pathname);
+  const session = await request(loginEntry ? 'session/?auto_login=false' : 'session/');
   $('login-screen').hidden = session.authenticated;
   $('workspace').hidden = !session.authenticated;
-  $('logout').hidden = session.debug_auto_login;
-  if (!session.authenticated) { state.replyDrafts.clear(); updateRunProgress([]); state.account = null; enableAssistant(false); showAuthForm(false); return; }
+  if (!session.authenticated) {
+    state.replyDrafts.clear(); updateRunProgress([]); state.account = null; enableAssistant(false);
+    history.replaceState({}, '', '/login/');
+    showAuthForm(false);
+    return;
+  }
+  if (loginEntry) { location.replace(session.onboarding_required ? '/settings/company/?onboarding=1' : '/#home'); return; }
   if (state.account !== session.username) {
     state.mailboxes = [];
     $('gmail-chip-label').textContent = t('连接 Gmail');
@@ -591,7 +597,7 @@ async function initialize() {
 }
 
 /** Function: Register static-form and dynamic-content events. Inputs: Existing DOM. Outputs: None.
- * Logic: Bind registration and business forms; logout clears the customer route and account changes clear navigation context. Review lives in mail settings, whose navigation is separate from explicit authorization. The widget retains its conversation independently; recovery resumes read-only observation; pagehide cancels stale responses.
+ * Logic: Bind registration and business forms; workspace.js separately binds the shared logout control. Review lives in mail settings, whose navigation is separate from explicit authorization. The widget retains its conversation independently; recovery resumes read-only observation; pagehide cancels stale responses.
  * Constraints: Bind once; never execute code through eval or string-based inline event handlers. */
 function bindEvents() {
   initProcessingUI(async () => { await loadList(); await refreshWorkspace(); }, mailboxId => pollGmailSync([mailboxId]));
@@ -606,7 +612,6 @@ function bindEvents() {
   $('show-login').onclick = () => showAuthForm(false);
   $('mail-form').addEventListener('submit', mailSubmit);
   $('register-form').addEventListener('submit', registerSubmit);
-  $('logout').onclick = event => busy(event.currentTarget, async () => { await request('session/', { method: 'DELETE' }); state.detail = null; history.replaceState({}, '', location.pathname + '#home'); await initialize(); });
   $('filters').onsubmit = event => { event.preventDefault(); state.page = 1; busy(event.submitter, loadList); };
   $('filters').onreset = () => { state.page = 1; setTimeout(() => busy(null, loadList), 0); };
   $('refresh').onclick = event => busy(event.currentTarget, refreshInbox);

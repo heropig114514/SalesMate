@@ -56,7 +56,7 @@ Variable index:
 - LoginSerializer.username: Browser login username.
 - MailboxViewSet.queryset: Empty queryset that lets OpenAPI infer the mailbox UUID path type.
 - OBJECT: Generic OpenAPI object response type.
-- logger: Records local-development session creation and configuration errors without credentials.
+- logger: Records session creation, failed authentication, logout, and configuration errors without credentials.
 - SessionView.permission_classes: Endpoint access-permission policy.
 - VERSION_HEADERS: Schema definitions for If-Match, job ID, and lease credentials.
 """
@@ -129,21 +129,23 @@ class LoginSerializer(StrictSerializer):
 
 
 # Function: Provide CSRF-protected browser session entry points.
-# Logic: GET can establish a session from local-debug configuration and obtain CSRF; POST validates login and DELETE logs out.
+# Logic: GET obtains CSRF and can establish a configured local session unless explicitly suppressed; POST validates login and DELETE preserves an anonymous logout marker.
 # Constraints: Anonymous login also executes Django csrf_protect; it does not replace security validation with DRF anonymous-CSRF exemption.
 @method_decorator(csrf_protect, name="dispatch")
 class SessionView(APIView):
     permission_classes = [AllowAny]
 
     # Function: Return session identity and a CSRF token.
-    # Inputs: `request` is a browser request.
+    # Inputs: `request` includes optional auto_login=false and an anonymous session suppression marker.
     # Outputs: Authentication state, username, CSRF token, debug_auto_login, and onboarding_required flags.
-    # Logic: When DEBUG and the explicit switch are enabled and a direct request comes from a loopback address, establish the configured ordinary-user session for an anonymous request.
+    # Logic: Require DEBUG, the configured switch, loopback, no logout marker, and no auto_login=false before establishing the configured ordinary-user session.
     # Constraints: Local auto-login neither creates users nor admits disabled or administrator accounts; laboratory settings never establish or replace authenticated identity.
     @extend_schema(responses=OBJECT, tags=["session"])
     def get(self, request):
         debug_auto_login = bool(settings.DEBUG and getattr(settings, "LOCAL_DEBUG_AUTO_LOGIN", False)
-                                and request.META.get("REMOTE_ADDR") in {"127.0.0.1", "::1"})
+                                and request.META.get("REMOTE_ADDR") in {"127.0.0.1", "::1"}
+                                and request.query_params.get("auto_login") != "false"
+                                and not request.session.get("suppress_debug_auto_login", False))
         if debug_auto_login and not request.user.is_authenticated:
             user = get_user_model().objects.filter(
                 username=settings.LOCAL_DEBUG_USER, is_active=True, is_staff=False, is_superuser=False,
@@ -163,25 +165,31 @@ class SessionView(APIView):
     # Function: Create an authenticated user session.
     # Inputs: `request`.data contains username and password.
     # Outputs: Username and a new CSRF token; authentication failure raises AuthenticationFailed.
-    # Logic: Use Django authenticate and login to rotate the session ID.
-    # Constraints: Does not create users automatically; users are provisioned through a management command.
+    # Logic: Authenticate, rotate the session ID, clear the logout marker, and log the successful user ID; failures log no supplied identity or password.
+    # Constraints: Does not create users; registration or provisioning creates accounts separately.
     @extend_schema(request=LoginSerializer, responses=OBJECT, tags=["session"])
     def post(self, request):
         data = validated(LoginSerializer, request.data)
         user = authenticate(request, username=data["username"], password=data["password"])
         if user is None:
+            logger.warning("session_login_failed reason=invalid_credentials")
             raise AuthenticationFailed("用户名或密码不正确。")
         login(request, user)
+        request.session.pop("suppress_debug_auto_login", None)
+        logger.info("session_login_succeeded user_id=%s", user.pk)
         return Response({"authenticated": True, "username": user.get_username(), "csrf_token": get_token(request)})
 
     # Function: Log out the current session.
     # Inputs: `request` is a browser request; write requests require CSRF.
     # Outputs: Empty 204 response.
-    # Logic: Clear the Django session.
-    # Constraints: Does not revoke independent Agent credentials.
+    # Logic: Flush the authenticated session, then retain only an anonymous marker preventing immediate debug auto-login; log the former user ID.
+    # Constraints: Does not revoke independent Agent credentials or change global automatic-login settings; CSRF failure leaves identity intact.
     @extend_schema(responses={204: None}, tags=["session"])
     def delete(self, request):
+        user_id = request.user.pk
         logout(request)
+        request.session["suppress_debug_auto_login"] = True
+        logger.info("session_logout_succeeded user_id=%s", user_id)
         return Response(status=204)
 
 

@@ -1,9 +1,9 @@
 /**
  * Responsibility: Provide shared navigation, bottom Profile settings, customer context, real task summaries, and bottom chat across mail, business, world insights, and settings.
- * Implementation: The sidebar no longer lists opportunity priorities; URLs retain customer identity/shared experiment context. Experiment customers use read-only source entries; summaries use authorized GETs. Profile offers explicitly confirmed internal account-data reset while preserving login identity.
+ * Implementation: URLs retain customer identity/shared experiment context; summaries use authorized GETs. Profile offers account-data reset and CSRF-protected logout, returning to /login/ only after server confirmation.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: Header versions reflect removal of experiment navigation; chat Markdown, 0919 interface, and language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. app.js, business.js, world-news.js, and company-settings.js call this module; workspace.css/product-header.js share the shell; review and transactions retain existing APIs.
- * Directory: businessHref, renderWorkspaceNav, mountWorkspace, setWorkspaceContext, refreshWorkspace.
+ * Directory: businessHref, renderWorkspaceNav, logoutSession, mountWorkspace, setWorkspaceContext, refreshWorkspace.
  * Variable index: customerResources contains four customer business entries; context is the current customer; activePage is the current page; refreshSequence prevents stale updates.
  */
 import { t, h } from './i18n.js?v=20260921-product';
@@ -26,20 +26,40 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** Function: Rebuild shared navigation. Inputs: Module activePage/context. Outputs: None.
- * Logic: Show workspace, global insights, Channels, and customers without a sidebar priority entry. Bottom settings omit customer identity; account reset delegates to its confirmation flow. Constraints: Shared experiment customers never enter private mail routes; other customer identities pass only to relevant business links. */
+ * Logic: Show workspace, global insights, Channels, and customers. Profile exposes reset and logout with a live error region. Constraints: Shared experiment customers never enter private mail routes; other customer identities pass only to relevant business links. */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
   nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
   if (profile) {
-    profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button>`;
+    profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button><button type="button" class="text-btn" id="logout">${t('退出登录')}</button><p id="logout-error" role="alert" hidden></p>`;
     profile.querySelector('#reset-account-data').onclick = event => resetAccountData(event.currentTarget);
+    profile.querySelector('#logout').onclick = event => logoutSession(event.currentTarget);
+  }
+}
+
+/** Function: End the current browser session explicitly. Inputs: button is the Profile logout control; the API helper reads the current CSRF cookie.
+ * Outputs: Navigate to /login/ after success, or display an accessible error and restore the control.
+ * Logic: Disable duplicate clicks, await server invalidation, and use full navigation to discard in-memory account data and polling.
+ * Constraints: Never report logout success before the server responds; no automatic retries, credential logging, account deletion, or external authorization revocation. */
+async function logoutSession(button) {
+  button.disabled = true;
+  const errorNode = document.getElementById('logout-error');
+  errorNode.hidden = true;
+  try {
+    await request('session/', { method: 'DELETE' });
+    location.replace('/login/');
+  } catch (error) {
+    console.error('session_logout_failed', { status: error.status, type: error.name });
+    errorNode.textContent = error.message;
+    errorNode.hidden = false;
+    button.disabled = false;
   }
 }
 
 /** Function: Mount the shared navigation shell. Inputs: active is the current page. Outputs: None.
- * Logic: Replace navigation/Profile and enable the floating entry; repeated clicks on the same review/mail-settings route still open the view. Constraints: Business pages call after login; public world news mounts the entry only. APIs enforce session permissions; mounting submits no requests. */
+ * Logic: Replace navigation/Profile and enable the floating entry; repeated clicks on the same review/mail-settings route still open the view. Constraints: Page controllers verify the session before mounting. APIs enforce permissions; mounting submits no requests. */
 export function mountWorkspace(active = 'home') {
   activePage = active;
   enableAssistant();

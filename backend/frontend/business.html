@@ -2,7 +2,7 @@
 
 <!-- Responsibility: Provide the semantic structure for sales business management.
 Implementation: workspace.js provides workspace, Channels, customers, four business navigation entries, and customer context; business.js renders URL-filtered lists with read-only shared-experiment labels, server-gated QQ sending connections, and action-confirmation forms.
-Relationships: Entry cache versions reflect sidebar-priority/experiment-entry removal and opportunity-priority support; chat Markdown, 0919 interface, and shared language/API resources use coordinated versions. The 0919 simplification removes duplicate global task bars; entry scripts follow workspace-chat upgrades. assistant-widget.js/css provides the bottom assistant, product-header.js the header, design-system.css Nocturne tokens, and business.css responsive layout; existing session login/sales APIs are reused.
+Relationships: The 20260927-auth entry loads shared Profile logout. Entry cache versions reflect sidebar-priority/experiment-entry removal and opportunity-priority support; chat Markdown, 0919 interface, and shared language/API resources use coordinated versions. The 0919 simplification removes duplicate global task bars; entry scripts follow workspace-chat upgrades. assistant-widget.js/css provides the bottom assistant, product-header.js the header, design-system.css Nocturne tokens, and business.css responsive layout; existing session login/sales APIs are reused.
 Directory: No functions or classes; workspace-profile provides company/mail settings and internal account reset, workspace-nav shared navigation, workspace-context the current customer, status-filter status filtering, and editor edit/action-confirmation dialogs.
 Internationalization: data-i18n marks static text/attributes; language-bar offers selection and i18n.js initializes marked nodes only. Explicit option values retain protocol values.
 Variable index: No script variables; business modules locate elements by DOM id. -->
@@ -62,6 +62,6 @@ Variable index: No script variables; business modules locate elements by DOM id.
 <div hidden="" id="editor-error" role="alert"></div>
 <div id="editor-body"></div>
 </dialog>
-<script type="module" src="/static/business.js?v=20260922-sidebar"></script>
+<script type="module" src="/static/business.js?v=20260927-auth"></script>
 </body>
 </html>

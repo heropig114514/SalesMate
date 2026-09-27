@@ -2,7 +2,7 @@
  * Responsibility: Provide business management for customers, transactions, follow-ups, collaboration, and external actions.
  * Implementation: Browse authorized business data together with permitted experiment rows; refresh visible order tables after confirmed chat updates. Ordinary writes retain their original permissions.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
- * Relationships: Navigation cache versions reflect removal of sidebar priority/experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat uses a shared upgrade version to avoid cached company-specific entry points. workspace.js provides navigation, bottom Profile, collapsible bottom chat, and the Nocturne navigation/task/URL customer context. sales-api.js handles same-origin calls without automatically approving tools.
+ * Relationships: The 20260927-auth entry loads shared Profile logout. Navigation cache versions reflect removal of sidebar priority/experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat uses a shared upgrade version to avoid cached company-specific entry points. workspace.js provides navigation, bottom Profile, collapsible bottom chat, and the Nocturne navigation/task/URL customer context. sales-api.js handles same-origin calls without automatically approving tools.
  * Directory: nameOf, label, display, notice, perform, showDialog, optionRows, relationOptions, fieldControl,
  * editRecord, readForm, detailRecord, runCommand, customerDetail, editCustomer, editContact,
  * groupingForm, attachmentForm, actionForm, renderActions, connectionForm, qqConnectionForm, refreshDirectory,
@@ -14,7 +14,7 @@
 import { t, h, locale, language } from './i18n.js?v=20260921-product';
 
 import { request, escapeHtml as esc } from "./api.js?v=20260921-product";
-import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260922-sidebar";
+import { mountWorkspace, setWorkspaceContext, refreshWorkspace, businessHref } from "./workspace.js?v=20260927-auth";
 import { salesRequest, allRows, uploadFile } from "./sales-api.js?v=20260921-product";
 
 const $ = (id) => document.getElementById(id);
@@ -1005,12 +1005,12 @@ function renderStats(overview) {
 }
 
 /** Function: Initialize authentication, metadata, and page interactions. Inputs: None; reads the current route.
- * Outputs: None. Logic: Load capabilities and directories, bind chat order-change refresh events, and retain read-only shared experiment customer forms.
+ * Outputs: None. Logic: Redirect anonymous visitors to /login/; otherwise load capabilities and directories, bind chat order-change refresh events, and retain read-only shared experiment customer forms.
  * Constraints: Initialization performs reads only; never save user data in browser local storage. */
 async function boot() {
   const session = await request("session/");
   if (!session.authenticated) {
-    location.assign("/");
+    location.replace("/login/");
     return;
   }
   user = await request("accounts/me/");

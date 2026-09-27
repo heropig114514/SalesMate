@@ -8,6 +8,9 @@ Directory:
 - DebugSessionTests.test_disabled_or_nonlocal_requires_login: Verify disabled switch, disabled DEBUG, or non-loopback address does not auto-login.
 - DebugSessionTests.test_unavailable_user_is_explicit_error: Verify missing, inactive, or administrator accounts do not auto-login.
 - DebugSessionTests.test_existing_identity_is_preserved: Verify an existing logged-in identity is not replaced.
+- DebugSessionTests.test_login_routes_reuse_existing_forms: Verify both public login URL variants serve the established form.
+- DebugSessionTests.test_manual_login_and_logout_suppress_automatic_login: Verify explicit login, session invalidation, and persistent logout under local automatic login.
+- DebugSessionTests.test_login_and_logout_require_csrf: Verify rejected writes preserve the existing anonymous or authenticated state.
 Variable index:
 - None
 """
@@ -21,6 +24,63 @@ from rest_framework.test import APIClient
 # Constraints: Test accounts and mailboxes are synthetic and no real credentials from a local demo are used.
 @override_settings(DEBUG=True, LOCAL_DEBUG_AUTO_LOGIN=True, LOCAL_DEBUG_USER="debug-user")
 class DebugSessionTests(TestCase):
+    # Function: Verify both dedicated login routes use the existing interface.
+    # Inputs: Anonymous browser client; no external services or template mocks.
+    # Outputs: Assertions for HTTP 200 and the existing login/registration forms.
+    # Logic: Read slash and no-slash variants through the Django URL resolver.
+    # Constraints: Does not assert browser script behavior; browser_auth.cjs covers that separately.
+    def test_login_routes_reuse_existing_forms(self):
+        for path in ("/login", "/login/"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertContains(response, 'id="login-form"')
+                self.assertContains(response, 'id="signup-form"')
+                self.assertTemplateUsed(response, "index.html")
+
+    # Function: Verify manual authentication remains usable with local automatic login enabled.
+    # Inputs: Synthetic debug account and CSRF-enforcing browser client.
+    # Outputs: Assertions for anonymous entry, invalid-password rejection, real login, invalidated old session, persistent logout, and relogin.
+    # Logic: Opt out on the entry request, exercise password authentication and DELETE, then replay the old cookie in an independent client.
+    # Constraints: Real database/session/CSRF handling; no external services, mocked authentication, or changes to deployment defaults.
+    def test_manual_login_and_logout_suppress_automatic_login(self):
+        self.user.set_password("test-password-123")
+        self.user.save(update_fields=["password"])
+        response = self.client.get("/api/v1/session/?auto_login=false")
+        self.assertFalse(response.data["authenticated"])
+        self.assertFalse(response.data["debug_auto_login"])
+        token = response.data["csrf_token"]
+        payload = {"username": self.user.username, "password": "incorrect"}
+        rejected = self.client.post("/api/v1/session/", payload, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(rejected.status_code, 403)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        payload["password"] = "test-password-123"
+        response = self.client.post("/api/v1/session/", payload, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(response.status_code, 200)
+        old_cookie = self.client.cookies["sessionid"].value
+        token = response.data["csrf_token"]
+        self.assertEqual(self.client.delete("/api/v1/session/", HTTP_X_CSRFTOKEN=token).status_code, 204)
+        self.assertFalse(self.client.get("/api/v1/session/").data["authenticated"])
+        self.assertFalse(self.client.get("/api/v1/session/").data["authenticated"])
+        stale = APIClient()
+        stale.cookies["sessionid"] = old_cookie
+        self.assertEqual(stale.get("/api/v1/companies/").status_code, 403)
+        token = self.client.get("/api/v1/session/").data["csrf_token"]
+        response = self.client.post("/api/v1/session/", payload, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("suppress_debug_auto_login", self.client.session)
+
+    # Function: Verify anonymous login and authenticated logout retain CSRF protection.
+    # Inputs: Existing synthetic account and a client enforcing Django CSRF middleware.
+    # Outputs: Assertions for rejected writes and unchanged session identity.
+    # Logic: Submit login without a CSRF token, establish debug login by GET, then submit logout without a token.
+    # Constraints: No authentication mocking; a rejected logout must not set the anonymous suppression marker.
+    def test_login_and_logout_require_csrf(self):
+        self.assertEqual(self.client.post("/api/v1/session/", {"username": "debug-user", "password": "invalid"}, format="json").status_code, 403)
+        self.assertNotIn("_auth_user_id", self.client.session)
+        self.client.get("/api/v1/session/")
+        self.assertEqual(self.client.delete("/api/v1/session/").status_code, 403)
+        self.assertEqual(self.client.session["_auth_user_id"], str(self.user.pk))
+
     # Function: Create an ordinary debug user and browser client.
     # Inputs: Test-framework initialized instance state, with no external parameters.
     # Outputs: Instance state for `user` and `client`.

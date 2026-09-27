@@ -1,13 +1,13 @@
 /** Responsibility: Read, edit, and save the company step of four-step onboarding per account.
  * Implementation: Shared navigation/bottom assistant; explicit saves include a version, failures preserve input, and conflicts require reloading.
- * Relationships: Navigation cache versions reflect removal of sidebar priority/experiment entries and opportunity-priority support. Profile item identifiers, chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. Uses company-settings.html/css, accounts/company-profile API, and api.js for CSRF/errors.
+ * Relationships: The 20260927-auth entry loads shared Profile logout. Navigation cache versions reflect removal of sidebar priority/experiment entries and opportunity-priority support. Profile item identifiers, chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. Uses company-settings.html/css, accounts/company-profile API, and api.js for CSRF/errors.
  * Directory: text, showStatus, renderForm, loadProfile, saveProfile, boot.
  * Variable index: choices holds industry/size options; fields holds fields and bilingual names; revision is the observed version; busy prevents overlapping operations; $ queries the DOM.
  */
 import { mountOnboarding } from './onboarding.js?v=20260921-support';
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
-import { mountWorkspace } from './workspace.js?v=20260922-sidebar';
+import { mountWorkspace } from './workspace.js?v=20260927-auth';
 
 const $ = id => document.getElementById(id);
 const choices = { industry: [['半导体检测','半导体检测','Semiconductor inspection'],['精密量测','精密量测','Precision metrology'],['光学检测','光学检测','Optical inspection'],['工业检测','工业检测','Industrial inspection']], size_band: [['lt_50','少于 50 人','Under 50'],['50_100','50–99 人','50–99'],['100_200','100–199 人','100–199'],['200_500','200–499 人','200–499'],['gte_500','500 人及以上','500+']] };
@@ -104,7 +104,7 @@ async function boot() {
   $('company-reload').textContent = text('重新读取', 'Reload');
   try {
     const session = await request('session/');
-    if (!session.authenticated) { location.replace('/'); return; }
+    if (!session.authenticated) { location.replace('/login/'); return; }
     $('account').textContent = session.username;
     mountWorkspace('company-settings');
     $('company-form').addEventListener('submit', saveProfile);
