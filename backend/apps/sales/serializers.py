@@ -996,7 +996,7 @@ class ZonedDateTimeField(s.DateTimeField):
 
 
 # Function: Validate shared event facts and isolate linked business information.
-# Logic: Validate date precision on writes; all read entry points filter invisible opportunity IDs. Date-only output includes the final day in its date range.
+# Logic: Validate source amounts/evidence and date precision on writes; all read entry points filter invisible opportunity IDs. Date-only output includes the final day in its date range.
 # Constraints: Original event text is shared fact data; opportunities, companies, and amounts gain no permissions through events. No external site access.
 class WorldEventSerializer(StrictModelSerializer):
     amount = NewsAmountField(max_digits=30, decimal_places=6, min_value=0, allow_null=True, required=False, coerce_to_string=True)
@@ -1077,7 +1077,7 @@ class WorldNewsSerializer(StrictModelSerializer):
         return validate_insight(self, validate_news_signal(self, attrs))
 
     # Function: Declare news fields.
-    # Logic: Content, source, and thirteen public lead fields are writable; new fields are optional. Identity/version are read-only; insights/database constraints enforce source uniqueness.
+    # Logic: Content, source, and fourteen public lead fields are writable; new fields are optional. Identity/version are read-only; insights/database constraints enforce source uniqueness.
     # Constraints: DRF automatic source uniqueness must not incorrectly reject manual records; archival uses command endpoints.
     class Meta:
         model = models.WorldNews

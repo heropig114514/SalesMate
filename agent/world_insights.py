@@ -17,7 +17,7 @@ Directory:
 - _json_get: Perform one bounded streaming JSON request with explicit timeout and no redirects; convert network/JSON errors to InsightError.
 - search_gdelt: Read a bounded GDELT article list and retain public source URLs and titles; publisher country is not event geography.
 - read_feed: Read a bounded configured RSS/Atom feed with no redirects, normalize entry metadata and return candidates.
-- fetch_page: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract article text; close the response on every path.
+- fetch_page: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract main content before standalone articles so related-card articles cannot replace the story; close the response on every path.
 - summarize_news: Call the injected model once, validate relevance and country evidence, then compose separate company hints and source amounts; return None for irrelevant or insufficient source text.
 - Geocoder: Resolve verified city/country coordinates using a rate-limited persistent Nominatim cache; cache unsuccessful lookups too.
 - Geocoder.__init__: Initialize injected clock/sleep hooks and cache path; missing or malformed cache starts empty under existing behavior.
@@ -441,10 +441,10 @@ def read_feed(url: str, industry: str, kind: str, *, limit: int = 15) -> list[Ca
     return output
 
 
-# Function: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract article text; close the response on every path.
+# Function: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract main content before standalone articles so related-card articles cannot replace the story; close the response on every path.
 # Inputs: `url` are the explicit source, configuration or injected dependency parameters.
 # Outputs: See the annotated return type; validation and transport failures propagate as documented.
-# Logic: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract article text; close the response on every path.
+# Logic: Validate public DNS and bounded HTML, parse publication metadata and JSON-LD events, then extract main content before standalone articles so related-card articles cannot replace the story; close the response on every path.
 # Constraints: Source text is untrusted; no CRM association or monetary conversion is inferred.
 def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
     """Read bounded public HTML to verify dates and structured events."""
@@ -515,7 +515,7 @@ def fetch_page(url: str) -> tuple[str, datetime | None, list[dict[str, Any]]]:
                 published = aware_time(item["datePublished"])
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
-    main = soup.find("article") or soup.find("main") or soup
+    main = soup.find("main") or soup.find("article") or soup
     paragraphs = [tag.get_text(" ", strip=True) for tag in main.find_all(["p", "h1", "h2"])]
     excerpt = " ".join(part for part in paragraphs if len(part) >= 25)[:5000]
     return _plain(excerpt), published, events

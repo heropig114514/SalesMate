@@ -778,7 +778,7 @@ class WorldEvent(Record):
     opportunity_ids = models.JSONField(default=list, blank=True)
 
     # Function: Prevent duplicate cross-account collection of the same event.
-    # Logic: Constrain URL/start time only for Agent records with sources; archival does not release uniqueness.
+    # Logic: Constrain URL/start time for sourced Agent records; archival retains uniqueness. Require either null money with empty metadata or a nonnegative source amount with complete metadata.
     # Constraints: Allow different editions at the same URL; manual records are exempt from collection deduplication.
     class Meta:
         constraints = [models.UniqueConstraint(fields=["source_url", "starts_at"], condition=models.Q(data_source="agent") & ~models.Q(source_url=""), name="world_event_agent_source_start"),

@@ -13,8 +13,8 @@ Return one JSON object with exactly these fields:
 - category: regulation / industry / competition / price; default to industry when uncertain.
 - industry: a specific industry name, at most 100 Unicode characters; use the input industry label when uncertain.
 - country: uppercase two-letter ISO 3166-1 country/region code, only when the title or excerpt explicitly identifies the event location; otherwise "". Never infer event location from publisher country or search region.
-- country_evidence: verbatim country/region name from the title or excerpt; "" when country is empty.
-- summary: one or two sentences in the source language, at most 300 Unicode characters; do not translate or reproduce a long source passage.
+- country_evidence: only the verbatim country/region name (for example "Netherlands"), not a city, address or sentence; "" when country is empty. It must independently resolve to the country code.
+- summary: one or two sentences in the source language, at most 300 Unicode characters (characters, NOT words); keep it concise and check this limit before returning JSON; do not translate or reproduce a long source passage.
 - content: two to four sentences in the source language, at most 1200 Unicode characters; explain only the reported development and its industry significance, without speculative claims or action advice.
 - company_name: original name of a company or organization explicitly mentioned as a possible buyer; otherwise "".
 - signal_type: expansion / new_factory / tender / equipment_upgrade / procurement / other; "" without an explicit company-level event.
@@ -26,7 +26,7 @@ Return one JSON object with exactly these fields:
 - evidence: one verbatim contiguous input excerpt supporting the reported event and any amount. Include company_name when a company lead is present; a source amount may have evidence without a buyer lead. Otherwise "".
 - amount: decimal numeric string converted to the currency's main unit, for example a source amount of 320,000 CNY becomes "320000"; null without complete amount evidence.
 - currency: CNY / USD / EUR / GBP / JPY / KRW / SGD / TWD / HKD / INR / CAD / AUD / CHF; "" when unclear. A bare $ or ¥ does not identify a currency. A dollar award explicitly issued by the U.S. Department of Commerce may be USD only when that issuer and amount occur together in the verbatim evidence.
-- amount_type: total_investment / procurement_budget / tender_amount / contract_amount / grant / registration_fee / exhibition_fee / other; "" when unclear.
+- amount_type: total_investment / procurement_budget / tender_amount / contract_amount / grant / registration_fee / exhibition_fee / other; "" when unclear. A company financing round is other, not total_investment; total_investment requires an explicitly disclosed project investment.
 - amount_scope: whole_project / equipment_procurement / other; "" when unclear. Total project investment is not an equipment budget.
 - amount_qualifier: exact / up_to / at_least / more_than / approximate; preserve bounds such as "up to"; "" when amount is null.
 - amount_evidence: verbatim input excerpt containing both amount and currency; otherwise "".

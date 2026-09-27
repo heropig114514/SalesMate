@@ -201,7 +201,7 @@ class NewsSignalMigrationTests(TransactionTestCase):
     # Function: Verify new fields are empty on old records and bodies remain unchanged.
     # Inputs: One legacy 0009 record without structured lead fields.
     # Outputs: After 0010, defaults are correct and content/revision/source remain unchanged.
-    # Logic: Create old data through historical models; restore all application leaf migrations in finally.
+    # Logic: Create and read through the specific migration-state models so later fields cannot leak into this assertion; restore all application leaf migrations in finally.
     # Constraints: No text extraction, external calls, or automatic backfill.
     def test_preserves_existing_news(self):
         executor = MigrationExecutor(connection)

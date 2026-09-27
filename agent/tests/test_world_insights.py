@@ -23,6 +23,7 @@ Directory:
 - WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved: Verify rejected write is visible and exits nonzero when nothing was saved.
 - WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved.RejectingTools: Model an explicit tool-write rejection with no successful receipt.
 - WorldInsightsTests.test_rejected_write_is_visible_and_exits_nonzero_when_nothing_was_saved.RejectingTools.call: Return a rejected write receipt while retaining fixture list behavior.
+- WorldInsightsTests.test_main_story_precedes_related_article: Verify main content is selected ahead of unrelated article cards.
 Variable index:
 - NOW: Fixed aware test clock.
 - NEWS_URL: Public-shaped fixture news URL.
@@ -43,6 +44,7 @@ from agent.world_insights import (
     _read_limited,
     build_event,
     existing_urls,
+    fetch_page,
     main,
     run_once,
     source_url,
@@ -104,6 +106,23 @@ def model(_system, _user, *, max_tokens):
 # Logic: Test collector contracts with mocked HTTP, model, geocoding and tool boundaries; no external services are verified.
 # Constraints: Network and model behavior are mocked; passing tests do not verify live services.
 class WorldInsightsTests(unittest.TestCase):
+    # Function: Verify a related article cannot replace the main source story.
+    # Inputs: Public-shaped URL and mocked HTTP/DNS responses with a main story plus a related article card.
+    # Outputs: Exact main-story excerpt containing its source amount.
+    # Logic: Exercise fetch_page against realistic semantic HTML; related cards may appear before the main element.
+    # Constraints: Network and DNS are mocked; this test does not verify the external publisher.
+    def test_main_story_precedes_related_article(self):
+        page = b'<html><article><p>Unrelated earlier exhibition story.</p></article><main><h1>Photonics financing announcement</h1><p>Morphotonics has raised more than EUR 40 million for manufacturing.</p></main></html>'
+        with patch('agent.world_insights.socket.getaddrinfo', return_value=[(2, 1, 6, '', ('93.184.216.34', 443))]), patch('agent.world_insights.requests.get') as get:
+            response = get.return_value
+            response.status_code = 200
+            response.headers = {'Content-Type': 'text/html'}
+            response.encoding = 'utf-8'
+            response.iter_content.return_value = [page]
+            excerpt, _, _ = fetch_page(NEWS_URL)
+        self.assertIn('EUR 40 million', excerpt)
+        self.assertNotIn('Unrelated', excerpt)
+
     # Function: Verify response limit rejects stream before full download.
     # Inputs: Isolated fixture state; no production credentials or data.
     # Outputs: Assertions raise on a contract mismatch; no return value.
@@ -373,3 +392,4 @@ class WorldInsightsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
