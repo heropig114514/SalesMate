@@ -114,7 +114,7 @@ async function checkDates(browser, base) {
     assert.match(await page.inputValue('#invite-body'), /2026-10-27/);
     await page.click('#invite-close');
     const timed = await page.evaluate(async row => {
-      const { calendarText } = await import('/static/world-news.js?v=20260927-source-amounts');
+      const { calendarText } = await import('/static/world-news.js?v=20260927-timeline');
       return calendarText({ ...row, time_precision: 'datetime', starts_at: '2026-10-27T09:00:00+08:00', ends_at: '2026-10-27T17:00:00+08:00' });
     }, fixture);
     assert.match(timed, /DTSTART:20261027T010000Z/);

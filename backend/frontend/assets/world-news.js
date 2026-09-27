@@ -1,15 +1,17 @@
 /** Responsibility: Display database-backed event maps, news, and invitation templates.
- * Implementation: Location markers remain interactive; event/news amounts come directly from source fields, with no CRM aggregation. News cards/details show public leads, source-amount definitions, and inference labels. Shared events use backend date precision for display/filtering/all-day calendar export. Read pagination explicitly; all news pages in the existing 14-day window are loaded. Mark synthetic placeholders, display failures, and provide no static fallback.
+ * Implementation: Location markers remain interactive; event/news amounts come directly from source fields, with no CRM aggregation. News cards/details show public leads, source-amount definitions, and inference labels. Shared events use backend date precision for display/filtering/all-day calendar export. Read pagination explicitly; all news pages in the 90-day window are loaded, with evidenced news on the map and events retained until 30 days after ending. Mark synthetic placeholders, display failures, and provide no static fallback.
  * Relationships: Map-anchor/amount-label fixes use updated resources; navigation versions reflect removal of sidebar priority/experiment entries; uses sales/world, world-news, seller-context, and WorldMap.
  * Directory: $, text, countryName, loadPages, eventRows, render, selectEvent, renderDetail, renderNews, renderArticle, foldLine, calendarText, calendarText.escape, calendarText.instant, downloadItinerary, inviteDraft, start.
- * Variable index: $ queries DOM; state holds snapshots/filters; categories classifies events; regionNames supplies region labels; map is the map instance.
+ * Variable index: RECENCY_POLICY defines the explicit 90-day news and 30-day ended-event windows; $ queries DOM; state holds snapshots/filters; categories classifies events; regionNames supplies region labels; map is the map instance.
  */
 import { language } from './i18n.js?v=20260921-product';
 import { request, escapeHtml as e } from './api.js?v=20260921-product';
 import { mountWorkspace } from './workspace.js?v=20260922-sidebar';
 import { eventDates, eventWindow, calendarBounds } from './world-dates.js?v=20260924-insights';
-import { signalSummary, signalDetail, sourceAmountText, sourceAmountDetail } from './world-signals.js?v=20260927-source-amounts';
-import { WorldMap } from './world-map.js?v=20260927-source-amounts';
+import { signalSummary, signalDetail, sourceAmountText, sourceAmountDetail } from './world-signals.js?v=20260927-timeline';
+import { timelineItems, filterTimeline, timelineDate } from './world-timeline.js?v=20260927-timeline';
+import { WorldMap } from './world-map.js?v=20260927-timeline';
+const RECENCY_POLICY = { newsDays: 90, eventHistoryDays: 30 };
 const $ = id => document.getElementById(id);
 const state = { events: [], news: [], countries: [], selected: null, country: 'all', type: 'all', time: 'all', view: 'global', seller: null };
 const categories = { regulation: ['监管', 'Regulation'], industry: ['产业', 'Industry'], competition: ['竞争', 'Competition'], price: ['价格', 'Price'] };
@@ -29,35 +31,40 @@ async function loadPages(path) {
   }
   return { ...first, results };
 }
-/** Function: Filter events. Inputs: includeCountry. Outputs: An array. Logic: Intersect type, unfinished time window, and country filters; date-only events use complete calendar days. Constraints: No database writes. */
+/** Function: Select the map timeline. Inputs: includeCountry toggles the regional filter. Outputs: A time-ordered array of news and events.
+ * Logic: Retain source-evidenced news and upcoming/recent events, then apply type/time/country filters. Constraints: Amount, creation time and CRM data never affect priority. */
 function eventRows(includeCountry = true) {
-  const now = new Date(), end = state.time === '30' ? new Date(now.getTime() + 30 * 86400000) : new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3 + 3, 1);
-  return state.events.filter(item => (state.type === 'all' || item.event_type === state.type) && (!includeCountry || state.country === 'all' || item.country === state.country) && (state.time === 'all' || ((item.time_precision === 'date' ? eventWindow(item).end > now : eventWindow(item).end >= now) && eventWindow(item).start < end)));
+  const now = new Date();
+  return filterTimeline(timelineItems(state.events, state.news, now, RECENCY_POLICY), { type: state.type, time: state.time, country: includeCountry ? state.country : 'all' }, now);
 }
 /** Function: Render filtered results. Inputs: state. Outputs: DOM. Logic: Date-only events use source dates; country counts, lists, and map stay synchronized; source amount context remains independent of private opportunities. Constraints: Empty states clear old details; the map shows individual source amounts at shared locations. */
 function render() {
   const rows = eventRows(), regional = eventRows(false);
   if (!rows.some(item => item.id === state.selected)) state.selected = rows[0]?.id || null;
-  $('event-count').textContent = rows.length; $('map-count').textContent = text(`${rows.length} 项活动`, `${rows.length} events`);
+  $('event-count').textContent = rows.length; $('map-count').textContent = text(`${rows.length} 条动态`, `${rows.length} updates`);
   $('region-filters').innerHTML = `<button data-country="all" aria-pressed="${state.country === 'all'}">${text('全部', 'All')} <span>${regional.length}</span></button>` + state.countries.map(item => `<button data-country="${e(item.code)}" aria-pressed="${state.country === item.code}">${e(countryName(item.code))}<span>${regional.filter(row => row.country === item.code).length}</span></button>`).join('');
-  $('event-list').innerHTML = rows.map(item => `<button class="event-card" aria-pressed="${item.id === state.selected}" data-select="${e(item.id)}"><span class="event-card-main"><span>${e(item.city)} · ${e(eventDates(item).start)}</span><strong>${e(item.title)}</strong><small>${e(sourceAmountText(item))}${item.data_source === 'synthetic' ? text(' · 虚拟占位', ' · Synthetic') : ''}</small></span></button>`).join('') || `<p>${text('没有匹配活动。', 'No matching events.')}</p>`;
+  $('event-list').innerHTML = rows.map(item => `<button class="event-card" aria-pressed="${item.id === state.selected}" data-select="${e(item.id)}"><span class="event-card-main"><span>${item.kind === 'news' ? text('新闻 · ', 'News · ') : text('活动 · ', 'Event · ')}${e(item.city)} · ${e(timelineDate(item))}</span><strong>${e(item.title)}</strong><small>${e(sourceAmountText(item))}${item.data_source === 'synthetic' ? text(' · 虚拟占位', ' · Synthetic') : ''}</small></span></button>`).join('') || `<p>${text('没有匹配的动态。', 'No matching updates.')}</p>`;
   map?.setItems(rows.map(item => ({ ...item, lat: item.latitude, lng: item.longitude, en: item.title })), state.selected);
   renderDetail(rows.find(item => item.id === state.selected));
   const params = new URLSearchParams({ type: state.type, time: state.time, country: state.country, view: state.view });
   if (state.selected) params.set('event', state.selected);
   history.replaceState(null, '', '/world/?' + params);
 }
-/** Function: Select an event. Inputs: id. Outputs: None. Logic: Use shared rendering. Constraints: No data writes. */
+/** Function: Select a news or event record. Inputs: id. Outputs: None. Logic: Use shared rendering. Constraints: No data writes. */
 function selectEvent(id) { state.selected = id; render(); }
-/** Function: Show event facts. Inputs: item. Outputs: Details. Logic: Escape shared facts and viewer-visible relations; date-only events show the source's final day and indicate unspecified time. Constraints: Do not generate recommendations. */
+/** Function: Show news or event facts. Inputs: item. Outputs: Details. Logic: News shows its own date, amount, location evidence and article link, with no event/calendar actions; Escape shared facts and viewer-visible relations; date-only events show the source's final day and indicate unspecified time. Constraints: Do not generate recommendations. */
 function renderDetail(item) {
-  if (!item) { $('event-detail').innerHTML = `<p>${text('请选择活动。', 'Select an event.')}</p>`; return; }
+  if (!item) { $('event-detail').innerHTML = `<p>${text('请选择动态。', 'Select an update.')}</p>`; return; }
+  if (item.kind === 'news') {
+    $('event-detail').innerHTML = `<div class="event-detail-head"><span>${text('产业新闻', 'Industry news')}</span><span>${e(item.published_at.slice(0, 10))}</span></div><h2>${e(item.title)}</h2><p>${e(item.city)} · ${e(countryName(item.country))}</p><p>${e(item.summary)}</p>${sourceAmountDetail(item)}${item.potential_sales_need ? `<section><h3>${text('潜在需求（推断）', 'Potential need (inference)')}</h3><p>${e(item.potential_sales_need)}</p><p>${e(item.opportunity_reason)}</p></section>` : ''}<section><h3>${text('地点依据', 'Location evidence')}</h3><blockquote>${e(item.location_evidence)}</blockquote><a href="${e(item.location_source_url)}" target="_blank" rel="noopener noreferrer">${text('地点来源', 'Location source')}</a></section><div class="event-actions"><a class="primary" href="/world/news/${e(item.id)}/">${text('阅读完整新闻', 'Read full news')}</a></div>`;
+    return;
+  }
   const days = Math.ceil((eventWindow(item).start - new Date()) / 86400000);
   $('event-detail').innerHTML = `<div class="event-detail-head"><span>${item.event_type === 'exhibition' ? text('展会', 'Exhibition') : text('销售活动', 'Sales event')}</span><span>${days >= 0 ? text(`${days} 天后`, `In ${days} days`) : text('已开始', 'Started')}</span></div><h2>${e(item.title)}</h2><p>${e(item.city)} · ${e(eventDates(item).start)} — ${e(eventDates(item).end)}${item.time_precision === 'date' ? text(' · 仅日期，具体时间未提供', ' · Dates only; time not provided') : ''}</p><p class="badge">${e(item.data_source === 'synthetic' ? text('数据库虚拟占位', 'Synthetic database record') : item.data_source)}</p>${sourceAmountDetail(item)}<section><h3>${text('为什么值得去', 'Why attend')}</h3><p>${e(item.description || text('等待补充说明', 'Awaiting details'))}</p></section><section><h3>${text('现场情况', 'On site')}</h3><ul>${item.onsite.map(value => `<li>${e(value)}</li>`).join('')}</ul><p>${text('报名截止', 'Registration closes')}：${e(item.registration_deadline?.slice(0, 10) || '—')}</p></section><section><h3>${text('建议动作', 'Suggested actions')}</h3><ul>${item.suggested_actions.map(value => `<li>${e(value)}</li>`).join('')}</ul></section>${item.source_url ? `<a href="${e(item.source_url)}" target="_blank" rel="noopener noreferrer">${text('原始来源', 'Source')}</a>` : ''}<div class="event-actions"><button id="add-itinerary" class="primary">${text('加入行程', 'Add to itinerary')}</button><button id="create-invite" class="secondary">${text('生成客户邀约邮件', 'Draft invitation')}</button></div><p class="event-action-note">${text('导出日历文件；邀约为可编辑模板，尚未调用 AI。', 'Export calendar file; invitation is an editable template, without AI.')}</p>`;
   $('add-itinerary').onclick = () => downloadItinerary(item); $('create-invite').onclick = () => inviteDraft(item);
 }
-/** Function: Display news from the last fourteen days. Inputs: Snapshot. Outputs: DOM. Logic: Preserve actual publication time and show company, event, and source-amount definitions on cards. Constraints: News amounts never enter the map; synthetic timestamps remain unchanged. */
-function renderNews() { $('industry-news').innerHTML = state.news.map(item => `<a class="industry-news-card" href="/world/news/${e(item.id)}/"><span>${e((categories[item.category] || ['', ''])[language === 'en' ? 1 : 0])}${item.data_source === 'synthetic' ? text(' · 虚拟', ' · Synthetic') : ''}</span><h3>${e(item.title)}</h3>${signalSummary(item)}<time>${e(item.published_at.slice(0, 10))}</time></a>`).join('') || `<p>${text('近 14 天暂无资讯。', 'No news in the last 14 days.')}</p>`; }
+/** Function: Display news from the last ninety days. Inputs: Snapshot. Outputs: DOM. Logic: Preserve actual publication time and show company, event, and source-amount definitions on cards. Constraints: News dates are never refreshed; mapped news retains the same source amount as these cards. */
+function renderNews() { $('industry-news').innerHTML = state.news.map(item => `<a class="industry-news-card" href="/world/news/${e(item.id)}/"><span>${e((categories[item.category] || ['', ''])[language === 'en' ? 1 : 0])}${item.data_source === 'synthetic' ? text(' · 虚拟', ' · Synthetic') : ''}</span><h3>${e(item.title)}</h3>${signalSummary(item)}<time>${e(item.published_at.slice(0, 10))}</time></a>`).join('') || `<p>${text('近 90 天暂无资讯。', 'No news in the last 90 days.')}</p>`; }
 /** Function: Display article details. Inputs: id. Outputs: Promise. Logic: Read complete public leads by ID, finish loading state, and distinguish facts, inferences, source amounts, and evidence. Constraints: Never link private opportunities or fall back after errors. */
 async function renderArticle(id) { const item = await request('sales/records/world-news/' + encodeURIComponent(id) + '/'); $('world-data-status').textContent = text('数据库记录 · 资讯', 'Database record · News'); $('news-detail').innerHTML = `<a href="/world/">← ${text('返回全球洞察', 'Back')}</a><article><p>${e(item.data_source)} · ${e(item.published_at.slice(0, 10))}</p><h1>${e(item.title)}</h1><p>${e(item.summary)}</p>${signalDetail(item)}${item.content.split('\n').map(line => `<p>${e(line)}</p>`).join('')}${item.source_url ? `<a href="${e(item.source_url)}" target="_blank" rel="noopener noreferrer">${text('原始来源', 'Source')}</a>` : `<p>${text('虚拟或待补充来源', 'Synthetic or source pending')}</p>`}</article>`; }
 /** Function: Fold ICS lines. Inputs: line. Outputs: Text. Logic: Limit each UTF-8 line to 75 bytes. Constraints: Never split characters. */
@@ -73,7 +80,7 @@ function downloadItinerary(item) { const url = URL.createObjectURL(new Blob([cal
 /** Function: Fill an invitation template. Inputs: item. Outputs: A dialog. Logic: Use explicit event dates and the user's profile for the signature. Constraints: No AI calls, inferred recipients, or sending. */
 function inviteDraft(item) { const person = state.seller?.sales_setup?.personal || {}; $('invite-subject').value = text('邀约交流：', 'Invitation: ') + item.title; $('invite-body').value = text(`您好，\n\n希望与您在 ${eventDates(item).start} 的“${item.title}”（${item.city}）期间预约交流。请告知方便的时间。\n\n`, `Hello,\n\nWould you be available to meet during ${item.title} in ${item.city} on ${eventDates(item).start}?\n\n`) + [person.name, person.title, person.email].filter(Boolean).join('\n') + (item.data_source === 'synthetic' ? text('\n\n注意：活动为虚拟占位。', '\n\nThis event is synthetic.') : ''); $('invite-dialog').showModal(); }
 /** Function: Initialize the database-backed page. Inputs: DOM and URL filters. Outputs: Promise.
- * Logic: Read every event/news page in the unchanged 14-day news window, initialize map and filter controls, and show request errors explicitly.
+ * Logic: Read every event page and 90-day news page, merge verified news locations with event locations by temporal proximity, initialize map and filter controls, and show request errors explicitly.
  * Constraints: Never create placeholders, retry, convert source amounts or read CRM amounts; invitation/calendar actions remain user-triggered. */
 async function start() {
   mountWorkspace('world');
@@ -82,15 +89,25 @@ async function start() {
   try {
     if (article) { await renderArticle(article[1]); return; }
     $('world-data-status').textContent = text('正在读取数据库…', 'Loading database…');
-    const [world, news, seller] = await Promise.all([loadPages('sales/world/'), loadPages('sales/records/world-news/?to=' + encodeURIComponent(new Date().toISOString()) + '&from=' + encodeURIComponent(new Date(Date.now() - 14 * 86400000).toISOString())), request('sales/seller-context/')]);
+    const [world, news, seller] = await Promise.all([loadPages('sales/world/'), loadPages('sales/records/world-news/?to=' + encodeURIComponent(new Date().toISOString()) + '&from=' + encodeURIComponent(new Date(Date.now() - RECENCY_POLICY.newsDays * 86400000).toISOString())), request('sales/seller-context/')]);
     Object.assign(state, { events: world.results, countries: world.countries, news: news.results, seller });
+    const regions = new Map(state.countries.map(item => [item.code, item]));
+    for (const item of timelineItems(state.events, state.news, new Date(), RECENCY_POLICY)) if (!regions.has(item.country)) regions.set(item.country, { code: item.country, customer_count: 0 });
+    state.countries = [...regions.values()].sort((a, b) => a.code.localeCompare(b.code));
     const query = new URLSearchParams(location.search);
-    state.type = ['sales', 'exhibition'].includes(query.get('type')) ? query.get('type') : 'all'; state.time = ['30', 'quarter'].includes(query.get('time')) ? query.get('time') : 'all';
+    state.type = ['sales', 'exhibition', 'news'].includes(query.get('type')) ? query.get('type') : 'all'; state.time = ['30', 'quarter'].includes(query.get('time')) ? query.get('time') : 'all';
     state.country = state.countries.some(item => item.code === query.get('country')) ? query.get('country') : 'all'; state.view = ['apac', 'europe'].includes(query.get('view')) ? query.get('view') : 'global'; state.selected = query.get('event');
     $('world-data-status').textContent = text(`数据库记录 · ${state.events.filter(item => item.data_source === 'synthetic').length} 项虚拟活动`, `Database records · ${state.events.filter(item => item.data_source === 'synthetic').length} synthetic events`);
     $('event-type').value = state.type; $('event-time').value = state.time;
-    $('map-location-legend').textContent = text('标记表示活动地点', 'Markers show event locations');
-    $('map-note').textContent = text('地图标记表示活动地点；金额为各活动来源披露值，保留用途与限定词，不换汇、不汇总。', 'Markers show event locations. Amounts retain each source’s purpose and qualifier; no conversion or aggregation.');
+    $('map-location-legend').textContent = text('实线：活动 · 虚线：新闻', 'Solid: events · Dashed: news');
+    $('news-window-label').textContent = text('近 90 天 · 最新优先', 'Last 90 days · Newest first');
+    $('timeline-heading').textContent = text('产业动态与活动', 'Industry updates and events');
+    $('news-type-option').textContent = text('产业新闻', 'Industry news');
+    $('event-type-label').textContent = text('内容类型', 'Content type');
+    $('world-map-panel').setAttribute('aria-label', text('新闻与活动地图', 'News and event map'));
+    $('world-map').setAttribute('aria-label', text('可缩放的新闻与活动地图', 'Zoomable news and event map'));
+    $('event-detail').setAttribute('aria-label', text('新闻与活动详情', 'News and event details'));
+    $('map-note').textContent = text('按距今时间排序，不按金额排名。新闻保留 90 天，活动结束后保留 30 天；无可靠地点的新闻在下方展示。金额保留原币种、用途和限定词。', 'Ordered by proximity to today, not amount. News stays for 90 days; events stay until 30 days after ending. News without verified locations appears below. Source currencies and amount meanings are preserved.');
     map = new WorldMap($('world-map'), selectEvent); map.setCountries(state.countries.filter(item => item.customer_count > 0).map(item => item.code)); await map.load(); map.setView(state.view);
     document.querySelectorAll('[data-view]').forEach(node => node.setAttribute('aria-pressed', node.dataset.view === state.view));
     $('event-type').onchange = event => { state.type = event.target.value; render(); }; $('event-time').onchange = event => { state.time = event.target.value; render(); };

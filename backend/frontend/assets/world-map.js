@@ -1,11 +1,11 @@
 /** Responsibility: Project events and their source amounts onto a real world map.
- * Implementation: Local Natural Earth GeoJSON highlights followed customer countries. Fixed-size location markers display the selected event’s source amount and qualifier; unrelated amounts are never summed. Centers remain at geographic anchors.
+ * Implementation: Local Natural Earth GeoJSON highlights followed customer countries. Fixed-size solid event and dashed news markers display the selected event’s source amount and qualifier; unrelated amounts are never summed. Centers remain at geographic anchors.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; world-news.js supplies filters/selection callbacks, and backend customer country codes control highlights. No online tiles.
  * Directory: WorldMap, WorldMap.constructor, WorldMap.load, WorldMap.setView, WorldMap.setCountries, WorldMap.setItems, WorldMap.draw, WorldMap.destroy.
  * Variable index: LOCATION_DIAMETER defines a fixed location-bubble diameter and does not encode financial value; WorldMap.map is Leaflet; layer contains event markers; items/selectedId describes current display; onSelect is the callback; countries contains highlighted country names; view is the current perspective; resizeObserver watches container dimensions.
  */
 import { language } from "./i18n.js?v=20260921-product";
-import { sourceAmountText } from "./world-signals.js?v=20260927-source-amounts";
+import { sourceAmountText } from "./world-signals.js?v=20260927-timeline";
 const LOCATION_DIAMETER = 18;
 /** Function: Manage the map and accessible event bubbles. Logic: Filtering preserves perspective; explicit perspective changes update center/zoom together. Constraints: Business records come from the API; never locate the user. */
 export class WorldMap {
@@ -131,6 +131,7 @@ export class WorldMap {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "event-pin";
+      button.classList.toggle("news-pin", item.kind === "news");
       button.classList.toggle("amount-missing", amount === null);
       button.classList.toggle("multiple", items.length > 1);
       button.dataset.eventId = item.id;

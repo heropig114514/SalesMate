@@ -1,5 +1,5 @@
 """Responsibility: Define relational schemas for sales business, team sharing, and assistant operations.
-Implementation: News and events store source amounts and qualifiers independently of CRM links. Events/news share facts while retaining owner write attribution. Agent sources deduplicate by URL, plus event start time. Events explicitly store date precision; other records use UUIDs, revisions, and archival state.
+Implementation: News optionally stores a source-evidenced map location. News and events store source amounts and qualifiers independently of CRM links. Events/news share facts while retaining owner write attribution. Agent sources deduplicate by URL, plus event start time. Events explicitly store date precision; other records use UUIDs, revisions, and archival state.
 Relationships: sales.services handles transactions and validation; CRM retains private email and Agent analysis contracts.
 Directory:
 - WorldNews: Industry news facts, one set of public sales leads, source amounts, and evidence.
@@ -62,6 +62,11 @@ Variable index:
 - WorldEvent.Meta.constraints: Unique nonempty Agent source URL/start-time pairs, including archived records.
 - WorldNews.Meta.constraints: Unique Agent sources; amounts are nonnegative and jointly present or absent with currency, type, scope, and evidence.
 - WorldEvent.data_source: Event source label; synthetic denotes a placeholder.
+- WorldNews.city: Verified news-related city; blank when no map location is established.
+- WorldNews.latitude: Optional geocoded city latitude, never derived from publisher country.
+- WorldNews.longitude: Optional geocoded city longitude.
+- WorldNews.location_evidence: Source excerpt identifying the relevant facility or organization location.
+- WorldNews.location_source_url: Public source supporting the location excerpt.
 - WorldNews.data_source: News source label; synthetic denotes a placeholder.
 - WorldNews.title: News title.
 - WorldNews.category: News category.
@@ -787,9 +792,14 @@ class WorldEvent(Record):
 
 
 # Function: Store industry news, one set of public sales leads, source amounts, and evidence.
-# Logic: New text fields on old records remain empty and amounts null; preserve monetary meaning separately without adding amounts to CRM opportunities.
+# Logic: Optional news map locations require explicit location evidence; new fields on old records remain empty/null; preserve monetary meaning separately without adding amounts to CRM opportunities.
 # Constraints: Archived records still block recollection; do not create/link private records by company name, fetch external sites, or generate inferences.
 class WorldNews(Record):
+    city = models.CharField(max_length=120, blank=True, default="")
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    location_evidence = models.CharField(max_length=600, blank=True, default="")
+    location_source_url = models.URLField(max_length=2000, blank=True, default="")
     amount_qualifier = models.CharField(max_length=16, choices=INSIGHT_AMOUNT_QUALIFIERS, blank=True, default="")
     data_source = models.CharField(max_length=30, default="manual")
     title = models.CharField(max_length=240)

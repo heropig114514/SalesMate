@@ -10,7 +10,7 @@ Directory:
 - WorldEventSerializer.Meta: Event/news time and field validation.
 - WorldNewsSerializer: Public-news, single-lead-set, and source-amount contract.
 - WorldNewsSerializer.validate: Validate amount evidence after merging updates, then validate source deduplication.
-- WorldNewsSerializer.Meta: Declare base news fields and thirteen optional public lead fields.
+- WorldNewsSerializer.Meta: Declare news, optional evidenced geography and public lead fields.
 - ConnectionSerializer: Safe connection fields.
 - ConnectionSerializer.Meta: Field configuration.
 - StrictModelSerializer: Reject unknown/read-only inputs and restrict relations per user.
@@ -63,6 +63,9 @@ Variable index:
 - WorldEventSerializer.starts_on: Inclusive start date of date-only events, read-only.
 - WorldEventSerializer.ends_on: Inclusive end date of date-only events, read-only.
 - WorldEventSerializer.source_url: Source-format validation; insights and the database handle conditional deduplication, avoiding uniqueness constraints on manual sources.
+- WorldNewsSerializer.latitude: Optional bounded map latitude.
+- WorldNewsSerializer.longitude: Optional bounded map longitude.
+- WorldNewsSerializer.location_source_url: Public location evidence URL.
 - WorldNewsSerializer.source_url: News source-format validation; insights and the database handle cross-account Agent deduplication.
 - WorldEventSerializer.Meta.validators: Disable automatic DRF conditional uniqueness validation in favor of the explicit 409 contract.
 - WorldNewsSerializer.Meta.validators: Disable automatic DRF conditional uniqueness validation while retaining manual conditions and database constraints.
@@ -170,6 +173,7 @@ from rest_framework import serializers as s
 from apps.crm.models import Company, Contact
 from . import models
 from .news_signals import NewsAmountField, validate_news_signal
+from .news_locations import validate_news_location
 from .permissions import scope, visible_company_ids
 
 
@@ -1058,6 +1062,9 @@ class WorldEventSerializer(StrictModelSerializer):
 # Logic: New fields are optional and never automatically linked to CRM; merge to validate amount evidence/combinations, with globally deduplicated Agent sources.
 # Constraints: Disable DRF automatic source uniqueness checks; insights returns 409 for duplicates and the database handles concurrency. No fetching or summary generation.
 class WorldNewsSerializer(StrictModelSerializer):
+    latitude = s.FloatField(min_value=-85, max_value=85, allow_null=True, required=False)
+    longitude = s.FloatField(min_value=-180, max_value=180, allow_null=True, required=False)
+    location_source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     source_url = s.URLField(max_length=2000, allow_blank=True, required=False)
     published_at = ZonedDateTimeField()
     country = s.RegexField(r'^[A-Z]{2}$', allow_blank=True, required=False)
@@ -1070,19 +1077,19 @@ class WorldNewsSerializer(StrictModelSerializer):
     # Function: Validate news sources and complete monetary-evidence combinations.
     # Inputs: `attrs`.
     # Outputs: Validated fields.
-    # Logic: Merge old values to validate monetary combinations and excerpt inclusion, then reuse insights for HTTPS/source-duplicate validation.
+    # Logic: Merge old values to validate monetary combinations, excerpt inclusion and optional location evidence, then reuse insights for HTTPS/source-duplicate validation.
     # Constraints: Duplicates raise 409; never access sources or overwrite original records.
     def validate(self, attrs):
         from .insights import validate_insight
-        return validate_insight(self, validate_news_signal(self, attrs))
+        return validate_insight(self, validate_news_location(self, validate_news_signal(self, attrs)))
 
     # Function: Declare news fields.
-    # Logic: Content, source, and fourteen public lead fields are writable; new fields are optional. Identity/version are read-only; insights/database constraints enforce source uniqueness.
+    # Logic: Content, source, optional evidenced location and fourteen public lead fields are writable; new fields are optional. Identity/version are read-only; insights/database constraints enforce source uniqueness.
     # Constraints: DRF automatic source uniqueness must not incorrectly reject manual records; archival uses command endpoints.
     class Meta:
         model = models.WorldNews
         validators = []
-        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'published_at', 'source_url', 'summary', 'content', 'data_source', 'company_name', 'signal_type', 'project_name', 'demand_description', 'potential_sales_need', 'opportunity_reason', 'time_window', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence', 'amount_qualifier']
+        fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at', 'title', 'category', 'industry', 'country', 'city', 'latitude', 'longitude', 'location_evidence', 'location_source_url', 'published_at', 'source_url', 'summary', 'content', 'data_source', 'company_name', 'signal_type', 'project_name', 'demand_description', 'potential_sales_need', 'opportunity_reason', 'time_window', 'evidence', 'amount', 'currency', 'amount_type', 'amount_scope', 'amount_evidence', 'amount_qualifier']
         read_only_fields = ['id', 'owner', 'revision', 'archived', 'created_at', 'updated_at']
 
 

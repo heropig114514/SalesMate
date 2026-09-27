@@ -60,7 +60,7 @@ Example additions to `arguments.data`, to combine with existing title, category,
 
 News cards show entities, events, and source-amount meaning. Details separate source facts, evidence, amount type/scope, and inferred needs explicitly labeled as unconfirmed procurement. Amounts use string-based thousands grouping and trim insignificant trailing fractional zeros, without floats, significant-digit truncation, or currency conversion. Missing structured data is distinct from known zero.
 
-Events use the same source amount fields; neither news nor event money increases internal opportunity totals. News lacks city coordinates; no fabricated map locations.
+Events use the same source amount fields; neither news nor event money increases internal opportunity totals. News maps only after city, latitude, longitude, location_evidence and location_source_url are explicitly verified; unlocated news is still displayed below the map.
 
 Deploy database migrations/APIs before the collaborator's corresponding Agent version. Backend adaptation preserves Agent files, sources, and model parameters. Verify old/new payloads, permissions, and actual Tool receipts before collection tests. This document is not a production-release or real-collection acceptance record. Agent skips existing sources; old articles require separately authorized backfills.
 
@@ -95,3 +95,7 @@ This mode reuses Agent's existing collection/feed-summary rules without further 
 News and events both expose `amount_qualifier` (blank, exact, up_to, at_least, more_than, approximate). Amount types additionally include grant, registration_fee and exhibition_fee. A null amount requires empty currency/type/scope/quote/qualifier. Event `evidence` encloses `amount_evidence`; amount strings retain six fractional digits at most. Qualifiers preserve source bounds; an award of up to USD 1 billion is not an exact procurement budget.
 
 Agent extraction validates source money independently of company lead extraction. Event amounts are extracted once after date/location eligibility. REST, generated tools, persistence, cards/details and map labels share this contract. Maps no longer use CRM amounts or a currency switch. Historical source review is explicit and audited, never automatic text parsing during migration.
+
+## Evidenced news locations
+
+`city`, `latitude`, `longitude`, `location_evidence`, and `location_source_url` optionally place news on the map. Coordinates require all location fields plus country; the evidence must name the city and use a credential-free HTTPS source. Existing records default to blank/null. A mapped facility does not imply that a company-wide financing amount is allocated solely to that site; curate that distinction in the body. No migration, read path or serializer infers locations from the publisher or a country code.
