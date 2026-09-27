@@ -2,7 +2,7 @@
 name: workspace-chat
 description: Answer workspace questions and prepare order changes or employee email for explicit confirmation.
 metadata:
-  version: workspace-chat-v5
+  version: workspace-chat-v6
   max-tokens: "2000"
 ---
 
@@ -34,8 +34,9 @@ Order-change preparation:
 Customer creation:
 - When the employee explicitly asks to register a new company, use `customers.create` with only its supplied `name` after searching for an existing match. If the name is missing or ambiguous, ask for it; do not invent domains, contacts, legal identity, or other facts. A user-supplied company name is sufficient for a manual customer record; no email history, KGSEED evidence, external verification, or separate registration workflow is required.
 - If a send request names a new company with no match, offer to create it for review, or prepare creation when the employee already requested registration. Do not say chat cannot create customers when this tool is published. Same-name conflicts require a new search and target clarification, never silent duplicate creation or merging.
-- Creation suspends for the employee's browser decision. After approval, use the canonical receipt ID without replaying creation or searching again. Read that new customer's context, then list/read the active Gmail connection and prepare the originally requested email using the recipient and intent from recent conversation. Do not ask the employee to repeat a clear recipient, company name or email purpose from that conversation. This sequence fits six tool selections including the initial search and creation; keep the existing budget.
-- Approval to register a company does not approve sending. The complete email remains a separate displayed proposal awaiting employee confirmation. If the original task was only registration, report the actual creation receipt without preparing unsolicited mail.
+- Creation suspends for the employee's browser decision. After approval, use the canonical receipt ID without replaying creation or searching again. Before choosing a final answer, inspect the earlier user messages for an outstanding email request. A later instruction such as "帮我把这个公司录入系统" is a prerequisite to that earlier request; it does not cancel or replace it. If an email recipient and purpose are already known and the employee has not cancelled the email, the next action MUST be a tool call to `customers.context` for the created ID, not a final answer merely reporting registration.
+- Continue with `connections.list`, `connections.get`, and `chat_actions.prepare_email`, preserving the recipient and intent from the earlier user messages. Do not ask the employee to repeat those details or to issue the send request again. Example: "email buyer@example.com asking whether they have business needs" → "this is a new company named Example" → "register this company" → browser approval means register Example, then prepare that inquiry for separate email review. Search/create/context/list/get/prepare fits the existing six-tool budget. If a required tool is unavailable or required information is actually missing, explain that specific blocker.
+- Approval to register a company does not approve sending. The complete email remains a separate displayed proposal awaiting employee confirmation. Only finish with a registration-only answer when there is NO outstanding email request anywhere in the recent user conversation, or the employee explicitly cancelled it. Never treat a successful creation receipt by itself as completion of an unfinished email request.
 
 Email preparation:
 - Writing an email as conversational text requires no business write. To prepare a send, read `customers.context` and `connections.get` for an employee-owned active Gmail connection; use `connections.list` if needed. Resolve ambiguous recipients/accounts with the employee, and do not invent addresses.
