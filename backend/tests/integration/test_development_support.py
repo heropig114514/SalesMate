@@ -1,5 +1,5 @@
 """Responsibility: Verify database placeholders, global aggregation, opportunity results, and development permissions.
-Implementation: Use isolated PostgreSQL to verify shared public events, private opportunity isolation, and formal/lab-mode differences; do not connect to models or external services.
+Implementation: Use isolated PostgreSQL to verify shared public events, private opportunity isolation, and authentication and ownership in both formal and fixture modes; do not connect to models or external services.
 Relationships: Covers `sales.world`, `algorithm_views`, `seed_development_support`, and existing Tool authorization.
 Directory:
 - DevelopmentSupportTests: End-to-end support-layer tests.
@@ -8,12 +8,13 @@ Directory:
 - DevelopmentSupportTests.test_world_does_not_use_crm_amounts: Verify private CRM values cannot populate event source amounts.
 - DevelopmentSupportTests.test_partial_results_context_and_latest_score: Verify minimum submission and context.
 - DevelopmentSupportTests.test_formal_public_events_keep_private_business: Verify public events are shared while opportunities remain isolated.
-- DevelopmentSupportTests.test_lab_tools_omit_credentials_versions_and_source: Verify relaxed rules.
+- DevelopmentSupportTests.test_lab_tools_require_identity_and_versions: Verify owner Tool writes retain authentication and versions.
 - DevelopmentSupportTests.test_essential_boundaries_remain: Verify essential boundaries.
 Variable index:
 - None
 """
 
+import uuid
 from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -108,24 +109,31 @@ class DevelopmentSupportTests(TestCase):
             self.assertIsNone(row["amount"])
         self.assertEqual(other.get(f"/api/v1/sales/opportunity-context/{self.opportunity.pk}/").status_code, 404)
 
-    # Function: Verify lab mode omits credentials, versions, and sources.
-    # Inputs: Anonymous Tool HTTP calls, publicly selected identity, and cross-account opportunity association.
-    # Outputs: Reads and writes succeed without fabricated ownership.
-    # Logic: Explicitly override lab settings while retaining business services and data validation.
-    # Constraints: Do not execute external sends or calendar actions.
+    # Function: Preserve owner tool writes without weakening authentication or concurrency.
+    # Inputs: Anonymous, foreign, and owner Session clients; synthetic opportunity and event.
+    # Outputs: Unauthorized access rejects, owner writes succeed with idempotency/version, and private context stays isolated.
+    # Logic: Keep fixture source allowances while testing real authorization and original result creation.
+    # Constraints: No provider, model, or external action executes.
     @override_settings(LAB_OPEN_ACCESS=True, WORKSPACE_OWNER_ONLY=False)
-    def test_lab_tools_omit_credentials_versions_and_source(self):
+    def test_lab_tools_require_identity_and_versions(self):
         client = APIClient()
-        client.credentials(HTTP_X_LAB_USER=self.other.username)
-        response = client.post("/api/v1/agent-tools/call/", {"name": "opportunity_priorities.create", "arguments": {"data": {"opportunity": str(self.opportunity.pk), "priority_score": 70}}}, format="json")
+        payload = {"name": "opportunity_priorities.create", "arguments": {"data": {"opportunity": str(self.opportunity.pk), "priority_score": 70}}, "idempotency_key": str(uuid.uuid4())}
+        self.assertEqual(client.post("/api/v1/agent-tools/call/", payload, format="json").status_code, 401)
+        client.force_login(self.other)
+        context = {"name": "opportunity_context.get", "arguments": {"opportunity_id": str(self.opportunity.pk)}}
+        self.assertEqual(client.post("/api/v1/agent-tools/call/", context, format="json").status_code, 404)
+        client.force_login(self.user)
+        response = client.post("/api/v1/agent-tools/call/", payload, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         record = OpportunityPriority.objects.get(pk=response.data["data"]["id"])
         self.assertEqual(record.owner_id, self.user.pk)
         event = WorldEvent.objects.get(pk=self.manifest["events"][0])
-        updated = client.patch(f"/api/v1/sales/records/world-events/{event.pk}/", {"description": "已由算法修改", "opportunity_ids": [str(self.opportunity.pk)], "data_source": "agent", "source_url": ""}, format="json")
+        values = {"description": "已由算法修改", "opportunity_ids": [str(self.opportunity.pk)], "data_source": "agent", "source_url": ""}
+        url = f"/api/v1/sales/records/world-events/{event.pk}/"
+        self.assertEqual(client.patch(url, values, format="json").status_code, 400)
+        updated = client.patch(url, values, format="json", HTTP_IF_MATCH=str(event.revision))
         self.assertEqual(updated.status_code, 200, updated.data)
-        context = client.post("/api/v1/agent-tools/call/", {"name": "opportunity_context.get", "arguments": {"opportunity_id": str(self.opportunity.pk)}}, format="json")
-        self.assertEqual(context.status_code, 200, context.data)
+        self.assertEqual(client.post("/api/v1/agent-tools/call/", context, format="json").status_code, 200)
 
     # Function: Retain essential numeric and source safety boundaries.
     # Inputs: Out-of-range score and unsafe link.

@@ -27,7 +27,7 @@ async def verify(url, credential):
     params = StdioServerParameters(command=sys.executable,
         args=["-m", "integrations.salesmate_tools.mcp_server"], cwd=str(Path(__file__).resolve().parents[2]),
         env={**os.environ, "SALESMATE_TOOLS_URL": url, "SALESMATE_TOOLS_TOKEN": credential["token"],
-             "SALESMATE_TOOLS_TIMEOUT": "360", "SALESMATE_TOOLS_USER": ""})
+             "SALESMATE_TOOLS_TIMEOUT": "360"})
     async with Client(params) as client:
         catalog = await client.list_tools()
         names = {tool.name for tool in catalog.tools}

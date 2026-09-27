@@ -1,5 +1,5 @@
 """Responsibility: Project the caller's knowledge as bounded, traceable initial evidence for workspace chat.
-Implementation: Read explicitly imported knowledge, restricted to the caller in production mode and cross-account in experiment mode; request-bound read-only tools query customer data on demand.
+Implementation: Read explicitly imported knowledge, always restricted to the authenticated caller; request-bound read-only tools query customer data on demand.
 Relationships: ``chat.services`` first calls this under employee lock and freezes its result; does not execute models or external network access.
 Directory:
 - item: Generate a strict four-field evidence item.

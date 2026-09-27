@@ -1,5 +1,5 @@
 """Responsibility: Provide session-authenticated APIs for sales records, company grouping, attachments, and external actions.
-Implementation: Generic CRUD accepts opportunity signals/scores from algorithms. Experiment-mode default authentication supplies a public identity and notification commands allow cross-account maintenance. Events/news retain versioned record APIs with region/time filters. Resource allowlists select strict serializers; authorized transactions perform writes and unified errors hide credentials.
+Implementation: Generic CRUD accepts opportunity signals/scores from algorithms. Session authentication and private ownership remain mandatory for personal resources and notification commands. Events/news retain versioned record APIs with region/time filters. Resource allowlists select strict serializers; authorized transactions perform writes and unified errors hide credentials.
 Relationships: catalog provides management-page field contracts; services/grouping/actions/files implement business boundaries.
 Directory:
 - ResourceDetailView: Single-resource query route.
@@ -307,7 +307,7 @@ class CommandView(SalesView):
     # Function: Execute state, archival, approval, or notification-read commands.
     # Inputs: `request`: command/value and If-Match; `resource`; `record_id`.
     # Outputs: Record with updated version.
-    # Logic: Dispatch by model/command. Notification reads use mode-specific ownership queries and row locks; experiment mode permits cross-account maintenance, then updates version and audit.
+    # Logic: Dispatch by model/command. Notification commands always require owner-scoped queries and row locks before updating version and audit.
     # Constraints: Explicitly reject unknown commands or extra fields.
     @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
     def post(self, request, resource, record_id):

@@ -1,5 +1,5 @@
 """Responsibility: Maintain the discoverable business-tool allowlist and input contracts.
-Implementation: Semantic-graph tools can ingest text or structured observations and query lineage; opportunity signals and scores still reuse CRUD without calling algorithms; publish fact-upgrade and explicit queueing tools; experiment mode dynamically publishes a catalog that may omit version and idempotency key; register customer, email, calendar, information, file, and shared-experiment capabilities; when QQ is disabled, do not publish its send-preparation tool.
+Implementation: Semantic-graph tools can ingest text or structured observations and query lineage; opportunity signals and scores still reuse CRUD without calling algorithms; publish fact-upgrade and explicit queueing tools; all environments retain version, idempotency, and confirmation contracts; register customer, email, calendar, information, file, and shared-experiment capabilities; when QQ is disabled, do not publish its send-preparation tool.
 Relationships: ``dispatch`` interprets only fixed ``kind`` values; ``services`` controls authorization, idempotency, and proposals; ``graph_specs`` publishes the caller's own semantic graph; MCP does not extend the allowlist itself.
 Directory:
 - tool: Build a tool declaration.
@@ -11,7 +11,6 @@ Variable index:
 """
 
 from apps.sales.serializers import SERIALIZERS
-from common.laboratory import enabled
 from django.conf import settings
 from apps.sales.services import TRANSITIONS
 from apps.sales.views import LABELS
@@ -55,25 +54,20 @@ HUMAN_WRITES = {"aliases", "teams", "memberships", "grants"}
 # Function: Generate a tool description.
 # Inputs: ``name``, ``description``, ``kind``, ``schema``, execution mode ``mode``, and fixed route information ``binding``.
 # Outputs: Internal tool dictionary.
-# Logic: Separate public structure from internal binding; experiment mode skips management-proposal confirmation and does not require version or idempotency key; graph description still declares current-identity isolation.
+# Logic: Separate public structure from internal binding; retain confirmation, version, and idempotency contracts independently of experiment configuration.
 # Constraints: Confirm mode does not mean a business operation has already executed.
 def tool(name, description, kind, schema, mode="read", **binding):
-    if enabled():
-        description += (" 实验开放身份模式：图谱仍按当前身份隔离，来源写入使用source_key或episode_id幂等。" if kind == "graph" else
-                        " 实验开放模式：免登录、跨账号访问，revision/expected/idempotency_key 均可省略，内部管理操作直接执行。")
-        mode = "write" if mode == "confirm" else mode
-        schema["required"] = [key for key in schema.get("required", []) if key not in {"revision", "expected"}]
     return {
         "name": name,
         "description": description,
         "inputSchema": schema,
         "executionMode": mode,
-        "idempotency_required": mode != "read" and not enabled(),
+        "idempotency_required": mode != "read",
         "category": name.split(".")[0],
         "annotations": {
             "readOnlyHint": mode == "read",
             "destructiveHint": mode == "confirm",
-            "idempotentHint": mode == "read" or not enabled(),
+            "idempotentHint": True,
             "openWorldHint": kind in {"calendar", "sync"},
         },
         "kind": kind,

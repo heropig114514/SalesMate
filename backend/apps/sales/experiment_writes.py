@@ -1,5 +1,5 @@
 """Responsibility: Provide audited, removable creation, modification, and deletion of shared fictional business data.
-Implementation: Experiment mode omits stale client fingerprints and external drift checks; production compares strictly. Enforce model/field boundaries, manifest row locks, optimistic fingerprint locks, same-batch foreign keys, and no implicit cascading; commit data and manifest atomically.
+Implementation: Active employee authentication is mandatory in every mode. Experiment mode omits stale client fingerprints and external drift checks; production compares strictly. Enforce model/field boundaries, manifest row locks, optimistic fingerprint locks, same-batch foreign keys, and no implicit cascading; commit data and manifest atomically.
 Relationships: The web UI and Tool/MCP share mutate; experiments publishes capabilities; seed_kg_lab cleans up under the same manifest lock.
 Directory:
 - write_fields: Enumerate business fields users may submit.
@@ -124,10 +124,10 @@ def delete_leaf(record):
 # Function: Atomically maintain one business record in a shared batch.
 # Inputs: `actor`: authenticated account; `operation`: create/update/delete; `batch`: exact batch; `label`: model; `data`: business fields; `pk` and `expected`: primary key and old fingerprint for update/delete.
 # Outputs: A JSON object containing operation, primary key, batch, actor, and latest record.
-# Logic: Lock batch owner, manifest, then target; verify manifest integrity. Experiment mode does not require client expected; production checks the old fingerprint. Refresh manifest and audit after saving while retaining the original manifest.
+# Logic: Require an authenticated active actor even in experiment mode. Lock batch owner, manifest, then target; verify manifest integrity. Experiment mode does not require client expected; production checks the old fingerprint. Refresh manifest and audit after saving while retaining the original manifest.
 # Constraints: No automatic retries; database conflicts become 409. Do not execute email, analysis, or queue tasks; retain historical truth and flag possible staleness.
 def mutate(actor, operation, batch, label, data=None, pk=None, expected=None):
-    if not enabled() and (not actor.is_authenticated or not actor.is_active):
+    if not actor.is_authenticated or not actor.is_active:
         raise PermissionDenied("需要有效登录账号。")
     if operation not in {"create", "update", "delete"} or not capabilities(label).get(operation):
         raise PermissionDenied("此模型或操作未开放；身份、授权、文件和执行证据保持只读。")

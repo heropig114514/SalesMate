@@ -1,5 +1,5 @@
 """Responsibility: Execute authorized sales transactions, amount validation, state transitions, and Agent snapshot synchronization.
-Implementation: Public news/events may omit currency when amount is unknown; retain other transaction currency/amount/state constraints. The database resolves cross-account shared-source uniqueness. Serialize writes by business owner, propagate opportunity/seller scoring dependencies, and commit audits, versions, and tasks atomically.
+Implementation: All environments enforce owner, manager, and private relation permissions. Public news/events may omit currency when amount is unknown; retain other transaction currency/amount/state constraints. The database resolves cross-account shared-source uniqueness. Serialize writes by business owner, propagate opportunity/seller scoring dependencies, and commit audits, versions, and tasks atomically.
 Internationalization: translate parameterized field errors when raised using the current language; preserve field names, validation conditions, states, and write behavior.
 Relationships: views serializes first, permissions controls scope, and crm.jobs retains existing analysis-trigger semantics.
 Directory:
@@ -19,7 +19,6 @@ Variable index:
 - IMMUTABLE_RELATIONS: Ownership relations immutable on existing entities.
 """
 
-from common.laboratory import enabled
 
 from contextlib import ExitStack
 import logging
@@ -148,7 +147,7 @@ def company_of(instance):
 # Function: Validate cross-entity relations, amounts, drafts, and assignee constraints.
 # Inputs: `instance`: model to save; `actor`: user; `changed`: current field set; `creating`: whether this is creation.
 # Outputs: None; violated constraints raise ValidationError/PermissionDenied, with parameterized amount errors in the current language.
-# Logic: News/events may omit currency only when amount=null and currency is empty; transaction currency requirements remain unchanged. Experiment mode skips owner/manager checks and permits cross-account products, but retains frozen-document, same-currency, quantity/discount, and company-relation constraints. New conversations still have no preselected company.
+# Logic: News/events may omit currency only when amount=null and currency is empty; transaction currency requirements remain unchanged. Always enforce owner/manager and product ownership checks alongside frozen-document, same-currency, quantity/discount, and company-relation constraints. New conversations still have no preselected company.
 # Constraints: Call only within authorized transactions; no automatic repricing, currency conversion, or transaction inference.
 def validate_record(instance, actor, changed, creating):
     if creating and isinstance(instance, models.Conversation) and instance.company_id is not None:
@@ -182,11 +181,11 @@ def validate_record(instance, actor, changed, creating):
         isinstance(
             instance, (models.CompanyAlias, models.CompanySettings, models.CompanyGrant)
         )
-        and not enabled() and instance.company.owner_id != actor.pk
+        and instance.company.owner_id != actor.pk
     ):
         raise PermissionDenied("客户归组、生命周期和共享授权仅由所有者维护。")
     if isinstance(instance, (models.Message, models.Draft)) and (
-        (not enabled() and instance.conversation.owner_id != actor.pk) or instance.conversation.archived
+        (instance.conversation.owner_id != actor.pk) or instance.conversation.archived
     ):
         raise PermissionDenied("会话不可写。")
     if isinstance(instance, models.Membership):
@@ -195,11 +194,11 @@ def validate_record(instance, actor, changed, creating):
         instance.owner_id = instance.team.owner_id
         if instance.user_id == instance.team.owner_id:
             raise ValidationError("团队所有者具有固有管理权，不创建重复成员记录。")
-        if instance.role == "manager" and not enabled() and instance.team.owner_id != actor.pk:
+        if instance.role == "manager" and instance.team.owner_id != actor.pk:
             raise PermissionDenied("只有团队所有者可以授予管理角色。")
         if (
             not creating
-            and not enabled() and instance.team.owner_id != actor.pk
+            and instance.team.owner_id != actor.pk
             and models.Membership.objects.filter(
                 pk=instance.pk, role="manager"
             ).exists()
@@ -261,7 +260,7 @@ def validate_record(instance, actor, changed, creating):
         ):
             raise ValidationError("数量须大于零，整行折扣不得超过数量乘单价。")
         if instance.product_id and (
-            (not enabled() and instance.product.owner_id != parent.owner_id)
+            (instance.product.owner_id != parent.owner_id)
             or instance.product.currency != parent.currency
             or instance.product.archived
         ):
@@ -396,7 +395,7 @@ def save_record(serializer, actor, expected=None):
 # Function: Archive or restore records.
 # Inputs: `instance`, `actor`, and `expected`: old version; `archived`: target boolean.
 # Outputs: Updated instance.
-# Logic: Lock the original record and owner within the transaction. Experiment mode requires neither team-manager identity nor old version; retain running-action/related-document state checks and save audits.
+# Logic: Lock the original record and owner within the transaction. Require team-manager authority and the expected version in every environment; retain running-action/related-document state checks and save audits.
 # Constraints: Immutable messages, reminders, and execution records cannot be archived; archiving details must not alter frozen document amounts.
 @transaction.atomic
 def archive_record(instance, actor, expected, archived):
@@ -411,7 +410,7 @@ def archive_record(instance, actor, expected, archived):
     if (
         isinstance(instance, models.Membership)
         and instance.role == "manager"
-        and not enabled() and actor.pk != instance.team.owner_id
+        and actor.pk != instance.team.owner_id
     ):
         raise PermissionDenied("仅团队所有者可以归档或恢复管理者。")
     if (

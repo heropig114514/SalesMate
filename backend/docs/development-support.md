@@ -22,7 +22,7 @@ LAB_OPEN_ACCESS=True
 WORKSPACE_OWNER_ONLY=False
 ```
 
-Both settings must apply, and existing processes require service restarts; code defaults are unchanged. This mode permits cross-account business access without Cookie, CSRF, or Tool tokens; If-Match/revision and Tool idempotency keys may be omitted. `X-Lab-User: algorithm-lab` selects ownership; omission follows existing experiment identity selection. See [experiment access](laboratory-access.md). External mailbox OAuth, real sending/calendar confirmation, relational integrity, and monetary structure retain original contracts.
+Synthetic experiment settings never bypass authentication or account permissions. Use an employee Session or explicitly delegated Tool token. Versions, idempotency keys, CSRF, and confirmation remain required. See [experiment access](laboratory-access.md).
 
 On 2026-09-22, this batch was imported into production PostgreSQL for `algorithm-lab` and record counts verified against the audit manifest. Pre-import database/runtime backups and the import manifest reside at `/opt/salesmate/backups/support-seed-20260922T064840Z`. Deployment restarted services to load configuration; verify through `lab_open_access` in `/api/v1/session/` and `/api/v1/sales/world/`.
 

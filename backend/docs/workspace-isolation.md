@@ -1,16 +1,18 @@
 # Personal Workspace and Mail-Fact Compatibility
 
-On 2026-09-21, at the project owner's request, each account's own view was restored after algorithm integration. Deployment configuration is:
+The current account policy always isolates personal conversations, messages, knowledge, mailboxes, external connections, attachments, and profile material. Production configuration is:
 
-    WORKSPACE_OWNER_ONLY=True
-    LAB_OPEN_ACCESS=False
+    WORKSPACE_OWNER_ONLY=False
+    LAB_OPEN_ACCESS=True
     LOCAL_DEBUG_AUTO_LOGIN=False
 
-WORKSPACE_OWNER_ONLY takes precedence over laboratory mode. The web application requires real sign-in. Business records, mailbox originals, analysis, chat, knowledge, and files are isolated by account. Team sharing and KGSEED shared entry points are disabled: the experiment catalog is empty, and batch reads, export, attachments, edits, and MCP experiment tools are rejected. Existing database data and ownership are unchanged. An owner may still view that owner's KGSEED customers in ordinary business pages.
+The retained laboratory flag applies only to explicit synthetic fixtures; it never bypasses account permissions. Historical fixture integrity differs from current rows, so this change deliberately preserves the existing fixture setting without rewriting audit manifests.
 
-With account isolation, analysis no longer uses cross-account experiment material. Existing analysis caches that include it become invalid under current source-version rules. An explicit analysis refresh is needed to generate a result from currently available sources. Restoring views never invokes models automatically in bulk.
+Team sharing remains enabled through active memberships and explicit customer grants. Global news/events remain readable by authenticated employees. Private resources do not inherit customer grants. `WORKSPACE_OWNER_ONLY=True` is a separate optional policy that also disables team sharing and synthetic batch interfaces; it is not needed for private account isolation.
 
-The Agent task API continues to use Authorization: Agent with that account's service token. Task writes include the claimed lease and company version. The business-tools API/MCP uses that account's Tool authorization, restricted tool list, and expiry. MCP configuration must provide SALESMATE_TOOLS_TOKEN; SALESMATE_TOOLS_USER alone can no longer select an account. Session tool calls obey current-account permissions. Write operations retain existing version and idempotency contracts.
+Browser calls require Session and CSRF. Agent calls require the employee’s Agent credential and claimed leases. Standalone MCP requires a delegated Tool token with valid expiry and scope. Chat and browser tool discovery retain the full catalog; execution uses the authenticated employee’s permissions. Public identity headers cannot select an account. Writes retain version, idempotency, and explicit confirmation contracts.
+
+Both Google OAuth entry points bind state and PKCE to the initiating employee. Switching account before callback rejects the exchange; existing grants and stored owners are unchanged. Restart any OAuth flow initiated before this deployment.
 
 The M in the workspace top-right is a Gmail-connection indicator, not a login avatar. The mailbox list always returns only current-account connections. Switching account immediately clears the old mailbox display, and a late response for the old account cannot overwrite the current interface.
 

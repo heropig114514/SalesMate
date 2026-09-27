@@ -1,5 +1,5 @@
 """Responsibility: Bound authorization for sales business sharing, personal conversations, and team management.
-Implementation: Authenticated users share read access to global news/events; other records retain personal/team isolation. Experiment mode retains open rules.
+Implementation: Authenticated users share read access to global news/events; other records retain personal/team isolation. Experiment settings never widen account permissions.
 Relationships: Serialized relations and transactional services share this module; never authorize using client-declared owner values.
 Directory:
 - visible_company_ids: Return a query of company identifiers accessible to the user.
@@ -13,7 +13,7 @@ Variable index:
 """
 
 from django.db.models import Q
-from common.laboratory import enabled, owner_only
+from common.laboratory import owner_only
 from rest_framework.exceptions import NotFound, PermissionDenied
 
 from apps.crm.models import Company
@@ -35,11 +35,9 @@ SHARED_INSIGHTS = (models.WorldEvent, models.WorldNews)
 # Function: Return a query of company identifiers accessible to the user.
 # Inputs: `user`: authenticated user.
 # Outputs: Company primary-key QuerySet.
-# Logic: Personal isolation returns owned companies only; experiment mode returns all, while production collaboration includes team sharing.
+# Logic: Personal-only policy returns owned companies; otherwise include only active team grants.
 # Constraints: This scope must not authorize private email or L1-L4 input reads.
 def visible_company_ids(user):
-    if enabled():
-        return Company.objects.values_list("pk", flat=True)
     if owner_only():
         return Company.objects.filter(owner=user).values_list("pk", flat=True)
     teams = models.Team.objects.filter(archived=False).filter(
@@ -58,12 +56,10 @@ def visible_company_ids(user):
 # Function: Validate company business read/write permissions.
 # Inputs: `user`, `company`, and `write`, defaulting to read-only.
 # Outputs: Original Company; lack of access returns the same 404 as absence.
-# Logic: Personal isolation rejects other owners; experiment mode allows directly, while collaboration validates teams/grants.
+# Logic: Personal-only policy rejects other owners; collaboration validates active teams and grants.
 # Constraints: No mailbox permission upgrades; owners always retain business management rights.
 def company_access(user, company, write=False):
     if company.owner_id == user.pk:
-        return company
-    if enabled():
         return company
     if owner_only():
         raise NotFound("公司不存在或未授权。")
@@ -92,13 +88,11 @@ def company_access(user, company, write=False):
 # Function: Return identifiers of teams managed by the user.
 # Inputs: `user`: current user.
 # Outputs: Team primary-key queryset.
-# Logic: Personal isolation manages owned teams only; experiment mode opens all, while collaboration includes active managers.
+# Logic: Personal-only policy manages owned teams; collaboration includes active managers.
 # Constraints: Archived teams reject membership changes.
 def managed_team_ids(user):
     if owner_only():
         return models.Team.objects.filter(owner=user, archived=False).values_list("pk", flat=True)
-    if enabled():
-        return models.Team.objects.values_list("pk", flat=True)
     return (
         models.Team.objects.filter(archived=False)
         .filter(
@@ -117,15 +111,13 @@ def managed_team_ids(user):
 # Function: Build model-level visible querysets.
 # Inputs: `model`: allowlisted model class; `user`: current user.
 # Outputs: QuerySet filtered by personal/business-sharing permissions, including archived records for explicit filtering.
-# Logic: Authenticated users may read public news/events even under personal isolation; other models retain existing isolation rules.
+# Logic: Authenticated users may read public news/events even under personal isolation; private models always require ownership; business models require ownership or explicit active team grants, regardless of experiment settings.
 # Constraints: Sharing expands reads only; writes still use require_edit. Serializers project event-linked business fields per user.
 def scope(model, user):
     if model in SHARED_INSIGHTS:
         return model.objects.all() if user and user.is_authenticated else model.objects.none()
     if owner_only():
         return model.objects.filter(owner=user)
-    if enabled():
-        return model.objects.all()
     if model in PRIVATE_MODELS:
         return model.objects.filter(owner=user)
     if model is models.Team:
@@ -170,10 +162,10 @@ def scope(model, user):
 # Function: Verify object edit permission.
 # Inputs: `instance`: existing record; `user`: authenticated actor.
 # Outputs: None; unauthorized access raises 404 or PermissionDenied.
-# Logic: Shared news expands reads only. Personal isolation rejects other-owner edits; experiment mode/original ownership permits them; otherwise check collaboration authorization.
+# Logic: Owners may edit their records; personal-only policy rejects foreign edits, otherwise validate explicit collaboration authorization. Shared news expands reads only.
 # Constraints: Authorization cannot be transferred by changing owner, company, or document ownership.
 def require_edit(instance, user):
-    if enabled() or instance.owner_id == user.pk:
+    if instance.owner_id == user.pk:
         return
     if owner_only():
         raise NotFound("记录不存在或未授权。")

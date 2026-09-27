@@ -1,5 +1,5 @@
 """Responsibility: Provide chat transactions, employee isolation, idempotent saving, and explicit recovery.
-Implementation: Employee locks serialize workspace jobs; approval waits block further tools, reports, and submissions until an independent decision. Claims restore approved Agent continuations without repeating writes; historical messages and exact terminal reports remain intact.
+Implementation: Private ownership remains mandatory under every configuration. Employee locks serialize workspace jobs; approval waits block further tools, reports, and submissions until an independent decision. Claims restore approved Agent continuations without repeating writes; historical messages and exact terminal reports remain intact.
 Relationships: Called by ``chat.views`` and Worker; reuses sales ``Conversation`` and ``Message`` and crm authentication.
 Directory:
 - lock_owner: Acquire existing employee lock.
@@ -18,7 +18,7 @@ Variable index:
 - logger: Logs only task identifier, employee, and status.
 """
 
-from common.laboratory import enabled, owner_scope
+from common.laboratory import owner_scope
 
 import logging
 
@@ -49,13 +49,13 @@ def lock_owner(owner):
 # Function: Read a conversation usable for general or customer question answering.
 # Inputs: Current employee ``owner`` and UUID ``conversation_id``.
 # Outputs: ``Conversation`` with nullable company; unauthorized access returns 404.
-# Logic: Production mode validates employee and company ownership; experiment mode opens cross-account conversations.
+# Logic: Always validate employee and company ownership, including in experimental deployments.
 # Constraints: Archived company or conversation accepts no new task or context read.
 def conversation_for(owner, conversation_id):
     conversation = (
         Conversation.objects.select_related("company")
         .filter(owner_scope(owner), pk=conversation_id, archived=False)
-        .filter(Q() if enabled() else (Q(company__isnull=True) | Q(company__owner=owner)))
+        .filter(Q(company__isnull=True) | Q(company__owner=owner))
         .first()
     )
     if (
@@ -71,7 +71,7 @@ def conversation_for(owner, conversation_id):
 # Function: Validate end-to-end ownership of an answer request.
 # Inputs: Current employee ``owner``, UUID ``request_id``, and whether ``lock`` acquires request row lock.
 # Outputs: ``AnswerRequest`` with conversation and message; unauthorized access or invalid binding returns 404.
-# Logic: Check original ownership and conversation binding of message and request; production mode additionally restricts caller ownership, while experiment mode permits cross-account access.
+# Logic: Check caller ownership and original conversation/message bindings in every environment.
 # Constraints: Locked query locks only request table, avoiding database lock error from nullable assistant relation.
 def request_for(owner, request_id, lock=False):
     query = (
@@ -79,7 +79,7 @@ def request_for(owner, request_id, lock=False):
             "company", "conversation", "user_message", "assistant_message"
         )
         .filter(owner_scope(owner), pk=request_id)
-        .filter(Q() if enabled() else (Q(company__isnull=True) | Q(company__owner=owner)))
+        .filter(Q(company__isnull=True) | Q(company__owner=owner))
     )
     if lock:
         query = query.select_for_update(of=("self",))
@@ -117,7 +117,7 @@ def require_workspace(conversation):
 # Function: Create one user question and answer request.
 # Inputs: Authenticated user ``owner`` and ``data`` containing conversation_id, content, and client_key.
 # Outputs: ``AnswerRequest`` and boolean indicating whether it was first created.
-# Logic: Preserve the submitter as requested_by before experiment-mode ownership resolution; lock the owning account and reread the workspace conversation. Client idempotency precedes active-task checks, so same-content retransmission returns the original request.
+# Logic: Preserve the authenticated submitter as requested_by; lock that account and resolve only its workspace conversation. Client idempotency precedes active-task checks, so same-content retransmission returns the original request.
 # Constraints: Ordinary historical messages are not promoted to model requests; pending, processing, and awaiting_approval requests block a second new question.
 @transaction.atomic
 def submit(owner, data):
@@ -126,9 +126,6 @@ def submit(owner, data):
     client_key = contracts.identifier(data["client_key"])
     content = contracts.text(data["content"], "content")
     requested_by = owner
-    conversation = conversation_for(owner, conversation_id)
-    if enabled():
-        owner = conversation.owner
     lock_owner(owner)
     conversation = conversation_for(owner, conversation_id)
     require_workspace(conversation)
@@ -170,12 +167,10 @@ def submit(owner, data):
 # Function: Create a traceable new attempt for a failed answer.
 # Inputs: Current employee ``owner`` and original-request UUID ``request_id``.
 # Outputs: New request and first-creation flag; repeated click returns original successor.
-# Logic: Only workspace permits retry; resolve and lock original ownership, reject active work including approval waits or a later question, and preserve the original requested_by (falling back to owner for legacy requests).
+# Logic: Only workspace permits retry; lock the authenticated employee and require their original request ownership, reject active work including approval waits or a later question, and record the authenticated retrying employee as the new attempt’s requested_by while preserving the original audit row.
 # Constraints: Does not retry automatically, revive cancelled or awaiting_approval requests, or overwrite the original request or historical answer.
 @transaction.atomic
 def retry(owner, request_id):
-    if enabled():
-        owner = request_for(owner, request_id).owner
     lock_owner(owner)
     old = request_for(owner, request_id, lock=True)
     require_workspace(old.conversation)
@@ -202,7 +197,7 @@ def retry(owner, request_id):
         conversation=old.conversation,
         user_message=old.user_message,
         retry_of=old,
-        requested_by=old.requested_by or owner,
+        requested_by=owner,
     )
     logger.info(
         "chat_retried request_id=%s previous_id=%s owner_id=%s",

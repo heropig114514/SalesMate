@@ -1,5 +1,5 @@
 """Responsibility: Verify real interface behavior after synthetic-fact compatibility, upgrade tools, and restored account isolation.
-Implementation: Generate two sets of real fixtures in an isolated database and verify through HTTP, Agent L2, and persistence APIs in sequence.
+Implementation: Generate two sets of real fixtures in an isolated database and verify through authenticated owner HTTP, leased Agent L2, and persistence APIs in sequence; foreign-reader cases retain explicit denial checks.
 Relationships: Covers `extraction_contract`, `CompanyViewSet`, Tool API, and personal-workspace access policy.
 Directory:
 - ExtractionCompatibilityTests: Cross-layer regression tests.
@@ -16,6 +16,7 @@ Variable index:
 """
 
 import hashlib
+import uuid
 import tempfile
 from copy import deepcopy
 from pathlib import Path
@@ -27,7 +28,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from agent.workflows.analysis_input import AnalysisInput, build_analysis_input, _validate_email
-from apps.crm import selectors
+from apps.crm import selectors, jobs
+from apps.agent_tools.registry import build_registry
 from apps.crm.models import AgentCredential, Company, Mailbox
 from apps.crm.durable_models import ExtractionRepair
 from apps.sales.management.commands.seed_kg_lab import run_seed
@@ -63,16 +65,20 @@ class ExtractionCompatibilityTests(TestCase):
     # Inputs: `name` is fixed tool name; `arguments` are known business input.
     # Outputs: HTTP response.
     # Logic: Use service authentication and registry/dispatch rather than directly calling view.
-    # Constraints: Lab mode permits no idempotency key and does not access external services.
+    # Constraints: Generate explicit test UUIDs for mutations; reads omit keys and no external services are accessed.
     def call(self, name, arguments):
-        return self.client.post("/api/v1/agent-tools/call/", {"name": name, "arguments": arguments}, format="json")
+        payload = {"name": name, "arguments": arguments}
+        if build_registry()[name]["executionMode"] != "read":
+            payload["idempotency_key"] = str(uuid.uuid4())
+        return self.client.post("/api/v1/agent-tools/call/", payload, format="json")
 
     # Function: Cover the complete production legacy-fixture path from reading to Agent L2 saving.
     # Inputs: Original batch envelope after removing newly added structural fields.
     # Outputs: Detail, analysis enqueueing, and L2 save all succeed while synthetic version retains original value.
-    # Logic: Simulate deployed legacy rows without rewriting `prompt_version`; construct Agent input from actual context.
+    # Logic: Authenticate as the fixture owner, simulate deployed legacy rows without rewriting `prompt_version`, and construct Agent input from actual context under a real claimed lease.
     # Constraints: Does not run L3 model and does not treat L2 test as model-quality validation.
     def test_existing_seed_builds_and_saves_l2(self):
+        self.client.force_authenticate(self.owner)
         for email in self.company.emails.all():
             email.payload.pop("extract_schema_version")
             email.save(update_fields=["payload"])
@@ -84,21 +90,26 @@ class ExtractionCompatibilityTests(TestCase):
         backend = SimpleNamespace(get_company_grouping=lambda identity: grouping, get_company_context=lambda identity: context)
         result = build_analysis_input(str(self.company.pk), backend=backend, clock=timezone.now)
         self.assertIsInstance(result, AnalysisInput, result)
-        saved = self.client.post("/api/v1/agent/analysis-inputs/", result.to_dict(), format="json")
+        job = jobs.claim(self.owner, 1, 600, company_id=self.company.pk)[0]
+        AgentCredential.objects.create(owner=self.owner, name="compat-test", digest=hashlib.sha256(b"compat-owner-token").hexdigest())
+        agent = APIClient()
+        agent.credentials(HTTP_AUTHORIZATION="Agent compat-owner-token")
+        saved = agent.post("/api/v1/agent/analysis-inputs/", result.to_dict(), format="json", HTTP_IF_MATCH=str(job["expected_version"]), HTTP_X_JOB_ID=job["job_id"], HTTP_X_LEASE_TOKEN=job["lease_token"])
         self.assertEqual(saved.status_code, 200, saved.data)
         self.assertTrue(all(item["extract_prompt_version"] == f"{self.batch}:fixture-extract-v1" for item in context["emails"]))
 
     # Function: Verify normal fixture does not trigger unnecessary re-extraction of 300 messages.
     # Inputs: Batch whose generator explicitly records structural version.
     # Outputs: Two tools are discoverable, preview is compatible, upgrade creates zero records, and revision is unchanged.
-    # Logic: Actually execute read-only preview and write tool and verify repair table is empty.
+    # Logic: As the fixture owner, execute preview and a versioned idempotent upgrade; verify the repair table remains empty.
     # Constraints: No model call or legacy-fact rewrite.
     def test_compatible_upgrade_is_noop(self):
+        self.client.force_authenticate(self.owner)
         args = {"company_id": str(self.company.pk)}
         preview = self.call("customers.extraction_status", args)
         self.assertEqual(preview.status_code, 200, preview.data)
         self.assertEqual(preview.data["data"]["incompatible_emails"], 0)
-        upgraded = self.call("customers.upgrade_extractions", args)
+        upgraded = self.call("customers.upgrade_extractions", {**args, "revision": self.company.revision})
         self.assertEqual(upgraded.status_code, 200, upgraded.data)
         self.assertEqual(upgraded.data["data"]["created"], 0)
         self.assertFalse(ExtractionRepair.objects.exists())
@@ -106,15 +117,16 @@ class ExtractionCompatibilityTests(TestCase):
     # Function: Verify that a real legacy structure is explicitly queued through Tool.
     # Inputs: One latest `extract-v6` extraction and legacy schema declaration.
     # Outputs: Analysis returns 409; upgrade creates one repair and progress is queryable.
-    # Logic: Version check must not accept ordinary legacy prompt due to `synthetic_batch` or schema field.
+    # Logic: Use authenticated owner and explicit revision; compatibility must not accept ordinary legacy prompts based on synthetic_batch or schema declarations.
     # Constraints: Worker does not start in this test.
     def test_real_legacy_upgrade_tool(self):
+        self.client.force_authenticate(self.owner)
         source = self.company.emails.first().extractions.latest("pk")
         source.prompt_version = "extract-v6"
         source.save(update_fields=["prompt_version"])
         response = self.call("customers.analyze", {"company_id": str(self.company.pk)})
         self.assertEqual(response.status_code, 409, response.data)
-        upgraded = self.call("customers.upgrade_extractions", {"company_id": str(self.company.pk)})
+        upgraded = self.call("customers.upgrade_extractions", {"company_id": str(self.company.pk), "revision": self.company.revision})
         self.assertEqual(upgraded.status_code, 200, upgraded.data)
         self.assertEqual(upgraded.data["data"]["created"], 1)
 

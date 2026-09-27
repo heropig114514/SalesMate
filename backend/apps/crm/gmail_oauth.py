@@ -13,6 +13,8 @@ Directory:
 - report_mailbox_sync: Save Agent synchronization result and refreshed credential.
 Variable index:
 - GMAIL_SCOPES: Google Gmail read-only OAuth scope.
+- SESSION_OWNER_KEY: Initiating employee ID bound to the one-time OAuth state.
+- logger: Logs rejected OAuth ownership changes without codes or credentials.
 - SESSION_STATE_KEY: Key saving OAuth state in the current browser session.
 - SESSION_CODE_VERIFIER_KEY: Key saving the PKCE code_verifier in the current browser session.
 - __all__: Public service functions of this module.
@@ -21,6 +23,7 @@ Variable index:
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from typing import Any
 
@@ -34,6 +37,8 @@ from .access import Conflict, InvalidState, mailbox_for
 from .models import GmailCredential, Mailbox, QQCredential
 
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SESSION_OWNER_KEY = "salesmate_gmail_oauth_owner"
+logger = logging.getLogger("salesmate.oauth")
 SESSION_STATE_KEY = "salesmate_gmail_oauth_state"
 SESSION_CODE_VERIFIER_KEY = "salesmate_gmail_oauth_code_verifier"
 
@@ -62,7 +67,7 @@ def _client_config() -> dict[str, Any]:
 # Function: Create the current employee's Google authorization URL and save state.
 # Inputs: `request` is an authenticated browser request.
 # Outputs: Google authorization URL string.
-# Logic: Request offline access, consent, and gmail.readonly, and save this PKCE verifier.
+# Logic: Request offline access, consent, and gmail.readonly, and save this PKCE verifier together with the initiating employee ID.
 # Constraints: Does not return client secret or Gmail token in the response.
 def begin_authorization(request) -> str:
     """Create the employee-specific Google authorization URL and remember state."""
@@ -75,6 +80,7 @@ def begin_authorization(request) -> str:
         access_type="offline",
         prompt="consent",
     )
+    request.session[SESSION_OWNER_KEY] = request.user.pk
     request.session[SESSION_STATE_KEY] = state
     request.session[SESSION_CODE_VERIFIER_KEY] = flow.code_verifier
     return authorization_url
@@ -99,10 +105,11 @@ def _fetch_token(flow, code: str) -> None:
 # Function: Complete the Google callback and establish the current employee mailbox connection.
 # Inputs: `request` contains employee session, code, and state.
 # Outputs: Mailbox for the verified address.
-# Logic: Restore PKCE verifier, exchange code, read Gmail profile, and save credentials; the user requests initial synchronization after selecting scope.
+# Logic: Verify initiating employee, restore PKCE verifier, exchange code, read Gmail profile, and save credentials; the user requests initial synchronization after selecting scope.
 # Constraints: Does not establish a binding for mismatched state or PKCE verifier or invalid address, and does not overwrite an existing QQ connection.
 def finish_authorization(request) -> Mailbox:
     """Exchange Google callback code and verify the account without queueing mail reads."""
+    owner_id = request.session.pop(SESSION_OWNER_KEY, None)
     expected_state = request.session.pop(SESSION_STATE_KEY, "")
     code_verifier = request.session.pop(SESSION_CODE_VERIFIER_KEY, "")
     returned_state = request.query_params.get("state", "")
@@ -111,6 +118,9 @@ def finish_authorization(request) -> Mailbox:
         expected_state, returned_state
     ):
         raise InvalidState("Google OAuth state 已失效，请重新发起授权。")
+    if owner_id != request.user.pk or not request.user.is_authenticated or not request.user.is_active:
+        logger.warning("oauth_owner_mismatch provider=gmail_read initiator_id=%s actor_id=%s action=restart_authorization", owner_id, request.user.pk)
+        raise InvalidState("登录账号已变化或授权归属已失效，请用当前账号重新连接。")
     if not code:
         raise InvalidState("Google 未返回授权码，请重新发起授权。")
     if not code_verifier:

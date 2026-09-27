@@ -1,5 +1,5 @@
 """Responsibility: Store and download employees' private customer attachments.
-Implementation: Use random storage keys, streaming digests, and explicit size limits. Production downloads require login and owner checks; experiment mode exposes business attachments publicly.
+Implementation: Use random storage keys, streaming digests, and explicit size limits. Downloads always require login and owner checks, independently of synthetic experiment settings.
 Relationships: views handles multipart uploads; Attachment stores metadata only; no public static route mounts the storage directory.
 Directory:
 - store_file: Write an authorized attachment and save its audit entry.
@@ -9,7 +9,6 @@ Variable index:
 - MAX_BYTES: 20 MiB limit per attachment.
 """
 
-from common.laboratory import enabled
 
 import hashlib
 import logging
@@ -77,10 +76,10 @@ def store_file(actor, company, upload):
 # Function: Open a private file for attachment download.
 # Inputs: `actor`; `record`: attachment already queried by ID.
 # Outputs: Read-only binary file handle; missing files, path escape, or permission failures return 404.
-# Logic: Recheck owner in production; all modes check archival state and directory boundaries and record download audits. Browsers receive attachment responses.
+# Logic: Always recheck owner, archival state, and directory boundaries and record download audits. Browsers receive attachment responses.
 # Constraints: No arbitrary path reads; file content never executes as inline HTML.
 def open_file(actor, record):
-    if (not enabled() and record.owner_id != actor.pk) or record.archived:
+    if (record.owner_id != actor.pk) or record.archived:
         raise NotFound("附件不存在。")
     root = (settings.BASE_DIR / "private_uploads").resolve()
     path = (root / record.storage_key).resolve()

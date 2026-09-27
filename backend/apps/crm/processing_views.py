@@ -1,5 +1,5 @@
 """Responsibility: Provide employee synchronization progress, explicit retry, and email human-review interfaces.
-Implementation: Experiment mode uses public cross-account business scope; Session identity limits mailbox owner. A mailbox can display all persisted messages, and review uses If-Match to avoid overwriting concurrent judgments.
+Implementation: Private processing scope always uses the authenticated Session employee as mailbox owner. A mailbox can display all persisted messages, and review uses If-Match to avoid overwriting concurrent judgments.
 Relationships: urls registers explicit paths, while processing and classification own database transactions.
 Directory:
 - ReviewRequestSerializer: Declare human-confirmation payload.
@@ -46,7 +46,7 @@ class SyncRunView(APIView):
     # Function: Query overall synchronization and profiling progress.
     # Inputs: `request` is an employee session and `run_id` is a batch UUID.
     # Outputs: Batch counts and safe per-message errors.
-    # Logic: Production mode limits mailbox owner, experiment mode queries across accounts by batch ID, then generates derived statistics.
+    # Logic: Query the batch ID together with authenticated mailbox ownership, then generate derived statistics.
     # Constraints: Absent and unauthorized records both return 404 with no write side effects.
     @extend_schema(responses=OBJECT, tags=["processing"])
     def get(self, request, run_id):
@@ -72,7 +72,7 @@ class EmailReviewsView(APIView):
     # Function: List reviewable messages by mailbox and status.
     # Inputs: `request` may include status and page, while `mailbox_id` may limit one mailbox.
     # Outputs: At most 20 items, total count, and pending-review count.
-    # Logic: Production mode filters by mailbox owner and experiment mode crosses accounts; all retains review scope, saved includes business messages, and results order by received time descending.
+    # Logic: Always filter by authenticated mailbox owner; all retains review scope, saved includes business messages, and results order by received time descending.
     # Constraints: Does not parse bodies as HTML; invalid status or pagination returns 400.
     @extend_schema(responses=OBJECT, tags=["processing"], parameters=[OpenApiParameter("status", str, enum=["pending", "non_business", "all", "saved"]), OpenApiParameter("page", int)])
     def get(self, request, mailbox_id=None):

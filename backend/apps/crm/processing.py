@@ -1,5 +1,5 @@
 """Responsibility: Manage mailbox batches, per-message progress, and durable state required for recovery.
-Implementation: Experiment mode permits explicit cross-account retries and Worker claim scope retains its selected identity; row locks serialize requests and freeze user scope, disabled QQ rejects queueing and claiming, batch leases reject old executors, and counts derive from jobs.
+Implementation: Explicit retries and Worker claims are confined to the authenticated employee; row locks serialize requests and freeze user scope, disabled QQ rejects queueing and claiming, batch leases reject old executors, and counts derive from jobs.
 Relationships: Gmail and QQ share the durable queue, with worker dispatching providers; processing_views provides progress and explicit retry.
 Directory:
 - request_run: Create a bounded mailbox batch and reject duplicate active batches.
@@ -211,7 +211,7 @@ def run_data(run):
 # Function: Create a new batch for explicitly failed messages.
 # Inputs: `owner` is the employee and `run_id` is a terminal batch.
 # Outputs: New retry batch; rejects absent failures or an active batch.
-# Logic: Production mode limits to the original employee mailbox, while experiment mode permits cross-account reading of failed batches; explicit retries reuse original message identifiers and retain history.
+# Logic: Always limit failed-batch reads to the original employee mailbox; explicit retries reuse original message identifiers and retain history.
 # Constraints: Retains old batch audit history and original dedupe_key without overwriting healthy messages.
 def retry_run(owner, run_id):
     run = MailboxSyncRun.objects.filter(owner_scope(owner, "mailbox__owner"), pk=run_id).first()

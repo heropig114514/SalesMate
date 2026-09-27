@@ -1,5 +1,5 @@
 """Responsibility: Manage company directories, contacts, and explicit manual email grouping.
-Implementation: Experiment mode uses public cross-account business scope; owner locks and revision checks protect bulk moves. Merges preserve historical analyses and propagate transaction ownership changes to other company scores.
+Implementation: Company grouping always requires private company ownership; owner locks and revision checks protect bulk moves. Merges preserve historical analyses and propagate transaction ownership changes to other company scores.
 Relationships: crm.ingestion uses exact CompanyAlias mappings; sales API exposes only the business directory to shared users.
 Directory:
 - directory_row: Build a company directory entry without private emails.
@@ -130,7 +130,7 @@ def save_contact(actor, company_id, expected, data):
 # Function: Move explicitly selected emails to the same employee's target company.
 # Inputs: `actor`, `source_id`, `target_id`, `source_revision`, `target_revision`, and `keys`: email deduplication-key array.
 # Outputs: Moved count and new versions of both companies.
-# Logic: Query and lock both companies according to the current mode; experiment mode permits cross-account moves. Reuse contacts by email, retain each company's settings ownership, and preserve email bodies.
+# Logic: Query and lock both companies under the authenticated owner. Reuse contacts by email, retain each company's settings ownership, and preserve email bodies.
 # Constraints: Do not authorize shared users to move private email; do not automatically transfer transactions or change future domain routing.
 @transaction.atomic
 def move_emails(actor, source_id, target_id, source_revision, target_revision, keys):
@@ -201,7 +201,7 @@ def move_emails(actor, source_id, target_id, source_revision, target_revision, k
 # Inputs: `actor`、`source_id`、`target_id`、`source_revision`、`target_revision`.
 # Outputs: Target company directory entry.
 # Logic: Reject conflicting fields and transfer business relations; retain historical analyses at the source. Transaction-order ownership changes also update other companies' scoring-context versions.
-# Constraints: Production allows only company owners, while experiment mode permits cross-account access. Team-sharing grants do not expand automatically; revoke source sharing grants first.
+# Constraints: Only company owners may perform this operation in every environment. Team-sharing grants do not expand automatically; revoke source sharing grants first.
 @transaction.atomic
 def merge_companies(actor, source_id, target_id, source_revision, target_revision):
     get_user_model().objects.select_for_update().get(pk=actor.pk)

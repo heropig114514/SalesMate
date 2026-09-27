@@ -1,6 +1,6 @@
 """Responsibility: Declare sales business API routes.
 Implementation: Register global insights, seller profiles, and opportunity queries; preserve write permissions. Read-only browse merges approved experiment records. Fixed operations take precedence and views validate resource allowlists.
-Relationships: config.urls mounts under /api/v1/sales/; views use production login or public experiment identity.
+Relationships: config.urls mounts under /api/v1/sales/; views require authenticated employee identity regardless of laboratory settings.
 Directory:
 - None
 Variable index:

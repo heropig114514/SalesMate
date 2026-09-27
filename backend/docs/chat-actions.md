@@ -33,7 +33,7 @@ Cancellation uses `decision=cancel`. All three endpoints require a real Session;
 - The existing `sales_worker` claims approved ToolActions. It constructs MIME using the exact frozen To/Cc/Bcc, subject and body and never automatically retries uncertain sends. Proposal reads use the linked action's current state, including after restart or manual reconciliation. `succeeded` means provider acceptance, not recipient delivery or reading.
 - The browser renders frozen content as escaped text, submits only decision/revision, and restores cards from the server on refresh. Pending proposals do not block another chat question. Approved/running mail status polling is bounded and stops on errors; manual refresh does not execute anything.
 - Account reset recognizes proposal ownership through the originating request. No changes were made to ordinary non-chat tool authorization or experimental business rules.
-- Conversation responses expose read-only `can_review_chat_actions`, computed from the actual Django Session and original conversation owner. The browser only requests private proposals when this capability is true. Anonymous or cross-account laboratory browsing retains its existing chat behavior without acquiring confirmation permission.
+- Conversation responses expose read-only `can_review_chat_actions`, computed from the actual Django Session and original conversation owner. The browser only requests private proposals when this capability is true. Anonymous or cross-account conversation reads are rejected regardless of laboratory settings.
 
 ## Validation and rollout
 

@@ -1,6 +1,6 @@
 """Responsibility: Provide HTTP endpoints for tool discovery, invocation, user delegation, and human confirmation.
-Implementation: Explicit experiment mode needs no login or separate token while production mode retains original authorization. Calls use independent Tool or Session identity, file JSON uses bounded parsing, credentials support an explicit tool list or preset snapshot, and production management and proposal approval accept only user Session and CSRF.
-Relationships: ``services`` manages idempotency and permissions; reuses ``SalesView`` safe error mapping and ``common.laboratory`` unified experiment identity.
+Implementation: Authentication is required in every environment. Calls use independent Tool or Session identity, file JSON uses bounded parsing, credentials support an explicit tool list or preset snapshot, and management and proposal approval accept only user Session and CSRF.
+Relationships: ``services`` manages idempotency and permissions; reuses ``SalesView`` safe error mapping and authenticated Session or Tool identity.
 Directory:
 - ToolView: Tool authentication boundary.
 - CatalogView: Tool catalog.
@@ -21,10 +21,10 @@ Directory:
 Variable index:
 - ToolView.authentication_classes: Tool and browser authentication.
 - CallView.parser_classes: Bounded file-JSON parsing while retaining original form parsers.
-- CredentialView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
-- CredentialDetailView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
-- ProposalView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
-- DecisionView.authentication_classes: Public identity in experiment mode and user Session only in production mode.
+- CredentialView.authentication_classes: User Session with CSRF on unsafe methods.
+- CredentialDetailView.authentication_classes: User Session with CSRF on unsafe methods.
+- ProposalView.authentication_classes: User Session with CSRF on unsafe methods.
+- DecisionView.authentication_classes: User Session with CSRF on unsafe methods.
 """
 
 import hashlib
@@ -33,7 +33,6 @@ from datetime import timedelta
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 from rest_framework.authentication import SessionAuthentication
-from common.laboratory import LaboratoryAuthentication
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -48,7 +47,7 @@ from .parsers import ToolJSONParser
 
 
 # Function: Constrain tool identity.
-# Logic: ``ToolAuthentication`` provides public identity in experiment mode; production mode prefers Tool credentials while browsers retain CSRF.
+# Logic: Validate Tool credentials when supplied; browsers use Session with CSRF.
 # Constraints: Production mode does not reuse Worker Agent authentication.
 class ToolView(SalesView):
     authentication_classes = [ToolAuthentication, SessionAuthentication]
@@ -126,10 +125,10 @@ class CallView(ToolView):
 
 
 # Function: Delegate tool permissions for a user.
-# Logic: Experiment mode manages delegations through publicly selected identity; production mode accepts only the current Session user.
+# Logic: Only the authenticated Session user may manage their delegations.
 # Constraints: A Tool token cannot issue new permission.
 class CredentialView(SalesView):
-    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
+    authentication_classes = [SessionAuthentication]
 
     # Function: Query the caller's authorizations.
     # Inputs: Pagination from ``request``.
@@ -216,10 +215,10 @@ class CredentialView(SalesView):
 
 
 # Function: Revoke a user's delegation.
-# Logic: Experiment mode revokes through public selected identity; production mode requires current-user Session while ownership remains located by selected identity.
+# Logic: Require current-user Session and locate only that user’s delegation.
 # Constraints: Can revoke only the caller's own authorization.
 class CredentialDetailView(SalesView):
-    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
+    authentication_classes = [SessionAuthentication]
 
     # Function: Revoke one token.
     # Inputs: ``request`` and ``credential_id``.
@@ -241,10 +240,10 @@ class CredentialDetailView(SalesView):
 
 
 # Function: Present pending-confirmation content to a user.
-# Logic: Experiment mode reads proposals by public selected identity; production mode requires the corresponding user's Session.
+# Logic: Require the proposal owner’s authenticated Session.
 # Constraints: Credentials cannot read or approve through this endpoint.
 class ProposalView(SalesView):
-    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
+    authentication_classes = [SessionAuthentication]
 
     # Function: Read a proposal.
     # Inputs: Pagination from ``request`` and optional path identifier ``proposal_id``.
@@ -265,10 +264,10 @@ class ProposalView(SalesView):
 
 
 # Function: Accept independent user confirmation.
-# Logic: Experiment mode submits a decision under public selected identity; production mode requires user Session and CSRF, while actual execution still delegates to ``decide``.
+# Logic: Require owner Session and CSRF; actual execution delegates to ``decide``.
 # Constraints: Is not registered as an Agent tool.
 class DecisionView(SalesView):
-    authentication_classes = [LaboratoryAuthentication, SessionAuthentication]
+    authentication_classes = [SessionAuthentication]
 
     # Function: Approve or cancel one proposal.
     # Inputs: ``request`` contains decision and ``proposal_id``.

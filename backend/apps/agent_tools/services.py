@@ -1,6 +1,6 @@
 """Responsibility: Execute tool authorization, strict input, idempotent receipts, and human-confirmation protocol.
-Implementation: Ordinary write calls and unique receipts save atomically; graph writes use source idempotency and inference does not occupy a transaction; production management operations create proposals and experiment mode executes directly.
-Relationships: ``registry`` defines capabilities and ``dispatch`` reuses business logic; only Session views call ``decide`` in production mode, while experiment mode uses public identity.
+Implementation: Ordinary write calls and unique receipts save atomically; graph writes use source idempotency and inference does not occupy a transaction; management operations create proposals for authenticated browser confirmation.
+Relationships: ``registry`` defines capabilities and ``dispatch`` reuses business logic; only authenticated Session views call ``decide``.
 Directory:
 - catalog: Return the current identity's tool catalog.
 - authorize: Recheck tool authorization.
@@ -15,8 +15,6 @@ Variable index:
 import hashlib
 import json
 import logging
-import uuid
-from common.laboratory import enabled
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -34,10 +32,10 @@ logger = logging.getLogger("salesmate.agent_tools")
 # Function: List available tools.
 # Inputs: Logged-in user ``actor``, optional tool credential ``credential``, and optional category ``category``.
 # Outputs: List of public tool descriptions.
-# Logic: Production mode filters by credential allowlist and experiment mode publishes the complete catalog; exposes source-idempotency scope without exposing internal handlers.
+# Logic: Session callers receive the complete catalog and Tool callers receive their explicit delegation scope; exposes source-idempotency scope without exposing internal handlers.
 # Constraints: The catalog grants no permission and returns no business data or credentials.
 def catalog(actor, credential=None, category=None):
-    if not enabled() and not actor.is_active:
+    if not actor.is_authenticated or not actor.is_active:
         raise PermissionDenied("用户已停用。")
     if credential:
         check_credential(credential)
@@ -58,7 +56,7 @@ def catalog(actor, credential=None, category=None):
             }
         }
         for name, spec in build_registry().items()
-        if (enabled() or not credential or name in credential.allowed_tools)
+        if (not credential or name in credential.allowed_tools)
         and (not category or spec["category"] == category)
     ]
 
@@ -66,12 +64,12 @@ def catalog(actor, credential=None, category=None):
 # Function: Recheck execution identity.
 # Inputs: ``actor``, ``credential``, and tool name ``name``.
 # Outputs: None.
-# Logic: Experiment mode does not check user state or the tool allowlist; production mode checks identity and authorization ownership.
+# Logic: Always check user state, credential ownership, and explicit delegation scope.
 # Constraints: Actual handlers continue to check business-entity permissions.
 def authorize(actor, credential, name):
-    if not enabled() and not actor.is_active:
+    if not actor.is_authenticated or not actor.is_active:
         raise PermissionDenied("用户已停用。")
-    if credential and not enabled():
+    if credential:
         if credential.owner_id != actor.pk:
             raise PermissionDenied("工具授权归属不一致。")
         check_credential(credential, name)
@@ -101,7 +99,7 @@ def response_data(response):
 # Inputs: ``actor``, ``credential``, ``name``, ``arguments``, and optional UUID ``idempotency_key``.
 # Outputs: Result containing tool name and receipt.
 # Logic: Validate and authorize first; graph-source writes manage their own transactions and are idempotent by ``source_key`` or ``episode_id``; other writes and ``ToolCall`` receipts share one transaction, while confirm tools only freeze a proposal.
-# Constraints: Source-idempotent tools reject a transmitted UUID, return Episode audit, and create no ``ToolCall``; ordinary production writes still require an idempotency UUID; failures do not retry and a cached receipt is not current data.
+# Constraints: Source-idempotent tools reject a transmitted UUID, return Episode audit, and create no ``ToolCall``; ordinary writes still require an idempotency UUID; failures do not retry and a cached receipt is not current data.
 def invoke(actor, credential, name, arguments, idempotency_key=None):
     spec = build_registry().get(name)
     if spec is None:
@@ -120,12 +118,10 @@ def invoke(actor, credential, name, arguments, idempotency_key=None):
                 raise ValidationError("图谱写入使用来源键或观察ID幂等，不接受 idempotency_key。")
             result = {"tool": name, **response_data(execute(actor, spec, arguments))}
         elif spec["executionMode"] == "read":
-            if idempotency_key is not None and not enabled():
+            if idempotency_key is not None:
                 raise ValidationError("只读工具不接受幂等键。")
             result = {"tool": name, **response_data(execute(actor, spec, arguments))}
         else:
-            if enabled() and idempotency_key is None:
-                idempotency_key = str(uuid.uuid4())
             validate(idempotency_key, UUID)
             digest = hashlib.sha256(
                 json.dumps(
@@ -205,7 +201,7 @@ def invoke(actor, credential, name, arguments, idempotency_key=None):
 # Inputs: Authorized ``proposal``.
 # Outputs: Tool input, expiry, status, and user-confirmation endpoint.
 # Logic: Present frozen input for complete interface preview.
-# Constraints: Production confirmation endpoint accepts only Session; experiment-mode public identity can select original proposal ownership.
+# Constraints: Confirmation requires the proposal owner’s Session with CSRF.
 def proposal_data(proposal):
     return plain(
         {
@@ -217,7 +213,7 @@ def proposal_data(proposal):
             "expired": proposal.expires_at <= timezone.now(),
             "result": proposal.result,
             "decision_path": f"/api/v1/agent-tools/proposals/{proposal.pk}/decision/",
-            "confirmation_authentication": "laboratory_identity" if enabled() else "user_session_csrf",
+            "confirmation_authentication": "user_session_csrf",
         }
     )
 
@@ -226,7 +222,7 @@ def proposal_data(proposal):
 # Inputs: Logged-in user ``actor``, ``proposal_id``, and ``decision`` of approve or cancel.
 # Outputs: Proposal status and actual business result.
 # Logic: Lock proposal, check expiry, original authorization, and current permissions, then execute frozen arguments.
-# Constraints: Production caller must be a Session-only view and experiment mode uses public identity; version conflicts roll back and retain pending state without modifying frozen input.
+# Constraints: Caller must be a Session-only view; version conflicts roll back and retain pending state without modifying frozen input.
 @transaction.atomic
 def decide(actor, proposal_id, decision):
     if decision not in {"approve", "cancel"}:

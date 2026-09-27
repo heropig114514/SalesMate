@@ -15,7 +15,7 @@ Directory:
 - ClientTests.test_configuration_and_fixed_endpoints: Reject unsafe addresses and unknown endpoints.
 - ClientTests.test_timeout_configuration_and_model_errors: Verify explicit long timeouts and forwarded model errors.
 - ProtocolTests: Actual subprocess MCP checks.
-- ProtocolTests.test_anonymous_stdio: Verify tokenless MCP and optional idempotency keys.
+- ProtocolTests.test_anonymous_stdio: Verify tokenless protocol fixtures and optional idempotency keys against a mock server.
 - ProtocolTests.test_stdio_catalog_call_and_error: Verify SDK handshakes, pagination, write arguments, and error flags.
 Variable index:
 - ROOT: Repository root.
@@ -290,7 +290,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             server.server_close()
             thread.join()
 
-    # Function: Verify actual anonymous MCP handshakes and write arguments.
+    # Function: Verify tokenless MCP handshakes and write arguments against an isolated mock server.
     # Inputs: Local experiment HTTP fixture and empty-token configuration.
     # Outputs: Schemas omit mandatory idempotency keys; writes receive structured success responses.
     # Logic: Start actual stdio subprocesses and use the MCP SDK for discovery/calls.
@@ -303,7 +303,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             params = StdioServerParameters(command=sys.executable,
                 args=["-m", "integrations.salesmate_tools.mcp_server"], cwd=str(ROOT),
                 env={**os.environ, "SALESMATE_TOOLS_URL": f"http://127.0.0.1:{server.server_port}",
-                     "SALESMATE_TOOLS_TOKEN": "", "SALESMATE_TOOLS_USER": ""})
+                     "SALESMATE_TOOLS_TOKEN": ""})
             async with Client(params) as client:
                 first = await client.list_tools()
                 second = await client.list_tools(cursor=first.next_cursor)

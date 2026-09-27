@@ -1,5 +1,5 @@
 """Responsibility: Provide information, catalog, and file data tools for algorithm callers without running models or scoring.
-Implementation: Experiment mode opens cross-account information-file queries while the information singleton remains located by selected experiment identity; reuse accounts information APIs; catalog changes retain account lock and revision; ordinary files require a TXT suffix while experiment entry may explicitly accept validated ``text/plain``.
+Implementation: Information-file queries and the information singleton are always scoped to the authenticated employee; reuse accounts information APIs; catalog changes retain account lock and revision; ordinary files require a TXT suffix while experiment entry may explicitly accept validated ``text/plain``.
 Relationships: ``registry`` calls ``support_specs`` and ``dispatch`` calls ``execute_support``; ``experiments`` reuses chunk encoding; ``services`` provides idempotency and call logging.
 Directory:
 - support_specs: Declare information, catalog, and file tools.
@@ -88,7 +88,7 @@ def support_specs(tool):
 # Function: Read or modify an information catalog.
 # Inputs: ``request`` is restricted account context, ``spec`` is the tool declaration, and ``args`` are validated parameters.
 # Outputs: Pagination or item, ``setup_revision``, or deletion receipt.
-# Logic: Read the catalog by selected identity and apply operation; unified version policy decides when revision can be omitted, while production mode still requires the current version.
+# Logic: Read the catalog by authenticated identity and require the current revision before applying the operation.
 # Constraints: Does not modify transactional ``Product``; updates cannot replace entry id; failures roll back wholly with no implicit retry.
 @transaction.atomic
 def catalog_operation(request, spec, args):
@@ -128,7 +128,7 @@ def catalog_operation(request, spec, args):
 # Inputs: ``request``, ``operation``, and Schema-validated ``args``.
 # Outputs: Metadata, pagination, chunk, or deletion or upload receipt.
 # Logic: Upload reuses original PDF and TXT validation; production mode checks the caller's information references and experiment mode checks references for all accounts.
-# Constraints: Production mode limits files to current account; experiment-mode cross-account reads and writes still refuse deleting referenced files; does not parse PDFs or automatically read all chunks.
+# Constraints: All modes limit files to the current account and refuse deleting referenced files; does not parse PDFs or automatically read all chunks.
 @transaction.atomic
 def document_operation(request, operation, args):
     if operation in {"upload", "delete"}:

@@ -7,8 +7,7 @@ Directory:
 
 Variable index:
 - WORKSPACE_OWNER_ONLY: Explicitly restores personal workspaces, taking priority over anonymous laboratory access, team sharing, and experiment-batch sharing.
-- LAB_OPEN_ACCESS: Explicitly enables unauthenticated, cross-account laboratory access for all business APIs; disabled by default.
-- LAB_DEFAULT_USER: Ownership and audit account name for anonymous laboratory writes.
+- LAB_OPEN_ACCESS: Enables explicit synthetic-fixture experiments only; never bypasses account authorization.
 - BASE_DIR: backend software root, the base path for frontend, contracts, static files, and media.
 - PROJECT_DIR: Project root containing the shared .env.
 - env: Environment-variable reader with type conversion.
@@ -70,7 +69,6 @@ if not SECRET_KEY.strip():
 DEBUG = False
 WORKSPACE_OWNER_ONLY = env.bool("WORKSPACE_OWNER_ONLY", default=False)
 LAB_OPEN_ACCESS = env.bool("LAB_OPEN_ACCESS", default=False) and not WORKSPACE_OWNER_ONLY
-LAB_DEFAULT_USER = env.str("LAB_DEFAULT_USER", default="algorithm-lab")
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
@@ -156,8 +154,8 @@ GOOGLE_OAUTH_REDIRECT_URI = env.str(
 )
 
 REST_FRAMEWORK = {
-    # Laboratory authentication exposes public identity only behind its explicit switch; otherwise Session authentication resumes and health checks remain independently anonymous.
-    "DEFAULT_AUTHENTICATION_CLASSES": ["common.laboratory.LaboratoryAuthentication", "rest_framework.authentication.SessionAuthentication"],
+    # Browser identity always requires a real Session and unsafe requests retain CSRF validation.
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

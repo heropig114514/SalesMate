@@ -1,190 +1,215 @@
-"""Responsibility: Verify anonymous cross-account business access in public lab mode and restored permissions after it is disabled.
-Implementation: Use a real HTTP client without cookies or tokens and with CSRF checks in isolated PostgreSQL.
-Relationships: Covers laboratory and Sales/CRM/Tool/Chat entry points; synthetic batches are generated in temporary directories without external models or sends.
+"""Responsibility: Prove experimental settings cannot bypass employee authentication or private ownership.
+Implementation: Exercise real Session, Agent, Tool HTTP paths with two employees and real CSRF checks in isolated PostgreSQL.
+Relationships: Covers laboratory policy, business CRUD, chat isolation, delegated tools, and both OAuth callbacks.
 Directory:
-- LaboratoryTests: Public-lab integration verification.
-- LaboratoryTests.setUp: Create two non-KGSEED accounts and business records.
-- LaboratoryTests.call: Send Tool request without credentials or idempotency key.
-- LaboratoryTests.test_anonymous_reads_and_all_list_tools: Anonymous full catalog and cross-account reads.
-- LaboratoryTests.test_cross_owner_write_and_internal_confirmation: Anonymous cross-account modification and direct management operations.
-- LaboratoryTests.test_identity_selection_and_invalid_token: Public owner selection and invalid-token compatibility.
-- LaboratoryTests.test_switch_off_restores_authentication: Restore formal authentication and version checking.
-- LaboratoryTests.test_anonymous_chat_preserves_original_owner: Cross-account chat and knowledge context.
-- LaboratoryTests.test_seed_crud_and_regular_edit: Anonymous fictional-data maintenance and readable ordinary edits.
-- LaboratoryTests.test_agent_context_and_lease_optional: Agent business access without authentication and optional lease.
+- LaboratoryTests: Account-isolation regression matrix under the former bypass switch.
+- LaboratoryTests.setUp: Create two employees and independent private records.
+- LaboratoryTests.test_anonymous_and_identity_headers: Reject anonymous and forged identities.
+- LaboratoryTests.test_private_crud_and_full_catalog: Preserve owner CRUD and full catalog while hiding foreign records.
+- LaboratoryTests.test_csrf_and_versions: Preserve CSRF and optimistic concurrency even in experiments.
+- LaboratoryTests.test_agent_credentials: Bind Agent reads to the credential owner.
+- LaboratoryTests.test_tool_credentials: Enforce delegation expiry, revocation, scope, and private ownership.
+- LaboratoryTests.test_chat_and_knowledge: Reject foreign chat operations, exclude foreign knowledge, and bind explicit retries to the current owner.
+- LaboratoryTests.test_team_sharing: Retain explicit shared customer access without sharing private resources.
+- LaboratoryTests.test_oauth_owner_binding: Reject account switches before either Google token exchange.
 Variable index:
-- BASE: Fixed Tool API prefix.
+- BASE: Business Tool API prefix.
 """
-
-import tempfile
-from pathlib import Path
+import hashlib
 import uuid
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
+from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.test import APIClient
 
+from apps.agent_tools.models import ToolCredential
 from apps.agent_tools.registry import build_registry
-from apps.chat.models import KnowledgeEntry, AnswerRequest
-from apps.crm import rules
-from integrations.company_enrichment import input_version
-from rest_framework.exceptions import ValidationError
-from apps.crm.access import check_version
+from apps.agent_tools.services import catalog, invoke
+from apps.chat import services as chat
+from apps.chat.models import KnowledgeEntry
+from apps.crm.access import Conflict, InvalidState, check_version
+from apps.crm.gmail_oauth import begin_authorization, finish_authorization
 from apps.crm.jobs import require_lease
-from apps.sales import grouping, models
-from apps.sales.experiments import APPROVED_BATCHES, load_batch, table_rows
-from apps.sales.management.commands.seed_kg_lab import run_seed
+from apps.crm.models import AgentCredential
+from apps.sales import grouping, integrations, models
+from apps.sales.permissions import company_access, scope
 
 BASE = "/api/v1/agent-tools/"
 
 
-# Function: Verify passwordless lab business flow.
-# Logic: Test configuration enables mode; framework restores configuration and rolls back data afterwards.
-# Constraints: Do not call public internet or real external services.
-@override_settings(LAB_OPEN_ACCESS=True, LAB_DEFAULT_USER="algorithm-lab", LOCAL_DEBUG_AUTO_LOGIN=False)
+# Function: Verify private account boundaries even with synthetic experiments enabled.
+# Logic: TestCase rolls back fixtures; override_settings restores all switches after each test.
+# Constraints: No production data, provider calls, model calls, or real messages.
+@override_settings(LAB_OPEN_ACCESS=True, WORKSPACE_OWNER_ONLY=False, LOCAL_DEBUG_AUTO_LOGIN=False)
 class LaboratoryTests(TestCase):
-    # Function: Establish cross-account data.
+    # Function: Establish independent records and CSRF-aware clients.
     # Inputs: Isolated test database.
-    # Outputs: Instance state for two users, customer, product, knowledge, and anonymous client.
-    # Logic: Ordinary records carry no KGSEED marker, verifying open scope is not limited to fictional batches.
-    # Constraints: Enable real CSRF checks and do not use force_authenticate.
+    # Outputs: Two users, company, product, connection, conversation, and browser client.
+    # Logic: Real Session login is used where authentication behavior matters.
+    # Constraints: All records are synthetic and transactionally rolled back.
     def setUp(self):
-        self.owner = get_user_model().objects.create_user(username="lab-owner")
-        self.other = get_user_model().objects.create_user(username="lab-other")
-        self.company = grouping.create_company(self.owner, "Ordinary private customer")
-        self.product = models.Product.objects.create(owner=self.owner, sku="ordinary", name="Original", currency="USD", unit_price="2.00")
-        self.knowledge = KnowledgeEntry.objects.create(owner=self.owner, title="Shared fact", content="Cross account fact", version="1")
+        self.owner = get_user_model().objects.create_user(username="isolated-owner")
+        self.other = get_user_model().objects.create_user(username="isolated-other")
+        self.company = grouping.create_company(self.owner, "Private company")
+        self.product = models.Product.objects.create(owner=self.owner, sku="private", name="Original", currency="USD", unit_price="2.00")
+        self.connection = models.Connection.objects.create(owner=self.owner, provider="gmail", account="owner@example.com")
+        self.conversation = models.Conversation.objects.create(owner=self.owner, title="Private chat")
         self.client = APIClient(enforce_csrf_checks=True)
 
-    # Function: Execute anonymous Tool request.
-    # Inputs: `name` tool name, `arguments` input, and `expected` HTTP status.
-    # Outputs: Response data.
-    # Logic: Send no authentication, version, or idempotency headers and assert real HTTP result.
-    # Constraints: Failure assertion retains response for diagnosis.
-    def call(self, name, arguments, expected=200):
-        response = self.client.post(BASE + "call/", {"name": name, "arguments": arguments}, format="json")
-        self.assertEqual(response.status_code, expected, response.data)
-        return response.data
+    # Function: Reject anonymous access and spoofed ownership.
+    # Inputs: Public identity header and invalid Agent/Tool tokens.
+    # Outputs: Authentication failures, no automatically created laboratory user.
+    # Logic: Exercise browser, tool, and Worker endpoints through real authenticators.
+    # Constraints: Session status remains publicly readable without authenticating the caller.
+    def test_anonymous_and_identity_headers(self):
+        self.client.credentials(HTTP_X_LAB_USER=self.owner.username)
+        for path in ("/api/v1/sales/directory/", "/api/v1/companies/", "/api/v1/mailboxes/", BASE + "catalog/", "/api/v1/sales/browse/directory/"):
+            with self.subTest(path=path):
+                self.assertIn(self.client.get(path).status_code, (401, 403))
+        self.assertFalse(self.client.get("/api/v1/session/").data["authenticated"])
+        for header, path in (("Tool invalid", BASE + "catalog/"), ("Agent invalid", "/api/v1/agent/context/")):
+            self.client.credentials(HTTP_X_LAB_USER=self.owner.username, HTTP_AUTHORIZATION=header)
+            self.assertEqual(self.client.get(path).status_code, 401)
+        self.assertEqual(get_user_model().objects.count(), 2)
 
-    # Function: Verify anonymous read entry points and full Tool catalog.
-    # Inputs: Ordinary records and registry for two accounts.
-    # Outputs: Visible company, product, and knowledge; every record list is requestable.
-    # Logic: Iterate fixed registered resources; web browse, CRM, and Tool use real views.
-    # Constraints: Do not interpret successful protocol reads as model-inference quality.
-    def test_anonymous_reads_and_all_list_tools(self):
-        for path in ("/api/v1/session/", "/api/v1/sales/directory/", "/api/v1/companies/", "/api/v1/mailboxes/", BASE + "catalog/"):
-            response = self.client.get(path)
-            self.assertEqual(response.status_code, 200, response.data)
-            self.assertEqual(response["X-Lab-Open-Access"], "true")
-        self.assertTrue(self.client.get("/api/v1/session/").data["lab_open_access"])
-        self.assertEqual(self.call("products.list", {})["data"]["count"], 1)
-        self.assertIn("Shared fact", str(self.call("knowledge.search", {})))
-        for name, spec in build_registry().items():
-            if spec["kind"] == "record_list":
-                with self.subTest(tool=name):
-                    self.call(name, {})
-
-    # Function: Verify anonymous modification and direct management operations.
-    # Inputs: Another account's product and new team name.
-    # Outputs: Writes succeed, original ownership remains, audit retains lab actor, and internal proposals need no confirmation.
-    # Logic: Omit If-Match, revision, and idempotency key, then perform archive.
-    # Constraints: Actual external sending flow is outside this test.
-    def test_cross_owner_write_and_internal_confirmation(self):
-        response = self.client.patch(f"/api/v1/sales/records/products/{self.product.pk}/", {"name": "Public edit"}, format="json")
+    # Function: Preserve owned CRUD and complete capability discovery.
+    # Inputs: Authenticated owner and foreign employee sessions.
+    # Outputs: Full catalog and successful owner edit; foreign detail/update stay hidden.
+    # Logic: Obtain a real CSRF token from Session and use current optimistic revision.
+    # Constraints: The catalog lists capabilities without granting cross-account rights.
+    def test_private_crud_and_full_catalog(self):
+        self.client.force_login(self.owner)
+        self.assertEqual(self.client.get(BASE + "catalog/").data["count"], len(build_registry()))
+        self.client.get("/api/v1/session/")
+        csrf = self.client.cookies["csrftoken"].value
+        response = self.client.patch(f"/api/v1/sales/records/products/{self.product.pk}/", {"name": "Owned edit"}, format="json", HTTP_X_CSRFTOKEN=csrf, HTTP_IF_MATCH=str(self.product.revision))
         self.assertEqual(response.status_code, 200, response.data)
+        self.client.force_login(self.other)
+        self.client.get("/api/v1/session/")
+        csrf = self.client.cookies["csrftoken"].value
+        for resource, obj in (("products", self.product), ("connections", self.connection), ("conversations", self.conversation)):
+            path = f"/api/v1/sales/records/{resource}/{obj.pk}/"
+            self.assertEqual(self.client.get(path).status_code, 404)
+            self.assertEqual(self.client.patch(path, {"archived": True}, format="json", HTTP_X_CSRFTOKEN=csrf).status_code, 404)
         self.product.refresh_from_db()
-        self.assertEqual((self.product.name, self.product.owner_id), ("Public edit", self.owner.pk))
-        result = self.call("products.update", {"id": str(self.product.pk), "data": {"name": "Tool edit"}})
-        self.assertIn("call_id", result)
-        self.call("products.archive", {"id": str(self.product.pk), "archived": True})
-        self.assertEqual(self.call("teams.create", {"data": {"name": "Public team"}})["status"], "completed")
-        setting = self.company.business_settings
-        self.call("customer_settings.update", {"id": str(setting.pk), "data": {"notes": "Public customer edit"}})
-        self.assertTrue(models.AuditEvent.objects.filter(actor__username="algorithm-lab", owner=self.owner).exists())
+        self.assertEqual(self.product.name, "Owned edit")
+        self.assertFalse(self.product.archived)
 
-    # Function: Verify passwordless owner selection and compatibility with invalid old token.
-    # Inputs: X-Lab-User and invalid Authorization.
-    # Outputs: Selected account owns new record; invalid old credential does not reject business access.
-    # Logic: Create product through public identity header; after clearing identity return to default lab account.
-    # Constraints: Only lab mode accepts this header and does not create login Session.
-    def test_identity_selection_and_invalid_token(self):
-        self.client.credentials(HTTP_X_LAB_USER=self.other.username, HTTP_AUTHORIZATION="Tool expired-or-invalid")
-        result = self.call("products.create", {"data": {"sku": "selected", "name": "Selected", "currency": "USD", "unit_price": "1.00"}})
-        self.assertEqual(models.Product.objects.get(pk=result["data"]["id"]).owner_id, self.other.pk)
-        self.client.credentials(HTTP_AUTHORIZATION="invalid")
-        self.assertEqual(self.client.get(BASE + "catalog/").status_code, 200)
+    # Function: Keep CSRF, version, and claimed-lease requirements active.
+    # Inputs: Real authenticated browser without CSRF and missing protocol versions.
+    # Outputs: Rejection before any modification.
+    # Logic: Check both HTTP middleware and direct business invariants.
+    # Constraints: Does not weaken or replace established version semantics.
+    def test_csrf_and_versions(self):
+        self.client.force_login(self.owner)
+        self.assertEqual(self.client.patch(f"/api/v1/sales/records/products/{self.product.pk}/", {"name": "Denied"}, format="json").status_code, 403)
+        with self.assertRaises(ValidationError):
+            check_version(None, 0)
+        with self.assertRaises(Conflict):
+            require_lease(self.company, None, None)
+        self.assertEqual(build_registry()["teams.create"]["executionMode"], "confirm")
+        self.assertTrue(build_registry()["products.update"]["idempotency_required"])
 
-    # Function: Verify the unified disable switch.
-    # Inputs: Anonymous and logged-in requests from the same client.
-    # Outputs: Anonymous access rejects, cross-account resources are hidden, and missing version is not accepted.
-    # Logic: After runtime mode switch, use original authentication and scope without rebuilding test client.
-    # Constraints: Production deployment must restart service when switching environment variables.
-    def test_switch_off_restores_authentication(self):
-        self.assertEqual(self.client.get(BASE + "catalog/").status_code, 200)
-        with override_settings(LAB_OPEN_ACCESS=False):
-            self.assertIn(self.client.get(BASE + "catalog/").status_code, (401, 403))
-            self.assertIn(self.client.get("/api/v1/companies/").status_code, (401, 403))
-            self.client.force_login(self.other)
-            response = self.client.get(f"/api/v1/sales/records/products/{self.product.pk}/")
-            self.assertEqual(response.status_code, 404)
-            with self.assertRaises(ValidationError):
-                check_version(None, 0)
+    # Function: Resolve Agent context using credential ownership only.
+    # Inputs: Credential for the second employee with a forged first-employee header.
+    # Outputs: Foreign private company context returns 404; inactive owner returns 401.
+    # Logic: Use real digest authentication rather than force_authenticate.
+    # Constraints: No worker or external model is started.
+    def test_agent_credentials(self):
+        AgentCredential.objects.create(owner=self.other, name="test", digest=hashlib.sha256(b"test-agent").hexdigest())
+        self.client.credentials(HTTP_AUTHORIZATION="Agent test-agent", HTTP_X_LAB_USER=self.owner.username)
+        self.assertEqual(self.client.get("/api/v1/agent/context/", {"company_id": str(self.company.pk)}).status_code, 404)
+        self.other.is_active = False
+        self.other.save()
+        self.assertEqual(self.client.get("/api/v1/agent/context/").status_code, 401)
 
-    # Function: Verify cross-account conversation and knowledge evidence.
-    # Inputs: Another account's workspace conversation.
-    # Outputs: Anonymous submission retains original ownership; Agent context sees another account's knowledge.
-    # Logic: Use real submit, claim, and context APIs; public identity header selects queue for claim.
-    # Constraints: Do not run model or change established knowledge budget.
-    def test_anonymous_chat_preserves_original_owner(self):
-        conversation = models.Conversation.objects.create(owner=self.other, title="Existing workspace")
-        response = self.client.post("/api/v1/sales/chat/messages/", {"conversation_id": str(conversation.pk), "client_key": str(uuid.uuid4()), "content": "Shared fact"}, format="json")
-        self.assertEqual(response.status_code, 201, response.data)
-        answer = AnswerRequest.objects.get(conversation=conversation)
-        self.assertEqual(answer.owner_id, self.other.pk)
-        self.client.credentials(HTTP_X_LAB_USER=self.other.username)
-        response = self.client.post("/api/v1/agent/chat/requests/claim/", {}, format="json")
-        self.assertEqual(response.status_code, 200, response.data)
-        self.client.credentials()
-        response = self.client.post("/api/v1/agent/chat/context/", {"request_id": str(answer.pk), "scope": "internal"}, format="json")
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertIn("Cross account fact", str(response.data))
+    # Function: Validate limited Tool delegation independently of experiment switches.
+    # Inputs: Other employee's valid, expired, and revoked credentials.
+    # Outputs: Only delegated names are published; foreign data and ungranted writes reject.
+    # Logic: Exercise HTTP Tool authentication and actual business dispatch.
+    # Constraints: Credentials are synthetic; no raw credential is logged by application code.
+    def test_tool_credentials(self):
+        credential = ToolCredential.objects.create(owner=self.other, name="test", digest=hashlib.sha256(b"test-tool").hexdigest(), allowed_tools=["products.get"], expires_at=timezone.now()+timedelta(hours=1))
+        self.client.credentials(HTTP_AUTHORIZATION="Tool test-tool", HTTP_X_LAB_USER=self.owner.username)
+        self.assertEqual([row["name"] for row in self.client.get(BASE+"catalog/").data["tools"]], ["products.get"])
+        response = self.client.post(BASE+"call/", {"name": "products.get", "arguments": {"id": str(self.product.pk)}}, format="json")
+        self.assertEqual(response.status_code, 404)
+        response = self.client.post(BASE+"call/", {"name": "products.list", "arguments": {}}, format="json")
+        self.assertEqual(response.status_code, 403)
+        for field, value in (("expires_at", timezone.now()-timedelta(seconds=1)), ("revoked_at", timezone.now())):
+            credential.expires_at = timezone.now()+timedelta(hours=1)
+            setattr(credential, field, value)
+            credential.save()
+            self.assertEqual(self.client.get(BASE+"catalog/").status_code, 401)
 
-    # Function: Verify anonymous CRUD for fictional batch and compatibility with ordinary entry point.
-    # Inputs: Complete small 44-table batch and maintenance request without expected version.
-    # Outputs: Creation, modification, and deletion succeed; ordinary edits do not invalidate lab read entry point.
-    # Logic: Maintain and delete new product through lab entry point, then ordinarily modify existing synthetic product.
-    # Constraints: Temporary attachments clean on exit and real database is unaffected.
-    def test_seed_crud_and_regular_edit(self):
-        with tempfile.TemporaryDirectory() as folder, override_settings(BASE_DIR=Path(folder)):
-            run_seed(self.owner, APPROVED_BATCHES[0], 2)
-            location = {"batch": APPROVED_BATCHES[0], "model": "sales.Product"}
-            created = self.call("experiments.create", {**location, "data": {"sku": "lab-new", "name": "New", "currency": "USD", "unit_price": "1.00"}})["data"]
-            self.call("experiments.update", {**location, "pk": created["pk"], "data": {"name": "Updated"}})
-            self.call("experiments.delete", {**location, "pk": created["pk"]})
-            row = table_rows(load_batch(APPROVED_BATCHES[0]), "sales.Product")[0]
-            self.call("products.update", {"id": row["pk"], "data": {"name": "Ordinary edit"}})
-            rows = table_rows(load_batch(APPROVED_BATCHES[0]), "sales.Product")
-            updated = next(item for item in rows if item["pk"] == row["pk"])
-            self.assertEqual(updated["fields"]["name"], "Ordinary edit")
-            self.assertNotEqual(updated["fingerprint"], row["fingerprint"])
-            self.assertEqual(self.client.get("/api/v1/sales/browse/directory/").status_code, 200)
+    # Function: Reject foreign chat access without changing ownership or leaking knowledge.
+    # Inputs: Private conversation and knowledge belonging to the first employee.
+    # Outputs: Foreign submit/read/retry reject; owner retry records the current initiator without rewriting historical audit; knowledge search contains no private text.
+    # Logic: Exercise real transactional chat services, including a legacy mismatched initiator, and normal tool dispatch.
+    # Constraints: Successful submission remains pending; no model is invoked.
+    def test_chat_and_knowledge(self):
+        KnowledgeEntry.objects.create(owner=self.owner, title="Secret fact", content="Private evidence", version="1")
+        data = {"conversation_id": str(self.conversation.pk), "client_key": str(uuid.uuid4()), "content": "hello"}
+        with self.assertRaises(NotFound):
+            chat.submit(self.other, data)
+        request, _ = chat.submit(self.owner, data)
+        self.assertEqual(request.requested_by_id, self.owner.pk)
+        with self.assertRaises(NotFound):
+            chat.request_for(self.other, request.pk)
+        self.assertNotIn("Private evidence", str(invoke(self.other, None, "knowledge.search", {})))
+        self.assertEqual(len(catalog(self.other)), len(build_registry()))
+        request.status = "failed"
+        request.requested_by = self.other
+        request.save(update_fields=["status", "requested_by"])
+        with self.assertRaises(NotFound):
+            chat.retry(self.other, request.pk)
+        successor, created = chat.retry(self.owner, request.pk)
+        self.assertTrue(created)
+        self.assertEqual(successor.requested_by_id, self.owner.pk)
+        request.refresh_from_db()
+        self.assertEqual(request.requested_by_id, self.other.pk)
 
-    # Function: Verify Agent context and omitted lease.
-    # Inputs: Anonymous client and another account's company.
-    # Outputs: Context and L2 save both return HTTP 200; omitted version and lease pass; OAuth-key claiming still requires machine credential.
-    # Logic: Access real Agent context and directly check boundaries of public lease function and credential-output endpoint.
-    # Constraints: Build L2 with actual rules, do not mock database save, and do not call external model.
-    def test_agent_context_and_lease_optional(self):
-        response = self.client.get("/api/v1/agent/context/", {"company_id": str(self.company.pk)})
-        self.assertEqual(response.status_code, 200, response.data)
-        context = response.data
-        group = self.client.get("/api/v1/agent/grouping/", {"company_id": str(self.company.pk)}).data
-        document = rules.build_input(group, context)
-        document["business_context"]["company_enrichment"] = context["company_enrichment"]
-        document["input_version"] = input_version(context["emails"], document["merge_version"], context["external_snapshot_version"], context["company_enrichment"])
-        saved = self.client.post("/api/v1/agent/analysis-inputs/", document, format="json")
-        self.assertEqual(saved.status_code, 200, saved.data)
-        self.assertIsNone(require_lease(self.company, None, None))
-        check_version(None, self.company.revision)
-        response = self.client.post("/api/v1/agent/mailbox-syncs/claim/", {"limit": 1}, format="json")
-        self.assertEqual(response.status_code, 401)
+    # Function: Preserve team business grants without extending private ownership.
+    # Inputs: Active editor membership and explicit customer grant.
+    # Outputs: Shared customer remains writable, while conversation and Gmail remain hidden.
+    # Logic: Use the existing permission module with real team rows.
+    # Constraints: Raw email context and personal files are never authorized by company grants.
+    def test_team_sharing(self):
+        team = models.Team.objects.create(owner=self.owner, name="Sales team")
+        models.Membership.objects.create(owner=self.owner, team=team, user=self.other, role="editor")
+        models.CompanyGrant.objects.create(owner=self.owner, company=self.company, team=team, role="editor")
+        self.assertEqual(company_access(self.other, self.company, write=True), self.company)
+        self.assertFalse(scope(models.Connection, self.other).exists())
+        self.assertFalse(scope(models.Conversation, self.other).exists())
+        with self.assertRaises(NotFound):
+            chat.conversation_for(self.other, self.conversation.pk)
+
+    # Function: Pin both OAuth flows to their initiating employee.
+    # Inputs: Mock Google Flow and browser state, with the account switched before callback.
+    # Outputs: InvalidState before token exchange; one-time state is consumed.
+    # Logic: Exercise real initiation and callback services for sending/calendar and mailbox OAuth.
+    # Constraints: Only the Google boundary is mocked; this does not verify a real provider authorization.
+    @override_settings(GOOGLE_OAUTH_CLIENT_ID="test-client", GOOGLE_OAUTH_CLIENT_SECRET="test-secret")
+    def test_oauth_owner_binding(self):
+        with override_settings(SALESMATE_VAULT_KEY=Fernet.generate_key().decode()):
+            for module, provider in (("apps.sales.integrations", "gmail"), ("apps.sales.integrations", "calendar"), ("apps.crm.gmail_oauth", "gmail_read")):
+                with self.subTest(provider=provider):
+                    flow = Mock(code_verifier="test-verifier")
+                    flow.authorization_url.return_value = ("https://accounts.google.com/test", "test-state")
+                    request = SimpleNamespace(user=self.owner, session={}, query_params={"state": "test-state", "code": "test-code"})
+                    with patch(module+".Flow.from_client_config", return_value=flow):
+                        if provider == "gmail_read":
+                            begin_authorization(request)
+                        else:
+                            integrations.begin(request, provider, "https://example.com/callback/")
+                        request.user = self.other
+                        with self.assertRaises(InvalidState):
+                            (finish_authorization if provider == "gmail_read" else integrations.finish)(request)
+                    flow.fetch_token.assert_not_called()
+                    self.assertFalse(request.session)

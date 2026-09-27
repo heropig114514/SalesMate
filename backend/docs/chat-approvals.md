@@ -44,7 +44,7 @@ X-CSRFToken: <browser CSRF token>
 {"decision": "approve"}
 ```
 
-`decision` is `approve` or `reject`; extra fields, replacement arguments, and self-reported approval flags are rejected. Only the user who submitted the question may decide using a logged-in Session with CSRF. Legacy requests use their owner. Agent/Tool credentials and public laboratory identity headers cannot approve. Anonymous laboratory chat therefore needs a real eligible login before a decision can be submitted; laboratory access does not disable this gate.
+`decision` is `approve` or `reject`; extra fields, replacement arguments, and self-reported approval flags are rejected. Only the user who submitted the question may decide using a logged-in Session with CSRF. Legacy requests use their owner. Agent/Tool credentials and public laboratory identity headers cannot approve. Anonymous chat access is rejected; only the authenticated employee can read or continue their private conversation.
 
 The approval lasts 24 hours, matching the existing tool-proposal lifetime. Execution revalidates access, the current tool schema, and the exact target fingerprint, including in laboratory mode. Modification/deletion locks the batch owner, manifest, and target before the final version check. Expired approvals or changed targets return 409; the user can reject and submit a fresh question. Business failures preserve their HTTP errors and leave the approval pending without a mutation/evidence receipt. No silent retries or automatic refreshed approval are performed.
 

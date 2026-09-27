@@ -1,6 +1,6 @@
 """Responsibility: Centralize business authorization, conflict errors, and JSON normalization.
-Implementation: Production mode validates tokens and ownership; experiment mode needs no sign-in, permits cross-account queries, and skips If-Match.
-Relationships: Shared by browser Session, AgentCredential, and the explicit experiment switch in common.laboratory.
+Implementation: Validate service tokens, private ownership, and optimistic versions independently of experiment settings.
+Relationships: Shared by browser business services and authenticated AgentCredential endpoints.
 Directory:
 - Conflict: Represent a version, idempotency, or lease conflict.
 - InvalidState: Represent an operation incompatible with current state.
@@ -30,7 +30,7 @@ from rest_framework.exceptions import APIException, AuthenticationFailed, NotFou
 from rest_framework.renderers import JSONRenderer
 
 from .models import AgentCredential, Company, Mailbox
-from common.laboratory import enabled, identity, owner_scope
+from common.laboratory import owner_scope
 
 logger = logging.getLogger("salesmate.business")
 
@@ -54,18 +54,15 @@ class InvalidState(APIException):
 
 
 # Function: Authenticate high-entropy Agent service tokens used only by backend business interfaces.
-# Logic: Experiment mode uses a public identity; production mode and claim endpoints that output OAuth credentials continue validating the Agent digest.
-# Constraints: Public-mode identity only marks ownership; OAuth credential transport retains machine authentication and deployments use HTTPS.
+# Logic: Every Agent endpoint validates the service credential digest and active owner.
+# Constraints: Caller-supplied identity headers cannot change credential ownership; deployments use HTTPS.
 class AgentAuthentication(BaseAuthentication):
     # Function: Validate an Authorization: Agent token.
     # Inputs: `request` is a DRF request and reads its Authorization header.
     # Outputs: A validated user and credential tuple; returns None without a header and raises AuthenticationFailed for an invalid header.
-    # Logic: Experiment mode uses public identity; production mode looks up a SHA-256 digest and requires the owner to remain active.
+    # Logic: Look up a SHA-256 digest and require the owner to remain active.
     # Constraints: Logs only failure type and never header or token content.
     def authenticate(self, request):
-        actor = None if request.path.endswith("/mailbox-syncs/claim/") else identity(request)
-        if actor is not None:
-            return actor, None
         header = get_authorization_header(request).split()
         if not header:
             return None
@@ -99,7 +96,7 @@ def plain(value):
 # Function: Resolve a company belonging to the current user.
 # Inputs: `owner` is the authenticated user; `company_id` is the company UUID; `lock` controls transactional row locking.
 # Outputs: Company; invalid UUID format returns 400, while absent and unauthorized records return the same 404.
-# Logic: Production mode filters by owner; experiment mode exposes all companies.
+# Logic: Always filter by owner because CRM context contains private email evidence.
 # Constraints: Callers must be in a transaction when lock=True.
 def company_for(owner, company_id, lock=False):
     try:
@@ -118,7 +115,7 @@ def company_for(owner, company_id, lock=False):
 # Function: Resolve a business mailbox belonging to the current user.
 # Inputs: `owner` is the authenticated user; `mailbox_id` is the backend mailbox UUID; `lock` controls row locking.
 # Outputs: Mailbox; invalid UUID format returns 400, while absent and unauthorized records return 404.
-# Logic: Production mode queries by owner and ID together; experiment mode queries every mailbox by ID.
+# Logic: Always query by owner and ID together.
 # Constraints: Address existence does not mean Gmail OAuth is verified.
 def mailbox_for(owner, mailbox_id, lock=False):
     try:
@@ -137,11 +134,9 @@ def mailbox_for(owner, mailbox_id, lock=False):
 # Function: Require the caller to supply an optimistic-lock version equal to the database version.
 # Inputs: `expected` is the HTTP version integer and `actual` is the entity's current version.
 # Outputs: None; missing or malformed values raise ValidationError and stale values raise Conflict.
-# Logic: Experiment mode passes directly; production mode accepts only non-negative integer strings or integers.
+# Logic: Accept only non-negative integer strings or integers in every environment.
 # Constraints: Callers must hold the relevant row lock during validation.
 def check_version(expected, actual):
-    if enabled():
-        return
     if expected is None or not str(expected).isdigit():
         raise ValidationError("必须使用 If-Match 传入读取时的非负版本。")
     if int(expected) != actual:

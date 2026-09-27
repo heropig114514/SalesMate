@@ -37,7 +37,7 @@ SALESMATE_TOOLS_TOKEN=<dedicated Tool credential for the current user>
 SALESMATE_TOOLS_TIMEOUT=360
 ```
 
-Inject tokens from a private environment or secret manager. Do not treat a placeholder as a real value or write it to Git, tool arguments, or logs. A `Tool` credential differs from the Gmail/chat Worker `Agent` credential. The isolated graph sandbox requires authentication; the unauthenticated laboratory mode described elsewhere does not apply. The credential determines identity, so an owner cannot be supplied to impersonate another user. Grant read-only Agents only query tools; graph construction and retraction each require appropriate write permission.
+Inject tokens from a private environment or secret manager. Do not treat a placeholder as a real value or write it to Git, tool arguments, or logs. A `Tool` credential differs from the Gmail/chat Worker `Agent` credential. All graph and business endpoints require authenticated identity, including synthetic experiment deployments. The credential determines identity, so an owner cannot be supplied to impersonate another user. Grant read-only Agents only query tools; graph construction and retraction each require appropriate write permission.
 
 The SDK default timeout is 30 seconds. An explicit 360 seconds is only the client waiting limit; the backend model timeout remains 300 seconds. The SDK does not load the project `.env`; the calling process must receive these environment variables.
 

@@ -23,7 +23,7 @@ Directory:
 - ChatActionTests.test_expiry_cancel_and_superseded_proposals: Refuse expired, cancelled and replaced approvals.
 - ChatActionTests.test_laboratory_does_not_relax_scope_or_versions: Retain strict business rules in open mode.
 - ChatActionTests.test_team_order_permission_is_rechecked: Respect genuine editor grants and revoke access before confirmation.
-- ChatActionTests.test_review_capability_requires_actual_session_owner: Preserve laboratory browsing without granting private proposal review.
+- ChatActionTests.test_review_capability_requires_actual_session_owner: Reject foreign conversation reads and require the actual owner Session for proposal review.
 Variable index:
 - None
 """
@@ -119,7 +119,7 @@ class ChatActionTests(TestCase):
 
     # Function: Separate laboratory browsing from genuine employee review capability.
     # Inputs: Owned and foreign conversations, real Session, anonymous client and explicit lab identity header.
-    # Outputs: Browsing remains allowed; only an actual owning Session receives review capability.
+    # Outputs: Foreign and anonymous browsing rejects; an owning Session receives review capability.
     # Logic: Query real conversation serialization in open mode and assert it does not trust request.user impersonation.
     # Constraints: No private proposal content or decision permission is exposed to anonymous or foreign viewers.
     @override_settings(LAB_OPEN_ACCESS=True)
@@ -127,11 +127,10 @@ class ChatActionTests(TestCase):
         url = f"/api/v1/sales/records/conversations/{self.conversation.pk}/"
         self.assertTrue(self.browser.get(url).data["can_review_chat_actions"])
         self.browser.force_login(self.other)
-        self.assertFalse(self.browser.get(url, HTTP_X_LAB_USER=self.user.username).data["can_review_chat_actions"])
+        self.assertEqual(self.browser.get(url, HTTP_X_LAB_USER=self.user.username).status_code, 404)
         anonymous = APIClient()
         response = anonymous.get(url, HTTP_X_LAB_USER=self.user.username)
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.data["can_review_chat_actions"])
+        self.assertEqual(response.status_code, 403)
 
     # Function: Verify discoverability, exact modes, schemas and private business reads.
     # Inputs: Real processing request and an unrelated employee connection.
@@ -331,7 +330,7 @@ class ChatActionTests(TestCase):
 
     # Function: Distinguish laboratory discovery from actual email ownership before and during preparation.
     # Inputs: Real owned fixtures plus a second employee's customer and Gmail metadata in laboratory mode.
-    # Outputs: Both records remain discoverable, ownership annotations persist in evidence, and rejected preparation creates no proposal or send.
+    # Outputs: Foreign records remain hidden, owned records retain ownership annotations, and rejected preparation creates no proposal or send.
     # Logic: Exercise actual HTTP list/detail reads and customer/connection rejection paths, including a nonexistent UUID with the same non-leaking error.
     # Constraints: Only synthetic encrypted credentials are used; no provider or model call occurs.
     @override_settings(LAB_OPEN_ACCESS=True)
@@ -340,16 +339,15 @@ class ChatActionTests(TestCase):
         customer = grouping.create_company(self.other, "Other email customer")
         page = self.call("connections.list", {"page_size": 20}).data["data"]
         ownership = {row["id"]: row["email_preparation_owned"] for row in page["results"]}
-        self.assertEqual(ownership, {str(self.connection.pk): True, str(foreign.pk): False})
+        self.assertEqual(ownership, {str(self.connection.pk): True})
         detail = self.call("connections.get", {"id": str(foreign.pk)})
-        self.assertFalse(detail.data["data"]["email_preparation_owned"])
-        self.assertIn('"email_preparation_owned": false', detail.data["evidence_items"][0]["content"])
+        self.assertEqual(detail.status_code, 404)
         page = self.call("customers.search", {"page_size": 20}).data["data"]
         ownership = {row["id"]: row["email_preparation_owned"] for row in page["results"]}
         self.assertTrue(ownership[str(self.company.pk)])
-        self.assertFalse(ownership[str(customer.pk)])
-        for row, expected in ((self.company, True), (customer, False)):
-            self.assertEqual(self.call("customers.context", {"company_id": str(row.pk)}).data["data"]["email_preparation_owned"], expected)
+        self.assertNotIn(str(customer.pk), ownership)
+        self.assertTrue(self.call("customers.context", {"company_id": str(self.company.pk)}).data["data"]["email_preparation_owned"])
+        self.assertEqual(self.call("customers.context", {"company_id": str(customer.pk)}).status_code, 404)
         for target in (foreign.pk, uuid.uuid4()):
             response = self.call(PREPARE_EMAIL, {**self.email_args, "connection_id": str(target)})
             self.assertEqual(response.status_code, 404)
@@ -426,13 +424,13 @@ class ChatActionTests(TestCase):
 
     # Function: Verify laboratory configuration cannot disable business proposal authorization.
     # Inputs: Open-mode override, foreign connection and changed order version.
-    # Outputs: Laboratory-visible generic connection metadata and 409 rejection for stale independent proposal approval.
-    # Logic: Generic reads follow the retained laboratory setting; independent proposals still recheck private targets and versions. Enable laboratory mode only for this explicit boundary test.
+    # Outputs: Hidden foreign connection metadata and 409 rejection for stale independent proposal approval.
+    # Logic: Generic reads and independent proposals both enforce private ownership and versions. Enable laboratory mode only for this explicit boundary test.
     # Constraints: Does not change runtime defaults or existing experiment-tool behavior.
     def test_laboratory_does_not_relax_scope_or_versions(self):
         with override_settings(LAB_OPEN_ACCESS=True):
             foreign = models.Connection.objects.create(owner=self.other, provider="gmail", account="other@example.com")
-            self.assertEqual(self.call("connections.get", {"id": str(foreign.pk)}).status_code, 200)
+            self.assertEqual(self.call("connections.get", {"id": str(foreign.pk)}).status_code, 404)
             proposal_id = self.prepare()
             models.SalesOrder.objects.filter(pk=self.order.pk).update(revision=self.order.revision + 1)
             self.assertEqual(self.decision(proposal_id).status_code, 409)

@@ -150,7 +150,7 @@ class ChatCustomerTests(TestCase):
     # Function: Require real initiating Session authentication and CSRF even in open lab mode.
     # Inputs: Pending creation and anonymous, Agent, wrong-user and missing-CSRF clients.
     # Outputs: Rejections and no company creation.
-    # Logic: Call the actual decision endpoint with each disallowed identity.
+    # Logic: Call the actual decision endpoint with each disallowed identity; foreign requests return 404 without revealing an existing approval.
     # Constraints: Production SessionAuthentication remains active; no force_authenticate bypass.
     @override_settings(LAB_OPEN_ACCESS=True)
     def test_session_csrf_and_initiator_required(self):
@@ -162,7 +162,7 @@ class ChatCustomerTests(TestCase):
         csrf.force_login(self.user)
         self.assertEqual(csrf.post(path, {"decision": "approve"}, format="json").status_code, 403)
         self.browser.force_login(self.other)
-        self.assertEqual(self.decide(approval).status_code, 403)
+        self.assertEqual(self.decide(approval).status_code, 404)
         self.assertFalse(Company.objects.filter(name=self.name).exists())
 
     # Function: Roll back customer creation if canonical evidence cannot be saved.

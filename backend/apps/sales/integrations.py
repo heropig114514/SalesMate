@@ -9,10 +9,12 @@ Directory:
 - finish: Handle OAuth callbacks and save encrypted connections.
 Variable index:
 - SCOPES: Google OAuth scopes explicitly requested for each provider.
+- logger: Logs OAuth owner mismatches using internal user IDs only.
 - SESSION_KEY: Session key holding one-time OAuth state, PKCE, and provider.
 """
 
 import json
+import logging
 import secrets
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -39,6 +41,7 @@ SCOPES = {
     ],
 }
 SESSION_KEY = "sales_external_oauth"
+logger = logging.getLogger("salesmate.oauth")
 
 
 # Function: Construct an encryptor from the required key.
@@ -104,7 +107,7 @@ def credentials_for(connection):
 # Function: Create an external-service authorization URL.
 # Inputs: `request`: employee session; `provider`: gmail/calendar; `redirect_uri`: fixed server callback.
 # Outputs: Google authorization URL.
-# Logic: Check encryption configuration, create a PKCE flow, and save one-time validation data in Session.
+# Logic: Check encryption configuration, create a PKCE flow, and save one-time validation data and the initiating employee ID in Session.
 # Constraints: Do not modify existing read-only mailbox authorization; register the callback URL in Google Console.
 def begin(request, provider, redirect_uri):
     if provider not in SCOPES:
@@ -127,6 +130,7 @@ def begin(request, provider, redirect_uri):
     )
     url, state = flow.authorization_url(access_type="offline", prompt="consent")
     request.session[SESSION_KEY] = {
+        "owner_id": request.user.pk,
         "provider": provider,
         "state": state,
         "verifier": flow.code_verifier,
@@ -138,7 +142,7 @@ def begin(request, provider, redirect_uri):
 # Function: Handle OAuth callbacks and save encrypted connections.
 # Inputs: `request`: current employee session and Google code/state.
 # Outputs: Connection.
-# Logic: Consume one-time state, exchange the code, query the real account, and store encrypted credentials.
+# Logic: Consume one-time state, verify the initiating employee, exchange the code, query the real account, and store encrypted credentials.
 # Constraints: Create no connection on failure; never return access tokens to the browser or start external actions automatically.
 def finish(request):
     saved = request.session.pop(SESSION_KEY, None)
@@ -146,6 +150,10 @@ def finish(request):
         str(request.query_params.get("state", "")), saved["state"]
     ):
         raise InvalidState("授权状态已失效，请重新连接。")
+    if saved.get("owner_id") != request.user.pk or not request.user.is_authenticated or not request.user.is_active:
+        logger.warning("oauth_owner_mismatch provider=%s initiator_id=%s actor_id=%s action=restart_authorization",
+                       saved.get("provider"), saved.get("owner_id"), request.user.pk)
+        raise InvalidState("登录账号已变化或授权归属已失效，请用当前账号重新连接。")
     if not request.query_params.get("code"):
         raise InvalidState("授权未完成。")
     flow = Flow.from_client_config(

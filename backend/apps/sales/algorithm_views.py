@@ -1,5 +1,5 @@
 """Responsibility: Provide algorithm data context and opportunity-score display queries.
-Implementation: Reuse original serializers/permissions and expose opportunities, signals, and scores unchanged, without model calls or scoring-rule changes.
+Implementation: Always require opportunity ownership before exposing private algorithm inputs. Reuse original serializers/permissions and expose opportunities, signals, and scores unchanged, without model calls or scoring-rule changes.
 Relationships: Algorithms may call fixed MCP tools; paginated results remain available through the API after retirement of the standalone opportunity-priority page.
 Directory:
 - seller_context: Collect the current identity's basic data and versions.
@@ -23,7 +23,6 @@ from apps.accounts.onboarding import snapshot
 from apps.accounts.models import CompanyProfile
 from apps.accounts.company_profile import CompanyProfileSerializer
 from apps.crm.selectors import context_pair
-from common.laboratory import enabled
 from .models import Opportunity, OpportunitySignal, OpportunityPriority, SellerProfile, Product
 from .serializers import OpportunitySerializer, OpportunitySignalSerializer, OpportunityPrioritySerializer, ProductSerializer
 from .permissions import scope
@@ -45,7 +44,7 @@ def seller_context(user, request):
 
 
 # Function: Query the current identity's background available to algorithms.
-# Logic: The selected identity comes from the session or experimental identity, never arbitrary owner parameters.
+# Logic: The selected identity comes from the authenticated session, never arbitrary owner parameters.
 # Constraints: Read-only, without automatic completion.
 class SellerContextView(SalesView):
     # Function: Return a unified data snapshot.
@@ -66,12 +65,11 @@ class OpportunityContextView(SalesView):
     # Inputs: `request` and `opportunity_id`.
     # Outputs: Opportunity, customer, original business emails, seller data, historical orders, signals, and latest score.
     # Logic: Select seller data by authoritative opportunity ownership; ordinary shared users cannot read the owner's private background or mail.
-    # Constraints: Non-owner production access returns 404; experimental mode permits cross-account access, logging identifiers only.
+    # Constraints: Non-owner access always returns 404, including in experiments; log identifiers only.
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request, opportunity_id):
         query = scope(Opportunity, request.user).filter(archived=False).select_related("company", "owner")
-        if not enabled():
-            query = query.filter(owner=request.user)
+        query = query.filter(owner=request.user)
         opportunity = get_object_or_404(query, pk=opportunity_id)
         _, context = context_pair(opportunity.company, include_priority=False)
         serializer_context = {"request": request}

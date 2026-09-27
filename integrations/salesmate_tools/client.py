@@ -32,11 +32,11 @@ class ToolError(RuntimeError):
 # Constraints: No database, filesystem, or arbitrary-URL tools.
 class ToolClient:
     # Function: Validate configuration.
-    # Inputs: `base_url` is the service root; optional `token` omits Authorization when empty; `timeout` is seconds; `user` optionally identifies experiment ownership.
+    # Inputs: `base_url` is the service root; optional `token` omits Authorization when empty; `timeout` is seconds.
     # Outputs: An instance.
     # Logic: Reject URL credentials, queries, and fragments; timeout must be finite, positive, and at most 3600 seconds.
     # Constraints: HTTP permits explicit local addresses only.
-    def __init__(self, base_url, token="", timeout=30, user=""):
+    def __init__(self, base_url, token="", timeout=30):
         if type(timeout) not in {int, float} or not math.isfinite(timeout) or not 0 < timeout <= 3600:
             raise ToolError("SALESMATE_TOOLS_TIMEOUT 须为大于0且不超过3600的秒数。")
         url = urlsplit(base_url)
@@ -59,17 +59,14 @@ class ToolClient:
                 "SALESMATE_TOOLS_URL 须为 HTTPS 服务根地址；本机可使用 HTTP。"
             )
         if not isinstance(token, str) or any(character.isspace() for character in token):
-            raise ToolError("SALESMATE_TOOLS_TOKEN 不能含空白；免登录实验服务器可留空。")
+            raise ToolError("SALESMATE_TOOLS_TOKEN 不能含空白。")
         self.base_url, self.token, self.timeout = base_url.rstrip("/"), token, timeout
-        if not isinstance(user, str) or any(ch in user for ch in "\r\n"):
-            raise ToolError("SALESMATE_TOOLS_USER 须为单行用户名。")
-        self.user = user
 
     # Function: Read explicit configuration.
-    # Inputs: Environment variables SALESMATE_TOOLS_URL, SALESMATE_TOOLS_TOKEN, SALESMATE_TOOLS_USER, SALESMATE_TOOLS_TIMEOUT.
+    # Inputs: Environment variables SALESMATE_TOOLS_URL, SALESMATE_TOOLS_TOKEN, SALESMATE_TOOLS_TIMEOUT.
     # Outputs: A client.
     # Logic: Retain the 30-second timeout default and parse overrides as floats; never load project .env or Worker credentials.
-    # Constraints: URL is required; an empty token is allowed, but production backend mode still rejects anonymous requests.
+    # Constraints: URL is required; an empty token is allowed for protocol testing, but the backend rejects anonymous business requests.
     @classmethod
     def from_env(cls):
         try:
@@ -80,7 +77,6 @@ class ToolClient:
             os.environ.get("SALESMATE_TOOLS_URL", ""),
             os.environ.get("SALESMATE_TOOLS_TOKEN", ""),
             timeout=timeout,
-            user=os.environ.get("SALESMATE_TOOLS_USER", ""),
         )
 
     # Function: Request a fixed endpoint.
@@ -95,8 +91,7 @@ class ToolClient:
             response = requests.request(
                 method,
                 self.base_url + "/api/v1/agent-tools/" + path,
-                headers={**({"Authorization": "Tool " + self.token} if self.token else {}),
-                         **({"X-Lab-User": self.user} if self.user else {})},
+                headers={"Authorization": "Tool " + self.token} if self.token else {},
                 params=params,
                 json=payload,
                 timeout=self.timeout,

@@ -1,5 +1,5 @@
 """Responsibility: Persist personal, product, and solution information from four-step onboarding and provide private attachment reads.
-Implementation: Experiment mode permits cross-account attachment reads and product or attachment links; the setup singleton remains located by the publicly selected identity; entries contain stable IDs and optional transactional-product links; strict structural validation, owner isolation, and ``If-Match`` optimistic locking apply; PDF and text attachments are read only through authenticated endpoints.
+Implementation: Attachment reads and product or attachment links always require the authenticated owner; the setup singleton belongs to that same employee; entries contain stable IDs and optional transactional-product links; strict structural validation, owner isolation, and ``If-Match`` optimistic locking apply; PDF and text attachments are read only through authenticated endpoints.
 Relationships: ``SalesSetup`` and ``SetupDocument``; company information continues to use the ``company-profile`` endpoint and does not modify scoring inputs.
 Directory:
 - StrictSerializer: Reject undeclared fields.
@@ -135,7 +135,7 @@ class SetupSerializer(StrictSerializer):
     # Function: Validate cross-field bounds and private-file references.
     # Inputs: ``attrs`` is field-validated data; the context's user is the current user.
     # Outputs: Validated data; inverted prices or another account's attachment raise ``ValidationError``.
-    # Logic: Validate unique entry UUIDs and unarchived products; production mode restricts product and attachment ownership while experiment mode permits cross-account links.
+    # Logic: Validate unique entry UUIDs and unarchived products; always restrict product and attachment ownership.
     # Constraints: Only validates references here and does not read file content; actual downloads use the corresponding file endpoint.
     def validate(self, attrs):
         from apps.sales.models import Product
@@ -254,7 +254,7 @@ class DocumentView(APIView):
     # Function: Read an attachment for the current account.
     # Inputs: ``request`` provides identity and the optional download query field; ``document_id`` is a UUID.
     # Outputs: PDF or text response; unauthorized access consistently returns 404.
-    # Logic: Production mode restricts by owner and experiment mode exposes business files; sets inline-or-download, nosniff, sandbox, and no-cache headers.
+    # Logic: Always restrict by owner; sets inline-or-download, nosniff, sandbox, and no-cache headers.
     # Constraints: Production mode rejects cross-account access; the client decides whether the browser has a PDF reader.
     @extend_schema(responses=OpenApiTypes.BINARY, tags=["accounts"])
     def get(self, request, document_id=None):

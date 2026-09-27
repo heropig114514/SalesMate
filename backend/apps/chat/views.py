@@ -61,7 +61,7 @@ class RequestListView(APIView):
     # Function: Read stably ordered request list.
     # Inputs: conversation, page, and page_size query parameters from ``request``.
     # Outputs: Existing count and results pagination structure.
-    # Logic: Production mode filters by user; experiment mode reads all selected-conversation requests; uses existing pagination and binding checks and invalid pagination returns 400.
+    # Logic: Always filter by the authenticated user; uses existing pagination and binding checks and invalid pagination returns 400.
     # Constraints: Rechecks binding for every result and does not output raw snapshots.
     @extend_schema(responses=OpenApiTypes.OBJECT, operation_id="chat_requests_list")
     def get(self, request):

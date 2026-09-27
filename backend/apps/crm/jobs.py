@@ -1,5 +1,5 @@
 """Responsibility: Manage durable analysis jobs, claim leases, and reports.
-Implementation: Return distinguishable 409 reasons for missing, invalid, expired leases and changed input; experiment mode can save business results without leases while explicit Worker leases retain state validation. Owner and job row locks ensure company-level exclusion, unfinished L1 repairs block profiling, revision is frozen, credentials are random, and expiration fails explicitly.
+Implementation: Return distinguishable 409 reasons for missing, invalid, expired leases and changed input; all Worker submissions require a valid claimed lease. Owner and job row locks ensure company-level exclusion, unfinished L1 repairs block profiling, revision is frozen, credentials are random, and expiration fails explicitly.
 Relationships: ingestion queues work, rules or an isolated Agent consumes it, and results validates leases.
 Directory:
 - enqueue: Merge unclaimed analysis work of the same kind for a company.
@@ -22,7 +22,6 @@ from rest_framework.exceptions import NotFound
 
 from .access import InvalidState, company_for, plain
 from .analysis_errors import analysis_conflict
-from common.laboratory import enabled
 from .models import Analysis, Job
 
 logger = logging.getLogger("salesmate.jobs")
@@ -110,12 +109,10 @@ def claim(owner, limit, lease_seconds, company_id=None):
 
 # Function: Validate a job claim credential and context version.
 # Inputs: `company` is locked; `job_id` and `token` come from headers; `require_revision` controls current-revision validation.
-# Outputs: Locked Job; returns None when experiment mode omits a lease; invalid, ended, expired, and changed-version states each raise a reasoned Conflict.
-# Logic: Experiment mode allows direct submission with no lease headers; Workers that provide a lease still validate state, expiration, and version, while production requires leases.
+# Outputs: Locked Job; invalid, ended, expired, and changed-version states each raise a reasoned Conflict.
+# Logic: Require lease headers and validate claimed state, expiration, and version in every environment.
 # Constraints: Caller is in a transaction and lease credentials never enter logs.
 def require_lease(company, job_id, token, require_revision=True):
-    if enabled() and not job_id and not token:
-        return None
     if not job_id or not token:
         raise analysis_conflict("analysis_lease_required", company, job_id, "require_lease")
     try:

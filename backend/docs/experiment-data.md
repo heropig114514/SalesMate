@@ -22,7 +22,7 @@ Analysis and scores can change through explicit maintenance requests; vectors re
 
 ## Read-only interfaces
 
-These website interfaces use Session authentication and accept only GET, HEAD, and OPTIONS. Anonymous users cannot read data under the ordinary authorization mode. Do not share website sessions or Agent credentials. Agent-tool authentication is described next.
+These website interfaces use Session authentication and accept only GET, HEAD, and OPTIONS. Anonymous users cannot read data in any mode. Do not share website sessions or Agent credentials. Agent-tool authentication is described next.
 
 | Interface | Contents |
 |---|---|

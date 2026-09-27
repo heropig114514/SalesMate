@@ -1,6 +1,6 @@
 /** Responsibility: Verify actual local global-insight pages/APIs and opportunity-priority page retirement.
  * Implementation: Use explicitly imported synthetic database batches; test source amounts, filters, details, ICS, templates, mobile layout, and request failures; require no priority link and a 404 for the retired page.
- * Relationships: Running local Django; no external news, Agent, or sending calls.
+ * Relationships: Running local Django with an explicitly authenticated browser storage-state file; no external news, Agent, or sending calls.
  * Directory: main.
  * Variable index: BASE is the explicit local test address; OUTPUT is the screenshot directory.
  */
@@ -10,13 +10,14 @@ const fs = require('node:fs');
 const { chromium } = require(process.env.SALESMATE_PLAYWRIGHT_MODULE);
 const BASE = process.env.SALESMATE_TEST_URL;
 const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
-/** Function: Run actual browser checks. Inputs: Explicit local URL and Playwright/browser environment paths. Outputs: Summary/screenshots. Logic: Read synthetic data with an experiment identity, verify source amount absence/error states, and confirm the removed priority entry and route. Constraints: Database reads only; no sending or third-party requests. */
+/** Function: Run actual browser checks. Inputs: Explicit local URL, SALESMATE_STORAGE_STATE_PATH, and Playwright/browser environment paths. Outputs: Summary/screenshots. Logic: Read synthetic data with an authenticated employee Session, verify source amount absence/error states, and confirm the removed priority entry and route. Constraints: Database reads only; no sending or third-party requests. */
 async function main() {
   if (!BASE || new URL(BASE).hostname !== '127.0.0.1') throw new Error('Set an explicit loopback SALESMATE_TEST_URL.');
+  if (!process.env.SALESMATE_STORAGE_STATE_PATH) throw new Error("Set SALESMATE_STORAGE_STATE_PATH to authenticated test browser state.");
   const browser = await chromium.launch({ headless: true, executablePath: process.env.SALESMATE_BROWSER_PATH });
   fs.mkdirSync(OUTPUT, { recursive: true });
   try {
-    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1600, height: 1000 }, extraHTTPHeaders: { 'X-Lab-User': 'algorithm-lab' } });
+    const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1600, height: 1000 }, storageState: process.env.SALESMATE_STORAGE_STATE_PATH });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());

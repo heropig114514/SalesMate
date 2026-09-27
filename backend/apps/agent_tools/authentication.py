@@ -1,6 +1,6 @@
 """Responsibility: Validate independent credentials with limited business-tool permissions.
-Implementation: Experiment mode provides a login-free identity; production mode accepts only Tool credentials and validates revocation, expiry, and tool scope.
-Relationships: Tool endpoints allow this authentication and browser Session; production-mode authorization creation and proposal confirmation permit only Session.
+Implementation: Accept only Tool credentials and validate revocation, expiry, active ownership, and explicit delegation scope in every environment.
+Relationships: Tool endpoints allow this authentication and browser Session; authorization creation and proposal confirmation permit only Session.
 Directory:
 - ToolAuthentication: Independent tool authentication.
 - ToolAuthentication.authenticate: Validate digest and authorization state.
@@ -19,17 +19,14 @@ from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from .models import ToolCredential
-from common.laboratory import enabled, identity
 
 
 # Function: Verify a valid delegation.
 # Inputs: Authorization record ``credential`` and optional tool name ``name``.
 # Outputs: None; an expired or unauthorized credential raises an authentication or permission exception.
-# Logic: Experiment mode skips authorization checks; production mode checks expiry, revocation, inactivity, and allowlist item by item.
+# Logic: Check expiry, revocation, inactivity, and delegation scope regardless of laboratory settings.
 # Constraints: Does not accept wildcards or read employee identity from model input.
 def check_credential(credential, name=None):
-    if enabled():
-        return
     if (
         credential.revoked_at
         or credential.expires_at <= timezone.now()
@@ -41,18 +38,15 @@ def check_credential(credential, name=None):
 
 
 # Function: Distinguish business delegation from existing Worker identity.
-# Logic: Experiment mode provides a public identity; production mode accepts only an independent Tool token.
+# Logic: Accept only an independent Tool token; browser requests continue through Session authentication.
 # Constraints: Tokens never enter logs or query parameters.
 class ToolAuthentication(BaseAuthentication):
     # Function: Authenticate a tool request.
     # Inputs: HTTP ``request``.
     # Outputs: User and authorization record, or ``None``.
-    # Logic: Experiment mode uses public identity; production mode validates current state after a digest lookup.
-    # Constraints: Production mode explicitly rejects other Authorization schemes; in experiment mode this header serves only identifiable ownership.
+    # Logic: Validate current credential state after a digest lookup.
+    # Constraints: Explicitly reject invalid or foreign Authorization schemes; public identity headers confer no permissions.
     def authenticate(self, request):
-        actor = identity(request)
-        if actor is not None:
-            return actor, None
         parts = get_authorization_header(request).split()
         if not parts:
             return None

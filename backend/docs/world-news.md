@@ -8,7 +8,7 @@ Public news adds one structured set of company, demand, project, amount, and evi
 
 - Events explicitly load all pages from `/api/v1/sales/world/`. News loads all pages of items from the last 90 days through `records/world-news/`; details query IDs directly.
 - Explicit company-country fields determine map highlights. Unrecognized countries count as missing, never inferred from email/addresses.
-- Manual, Agent, and synthetic events/news are shared facts. In production and under `WORKSPACE_OWNER_ONLY=true`, authenticated employees may read them while anonymous access is rejected. Only owners may update/archive; team administrators gain no implicit rights. Open experiment mode retains existing rules.
+- Manual, Agent, and synthetic events/news are shared facts. In production and under `WORKSPACE_OWNER_ONLY=true`, authenticated employees may read them while anonymous access is rejected. Only owners may update/archive; team administrators gain no implicit rights. Synthetic experiment mode retains these same account permissions.
 - `opportunity_ids` remains permission-filtered context only. Event monetary fields are source-disclosed amounts, independent of linked CRM opportunities.
 - Event titles, description, onsite, and suggested_actions are public, not private notes. Review historical manually entered internal-company information before production sharing. The backend neither infers sensitivity from keywords nor rewrites source text.
 - News remains eligible for 90 days after publication; events until 30 days after their end. Future events are retained. The mixed map list sorts by distance from now (ongoing events first), without monetary ranking. News cards sort publication time descending. Type/country/time filters preserve ordering.

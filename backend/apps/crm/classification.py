@@ -1,5 +1,5 @@
 """Responsibility: Maintain valid email business classification and human-review decisions.
-Implementation: Experiment mode uses a public cross-account business scope; inbound messages without a purchasing stage enter review, human results take precedence, and classification changes invalidate and repair lineage automatically.
+Implementation: Private email scope always follows the authenticated employee; inbound messages without a purchasing stage enter review, human results take precedence, and classification changes invalidate and repair lineage automatically.
 Relationships: ingestion updates machine classification, processing_views displays sourced original text and review per mailbox, and selectors projects business emails only.
 Directory:
 - automatic_classification: Map extraction status to business classification.
@@ -73,7 +73,7 @@ def review_data(email):
 # Function: Save human confirmation and invalidate affected profiles.
 # Inputs: `owner` is the signed-in employee, `email_id` is the email key, `decision` is confirmation status, and `expected` is the review version.
 # Outputs: Updated review representation.
-# Logic: Find the email according to the current mode, crossing accounts in experiment mode; lock company and email, save the human decision, and propagate invalidation while retaining repair and remaining-source recomputation flows.
+# Logic: Find the email under the authenticated employee’s private scope; lock company and email, save the human decision, and propagate invalidation while retaining repair and remaining-source recomputation flows.
 # Constraints: The same decision does not change version, though reconfirming business can explicitly reschedule failed repairs; profiling stops when no business messages remain.
 @transaction.atomic
 def review_email(owner, email_id, decision, expected):

@@ -1,5 +1,5 @@
 """Responsibility: Provide HTTP entry points for the browser workspace and Agent pull protocol.
-Implementation: Laboratory mode permits unauthenticated, cross-account business access while OAuth credential claims retain machine authentication. Web validation enqueues work and runtime exposes QQ capability. CRM registration stores country and propagates industry changes; historical L1 upgrades are explicitly queued and details include compatibility state. Mailbox connections are limited to the current owner, session and Agent identities are isolated, and registered users enter onboarding from persistent state.
+Implementation: Every business endpoint requires authenticated Session or Agent identity; laboratory settings cannot widen private ownership. Web validation enqueues work and runtime exposes QQ capability. CRM registration stores country and propagates industry changes; historical L1 upgrades are explicitly queued and details include compatibility state. Mailbox connections are limited to the current owner, session and Agent identities are isolated, and registered users enter onboarding from persistent state.
 Relationships: sync_scope requires Gmail/QQ synchronization scope; urls registers routes; the frontend calls authorized business endpoints; sales records CRM-registration audits.
 Directory:
 - AgentAuthenticationSchema: Declare independent Agent-service authentication for OpenAPI.
@@ -129,7 +129,7 @@ class LoginSerializer(StrictSerializer):
 
 
 # Function: Provide CSRF-protected browser session entry points.
-# Logic: GET can establish a session from local-debug configuration or return the laboratory identity and obtain CSRF; POST validates login and DELETE logs out.
+# Logic: GET can establish a session from local-debug configuration and obtain CSRF; POST validates login and DELETE logs out.
 # Constraints: Anonymous login also executes Django csrf_protect; it does not replace security validation with DRF anonymous-CSRF exemption.
 @method_decorator(csrf_protect, name="dispatch")
 class SessionView(APIView):
@@ -139,7 +139,7 @@ class SessionView(APIView):
     # Inputs: `request` is a browser request.
     # Outputs: Authentication state, username, CSRF token, debug_auto_login, and onboarding_required flags.
     # Logic: When DEBUG and the explicit switch are enabled and a direct request comes from a loopback address, establish the configured ordinary-user session for an anonymous request.
-    # Constraints: Local auto-login neither creates users nor admits disabled or administrator accounts; the authentication layer resolves laboratory identity and creates the default laboratory account on demand.
+    # Constraints: Local auto-login neither creates users nor admits disabled or administrator accounts; laboratory settings never establish or replace authenticated identity.
     @extend_schema(responses=OBJECT, tags=["session"])
     def get(self, request):
         debug_auto_login = bool(settings.DEBUG and getattr(settings, "LOCAL_DEBUG_AUTO_LOGIN", False)
@@ -155,7 +155,7 @@ class SessionView(APIView):
             logger.info("debug_session_created user_id=%s", user.pk)
         return Response({"authenticated": request.user.is_authenticated,
                          "username": request.user.get_username() if request.user.is_authenticated else None,
-                         "debug_auto_login": debug_auto_login or enabled(),
+                         "debug_auto_login": debug_auto_login,
                          "lab_open_access": enabled(),
                          "onboarding_required": bool(not enabled() and request.user.is_authenticated and SalesSetup.objects.filter(owner=request.user, completed=False).exists()),
                          "csrf_token": get_token(request)})
@@ -229,14 +229,14 @@ def process_if_rules(owner, company_id):
 
 
 # Function: Provide company list, detail, registration, and explicit reanalysis.
-# Logic: Filter every object by the company scope for the current mode; laboratory mode is globally visible; historical facts use a separate version-upgrade entry point.
+# Logic: Filter every object by the private company owner scope; historical facts use a separate version-upgrade entry point.
 # Constraints: Does not expose unverified sending or Gmail synchronization capability.
 class CompanyViewSet(ViewSet):
     queryset = Company.objects.none()
     # Function: Query the company list and statistics.
     # Inputs: `request`.query_params contains industry, size, signal, keywords, and pagination.
     # Outputs: Paginated company projection.
-    # Logic: Call the list selector for the current mode; laboratory mode does not filter by account.
+    # Logic: Call the owner-scoped list selector regardless of experiment settings.
     # Constraints: The default IsAuthenticated rejects unauthenticated requests.
     @extend_schema(operation_id="companies_list", responses=OBJECT, tags=["companies"], parameters=[OpenApiParameter(name, str) for name in ["q", "industry", "size_band", "signal", "crm_status", "page", "page_size"]])
     def list(self, request):
@@ -481,7 +481,7 @@ class DemoViewSet(ViewSet):
 
 
 # Function: Host backend protocol calls initiated by the Agent in the README.
-# Logic: Production mode uses independent AgentAuthentication to validate service identity; laboratory-mode business access is unauthenticated and the shared access policy determines entity scope.
+# Logic: Independent AgentAuthentication validates service identity in every environment; private entity reads remain owner scoped.
 # Constraints: Browser sessions cannot call these routes in production mode; OAuth credential claims always require an Agent service token.
 class AgentViewSet(ViewSet):
     authentication_classes = [AgentAuthentication]
