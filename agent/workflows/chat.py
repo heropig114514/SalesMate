@@ -287,7 +287,7 @@ def trim_context_items(customer_context: object, internal_knowledge: object, ext
 # Function: Parse a JSON object without duplicate keys.
 # Inputs: `value`: JSON string returned by the model.
 # Outputs: Reject duplicate keys through an object hook and return a dict.
-# Logic: Reject duplicate keys through an object hook and return a dict.
+# Logic: Reject duplicate keys through an object hook; report only the decoded root type when it is not an object, without logging model content.
 # Constraints: Invalid JSON or non-object values raise ChatValidationError.
 def _decode_json_object(value: str) -> dict[str, Any]:
     # Function: Reject duplicate JSON fields.
@@ -307,7 +307,7 @@ def _decode_json_object(value: str) -> dict[str, Any]:
     except (ValueError, TypeError) as error:
         raise ChatValidationError("Model output is not a valid JSON object.") from error
     if not isinstance(parsed, dict):
-        raise ChatValidationError("Model output must be a JSON object.")
+        raise ChatValidationError(f"Model output must be a JSON object; received {type(parsed).__name__}.")
     return parsed
 
 
