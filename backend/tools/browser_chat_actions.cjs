@@ -1,6 +1,6 @@
 /**
  * Responsibility: Verify independent order/email confirmation cards in the real browser UI.
- * Implementation: Serve repository assets, mock HTTP fixtures, and exercise complete previews, escaping, explicit decisions, refresh recovery, send-status observation and laboratory browsing without Session-only proposal requests.
+ * Implementation: Serve repository assets, mock HTTP fixtures, and exercise complete previews, escaping, explicit decisions, refresh recovery, delayed-reload button disabling, send-status observation and laboratory browsing without Session-only proposal requests.
  * Relationships: assistant.js renders actual cards; test_chat_actions.py independently verifies PostgreSQL and authenticated HTTP semantics.
  * Directory: main runs browser assertions; anonymous callbacks serve trusted assets and synthetic HTTP fixtures.
  * Variable index: FRONTEND locates assets; OUTPUT stores screenshots; imported bindings provide filesystem, HTTP, assertions and Playwright. Main's canReview and proposalReads verify capability-bound requests.
@@ -41,7 +41,7 @@ async function main() {
       arguments: { to: ['buyer@example.com'], cc: ['copy@example.com'], bcc: ['archive@example.com'], subject: 'Delivery <img src=x onerror="window.injected=true">',
         body_text: 'Hello,\nFull reviewed body.\n<script>window.injected=true</script>\nLast line preserved.' },
       preview: { company_name: 'Action customer', from_address: 'sales@example.com' } };
-    let reject = false, canReview = true, proposalReads = 0;
+    let reject = false, canReview = true, proposalReads = 0, conversationGate = null;
     await page.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.hostname !== '127.0.0.1') return route.abort();
@@ -60,7 +60,10 @@ async function main() {
         proposal.revision += 1;
         return route.fulfill({ json: proposal });
       }
-      if (endpoint === 'records/conversations/') return route.fulfill({ json: list([{ id: 'conversation-1', company: null, title: 'Action review', created_at: '2026-09-27T06:00:00Z', can_review_chat_actions: canReview }]) });
+      if (endpoint === 'records/conversations/') {
+        if (conversationGate) await conversationGate;
+        return route.fulfill({ json: list([{ id: 'conversation-1', company: null, title: 'Action review', created_at: '2026-09-27T06:00:00Z', can_review_chat_actions: canReview }]) });
+      }
       if (endpoint === 'records/messages/') return route.fulfill({ json: list(messages) });
       if (endpoint === 'records/drafts/') return route.fulfill({ json: list([]) });
       if (endpoint === 'chat/requests/') return route.fulfill({ json: list([answer]) });
@@ -80,6 +83,15 @@ async function main() {
     assert.equal(await card.locator('img,script').count(), 0);
     assert.equal(await page.evaluate(() => window.injected), undefined);
     assert.equal(decisions.length, 0);
+    let releaseConversation;
+    conversationGate = new Promise(resolve => { releaseConversation = resolve; });
+    await page.locator('#assistant-sessions').selectOption('conversation-1');
+    assert.equal(await card.locator('[data-proposal-decision="approve"]').isDisabled(), true);
+    assert.equal(await card.locator('[data-proposal-refresh]').isDisabled(), true);
+    conversationGate = null;
+    releaseConversation();
+    await page.waitForFunction(() => !window.chatTest.busy);
+    assert.equal(await card.locator('[data-proposal-decision="approve"]').isEnabled(), true);
     await page.locator('#assistant-input').fill('Unsaved input must remain');
     await page.evaluate(() => window.chatTest.refreshAnswers());
     assert.equal(await page.locator('#assistant-input').inputValue(), 'Unsaved input must remain');

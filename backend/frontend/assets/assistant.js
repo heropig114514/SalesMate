@@ -1,6 +1,6 @@
 /**
  * Responsibility: Provide workspace chat, Markdown answers, source citations, persisted conversations, and editable drafts.
- * Implementation: Render persisted answers and independent order/email proposal cards for Session-owned conversations; laboratory browsing retains ordinary chat without private proposal requests. Poll answer and send status. Experiment approval retains its existing dialog. Account/conversation changes discard stale responses.
+ * Implementation: Render persisted answers and independent order/email proposal cards for Session-owned conversations, disabling their controls during panel operations; laboratory browsing retains ordinary chat without private proposal requests. Poll answer and send status. Experiment approval retains its existing dialog. Account/conversation changes discard stale responses.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; assistant-widget.js mounts the single workspace entry and provides history, draft, and save controls; sales-api.js handles communication.
  * Directory: AssistantPanel, AssistantPanel.constructor, AssistantPanel.initializeView, AssistantPanel.open,
@@ -492,7 +492,7 @@ export class AssistantPanel {
 
   /** Function: Render one complete server-frozen proposal. Inputs: proposal is browser list data bound to a user message.
    * Outputs: Escaped HTML review card. Logic: Show every changed field or all message recipients/content, and only allow pending decisions.
-   * Constraints: Model Markdown and proposal content never create executable markup; approved does not mean sent. */
+   * Constraints: Model Markdown and proposal content never create executable markup; approved does not mean sent. Pending cards remain disabled while the panel is loading or submitting. */
   proposalCard(proposal) {
     const args = proposal.arguments, preview = proposal.preview;
     const labels = { pending_confirmation: "待确认，尚未执行", approved: "已确认，等待执行", running: "正在执行", succeeded: proposal.kind === "email_send" ? "邮件服务已接受发送，未确认送达" : "订单已更新", failed: "执行失败", uncertain: "结果不确定，请核对，勿重复发送", cancelled: "已取消或被新提案替代", expired: "已过期", conflicted: "数据已变化，请重新准备" };
@@ -506,8 +506,9 @@ export class AssistantPanel {
         content += `<p>${esc(preview.total_before ?? "unknown")} ${esc(oldCurrency)} → ${esc(preview.total_after ?? "unknown")} ${esc(preview.currency)}</p>`;
       }
     }
-    const buttons = proposal.status === "pending_confirmation" ? `<button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="approve">${esc(t("确认执行"))}</button><button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="cancel">${esc(t("取消"))}</button>` : "";
-    return `<section class="assistant-action-proposal" data-proposal-card="${esc(proposal.id)}"><h4>${esc(preview.company_name)} · ${esc(t(labels[proposal.status] || "状态未知"))}</h4>${content}<p>${esc(t("确认截止时间"))}: ${esc(proposal.expires_at)}</p><div class="actions">${buttons}<button type="button" data-proposal-refresh>${esc(t("刷新状态"))}</button></div></section>`;
+    const disabled = this.busy ? " disabled" : "";
+    const buttons = proposal.status === "pending_confirmation" ? `<button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="approve"${disabled}>${esc(t("确认执行"))}</button><button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="cancel"${disabled}>${esc(t("取消"))}</button>` : "";
+    return `<section class="assistant-action-proposal" data-proposal-card="${esc(proposal.id)}"><h4>${esc(preview.company_name)} · ${esc(t(labels[proposal.status] || "状态未知"))}</h4>${content}<p>${esc(t("确认截止时间"))}: ${esc(proposal.expires_at)}</p><div class="actions">${buttons}<button type="button" data-proposal-refresh${disabled}>${esc(t("刷新状态"))}</button></div></section>`;
   }
 
   /** Function: Submit a concrete reviewed decision. Inputs: proposalId and decision come from a server-backed card button.
@@ -635,11 +636,12 @@ export class AssistantPanel {
   }
 
   /** Function: Serialize current panel operations and display errors. Inputs: task is an asynchronous callback.
-   * Outputs: None. Logic: Disable saving, input, and conversation switching; active tasks continue to prevent new questions after completion, and errors appear in the status area.
-   * Constraints: No retries or body logging; the panel can still be closed after changing conversations. */
+   * Outputs: None. Logic: Disable saving, input, conversation switching and proposal controls; reenable the current rendered controls when the operation finishes. Active answer tasks continue to prevent new questions, and errors appear in the status area.
+   * Constraints: No retries or body logging; stale cards cannot invite a click that would be ignored during reload. The panel can still be closed after changing conversations. */
   async run(task) {
     if (this.busy) return;
     this.busy = true;
+    this.nodes.history.querySelectorAll("[data-proposal-decision], [data-proposal-refresh]").forEach((button) => { button.disabled = true; });
     for (const name of ["submit", "save", "sessions", "new", "input", "clear"])
       this.nodes[name].disabled = true;
     try {
@@ -649,6 +651,7 @@ export class AssistantPanel {
       console.warn("assistant_operation_failed");
     } finally {
       this.busy = false;
+      this.nodes.history.querySelectorAll("[data-proposal-decision], [data-proposal-refresh]").forEach((button) => { button.disabled = false; });
       for (const name of [
         "submit",
         "save",
