@@ -135,16 +135,16 @@ class ChatCustomerTests(TestCase):
 
     # Function: Disallow real customer creation in another employee's laboratory conversation.
     # Inputs: Open laboratory mode and a request submitted by a different employee.
-    # Outputs: No catalog publication and a 404 for direct tool invocation.
+    # Outputs: Full catalog publication with a 404 for private creation using a borrowed request.
     # Logic: Change submitter only to exercise strict private binding independent of lab access.
     # Constraints: Public experiment tools retain their established shared permissions.
     @override_settings(LAB_OPEN_ACCESS=True)
     def test_lab_borrowed_request_cannot_create(self):
         self.request.requested_by = self.other
         self.request.save(update_fields=["requested_by"])
-        response = self.agent.get("/api/v1/agent/chat/tools/", {"request_id": str(self.request.pk)})
+        response = self.agent.get("/api/v1/agent/chat/tools/", {"request_id": str(self.request.pk), "page_size": 100})
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertNotIn("customers.create", {tool["name"] for tool in response.data["tools"]})
+        self.assertIn("customers.create", {tool["name"] for tool in response.data["tools"]})
         self.assertEqual(self.propose().status_code, 404)
 
     # Function: Require real initiating Session authentication and CSRF even in open lab mode.

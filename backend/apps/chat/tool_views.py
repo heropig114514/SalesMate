@@ -1,5 +1,5 @@
-"""Responsibility: Publish Agent chat tool catalog, request-bound reads and experiment maintenance, and answer-status query.
-Implementation: Accept Agent authentication, distinguish tool/request errors, return 201 for independent proposals or 202 for experiment approval suspension, and prohibit response caching.
+"""Responsibility: Publish Agent chat tool catalog, request-bound business tools, and answer-status query.
+Implementation: Accept Agent authentication, distinguish tool/request errors, return 201 for independent proposals or 202 for generic write approval suspension, and prohibit response caching.
 Relationships: tool_reads executes reads or creates approval checkpoints; services owns request state and canonical evidence, and approvals alone accepts browser write decisions.
 Directory:
 - AgentChatView: Authentication, error, and cache policy.
@@ -12,6 +12,7 @@ Directory:
 - AgentRequestView: Check authoritative chat-report status.
 - AgentRequestView.get: Return browser-safe projection only for authorized request.
 Variable index:
+- ToolReadView.parser_classes: Reuse MCP bounded JSON parsing, including published document uploads.
 - AgentChatView.authentication_classes: Agent credentials only; Tool or Session cannot substitute.
 - logger: Records view, exception type, and HTTP request correlation ID without credential or content.
 """
@@ -24,6 +25,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.crm.access import AgentAuthentication
+from apps.agent_tools.parsers import ToolJSONParser
 
 from . import services, tool_reads
 
@@ -32,7 +34,7 @@ logger = logging.getLogger("salesmate.chat.tools")
 
 # Function: Isolate employee-bound chat-service identity and normalize errors.
 # Logic: Inherit default login permission, use only ``AgentAuthentication``, and prohibit response caching.
-# Constraints: Credential identifies employee rather than Worker process type; request and tool allowlists continue to limit business scope.
+# Constraints: Credential identifies employee rather than Worker process type; request ownership and native business authorization remain enforced.
 class AgentChatView(APIView):
     authentication_classes = (AgentAuthentication,)
 
@@ -66,8 +68,8 @@ class AgentChatView(APIView):
 
 
 # Function: Provide request-bound actual tool-discovery endpoint.
-# Logic: Publish only read and experiment-maintenance tool Schema authorized for current request.
-# Constraints: Requires valid processing request and does not return entire business catalog.
+# Logic: Publish all authorized MCP schemas plus eligible independent order/email proposals.
+# Constraints: Requires a valid processing request; pagination includes the complete business catalog.
 class ToolCatalogView(AgentChatView):
     # Function: Read one page of tool descriptions.
     # Inputs: request_id and optional page and page_size query parameters from ``request``.
@@ -96,10 +98,12 @@ class ToolCatalogView(AgentChatView):
         return Response(tool_reads.catalog_for(request.user, query))
 
 
-# Function: Execute a read, prepare an independent business proposal, or suspend an experiment write.
-# Logic: Derive identity from Agent authentication; only experiment writes accept the optional continuation checkpoint.
+# Function: Execute a read, prepare an independent business proposal, or suspend a generic business write.
+# Logic: Derive identity from Agent authentication; generic write/confirm operations require the continuation checkpoint, and file uploads reuse bounded MCP JSON parsing.
 # Constraints: No write executes through this view; the independent decision transaction uses the frozen approval UUID for idempotency.
 class ToolReadView(AgentChatView):
+    parser_classes = (ToolJSONParser,)
+
     # Function: Execute an authorized data tool.
     # Inputs: ``request`` data is request_id, name, and arguments object.
     # Outputs: Read data/evidence, 201 pending business proposal, 202 experiment approval_required, or explicit failure with scope=tool.

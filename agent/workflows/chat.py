@@ -1,5 +1,5 @@
-"""Responsibility: Orchestrate request-scoped customer and shared experiment tools, validating model answer citations.
-Implementation: Customer creation resumes from a canonical real-customer receipt, alongside existing experimental approvals. Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
+"""Responsibility: Orchestrate the complete request-scoped business tool catalog, validating model answer citations.
+Implementation: Read all published tools eagerly and derive write checkpoints from live execution modes; preserve arbitrary business receipts and specialized customer/experiment evidence. Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
 Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
 Directory:
 - ChatValidationError: Represent workspace contract validation failure.
@@ -20,7 +20,7 @@ Directory:
 - _lexical_units: Extract snippet-matching units.
 - bailian_chat_provider: Invoke Bailian to generate one JSON answer.
 - _workspace_failure: Generate a failure result for the current workspace version.
-- _workspace_arguments: Validate fixed read/confirmation proposal tools and model arguments.
+- _workspace_arguments: Validate model tool envelopes, specialized proposal arguments and existing pagination budgets.
 - _workspace_uuid: Validate a UUID string.
 - _workspace_catalog: Parse the data tool catalog actually published for the request.
 - _workspace_schema_arguments: Validate argument keys against the live schema.
@@ -64,10 +64,10 @@ from typing import Any, Mapping
 
 from agent.clients.backend_api import BackendContractError, BackendRequestError
 from agent.skills import load_skill
-from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, CUSTOMER_WRITE_TOOLS, WORKSPACE_WRITE_TOOLS
+from integrations.salesmate_tools.read_contract import EXPERIMENT_WRITE_TOOLS, CUSTOMER_WRITE_TOOLS
 from agent.clients.chat_actions import (
     ACTION_TOOLS, BUSINESS_READ_TOOLS, CONFIRMATION_CONTRACT, PREPARE_TOOLS,
-    WORKSPACE_TOOLS, action_answer, require_observed_targets,
+    action_answer, require_observed_targets,
     validate_action_arguments, validate_action_receipt,
 )
 
@@ -424,82 +424,27 @@ def _workspace_failure(request_id: str, code: str) -> dict[str, Any]:
     return {**stable_failure_result(request_id, code), "chat_prompt_version": WORKSPACE_CHAT_PROMPT_VERSION}
 
 
-# Function: Validate fixed read/confirmation proposal tools and model arguments.
+# Function: Validate model tool envelopes, specialized proposal arguments and existing pagination budgets.
 # Inputs: `name`: model-selected tool name; `value`: model-generated argument object.
-# Outputs: Strictly validate customer arguments and preserve the 20-item experiment pagination limit; return the name and a copy of arguments.
-# Logic: Validate customer creation as an explicit name-only input; preserve existing read validation and 20-item experiment pagination.
-# Constraints: The live backend schema validates complete experiment argument types; do not guess model or batch names.
+# Outputs: Return the nonblank name and copied JSON object with existing specialized pagination defaults.
+# Logic: Check independent proposal contracts and existing pagination; the live catalog supplies generic argument requirements.
+# Constraints: The live backend schema validates every tool; this function grants no name-based authorization.
 def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, Any]]:
-    """Validate customer arguments and experiment pagination budgets; the live backend schema still validates experiment field types."""
-    if (
-        not isinstance(name, str)
-        or name not in WORKSPACE_TOOLS
-        or not isinstance(value, dict)
-    ):
-        raise ChatValidationError("The workspace permits only registered reads and unexecuted confirmation proposals.")
+    if not isinstance(name, str) or not name.strip() or not isinstance(value, dict):
+        raise ChatValidationError("Tool name and arguments must be a nonblank string and object.")
     arguments = dict(value)
     if name in ACTION_TOOLS:
         try:
             validate_action_arguments(name, arguments)
         except ValueError as error:
             raise ChatValidationError(str(error)) from error
-        return name, arguments
-    if name in BUSINESS_READ_TOOLS:
-        if name.endswith(".get"):
-            if set(arguments) != {"id"}:
-                raise ChatValidationError("Record lookup accepts only id.")
-            _workspace_uuid(arguments["id"])
-        else:
-            allowed = {"page", "page_size", "archived"}
-            if name == "orders.list":
-                allowed |= {"company", "q", "status"}
-                _workspace_uuid(arguments.get("company"))
-            if set(arguments) - allowed:
-                raise ChatValidationError("Business search contains unsupported arguments.")
-            if type(arguments.get("page", 1)) is not int or arguments.get("page", 1) < 1:
-                raise ChatValidationError("Invalid business search page.")
-            size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
-            if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
-                raise ChatValidationError("Invalid business search page size.")
-            arguments.setdefault("page", 1)
-            arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
-        return name, arguments
-    if name in CUSTOMER_WRITE_TOOLS:
-        if set(arguments) != {"name"} or not isinstance(arguments["name"], str) or not arguments["name"].strip() or len(arguments["name"]) > 240:
-            raise ChatValidationError("Customer creation requires only an explicit name of 1–240 characters.")
-        return name, arguments
-    if name in EXPERIMENT_TOOLS | EXPERIMENT_WRITE_TOOLS:
-        if name == "experiments.rows":
-            size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
-            if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
-                raise ChatValidationError("Invalid experiment page size.")
-            arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
-        return name, arguments
-    if name == "customers.search":
-        if set(arguments) - {"q", "company", "archived", "page", "page_size"}:
-            raise ChatValidationError("Customer search contains unsupported arguments.")
-        if "q" in arguments and (
-            not isinstance(arguments["q"], str) or len(arguments["q"]) > 500
-        ):
-            raise ChatValidationError("Invalid customer search query.")
-        if "company" in arguments:
-            _workspace_uuid(arguments["company"])
-        if "archived" in arguments and (
-            not isinstance(arguments["archived"], str)
-            or arguments["archived"] not in {"false", "all"}
-        ):
-            raise ChatValidationError("Invalid customer search archive argument.")
-        if type(arguments.get("page", 1)) is not int or arguments.get("page", 1) < 1:
-            raise ChatValidationError("Invalid customer search page.")
+    if name in {"customers.search", "experiments.rows", "orders.list", "connections.list"}:
         size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
         if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
-            raise ChatValidationError("Invalid customer search page size.")
-        arguments.setdefault("page", 1)
+            raise ChatValidationError("Invalid search page size.")
         arguments.setdefault("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
-    elif set(arguments) != {"company_id"}:
-        raise ChatValidationError("Customer details accepts only company_id.")
-    else:
-        _workspace_uuid(arguments["company_id"])
+        if name != "experiments.rows":
+            arguments.setdefault("page", 1)
     return name, arguments
 
 
@@ -519,11 +464,11 @@ def _workspace_uuid(value: object) -> None:
 
 # Function: Parse the data tool catalog actually published for the request.
 # Inputs: `raw`: backend catalog response; `request_id`: currently claimed request identifier.
-# Outputs: Validate protocol and request, filter fixed candidates, and check closed schemas, returning an index by name.
-# Logic: Validate protocol and request, fixed candidates, closed schemas and read/confirm/checkpointed-write modes before indexing by name.
-# Constraints: Unpublished tools cannot execute; independent proposals require confirm/contract, checkpointed writes require write, and other tools require read.
+# Outputs: Validate protocol, request, unique names and closed schemas, returning all published tools indexed by name.
+# Logic: Accept read/write/confirm modes from the live registry; independent proposals additionally require their exact mode and confirmation contract.
+# Constraints: No static name filter; unpublished or malformed tools cannot execute, and generic write/confirm modes use checkpoints.
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
-    """Use only fixed candidates actually published for this processing request with matching execution modes."""
+    """Use every valid tool published for this processing request."""
     if not isinstance(raw, Mapping) or (
         raw.get("contract_version") != "chat-tools-v1"
         or raw.get("request_id") != request_id
@@ -535,12 +480,11 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
         if not isinstance(entry, Mapping):
             raise ChatValidationError("Invalid workspace tool catalog entry.")
         name = entry.get("name")
-        if name not in WORKSPACE_TOOLS:
-            continue
         schema = entry.get("inputSchema")
         if (
-            name in catalog
-            or entry.get("executionMode") != ("confirm" if name in PREPARE_TOOLS else "write" if name in WORKSPACE_WRITE_TOOLS else "read")
+            not isinstance(name, str) or not name.strip() or name in catalog
+            or entry.get("executionMode") not in {"read", "write", "confirm"}
+            or (name in ACTION_TOOLS and entry.get("executionMode") != ("confirm" if name in PREPARE_TOOLS else "read"))
             or (name in ACTION_TOOLS and entry.get("confirmationContract") != CONFIRMATION_CONTRACT)
             or not isinstance(schema, Mapping)
             or schema.get("type") != "object"
@@ -597,7 +541,7 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
 # Function: Validate a read receipt and generate a prompt summary.
 # Inputs: `raw`: backend read receipt; `request_id`: current request identifier; `name`: expected executed tool name.
 # Outputs: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
-# Logic: Validate request/tool/source bindings; accept a 201 customer-creation receipt only with a valid returned UUID/name, separately from synthetic mutation evidence.
+# Logic: Validate request/tool/source bindings and 2xx receipt status; specialize known evidence and preserve arbitrary JSON results and queued/pending states for generic tools.
 # Constraints: Summaries do not expand attachment bodies; apply shared budgets to source bodies.
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
@@ -605,11 +549,11 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
     if raw.get("request_id") != request_id or raw.get("tool") != name:
         raise ChatValidationError("Tool response does not belong to this request.")
     if (
-        raw.get("status") != "completed"
-        or raw.get("http_status") not in ({200, 201} if name in PREPARE_TOOLS | CUSTOMER_WRITE_TOOLS else {200})
-        or not isinstance(raw.get("data"), Mapping)
+        raw.get("status") not in {"completed", "accepted", "confirmation_required"}
+        or type(raw.get("http_status")) is not int or not 200 <= raw["http_status"] < 300
+        or "data" not in raw
     ):
-        raise ChatValidationError("Tool did not return completed query data.")
+        raise ChatValidationError("Tool did not return a valid business receipt.")
     _workspace_uuid(raw.get("read_id"))
     items = raw.get("evidence_items")
     if not isinstance(items, list) or not items:
@@ -620,7 +564,7 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
     ]
     if any(not item["source_id"].startswith(f"chat-tool:{raw['read_id']}:") for item in evidence):
         raise ChatValidationError("Tool evidence does not match this read ID.")
-    data = dict(raw["data"])
+    data = raw["data"]
     if name == "customers.search":
         if (
             not isinstance(data.get("results"), list)
@@ -664,12 +608,10 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
         summary = data
     elif name == "experiments.file_read":
         summary = {key: value for key, value in data.items() if key != "content"}
+    elif name == "customers.context":
+        summary = {key: data[key] for key in ("company_id", "company_name", "id", "name") if key in data}
     else:
-        summary = {
-            key: data[key]
-            for key in ("company_id", "company_name", "id", "name")
-            if key in data
-        }
+        summary = {"status": raw["status"], "http_status": raw["http_status"], "data": data}
     return summary, evidence
 
 
@@ -766,7 +708,7 @@ def _workspace_prompt_evidence(
 # Function: Process a workspace question and the read/confirmation proposal tool loop.
 # Inputs: `request`: backend claim object; `backend`: request-bound client; `chat_provider`: one-call model function.
 # Outputs: Final answer, stage failure, or awaiting_approval suspension; the complete request still has at most six tool turns.
-# Logic: Checkpoint customer creation and experiment writes alike; resume their canonical receipts and unchanged loop position, then require fresh customer/mailbox reads before any email proposal.
+# Logic: Load all catalog pages before the first model call; derive checkpoints from executionMode and resume canonical receipts without replay, preserving loop budgets and independent email prerequisites.
 # Constraints: backend is the real service boundary and chat_provider the model boundary; the backend persists evidence, with parameters and budgets unchanged.
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
     """At most six data tool calls, each selected by the model; the final answer cites only backend-registered evidence."""
@@ -791,7 +733,9 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
         observations: list[dict[str, Any]] = []
         records: dict[tuple[str, str], dict[str, Any]] = {}
         signatures: set[tuple[str, str]] = set()
-        catalog: dict[str, dict[str, Any]] | None = None
+        catalog = _workspace_catalog(backend.get_chat_tools(request_id), request_id)
+        checkpointed = {name for name, spec in catalog.items() if spec["executionMode"] in {"write", "confirm"} and name not in ACTION_TOOLS}
+        logger.info("workspace_chat_tools_loaded request_id=%s count=%s", request_id, len(catalog))
         start_turn = 0
         if "resume" in request:
             resume = _keys(request["resume"], {"continuation", "tool_result", "arguments", "evidence_items"}, "resume")
@@ -809,12 +753,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             # target reads before a later order/email proposal in this request.
             signatures = {item for item in signatures if item[0] not in {"orders.get", "connections.get", "customers.context"}}
             name = resume["tool_result"].get("tool")
-            if name not in WORKSPACE_WRITE_TOOLS:
+            if name not in checkpointed:
                 raise ChatValidationError("Unexpected approved tool.")
             summary, _ = _workspace_tool_result(resume["tool_result"], request_id, name)
             _workspace_append_evidence(evidence, [_source(item, "resume.evidence") for item in resume["evidence_items"]])
-            observations.append({"tool": name, "arguments": resume["arguments"], "status": "completed", "data": summary})
-            catalog = _workspace_catalog(backend.get_chat_tools(request_id), request_id)
+            observations.append({"tool": name, "arguments": resume["arguments"], "status": resume["tool_result"]["status"], "data": summary})
         for turn in range(start_turn, _WORKSPACE_MAX_TOOL_READS + 1):
             visible_evidence, prompt_evidence = _workspace_prompt_evidence(
                 evidence, request["question"]
@@ -830,9 +773,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                             "authorized_evidence": prompt_evidence,
                             "evidence_items_available": len(evidence),
                             "evidence_items_shown": len(prompt_evidence),
-                            "available_tools": list(catalog.values()) if catalog is not None else [
-                                {"name": name} for name in sorted(WORKSPACE_TOOLS)
-                            ],
+                            "available_tools": list(catalog.values()),
                             "tool_results": observations,
                             "remaining_reads": _WORKSPACE_MAX_TOOL_READS - turn,
                         },
@@ -862,13 +803,6 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             if turn >= _WORKSPACE_MAX_TOOL_READS:
                 raise ChatValidationError("The data-tool call limit was reached without an answer.")
             name, arguments = payload["name"], payload["arguments"]
-            if catalog is None:
-                code = "context_unavailable"
-                catalog = _workspace_catalog(backend.get_chat_tools(request_id), request_id)
-                logger.info(
-                    "workspace_chat_tools_loaded request_id=%s tools=%s",
-                    request_id, sorted(catalog),
-                )
             if name not in catalog:
                 if name in ACTION_TOOLS | BUSINESS_READ_TOOLS:
                     return {
@@ -876,10 +810,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                         "assistant_text": "This operation is not available through the current backend chat tools. This turn did not initiate any business changes or email sends. I can still help draft the proposed changes or email as text.",
                         "citations": [], "status": "completed", "error": None,
                     }
-                observations.append({
-                    "tool": name, "status": "unavailable", "reason": "not_published",
-                })
-                continue
+                raise ChatValidationError("The selected tool is not published for this request.")
             _workspace_schema_arguments(arguments, catalog[name]["inputSchema"])
             if name in PREPARE_TOOLS:
                 try:
@@ -894,7 +825,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
             signatures.add(signature)
             code = "context_unavailable"
             try:
-                if name in WORKSPACE_WRITE_TOOLS:
+                if name in checkpointed:
                     raw_result = backend.read_chat_tool(request_id, name, arguments, continuation={
                         "next_turn": turn + 1, "observations": observations,
                         "signatures": [list(item) for item in sorted(signatures)],
@@ -911,7 +842,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     }
                 if (
                     error.scope != "tool"
-                    or error.status_code not in ({400, 404, 409, 422} if name in ACTION_TOOLS | CUSTOMER_WRITE_TOOLS else {400, 404})
+                    or error.status_code not in {400, 404, 409, 422}
                 ):
                     raise
                 if error.status_code == 409 and name in PREPARE_TOOLS and "order_id" in arguments:
@@ -929,11 +860,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                 )
                 continue
             if raw_result.get("status") == "approval_required":
-                if name not in WORKSPACE_WRITE_TOOLS or raw_result.get("request_id") != request_id or raw_result.get("tool") != name:
+                if name not in checkpointed or raw_result.get("request_id") != request_id or raw_result.get("tool") != name:
                     raise ChatValidationError("Approval response does not match this write.")
                 logger.info("workspace_chat_suspended request_id=%s tool=%s next_turn=%s", request_id, name, turn + 1)
                 return {"request_id": request_id, "status": "awaiting_approval", "error": None}
-            if name in WORKSPACE_WRITE_TOOLS:
+            if name in checkpointed:
                 raise ChatValidationError("A proposed write must await browser approval; only a resumed claim may contain its execution receipt.")
             summary, items = _workspace_tool_result(raw_result, request_id, name)
             if name in ACTION_TOOLS:
@@ -959,7 +890,7 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                 records[(name, target)] = dict(raw_result["data"])
             _workspace_append_evidence(evidence, items)
             observations.append({
-                "tool": name, "arguments": arguments, "status": "completed",
+                "tool": name, "arguments": arguments, "status": raw_result["status"],
                 "data": summary,
             })
             logger.info(

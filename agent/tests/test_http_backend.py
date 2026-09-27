@@ -47,22 +47,48 @@ from agent.clients.backend_api import (
 )
 
 
+# Function: Group isolated transport and workflow regression assertions.
+# Logic: Use queued data or mocks while exercising real client and validation code.
+# Constraints: No deployed backend, model, employee decisions or external providers are contacted.
 class _Response:
+    # Function: Initialize queued transport fixture state.
+    # Inputs: `payload`, `status`, `headers`.
+    # Outputs: None; initialized fixture state.
+    # Logic: Store configured responses, headers and payload for later assertions.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def __init__(self, payload, *, status=200, headers=None):
         self._payload = payload
         self.status_code = status
         self.headers = headers or {}
         self.content = b"" if payload is None else b"json"
 
+    # Function: Return the configured simulated JSON response.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: The configured fixture value or client; exhausted transport queues raise AssertionError.
+    # Logic: Expose the stored payload without network access or parsing.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def json(self):
         return self._payload
 
 
+# Function: Group isolated transport and workflow regression assertions.
+# Logic: Use queued data or mocks while exercising real client and validation code.
+# Constraints: No deployed backend, model, employee decisions or external providers are contacted.
 class _Session:
+    # Function: Initialize queued transport fixture state.
+    # Inputs: `responses`.
+    # Outputs: None; initialized fixture state.
+    # Logic: Store configured responses, headers and payload for later assertions.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def __init__(self, *responses):
         self.responses = list(responses)
         self.calls = []
 
+    # Function: Record a simulated HTTP request and consume its configured response.
+    # Inputs: `method`, `url`, `kwargs`.
+    # Outputs: The configured fixture value or client; exhausted transport queues raise AssertionError.
+    # Logic: Append method, URL and options; fail explicitly when the response queue is exhausted.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def request(self, method, url, **kwargs):
         self.calls.append((method, url, kwargs))
         if not self.responses:
@@ -70,7 +96,15 @@ class _Session:
         return self.responses.pop(0)
 
 
+# Function: Group isolated transport and workflow regression assertions.
+# Logic: Use queued data or mocks while exercising real client and validation code.
+# Constraints: No deployed backend, model, employee decisions or external providers are contacted.
 class DjangoBackendClientTests(unittest.TestCase):
+    # Function: Build the real Django client with an in-memory transport.
+    # Inputs: `session`, `mailbox_id`.
+    # Outputs: The configured fixture value or client; exhausted transport queues raise AssertionError.
+    # Logic: Use a test-only URL and credential; retain mailbox selection for mapping assertions.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def client(self, session, *, mailbox_id="mailbox-1"):
         return DjangoBackendClient(
             "http://backend.test/api/v1/agent/",
@@ -79,6 +113,11 @@ class DjangoBackendClientTests(unittest.TestCase):
             session=session,
         )
 
+    # Function: Verify request bound chat read uses agent identity and checks evidence.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_request_bound_chat_read_uses_agent_identity_and_checks_evidence(self):
         session = _Session(_Response({
             "request_id": "request-1", "tool": "customers.search",
@@ -98,8 +137,13 @@ class DjangoBackendClientTests(unittest.TestCase):
             "arguments": {"q": "盛微"},
         })
         with self.assertRaises(BackendContractError):
-            backend.read_chat_tool("request-1", "customers.create", {"name": "假客户"})
+            backend.read_chat_tool("request-1", "customers.create", {"name": "假客户"}, continuation="invalid")
 
+    # Function: Verify chat tool catalog is bound to request and agent identity.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_tool_catalog_is_bound_to_request_and_agent_identity(self):
         session = _Session(_Response({
             "contract_version": "chat-tools-v1", "request_id": "request-1",
@@ -113,6 +157,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertIn("/chat/tools/?request_id=request-1", url)
         self.assertEqual(kwargs["headers"]["Authorization"], "Agent service-secret")
 
+    # Function: Verify chat tool error preserves backend scope.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_tool_error_preserves_backend_scope(self):
         session = _Session(_Response({
             "error": {"scope": "tool", "code": "not_found", "detail": "不可访问"}
@@ -123,6 +172,11 @@ class DjangoBackendClientTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.scope, "tool")
 
+    # Function: Verify chat request status uses agent identity.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_request_status_uses_agent_identity(self):
         session = _Session(_Response({
             "request_id": "request-1", "status": "completed",
@@ -135,6 +189,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertTrue(url.endswith("/chat/requests/request-1/"))
         self.assertEqual(kwargs["headers"]["Authorization"], "Agent service-secret")
 
+    # Function: Verify chat read rejects wrong request identity.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_read_rejects_wrong_request_identity(self):
         session = _Session(_Response({
             "request_id": "other", "tool": "customers.context", "status": "completed",
@@ -145,6 +204,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                 "request-1", "customers.context", {"company_id": "company-1"}
             )
 
+    # Function: Verify submit adds transport fields and aggregates response.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_submit_adds_transport_fields_and_aggregates_response(self):
         session = _Session(
             _Response(
@@ -166,6 +230,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertEqual(result["duplicate_count"], 1)
         self.assertEqual(result["affected_company_ids"], ["company-1", "company-2"])
 
+    # Function: Verify stored email lookup maps existing record and not found.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_stored_email_lookup_maps_existing_record_and_not_found(self):
         dedupe_key = "sales@example.com:message-1"
         session = _Session(
@@ -191,6 +260,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertIn("mailbox_id=mailbox-1", session.calls[0][1])
         self.assertIn("dedupe_key=sales%40example.com%3Amessage-1", session.calls[0][1])
 
+    # Function: Verify grouping context and job extensions are hidden from workflow.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_grouping_context_and_job_extensions_are_hidden_from_workflow(self):
         session = _Session(
             _Response({"company_id": "company-1"}, headers={"ETag": '"7"'}),
@@ -238,6 +312,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertEqual(report_headers["X-Lease-Token"], "lease-1")
         self.assertEqual(session.calls[2][2]["json"]["lease_seconds"], 120)
 
+    # Function: Verify cache miss and complete cache are mapped.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_cache_miss_and_complete_cache_are_mapped(self):
         analysis = {
             "company_id": "company-1",
@@ -254,6 +333,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertIsNone(backend.get_cached_analysis("company-1", "v1"))
         self.assertEqual(backend.get_cached_analysis("company-1", "v1"), analysis)
 
+    # Function: Verify employee mailbox sync claim and report are mapped.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_employee_mailbox_sync_claim_and_report_are_mapped(self):
         authorization = {"token": "test-token", "refresh_token": "test-refresh"}
         session = _Session(
@@ -297,6 +381,11 @@ class DjangoBackendClientTests(unittest.TestCase):
             session.calls[1][1].endswith("agent/mailbox-syncs/report/")
         )
 
+    # Function: Verify sync state uses etag for incremental cursor save.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_sync_state_uses_etag_for_incremental_cursor_save(self):
         session = _Session(
             _Response(
@@ -337,6 +426,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertTrue(session.calls[1][1].endswith("agent/sync-state-save/"))
         self.assertEqual(session.calls[1][2]["headers"]["If-Match"], "4")
 
+    # Function: Verify metadata only cache hit and http error fail explicitly.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_metadata_only_cache_hit_and_http_error_fail_explicitly(self):
         cache_session = _Session(
             _Response({"hit": True, "status": "completed", "input_version": "v1"})
@@ -358,6 +452,11 @@ class DjangoBackendClientTests(unittest.TestCase):
         self.assertNotIn("service-secret", str(raised.exception))
 
 
+    # Function: Verify chat claim maps zero and single work with authenticated transport.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_claim_maps_zero_and_single_work_with_authenticated_transport(self):
         claimed_request = {
             "request_id": "request-1",
@@ -396,6 +495,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                 )
                 self.assertEqual(kwargs["timeout"], 30.0)
 
+    # Function: Verify chat context maps scopes and independent retrieval statuses.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_context_maps_scopes_and_independent_retrieval_statuses(self):
         customer_item = {
             "source_id": "mail:1",
@@ -486,6 +590,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                     kwargs["headers"]["Authorization"], "Agent service-secret"
                 )
 
+    # Function: Verify chat report maps completed failed and duplicate results.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_report_maps_completed_failed_and_duplicate_results(self):
         completed = {
             "request_id": "request-1",
@@ -562,6 +671,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                     kwargs["headers"]["Authorization"], "Agent service-secret"
                 )
 
+    # Function: Verify chat scope and report input validation happens before transport.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_scope_and_report_input_validation_happens_before_transport(self):
         session = _Session()
         backend = self.client(session, mailbox_id=None)
@@ -594,6 +708,11 @@ class DjangoBackendClientTests(unittest.TestCase):
 
         self.assertEqual(session.calls, [])
 
+    # Function: Verify chat claim rejects malformed response objects.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_claim_rejects_malformed_response_objects(self):
         malformed_payloads = (
             [],
@@ -626,6 +745,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                 with self.assertRaises(BackendContractError):
                     self.client(session, mailbox_id=None).claim_answer_request()
 
+    # Function: Verify chat context rejects mismatches and malformed status objects.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_context_rejects_mismatches_and_malformed_status_objects(self):
         valid = {
             "request_id": "request-1",
@@ -691,6 +815,11 @@ class DjangoBackendClientTests(unittest.TestCase):
                 "request-1", "external"
             )
 
+    # Function: Verify chat report rejects mismatched and malformed response objects.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_report_rejects_mismatched_and_malformed_response_objects(self):
         result = {
             "request_id": "request-1",
@@ -738,11 +867,24 @@ class DjangoBackendClientTests(unittest.TestCase):
                 with self.assertRaises(BackendContractError):
                     self.client(session, mailbox_id=None).report_answer(result)
 
+    # Function: Verify chat non json and http failures are safe.
+    # Inputs: Instance fixture state and queued synthetic responses.
+    # Outputs: None; unittest assertions raise on contract violations.
+    # Logic: Arrange isolated responses, invoke the real client or workflow, and assert the named output/error and call-boundary behavior.
+    # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
     def test_chat_non_json_and_http_failures_are_safe(self):
         import io
         import logging
 
+        # Function: Group isolated transport and workflow regression assertions.
+        # Logic: Use queued data or mocks while exercising real client and validation code.
+        # Constraints: No deployed backend, model, employee decisions or external providers are contacted.
         class _NonJsonResponse(_Response):
+            # Function: Return the configured simulated JSON response.
+            # Inputs: Instance fixture state and queued synthetic responses.
+            # Outputs: The configured fixture value or client; exhausted transport queues raise AssertionError.
+            # Logic: Expose the stored payload without network access or parsing.
+            # Constraints: Mocks isolate network/model boundaries; passing assertions does not prove live service availability.
             def json(self):
                 raise ValueError("raw response body")
 

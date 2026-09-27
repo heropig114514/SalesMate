@@ -1,6 +1,6 @@
 """Responsibility: Provide bounded JSON transport for file tools without relaxing site-wide request limits.
 Implementation: Read at most the Base64 file-envelope bound from the request stream, then hand it to DRF JSON parsing; non-upload tools remain subject to the original JSON size limit.
-Relationships: Used only by ``CallView``; ``support`` continues to independently enforce file size and Schema validation.
+Relationships: Used by MCP ``CallView`` and chat ``ToolReadView``; ``support`` continues to independently enforce file size and Schema validation.
 Directory:
 - ToolJSONParser: Restricted tool JSON parser.
 - ToolJSONParser.parse: Check payload size and parse structure.

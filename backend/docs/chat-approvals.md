@@ -1,6 +1,6 @@
 # Chat write approval
 
-All writes exposed through `/api/v1/agent/chat/tool-reads/` require an explicit browser decision. These include private `customers.create` and `experiments.create/update/delete` for synthetic data. Reads remain immediate. Customer creation uses the existing directory handler with only an explicit company name; no guessed domains, contacts or other CRM facts. Order/email proposals retain their separate [action confirmation contract](chat-actions.md). Background jobs and ordinary non-chat Tool/MCP calls are unchanged.
+All writes exposed through `/api/v1/agent/chat/tool-reads/` require an explicit browser decision. The full live MCP catalog is published: every generic `write` or `confirm` tool uses this protocol, including product/quotation/follow-up/management operations, private `customers.create`, and synthetic `experiments.create/update/delete`. Reads remain immediate. Customer creation uses the existing directory handler with only an explicit company name; no guessed domains, contacts or other CRM facts. Order/email proposals retain their separate [action confirmation contract](chat-actions.md). Background jobs and ordinary non-chat Tool/MCP calls are unchanged.
 
 ## State and user experience
 
@@ -10,7 +10,7 @@ pending → processing → awaiting_approval
                          └─ reject: cancelled → conversation accepts another question
 ```
 
-The frontend displays the operation, batch, model, primary key when applicable, and proposed values. Approval executes that operation once, then the chat Worker resumes its saved loop. Rejection cancels the current request, restores an editable question when the input is empty, and preserves existing messages and audit records. Earlier approved writes in the same question remain committed. It is not a database rollback or deletion of conversation history.
+The frontend displays the exact tool and complete frozen JSON arguments for generic operations, with specialized customer and experiment previews. Approval executes that operation once, then the chat Worker resumes its saved loop. Rejection cancels the current request, restores an editable question when the input is empty, and preserves existing messages and audit records. Earlier approved writes in the same question remain committed. It is not a database rollback or deletion of conversation history.
 
 Closing the panel or browser does not decide anything. Reopening shows the persisted pending approval. While waiting, that conversation cannot submit another question, invoke further tools, or save a final answer; other conversations can continue. The Worker releases its temporary identity instead of holding a worker/thread or database transaction while the user decides.
 
@@ -30,7 +30,7 @@ The example illustrates the field types only: actual observations must contain t
 
 Successful proposal creation returns HTTP 202 with `status: "approval_required"`, `request_id`, `tool`, and `approval`. The request becomes `awaiting_approval`. No mutation receipt or success evidence exists yet. The Agent returns a local suspension result without calling `answers/`. A lost proposal response is reconciled through the existing status read rather than automatically retrying the write.
 
-After user approval, `claim/` returns the original five fields plus `resume`: the saved continuation, canonical operation receipt, its arguments, and the request's registered tool evidence. The Agent retains the same request ID, context, conversation history, model parameters, six-tool-call budget, and evidence budgets. It neither repeats earlier tools nor reruns the approved write. Another write in that continuation requires another approval.
+After user approval, `claim/` returns the original five fields plus `resume`: the saved continuation, canonical operation receipt, its arguments, and the request's registered tool evidence. The Agent retains the same request ID, context, conversation history, model parameters, six-tool-call budget, and evidence budgets. It neither repeats earlier tools nor reruns the approved write. Another write in that continuation requires another approval. Generic receipts preserve `completed`, `accepted` (queued), or `confirmation_required` (external action pending) and arbitrary JSON data. Native confirm-mode operations use their existing ToolProposal decision within the same explicit Session approval; source_key/episode_id tools retain native idempotency instead of receiving an incompatible UUID.
 
 ## Browser decision
 

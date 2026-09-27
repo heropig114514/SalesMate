@@ -1,6 +1,6 @@
 # Workspace chat: Agent integration contract
 
-Updated: 2026-09-21. This document describes implemented backend APIs. Production must first apply `chat.0003_tool_read` and deploy code. Agent implements tool selection, model-call loops, pagination, and prompts; the backend neither installs MCP for models nor invokes models automatically.
+Updated: 2026-09-27. This document describes implemented backend APIs. Production must first apply `chat.0003_tool_read` and deploy code. Agent implements tool selection, model-call loops, pagination, and prompts; the backend neither installs MCP for models nor invokes models automatically.
 
 ## 1. Scope and identity
 
@@ -8,7 +8,9 @@ Workspace chat requires no preselected company. Omit `company` or use null when 
 
 All endpoints use `Authorization: Agent <employee-bound-service-token>`, never ordinary Tool tokens or browser Sessions. Tokens identify employees; inputs reject owner_id, employee_id, or other overrides. Agent credentials identify employees independently of whether the process is called a chat worker. Catalog discovery/execution both require an owned processing request and an accessible conversation.
 
-Explicitly expose `customers.search`, `customers.context`, `experiments.catalog`, `experiments.rows`, and `experiments.file_read`, requiring live read registration. Also expose `experiments.create/update/delete`, requiring write registration. No other tools open automatically; real-business writes, confirmations, authorization management, sending, and calendar actions are outside this endpoint.
+The chat catalog includes every tool published by the authenticated employee's generic MCP registry, with identical schemas, modes and metadata. There is no chat-specific tool-name allowlist. Three private `chat_actions` tools add independent order/email proposals. Discover every page before the first model call; the HTTP adapter checks stable counts and unique names and rejects incomplete catalogs.
+
+Generic reads use native business handlers and permissions, including the configured laboratory mode. Generic write/confirm modes freeze exact arguments and suspend for Session browser approval. The approval rechecks live schema and business permissions, preserves UUID or source-key idempotency, and uses the native proposal decision for confirm-mode tools. Completed, accepted (queued), and confirmation_required (pending external action) receipts are distinct; no implicit retry or success inference occurs. Independent email/order proposals retain their private employee identity and separate review.
 
 Search reuses `visible_company_ids`; details reuse original company-owner permissions. A team-shared search hit grants no private email/profile access. Experiment tools reuse exact approved batch manifests/fingerprint validation to read/maintain fictional records while retaining owner, without exposing ordinary private details. L1–L4 remains unchanged. See [experiment sharing](experiment-data.md) for arguments/MCP integration.
 
@@ -21,7 +23,7 @@ Prefix: `/api/v1/agent/chat/`.
 | `POST requests/claim/` | Claim pending questions; existing API | Empty JSON object |
 | `POST context/` | Obtain original fixed context; existing API | request_id, scope |
 | `GET tools/` | Discover request tools/JSON Schema | request_id query; optional page/page_size |
-| `POST tool-reads/` | Read or maintain experiments and register evidence | request_id, name, arguments |
+| `POST tool-reads/` | Read published tools or suspend generic writes for review | request_id, name, arguments |
 | `POST answers/` | Save final answer; existing API | Original six-field report |
 | `GET requests/<request_id>/` | Reconcile saved state, message IDs, final citations | Path UUID |
 
@@ -60,7 +62,7 @@ Search `data.results[].id` is the company UUID; use it as detail `arguments.comp
 }
 ```
 
-Chat requests need no company_id, but details still require an explicit company; the backend does not guess. Root objects accept only request_id/name/arguments, not idempotency_key. Each call is one explicit read without backend retries.
+Chat requests need no company_id, but details still require an explicit company; the backend does not guess. Root objects accept request_id/name/arguments and a continuation checkpoint for generic writes, never an arbitrary idempotency_key. Each call is explicit, without backend retries.
 
 Success shape:
 
@@ -118,7 +120,7 @@ Business-tool errors retain original HTTP status:
 | Missing/inaccessible company detail | 404, scope=tool | Does not prove absence; report unavailable details while chat remains processing |
 | Invalid request envelope/catalog parameters | 400, scope=request | Correct call structure |
 | Agent authentication failure | 401, scope=request | Check employee credentials without switching identity |
-| Tool not allowlisted or no longer read | 403, scope=request | Do not attempt write/confirmation entry points |
+| Tool unregistered | 403, scope=request | Refresh discovery; do not invent capability names |
 | Missing/wrong-owner request or inaccessible conversation | 404, scope=request | Stop reading through this request |
 | Unclaimed/finished request | 409, scope=request | Check state without reviving the request |
 | Unexpected query/database/service exception | 500, scope=request | Report service failure, not empty data; query status/check logs |
@@ -174,4 +176,4 @@ Frontend removes company-specific chat entry points; old links open workspace ch
 
 CI retains/updates contract tests for five-field claims, action:tool → real HTTP query → action:answer, shared-worker employee isolation, and actual browser questions/citation reads. Backend does not validate model semantics, prompt-version enums, or citation authenticity; Schema, identity, permissions, state, and idempotency remain enforced.
 
-Experiment writes use the [chat approval protocol](chat-approvals.md): request-bound calls freeze exact arguments and an Agent continuation, return 202 approval_required, and suspend the request. A separate browser Session decision executes the write, registers evidence, and requeues the same request atomically; its approval UUID is the idempotency key. Rejection cancels the pending request and restores chat input without rolling back earlier approved writes. This gate also applies in laboratory mode and does not affect scheduled jobs or non-chat Tool calls. See [experiment sharing](experiment-data.md) for fields, boundaries, and cleanup.
+All generic write/confirm tools use the [chat approval protocol](chat-approvals.md): request-bound calls freeze exact arguments and an Agent continuation, return 202 approval_required, and suspend the request. A separate browser Session decision executes the write, registers evidence, and requeues the same request atomically; its approval UUID is the ordinary idempotency key, while source-scoped tools preserve their own source_key/episode_id contract. Rejection cancels the pending request and restores chat input without rolling back earlier approved writes. This gate also applies in laboratory mode and does not affect scheduled jobs or non-chat Tool calls. See [experiment sharing](experiment-data.md) for fields, boundaries, and cleanup.

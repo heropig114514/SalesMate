@@ -1,5 +1,5 @@
 """Responsibility: Enforce user approval for request-bound chat writes and resume the suspended answer.
-Implementation: Freeze customer creation or experimental arguments and Agent loop state; a Session-only decision executes once. Real customers additionally require private request ownership and no active exact-name duplicate, even in laboratory mode.
+Implementation: Freeze any published business mutation and Agent loop state; a Session-only decision executes once. Real customers additionally require private request ownership and no active exact-name duplicate, even in laboratory mode.
 Relationships: tool_reads proposes writes; services claims continuations and projects status; ApprovalDecisionView accepts browser decisions, independently of background jobs and ordinary Tool/MCP calls.
 Directory:
 - approval_data: Project reviewable operation content without the Agent checkpoint.
@@ -21,6 +21,8 @@ from datetime import timedelta
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.core.exceptions import ObjectDoesNotExist
+from django.http import Http404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiTypes
 from rest_framework.authentication import SessionAuthentication
@@ -79,7 +81,7 @@ def target_fingerprint(name, arguments):
 # Function: Freeze a chat mutation without executing any business handler.
 # Inputs: Locked processing ``request``, live ``spec``, exact ``arguments``, and Agent ``continuation``.
 # Outputs: HTTP-202 receipt with approval_required and reviewable operation.
-# Logic: Validate the checkpoint, target version, and private customer name before atomically suspending the request with a frozen approval.
+# Logic: Validate the checkpoint and applicable experiment/customer invariants before freezing any live registry write or confirm operation.
 # Constraints: Requires caller's transaction; no fallback for older Agents without resumable state and no laboratory bypass.
 def propose(request, spec, arguments, continuation):
     validate(continuation, CONTINUATION_SCHEMA)
@@ -119,11 +121,11 @@ def resume_data(request):
 # Function: Apply a browser user's decision to one frozen chat write.
 # Inputs: Session-authenticated ``actor``, ``request_id``, ``approval_id``, and approve/reject ``decision``.
 # Outputs: Locked AnswerRequest after cancellation or successful execution and requeue.
-# Logic: Lock owner/request/approval; recheck submitter, expiry, schema, version and customer-name conflicts; execute once with the approval UUID as idempotency key and persist canonical evidence plus resume state atomically.
-# Constraints: No model calls, external sends, automatic retries, changed arguments, or rollback of earlier approved writes; execution failures roll back this decision and leave it reviewable.
+# Logic: Lock owner/request/approval; recheck submitter, expiry, schema, version and customer-name conflicts; reuse native execution and confirmation services, choosing approval UUID or source-key idempotency, then persist actual completed/queued/pending receipts and resume state atomically.
+# Constraints: Published handlers retain their own service effects; external actions keep their business confirmation, and execution errors roll back this decision without retries or changed arguments.
 @transaction.atomic
 def decide(actor, request_id, approval_id, decision):
-    from .tool_reads import ALLOWED_TOOLS, evidence_for
+    from .tool_reads import evidence_for
 
     if decision not in {"approve", "reject"}:
         raise ValidationError("decision 必须为 approve 或 reject。")
@@ -147,7 +149,7 @@ def decide(actor, request_id, approval_id, decision):
         if approval.expires_at <= timezone.now():
             raise Conflict("审批已过期，请拒绝本次操作后重新提问。")
         spec = build_registry().get(approval.tool)
-        if approval.tool not in ALLOWED_TOOLS or spec is None or spec["executionMode"] != "write" or spec["inputSchema"] != approval.schema:
+        if spec is None or spec["executionMode"] not in {"write", "confirm"} or spec["inputSchema"] != approval.schema:
             raise Conflict("工具定义已变化，请拒绝本次操作后重新提问。")
         tool_services.authorize(request.owner, None, approval.tool)
         validate(approval.arguments, spec["inputSchema"])
@@ -165,9 +167,18 @@ def decide(actor, request_id, approval_id, decision):
                 raise Conflict("待审批记录已删除，请重新提问。")
             if target_fingerprint(approval.tool, approval.arguments) != approval.target_fingerprint:
                 raise Conflict("待审批记录已变化，请重新申请审批。")
-        business = tool_services.invoke(request.owner, None, approval.tool, approval.arguments, str(approval.pk))
-        if business["status"] != "completed":
-            raise Conflict("操作未完成，审批未提交。")
+        # Source-key tools own their idempotency; ordinary calls reuse the frozen approval UUID.
+        key = None if spec.get("idempotency_scope") in {"source_key", "episode_id"} else str(approval.pk)
+        try:
+            business = tool_services.invoke(request.owner, None, approval.tool, approval.arguments, key)
+            if spec["executionMode"] == "confirm":
+                # This Session decision approves the same frozen native proposal, preserving its audit and validation.
+                native = tool_services.decide(request.owner, business["proposal"]["id"], "approve")
+                business = {"tool": approval.tool, **native["result"]}
+        except (ObjectDoesNotExist, Http404):
+            raise NotFound("记录不存在或未授权。") from None
+        if business["status"] not in {"completed", "accepted", "confirmation_required"}:
+            raise Conflict("工具返回非预期执行状态，审批未提交。")
         read = ToolRead(request=request, tool=approval.tool, arguments=approval.arguments, result=business)
         read.evidence_items = evidence_for(read.pk, approval.tool, business["data"])
         read.save()

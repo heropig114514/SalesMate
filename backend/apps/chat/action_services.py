@@ -1,11 +1,10 @@
-"""Responsibility: Prepare and execute employee-confirmed chat order and email proposals.
+"""Responsibility: Prepare and execute employee-confirmed chat order and email proposals; generic reads use MCP dispatch.
 Implementation: Freeze validated content without business writes; Session decisions revalidate under locks and commit once. External sends remain the existing worker's responsibility.
 Relationships: action_contract publishes inputs; tool_reads persists evidence in the preparation transaction; sales services own business validation, audits and dependency invalidation.
 Directory:
 - strict_company_ids: Resolve genuine business grants independently of laboratory bypass.
 - lock_operation_owners: Serialize business snapshots with ordinary writers in a stable lock order.
 - require_request: Verify the employee and private workspace binding.
-- business_read: Read authorized orders and private connection metadata.
 - order_plan: Validate a complete order change and compute its frozen preview.
 - email_plan: Validate Gmail ownership, content and stored send authorization without network calls.
 - proposal_data: Project the closed Agent response using authoritative execution state.
@@ -102,40 +101,6 @@ def require_request(actor, request):
             or request.user_message.owner_id != actor.pk
             or request.user_message.conversation_id != request.conversation_id):
         raise NotFound("聊天请求不存在或不属于当前员工。")
-
-
-# Function: Read business targets without leaking credentials or laboratory-global records.
-# Inputs: Employee `actor`, allowed read `name`, and schema-validated `args`.
-# Outputs: Serialized record or bounded result page with count, page and page_size.
-# Logic: Orders use real company grants; connections always filter owner and serialize public fields only.
-# Constraints: Explicit company is required for order lists; this function performs no mutation.
-def business_read(actor, name, args):
-    order = name.startswith("orders.")
-    if order:
-        query = sales.SalesOrder.objects.filter(company_id__in=strict_company_ids(actor))
-        serializer = serializers.SalesOrderSerializer
-    else:
-        query = sales.Connection.objects.filter(owner=actor)
-        serializer = serializers.ConnectionSerializer
-    if name.endswith(".get"):
-        item = query.filter(pk=args["id"]).first()
-        if item is None:
-            raise NotFound("记录不存在或未授权。")
-        return serializer(item).data
-    if order:
-        if not Company.objects.filter(pk=args["company"], pk__in=strict_company_ids(actor)).exists():
-            raise NotFound("客户不存在或未授权。")
-        query = query.filter(company_id=args["company"])
-        if args.get("q"):
-            query = query.filter(number__icontains=args["q"])
-        if args.get("status"):
-            query = query.filter(status=args["status"])
-    archived = args.get("archived", "false")
-    if archived != "all":
-        query = query.filter(archived=archived == "true")
-    page, size = args.get("page", 1), args.get("page_size", 30)
-    return {"count": query.count(), "page": page, "page_size": size,
-        "results": serializer(query.order_by("created_at", "pk")[(page - 1) * size:page * size], many=True).data}
 
 
 # Function: Validate all proposed order mutations and derive exact before/after content.

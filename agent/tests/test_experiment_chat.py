@@ -33,8 +33,8 @@ class ExperimentChatTests(unittest.TestCase):
         self.assertEqual(prompt[0], file)
 
     # Function: Ensure new pagination tools use existing budgets.
-    # Inputs: Default page size, an over-budget value, and a write-tool name.
-    # Outputs: Default size is 20; excessive sizes and write tools raise ChatValidationError.
+    # Inputs: Default page size, an over-budget value, with published writes validated separately against live schemas.
+    # Outputs: Default size is 20; excessive sizes raise ChatValidationError.
     # Logic: Check the model-action argument entry point directly; the backend separately validates the complete schema.
     # Constraints: Do not mutate the original dictionary or treat client validation as authorization.
     def test_rows_keep_existing_page_budget(self):
@@ -42,6 +42,6 @@ class ExperimentChatTests(unittest.TestCase):
         _, parsed = _workspace_arguments("experiments.rows", args)
         self.assertEqual(parsed["page_size"], 20)
         self.assertNotIn("page_size", args)
-        for name, values in (("experiments.rows", {**args, "page_size": 21}), ("customers.create", {})):
+        for name, values in (("experiments.rows", {**args, "page_size": 21}),):
             with self.assertRaises(ChatValidationError):
                 _workspace_arguments(name, values)

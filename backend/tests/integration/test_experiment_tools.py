@@ -1,5 +1,5 @@
 """Responsibility: Verifies that an ordinary account reads another user's shared experiment data through the tool protocol and web Agent.
-Implementation: Creates fixtures in isolated PostgreSQL; uses real authenticated HTTP and Agent workflow, mocking only model decisions. Discovery includes the seven independent chat business capabilities.
+Implementation: Creates fixtures in isolated PostgreSQL; uses real authenticated HTTP and Agent workflow, mocking only model decisions. Discovery includes the entire MCP registry plus three independent proposals.
 Relationships: `experiments`, `agent_tools`, and `chat.tool_reads`; MCP stdio is separately connected to this service by SDK tests.
 Directory:
 - ExperimentToolTests: Cross-account tool and chat end-to-end verification.
@@ -45,7 +45,7 @@ from apps.sales.experiment_writes import WRITE_MODELS
 from apps.sales.experiments import APPROVED_BATCHES, TABLES
 from apps.sales.management.commands.seed_kg_lab import run_seed, verify_manifest
 from apps.sales.models import AuditEvent, Conversation
-from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS
+from integrations.salesmate_tools.read_contract import EXPERIMENT_TOOLS, EXPERIMENT_WRITE_TOOLS
 
 
 # Function: Verifies boundaries of a shared batch under two real identity protocols.
@@ -143,7 +143,7 @@ class ExperimentToolTests(LiveServerTestCase):
     # Function: Verifies another account's built-in Agent reads experiment data through real HTTP and saves citations.
     # Inputs: An ordinary reader's general conversation and deterministic model decisions.
     # Outputs: All three experiment tools succeed; answer and citations belong to the reader while source text retains the original batch ownership.
-    # Logic: Actually claims a request, discovers all fifteen tools, reads the directory, queries tables, reads files, reports an answer, then verifies persisted sources.
+    # Logic: Actually claims a request, discovers the complete paginated catalog, reads the directory, queries tables, reads files, reports an answer, then verifies persisted sources.
     # Constraints: The model boundary is mocked and does not prove real-model planning quality; all other transport, authorization, and evidence registration are real.
     def test_chat_agent_http_evidence_round_trip(self):
         conversation = Conversation.objects.create(owner=self.reader)
@@ -155,12 +155,12 @@ class ExperimentToolTests(LiveServerTestCase):
         # Function: Chooses the next step or cited answer from real tool results.
         # Inputs: `messages` is workflow-provided prompting and `max_tokens` is the unchanged model budget.
         # Outputs: A standard JSON tool decision or final answer with real source identifiers.
-        # Logic: After confirming all fifteen tool candidates, reads the directory, attachment table, and text, then cites the actually displayed file-chunk evidence.
+        # Logic: After confirming all published tools, reads the directory, attachment table, and text, then cites the actually displayed file-chunk evidence.
         # Constraints: Does not construct fabricated sources; the mock applies only to the language-model boundary.
         def decide(messages, *, max_tokens):
             payload = json.loads(messages[-1]["content"])
             count = len(payload["tool_results"])
-            self.assertEqual({item["name"] for item in payload["available_tools"]}, WORKSPACE_TOOLS | {
+            self.assertEqual({item["name"] for item in payload["available_tools"]}, set(build_registry()) | {
                 "orders.list", "orders.get", "connections.list", "connections.get",
                 "chat_actions.prepare_order_update", "chat_actions.prepare_email", "chat_actions.get"})
             if count == 0:

@@ -1,6 +1,6 @@
 /**
  * Responsibility: Verify the real chat approval dialog, cancellation, and resumption in a browser.
- * Implementation: Review real customer names separately from synthetic record previews; serve repository assets and mock only HTTP responses; exercise Session decision payloads, duplicate clicks, conflicts, refresh recovery, escaping, and desktop/mobile layout.
+ * Implementation: Review real customer names, synthetic record previews and complete generic tool arguments; serve repository assets and mock only HTTP responses; exercise Session decision payloads, duplicate clicks, conflicts, refresh recovery, escaping, and desktop/mobile layout.
  * Relationships: assistant-widget.js, assistant.js, and assistant-widget.css; test_chat_approvals.py separately exercises real PostgreSQL and authentication.
  * Directory: main runs the browser checks; anonymous callbacks serve files and fixture responses.
  * Variable index: FRONTEND locates real assets; OUTPUT stores ignored screenshots; other top-level bindings import test dependencies.
@@ -15,7 +15,7 @@ const OUTPUT = path.resolve(__dirname, '../artifacts/browser');
 
 /** Function: Run actual DOM interactions against controlled approval states.
  * Inputs: Environment Playwright/browser paths and repository assets. Outputs: Assertions, screenshots, and a pass line.
- * Logic: Pause polling time, allow only localhost, count decisions, and verify customer creation never renders experimental fields or implies email sending.
+ * Logic: Pause polling time, allow only localhost, count decisions, and verify customer/generic creation never renders experimental deletion fields or executes injected HTML.
  * Constraints: HTTP/model execution is mocked here; no real writes, accounts, or external network calls. */
 async function main() {
   const server = http.createServer((req, res) => {
@@ -135,8 +135,22 @@ async function main() {
     await dialog.locator('[data-decision="approve"]').click();
     await dialog.waitFor({ state: 'detached' });
     assert.deepEqual(decisions, ['approve', 'reject', 'approve', 'approve']);
+    // Generic writes show their actual tool and frozen parameters, with HTML treated as text.
+    answer.status = 'awaiting_approval';
+    answer.approval = { id: 'approval-4', tool: 'products.create', status: 'pending',
+      arguments: { data: { sku: 'CHAT-TEST', name: '<img src=x onerror="window.injected=true">', unit_price: '12.50' } } };
+    await page.evaluate(async () => { window.chatTest.close(); await window.chatTest.open(); });
+    await dialog.waitFor({ state: 'visible' });
+    assert.match(await dialog.textContent(), /products.create/);
+    assert.deepEqual(JSON.parse(await dialog.locator('pre').textContent()), answer.approval.arguments);
+    assert.doesNotMatch(await dialog.textContent(), /实验批次|数据表|将删除/);
+    assert.equal(await dialog.locator('img').count(), 0);
+    assert.equal(await page.evaluate(() => window.injected), undefined);
+    await dialog.locator('[data-decision="reject"]').click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.deepEqual(decisions, ['approve', 'reject', 'approve', 'approve', 'reject']);
     assert.deepEqual(errors, []);
-    console.log('Chat approval browser checks passed: review, escaping, conflict, rejection, resume, duplicate clicks, mobile layout, and separate customer-registration review.');
+    console.log('Chat approval browser checks passed: review, escaping, conflict, rejection, resume, duplicate clicks, mobile layout, customer-registration review, and generic frozen-argument review.');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

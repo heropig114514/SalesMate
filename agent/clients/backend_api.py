@@ -1,5 +1,5 @@
 """Responsibility: Map the minimal BackendClient workflow protocol to the Django Agent HTTP API.
-Implementation: Customer creation uses the same checkpointed browser decision as experiment writes. Maintain identity, ETag, and lease context; chat writes carry a resumable checkpoint and can return approval_required without execution. Email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
+Implementation: Aggregate every chat catalog page; all published generic writes use the checkpointed browser decision protocol. Maintain identity, ETag, and lease context; chat writes carry a resumable checkpoint and can return approval_required without execution. Email submission defaults to gmail_real, with qq_real explicitly selected for QQ.
 Relationships: Gmail/QQ workers share this transport; L2-L4 retain their protocols, parameters, and prompt versions.
 Directory:
 - BackendClient: Declare the minimal L1-L4 backend protocol.
@@ -88,7 +88,7 @@ from urllib.parse import quote, urlencode
 import requests
 
 from agent.skills import load_skill
-from agent.clients.chat_actions import ACTION_TOOLS, WORKSPACE_WRITE_TOOLS, WORKSPACE_TOOLS, validate_action_arguments
+from agent.clients.chat_actions import ACTION_TOOLS, validate_action_arguments
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
@@ -238,7 +238,7 @@ class BackendClient(Protocol):
     # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
-    # Function: Read workspace data or suspend customer/experiment writes for explicit browser approval.
+    # Function: Read published workspace data or suspend a generic business write for browser approval.
     # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` for suspended writes; instance authentication supplies identity.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Declare the protocol only; concrete clients implement transport.
@@ -837,30 +837,38 @@ class DjangoBackendClient:
     # Function: Discover the read and confirmation proposal tools actually authorized for the request.
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
-    # Logic: Issue one GET and validate protocol version, request, page, and count.
+    # Logic: Fetch every catalog page at the existing size of thirty; reject changing counts, duplicate names, missing pages or request/version mismatches.
     # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_tools(self, request_id: str) -> dict[str, Any]:
         """Read tools available to this processing request; do not infer permissions from the global registry."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tools request")
-        response, _ = self._request(
-            "GET", "chat/tools/", query={"request_id": request_id, "page": 1, "page_size": 30}
-        )
-        document = self._object(response, "Chat tools")
-        if (
-            document.get("contract_version") != "chat-tools-v1"
-            or document.get("request_id") != request_id
-            or type(document.get("count")) is not int
-            or type(document.get("page")) is not int
-            or type(document.get("page_size")) is not int
-            or document["page"] != 1
-            or document["count"] > document["page_size"]
-        ):
-            raise BackendContractError("Chat tools catalog version, request, or pagination does not match.")
-        tools = document.get("tools")
-        self._object_list(tools, "Chat tools tools")
-        if len(tools) != document["count"]:
-            raise BackendContractError("Chat tools catalog count does not match.")
-        return document
+        entries, names, count, page = [], set(), None, 1
+        while True:
+            response, _ = self._request(
+                "GET", "chat/tools/", query={"request_id": request_id, "page": page, "page_size": 30}
+            )
+            document = self._object(response, "Chat tools")
+            if (document.get("contract_version") != "chat-tools-v1"
+                    or document.get("request_id") != request_id
+                    or type(document.get("count")) is not int or document["count"] < 0
+                    or type(document.get("page")) is not int or document["page"] != page
+                    or type(document.get("page_size")) is not int or document["page_size"] != 30
+                    or (count is not None and document["count"] != count)):
+                raise BackendContractError("Chat tools catalog version, request, or pagination does not match.")
+            count = document["count"]
+            batch = document.get("tools")
+            self._object_list(batch, "Chat tools tools")
+            if len(batch) != min(30, count - len(entries)):
+                raise BackendContractError("Chat tools catalog count does not match.")
+            for entry in batch:
+                name = entry.get("name")
+                if not isinstance(name, str) or not name or name in names:
+                    raise BackendContractError("Chat tools catalog has invalid or duplicate names.")
+                names.add(name)
+            entries.extend(batch)
+            if len(entries) == count:
+                return {"contract_version": "chat-tools-v1", "request_id": request_id, "tools": entries, "count": count}
+            page += 1
 
     # Function: Read the authoritative status of the current employee's request.
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
@@ -881,24 +889,23 @@ class DjangoBackendClient:
             raise BackendContractError("Chat request status does not match this request.")
         return document
 
-    # Function: Read workspace data or suspend customer/experiment writes for explicit browser approval.
+    # Function: Read published workspace data or suspend a generic business write for browser approval.
     # Inputs: `request_id`, registered `name`, JSON `arguments`, and optional keyword `continuation` holding Agent loop state; instance credentials supply identity.
     # Outputs: Completed read receipt or approval_required with a frozen proposal; transport/contract errors propagate.
-    # Logic: Require a checkpoint for every workspace write, send once, and verify request/tool bindings without accepting immediate write completion.
+    # Logic: Use the workflow-supplied checkpoint to distinguish generic writes; send once and verify matching approval or read receipts without a static name list.
     # Constraints: Never approve, retry, or interpret a pending proposal as successful business execution.
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any], *, continuation: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
         """Invoke request-bound read and confirmation proposal tools; the backend confirms both tool results and evidence."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool request")
-        if name not in WORKSPACE_TOOLS:
-            raise BackendContractError("Chat tools allow registered reads and confirmation proposals, never direct writes or approval.")
+        self._required_string({"name": name}, "name", "Chat tool")
         if not isinstance(arguments, Mapping):
             raise BackendContractError("Chat tool arguments must be an object.")
-        if name in WORKSPACE_WRITE_TOOLS and not isinstance(continuation, Mapping):
+        if continuation is not None and not isinstance(continuation, Mapping):
             raise BackendContractError("A chat write requires a continuation checkpoint and browser approval.")
-        if name not in WORKSPACE_WRITE_TOOLS and continuation is not None:
-            raise BackendContractError("Only browser-approved workspace writes accept a continuation checkpoint.")
+        if name in ACTION_TOOLS and continuation is not None:
+            raise BackendContractError("Independent proposals do not accept a write checkpoint.")
         if name in ACTION_TOOLS:
             try:
                 validate_action_arguments(name, dict(arguments))
@@ -914,18 +921,18 @@ class DjangoBackendClient:
         if document.get("request_id") != request_id or document.get("tool") != name:
             raise BackendContractError("Chat tool response does not match this request or tool.")
         if document.get("status") == "approval_required":
-            if name not in WORKSPACE_WRITE_TOOLS:
+            if continuation is None:
                 raise BackendContractError("This tool does not use the suspended-write approval contract.")
             proposal = self._object(document.get("approval"), "Chat approval")
             if proposal.get("request_id") != request_id or proposal.get("tool") != name or proposal.get("status") != "pending" or not proposal.get("id"):
                 raise BackendContractError("Chat approval does not match the pending operation.")
             return document
-        if name in WORKSPACE_WRITE_TOOLS:
+        if continuation is not None:
             raise BackendContractError("A chat write cannot return immediate execution; browser approval is required.")
         if document.get("status") != "completed":
             raise BackendContractError("Chat tool did not confirm completion.")
-        if not isinstance(document.get("data"), Mapping):
-            raise BackendContractError("Chat tool data must be an object.")
+        if "data" not in document:
+            raise BackendContractError("Chat tool data is missing.")
         self._object_list(document.get("evidence_items"), "Chat tool evidence_items")
         return document
 

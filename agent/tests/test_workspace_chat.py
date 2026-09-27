@@ -349,7 +349,7 @@ class WorkspaceChatTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["chat_prompt_version"], WORKSPACE_CHAT_PROMPT_VERSION)
         self.assertEqual(backend.tool_calls, [])
-        self.assertEqual(backend.catalog_calls, [])
+        self.assertEqual(backend.catalog_calls, ["request-1"])
         self.assertEqual(len(provider.calls), 1)
 
     # Function: Given a simulated clarification answer to a Chinese send request, assert no tool call and no claimed action.

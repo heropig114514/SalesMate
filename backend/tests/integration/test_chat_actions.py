@@ -134,8 +134,8 @@ class ChatActionTests(TestCase):
 
     # Function: Verify discoverability, exact modes, schemas and private business reads.
     # Inputs: Real processing request and an unrelated employee connection.
-    # Outputs: Seven new discoverable tools, complete order lines and credential-free owner-scoped connection data.
-    # Logic: Exercise discovery and pagination through HTTP, then inspect registered evidence.
+    # Outputs: Published proposal modes, complete order lines and credential-free owner-scoped connection data under normal access.
+    # Logic: Generic order lists accept omitted company just like MCP; Exercise discovery and pagination through HTTP, then inspect registered evidence.
     # Constraints: Existing experiment tools are not removed.
     def test_catalog_and_business_reads(self):
         response = self.agent.get("/api/v1/agent/chat/tools/", {"request_id": str(self.request.pk), "page_size": 100})
@@ -150,7 +150,7 @@ class ChatActionTests(TestCase):
         page = self.call("connections.list", {"page_size": 1})
         self.assertEqual(page.data["data"]["count"], 1)
         self.assertNotIn("encrypted_credentials", page.data["data"]["results"][0])
-        self.assertEqual(self.call("orders.list", {}).status_code, 400)
+        self.assertEqual(self.call("orders.list", {}).status_code, 200)
         self.assertEqual(self.call("orders.list", {"company": str(self.company.pk)}).data["data"]["count"], 1)
 
     # Function: Verify preview-only preparation followed by one complete business commit.
@@ -388,13 +388,13 @@ class ChatActionTests(TestCase):
 
     # Function: Verify laboratory configuration cannot disable business proposal authorization.
     # Inputs: Open-mode override, foreign connection and changed order version.
-    # Outputs: Owner-scoped reads, actual confirmation requirements and 409 version rejection.
-    # Logic: Enable laboratory mode only for this explicit boundary test.
+    # Outputs: Laboratory-visible generic connection metadata and 409 rejection for stale independent proposal approval.
+    # Logic: Generic reads follow the retained laboratory setting; independent proposals still recheck private targets and versions. Enable laboratory mode only for this explicit boundary test.
     # Constraints: Does not change runtime defaults or existing experiment-tool behavior.
     def test_laboratory_does_not_relax_scope_or_versions(self):
         with override_settings(LAB_OPEN_ACCESS=True):
             foreign = models.Connection.objects.create(owner=self.other, provider="gmail", account="other@example.com")
-            self.assertEqual(self.call("connections.get", {"id": str(foreign.pk)}).status_code, 404)
+            self.assertEqual(self.call("connections.get", {"id": str(foreign.pk)}).status_code, 200)
             proposal_id = self.prepare()
             models.SalesOrder.objects.filter(pk=self.order.pk).update(revision=self.order.revision + 1)
             self.assertEqual(self.decision(proposal_id).status_code, 409)

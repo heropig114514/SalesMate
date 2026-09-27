@@ -1,8 +1,8 @@
 """Responsibility: Validate frozen order/email proposals independently of model assertions.
 Implementation: Closed argument/receipt checks and current-request target evidence;
-customer creation and experiments instead use resumable browser-approved writes.
+generic business writes instead use resumable browser approval based on the live catalog.
 Relationships: workflows.chat enforces these contracts; backend_api transports calls;
-shared read_contract declares checkpointed writes, never Agent approval authority.
+the live catalog declares generic execution modes, never Agent approval authority.
 Directory:
 - _object: Reject extra or missing object fields.
 - _uuid: Validate a string UUID.
@@ -21,7 +21,6 @@ Variable index:
 - PREPARE_TOOLS: Independent unexecuted proposal tools.
 - ACTION_TOOLS: Independent proposal and status tools.
 - BUSINESS_READ_TOOLS: Private mailbox and authorized order reads.
-- WORKSPACE_TOOLS: Reads, independent proposals and browser-approved workspace writes.
 - CONFIRMATION_CONTRACT: Independent proposal protocol version.
 - ORDER_FIELDS: Editable order header fields.
 - LINE_FIELDS: Editable existing order line fields.
@@ -32,7 +31,6 @@ from decimal import Decimal
 import re
 import uuid
 
-from integrations.salesmate_tools.read_contract import WORKSPACE_READ_TOOLS, WORKSPACE_WRITE_TOOLS
 
 PREPARE_ORDER = "chat_actions.prepare_order_update"
 PREPARE_EMAIL = "chat_actions.prepare_email"
@@ -40,7 +38,6 @@ GET_ACTION = "chat_actions.get"
 PREPARE_TOOLS = frozenset({PREPARE_ORDER, PREPARE_EMAIL})
 ACTION_TOOLS = PREPARE_TOOLS | {GET_ACTION}
 BUSINESS_READ_TOOLS = frozenset({"orders.list", "orders.get", "connections.list", "connections.get"})
-WORKSPACE_TOOLS = WORKSPACE_READ_TOOLS | BUSINESS_READ_TOOLS | ACTION_TOOLS | WORKSPACE_WRITE_TOOLS
 CONFIRMATION_CONTRACT = "chat-actions-v1"
 ORDER_FIELDS = frozenset({"number", "currency", "notes"})
 LINE_FIELDS = frozenset({"description", "quantity", "unit_price", "discount"})

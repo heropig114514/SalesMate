@@ -1,5 +1,5 @@
 """Responsibility: Verify the complete backend path for workspace chat read-only interfaces, stable evidence, and original business permissions.
-Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the sixteen-tool catalog with customer creation requiring browser approval and unchanged registry-mode enforcement; simulate failures and concurrent waits only at explicit boundaries.
+Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the complete MCP catalog, checkpointed writes and live registry modes; simulate failures and concurrent waits only at explicit boundaries.
 Relationships: chat.tool_reads/tool_views, the agent_tools registry, and chat.services; no external model or mailbox calls.
 Directory:
 - ChatToolTests: Integration tests for request-bound tool services.
@@ -9,11 +9,11 @@ Directory:
 - ChatToolTests.test_search_context_answer_round_trip: Search, details for two companies, context compatibility, and citation persistence.
 - ChatToolTests.test_search_pagination_and_empty: Pagination completeness and empty-result evidence.
 - ChatToolTests.test_shared_search_does_not_grant_detail: Shared directory visibility with private-detail rejection while chat can still complete.
-- ChatToolTests.test_schema_and_tool_whitelist: Reject identity injection, malformed registered tools and unexposed writes.
+- ChatToolTests.test_registry_and_argument_schema: Reject identity injection, malformed registered tools and unexposed writes.
 - ChatToolTests.test_auth_request_and_terminal_boundaries: Credential isolation, request ownership, and terminal-state rejection.
 - ChatToolTests.test_read_versions_are_immutable: Repeated reads do not overwrite old evidence.
 - ChatToolTests.test_failure_rolls_back_and_hides_internal_error: Exception rollback, safe errors, and retained state.
-- ChatToolTests.test_registry_mode_is_rechecked: Reject both discovery and execution after registered mode changes.
+- ChatToolTests.test_registry_mode_is_rechecked: Retain discovery and enforce the changed execution mode.
 - ChatToolConcurrencyTests: Serialization tests for tool reads and final reports.
 - ChatToolConcurrencyTests.test_answer_waits_for_inflight_read: Allow request completion only after in-flight reads finish.
 - ChatToolConcurrencyTests.test_answer_waits_for_inflight_read.blocked_execute: Place a synchronization barrier before the real handler.
@@ -109,10 +109,10 @@ class ChatToolTests(TestCase):
             format="json",
         )
 
-    # Function: Verify the catalog reflects the current allowlist and original argument contracts accurately.
+    # Function: Verify the catalog reflects the complete registry and original argument contracts accurately.
     # Inputs: Processing request, pagination parameters, and invalid query variants.
-    # Outputs: Sixteen tools with exact read/write/confirm modes and 400 for invalid queries.
-    # Logic: Compare paginated registry schemas, including private customer creation and seven independent business capabilities.
+    # Outputs: All published tools with exact read/write/confirm modes and 400 for invalid queries.
+    # Logic: Compare paginated registry schemas, including generic operations and three independent proposal capabilities.
     # Constraints: Customer creation and three experiment writes require checkpoints; confirmation proposals never execute immediately.
     def test_catalog_and_schema(self):
         response = self.client.get(
@@ -120,10 +120,10 @@ class ChatToolTests(TestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response["Cache-Control"], "no-store")
-        self.assertEqual(response.data["count"], 16)
+        self.assertEqual(response.data["count"], len(build_registry()) + len(action_contract.ACTION_TOOLS))
         self.assertEqual(
             {row["name"] for row in response.data["tools"]},
-            tool_reads.ALLOWED_TOOLS | action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS,
+            set(sorted(set(build_registry()) | action_contract.ACTION_TOOLS)[:30]),
         )
         registry = {**build_registry(), **action_contract.catalog()}
         for row in response.data["tools"]:
@@ -133,7 +133,7 @@ class ChatToolTests(TestCase):
             BASE + "tools/",
             {"request_id": str(self.request.pk), "page": 2, "page_size": 1},
         )
-        self.assertEqual((page.data["count"], len(page.data["tools"])), (16, 1))
+        self.assertEqual((page.data["count"], len(page.data["tools"])), (len(build_registry()) + 3, 1))
         for query in (
             {},
             {"page": "x"},
@@ -255,21 +255,21 @@ class ChatToolTests(TestCase):
         )
         self.assertEqual(saved.status_code, 200)
 
-    # Function: Verify the tool allowlist and argument schema prevent unauthorized access through identity parameters.
-    # Inputs: Additional identity/idempotency fields, missing locator arguments, invalid pagination, and names outside the allowlist.
+    # Function: Verify the live registry and argument schema prevent unauthorized access through identity parameters.
+    # Inputs: Additional identity/idempotency fields, missing locator arguments, invalid pagination, and unregistered names.
     # Outputs: Structural errors return 400, tool-scope errors return 403, and no read records are created.
-    # Logic: Reject unexposed customer deletion/analysis; distinguish malformed published customer creation from unauthorized tool names.
+    # Logic: Reject unregistered names and malformed arguments for published customer, mailbox and knowledge tools.
     # Constraints: Do not guess customers by removing company_id locator requirements.
-    def test_schema_and_tool_whitelist(self):
+    def test_registry_and_argument_schema(self):
         for name in (
             "customers.delete",
-            "customers.analyze",
-            "mailboxes.sync",
-            "knowledge.get",
             "nonexistent",
         ):
             self.assertEqual(self.read(name, {}).status_code, 403)
         for name, args in (
+            ("customers.analyze", {}),
+            ("mailboxes.sync", {}),
+            ("knowledge.get", {}),
             ("customers.create", {}),
             ("customers.context", {}),
             ("customers.context", {"company_id": "bad"}),
@@ -401,10 +401,10 @@ class ChatToolTests(TestCase):
             self.request.refresh_from_db()
             self.assertEqual(self.request.status, "processing")
 
-    # Function: Verify an allowlisted tool is no longer exposed after changing to write mode.
+    # Function: Verify live execution mode controls checkpoint requirements without hiding the tool.
     # Inputs: Replace registry customers.search executionMode only within the test.
-    # Outputs: The catalog removes the tool; calls return 403 without executing the handler.
-    # Logic: Discovery retains the other original tools and seven independent business capabilities; execution rechecks the live read mode of customers.search.
+    # Outputs: The catalog retains the tool; a missing write checkpoint returns 400 without executing the handler.
+    # Logic: Compare the first complete-registry page and assert that switching a read to write cannot silently execute without review.
     # Constraints: Only the registry is mocked; real business code and database are unchanged.
     def test_registry_mode_is_rechecked(self):
         registry = copy.deepcopy(build_registry())
@@ -418,9 +418,9 @@ class ChatToolTests(TestCase):
                 BASE + "tools/", {"request_id": str(self.request.pk)}
             )
             self.assertEqual(
-                [item["name"] for item in catalog.data["tools"]], sorted((tool_reads.ALLOWED_TOOLS - {"customers.search"}) | action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS)
+                [item["name"] for item in catalog.data["tools"]], sorted(set(registry) | action_contract.ACTION_TOOLS)[:30]
             )
-            self.assertEqual(self.read("customers.search", {}).status_code, 403)
+            self.assertEqual(self.read("customers.search", {}).status_code, 400)
             handler.assert_not_called()
 
 
