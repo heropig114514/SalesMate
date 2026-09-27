@@ -1,5 +1,5 @@
 """Responsibility: Manage mailbox batches, per-message progress, and durable state required for recovery.
-Implementation: Explicit retries and Worker claims are confined to the authenticated employee; row locks serialize requests and freeze user scope, disabled QQ rejects queueing and claiming, batch leases reject old executors, and counts derive from jobs.
+Implementation: Confine retries and claims to the employee; serialize frozen scope and leases with row locks, derive counts from jobs, and preserve safe Gmail reauthorization guidance independently of per-email failures.
 Relationships: Gmail and QQ share the durable queue, with worker dispatching providers; processing_views provides progress and explicit retry.
 Directory:
 - request_run: Create a bounded mailbox batch and reject duplicate active batches.
@@ -151,7 +151,7 @@ def record_event(run_id, token, stage, data):
 # Function: Complete a mailbox batch and save refreshed credentials and safe statistics.
 # Inputs: `run_id` and `token` are execution credentials, `result` is the Agent result, and `authorization` is an optional refreshed credential.
 # Outputs: Terminal batch representation.
-# Logic: Gmail or QQ per-message failure produces partial or failed; unfinished jobs and sources fail explicitly; only Gmail can submit refreshed credentials.
+# Logic: Gmail/QQ per-message failures produce partial or failed; unfinished work fails explicitly. Typed Gmail grant rejection selects fixed reconnection guidance, never an arbitrary provider message; only Gmail may submit refreshed credentials.
 # Constraints: Does not retry automatically; batch completion does not claim every company profile is complete, which run_data queries separately.
 @transaction.atomic
 def finish_run(run_id, token, result, authorization=None):
@@ -174,6 +174,8 @@ def finish_run(run_id, token, result, authorization=None):
     completed = counts.get("completed", 0)
     run.status = "partial" if failed and completed else "failed" if failed or result.get("status") == "failed" else "completed"
     run.error = {"code": (result.get("error") or {}).get("code", "sync_failed"), "message": "同步未完整完成，请检查逐封任务或 Worker 日志。"} if result.get("status") == "failed" else None
+    if run.error and run.error["code"] == "gmail_reauthorization_required":
+        run.error["message"] = "Gmail 收信授权已失效，未能完成同步。请用当前账号在邮箱设置中重新授权 Gmail 收信，再重试本批次；仅重试邮件或连接 Gmail 发信不能恢复收信授权。"
     run.result = {key: result[key] for key in ("created_count", "updated_count", "duplicate_count", "fetched_count", "cursor_saved", "pending_message_count", "failed_email_count", "sync_mode") if key in result}
     run.finished_at = timezone.now()
     run.save(update_fields=["status", "error", "result", "finished_at"])

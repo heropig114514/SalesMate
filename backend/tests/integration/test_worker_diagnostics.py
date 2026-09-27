@@ -5,6 +5,7 @@ Directory:
 - WorkerDiagnosticsTests: Worker diagnostics regression tests.
 - WorkerDiagnosticsTests.setUp: Create synthetic worker and mailbox.
 - WorkerDiagnosticsTests.test_authorization_failure_records_stage_without_secrets: Retain terminal state and safely record authorization failure.
+- WorkerDiagnosticsTests.test_invalid_grant_preserves_reauthorization_guidance: Expose a failed pre-discovery authorization separately from empty successful synchronization.
 - WorkerDiagnosticsTests.test_sync_failure_records_execution_stage: Distinguish synchronization execution failure from authorization stage.
 - WorkerDiagnosticsTests.test_report_failure_preserves_both_locations: Retain both error locations when failure reporting is rejected.
 - WorkerDiagnosticsTests.test_error_chain_omits_messages: Exception chain excludes secrets and business body.
@@ -22,6 +23,7 @@ from django.db import connection, OperationalError
 from django.test import TransactionTestCase
 
 from apps.crm import worker
+from agent.tools.gmail import GmailReauthorizationRequired
 from apps.crm.models import AgentCredential, GmailCredential, Mailbox
 from apps.crm.processing import request_run
 
@@ -80,6 +82,28 @@ class WorkerDiagnosticsTests(TransactionTestCase):
         self.assertIn("stage=gmail_authorize", output)
         self.assertIn("worker.py:run_sync:", output)
         self.assertNotIn("secret-access-token", output)
+
+    # Function: Persist actionable guidance when OAuth fails before any messages are discovered.
+    # Inputs: Queued real test run and a mocked typed grant rejection containing a synthetic secret.
+    # Outputs: Failed batch with zero jobs, safe reauthorization code/message, no sync calls or leaked secret.
+    # Logic: Execute real worker, identity cleanup and finish_run; compare mailbox and batch error projections.
+    # Constraints: No Google or model calls; no implicit retry, credential deletion, or reclassification as success.
+    def test_invalid_grant_preserves_reauthorization_guidance(self):
+        with patch.object(worker, "create_service_from_authorization", side_effect=GmailReauthorizationRequired("secret-refresh-token")) as authorize, patch.object(worker, "sync_persisted") as sync:
+            with self.assertLogs(worker.logger, level="ERROR") as logged:
+                self.assertTrue(worker.run_sync(self.owner))
+        self.run.refresh_from_db()
+        self.mailbox.refresh_from_db()
+        self.assertEqual(self.run.status, "failed")
+        self.assertEqual(self.run.email_jobs.count(), 0)
+        self.assertEqual(self.run.error["code"], "gmail_reauthorization_required")
+        self.assertIn("重新授权 Gmail 收信", self.run.error["message"])
+        self.assertEqual(self.mailbox.sync_state["error"], self.run.error["message"])
+        self.assertNotIn("secret-refresh-token", str(self.run.error) + str(logged.output))
+        self.assertTrue(GmailCredential.objects.filter(mailbox=self.mailbox).exists())
+        self.assertFalse(AgentCredential.objects.exists())
+        authorize.assert_called_once()
+        sync.assert_not_called()
 
     # Function: Distinguish execution error after authorization.
     # Inputs: No external parameters; mock successful authorization and synchronization failure.

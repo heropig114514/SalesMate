@@ -1,5 +1,5 @@
 """Responsibility: Execute mailbox synchronization and company analysis in an isolated process.
-Implementation: Perform synchronization and profiling for an explicit employee; each work unit holds an account-shared lock and uses a revocable isolated HTTP identity. Clean stale connections according to the Django lifecycle after external calls, and record execution stage and a location without sensitive bodies on exceptions.
+Implementation: Perform synchronization and profiling for an explicit employee with an account-shared lock and isolated HTTP identity. Clean stale connections after external calls; preserve typed Gmail reauthorization failures and safe stage/location diagnostics.
 Relationships: crm_worker shares scheduling and dispatch manages temporary credentials; Gmail/QQ and L1–L4 continue reading and writing through HTTP protocol.
 Directory:
 - error_location: Extract safe code locations from an exception chain.
@@ -14,7 +14,7 @@ from pathlib import Path
 from django.db import close_old_connections, connections
 from apps.accounts.reset_locks import account_work
 
-from agent.tools.gmail import create_service_from_authorization
+from agent.tools.gmail import GmailReauthorizationRequired, create_service_from_authorization
 from agent.tools import qq_mail
 from agent.workflows.orchestration import process_jobs_once
 
@@ -51,7 +51,7 @@ def error_location(error):
 # Function: Execute one employee mailbox's durable synchronization batch.
 # Inputs: `owner` is the employee selected by shared scheduling.
 # Outputs: Whether work was claimed; final state is stored in the database.
-# Logic: The shared lock covers the full unit and exception reporting; explicitly finish expired batches, prioritize human repairs, and use temporary identity to dispatch Gmail/QQ. Clear stale connections after external waits before writing terminal state, with stage marking the failure boundary.
+# Logic: Lock the unit and report failures with their execution stage; only typed Gmail authorization rejection maps to reauthorization guidance. Prioritize human repairs, dispatch Gmail/QQ through temporary identity, and clear stale connections before terminal writes.
 # Constraints: Read Gmail/QQ only, never execute sales email or calendar actions, and do not retry failures automatically; error bodies are not logged and QQ connections are released in finally.
 @account_work
 def run_sync(owner):
@@ -93,7 +93,8 @@ def run_sync(owner):
         if run:
             try:
                 close_old_connections()
-                finish_run(run.pk, run.lease_token, {"status": "failed", "error": {"code": "worker_sync_failed"}})
+                code = "gmail_reauthorization_required" if isinstance(error, GmailReauthorizationRequired) else "worker_sync_failed"
+                finish_run(run.pk, run.lease_token, {"status": "failed", "error": {"code": code}})
             except Exception as report_error:
                 logger.error("sync_failure_report_rejected run_id=%s stage=report_failure error_type=%s location=%s action=inspect_lease", run.pk, type(report_error).__name__, error_location(report_error))
         return run is not None

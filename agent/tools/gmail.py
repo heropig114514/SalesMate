@@ -1,8 +1,9 @@
 """Responsibility: Provide read-only Gmail authorization, history scanning, and observable per-email reads.
-Implementation: Preserve existing defaults; independent workers persist stages through callbacks while legacy CLI calls remain supported.
+Implementation: Preserve existing defaults; expose rejected refresh grants as a typed reauthorization failure, and persist per-email stages through callbacks while supporting legacy CLI calls.
 Relationships: Software workers use this module; Gmail tools provide raw content and backend HTTP clients persist business data.
 Directory:
 - GmailHistoryExpiredError: Identify an expired Gmail history cursor.
+- GmailReauthorizationRequired: Identify authorization that requires fresh employee consent.
 - create_service: Create a read-only Gmail client with a short-lived token.
 - create_service_from_authorization: Create a Gmail client from backend authorization.
 - get_profile_address: Query the authorized account address.
@@ -41,6 +42,13 @@ class GmailHistoryExpiredError(RuntimeError):
     """The saved Gmail historyId is no longer usable for incremental reads."""
 
 
+# Function: Distinguish invalid refresh grants from transport or application-configuration failures.
+# Logic: A typed RuntimeError preserves legacy failure handling while workers select safe reauthorization guidance.
+# Constraints: Carries no provider response, token, or credential; does not retry or remove stored authorization.
+class GmailReauthorizationRequired(RuntimeError):
+    pass
+
+
 # Function: Create a read-only Gmail client with a short-lived token.
 # Inputs: `access_token`: short-lived access token.
 # Outputs: Return a Gmail Service.
@@ -59,9 +67,9 @@ def create_service(access_token: str):
 
 # Function: Create a Gmail client from backend authorization.
 # Inputs: `authorization`: authorization or mailbox synchronization request object.
-# Outputs: Service and persistable refreshed-credential dictionary.
-# Logic: Refresh only when expired and a refresh token exists, then construct the SDK.
-# Constraints: Fail explicitly on refresh errors; returned credentials are for backend persistence only, never the browser.
+# Outputs: Service and persistable refreshed credentials; GmailReauthorizationRequired for invalid grants or unusable expired authorization.
+# Logic: Refresh only when expired with a refresh token; recognize Google's structured invalid_grant code before constructing the SDK.
+# Constraints: Other refresh failures remain ordinary safe RuntimeError; no retries or credential deletion. Returned credentials are for backend persistence only.
 def create_service_from_authorization(authorization: Mapping) -> tuple[object, dict]:
     """Create a Gmail Service from backend-stored authorization and return any refreshed credentials."""
     if not isinstance(authorization, Mapping) or not authorization:
@@ -74,12 +82,14 @@ def create_service_from_authorization(authorization: Mapping) -> tuple[object, d
             if credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
-                raise RuntimeError("Gmail authorization has expired; ask the employee to authorize again.")
+                raise GmailReauthorizationRequired("Gmail authorization has expired; ask the employee to authorize again.")
         service = build(
             "gmail", "v1", credentials=credentials, cache_discovery=False
         )
         return service, json.loads(credentials.to_json())
-    except RefreshError:
+    except RefreshError as error:
+        if any(isinstance(detail, Mapping) and detail.get("error") == "invalid_grant" for detail in error.args):
+            raise GmailReauthorizationRequired("Gmail read authorization is no longer valid; reconnect Gmail for this employee.") from None
         raise RuntimeError("Gmail authorization refresh failed; ask the employee to authorize again.") from None
     except RuntimeError:
         raise
