@@ -1,5 +1,5 @@
 """Responsibility: Orchestrate the complete request-scoped business tool catalog, validating model answer citations.
-Implementation: Read all published tools eagerly and derive write checkpoints from live modes; preserve ownership annotations and scoped business error diagnostics in model observations. Keep budgets unchanged; writes suspend for browser review and resume from canonical receipts.
+Implementation: Read all published tools eagerly and derive write checkpoints from live modes; expose existing Agent pagination limits in copied model schemas. Preserve ownership annotations and scoped business errors. Keep budgets unchanged; writes suspend for browser review and resume from canonical receipts.
 Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
 Directory:
 - ChatValidationError: Represent workspace contract validation failure.
@@ -22,7 +22,7 @@ Directory:
 - _workspace_failure: Generate a failure result for the current workspace version.
 - _workspace_arguments: Validate model tool envelopes, specialized proposal arguments and existing pagination budgets.
 - _workspace_uuid: Validate a UUID string.
-- _workspace_catalog: Parse the data tool catalog actually published for the request.
+- _workspace_catalog: Parse all published tools and expose effective existing pagination limits.
 - _workspace_schema_arguments: Validate argument keys against the live schema.
 - _workspace_decision: Parse a model action.
 - _workspace_tool_result: Validate a read receipt and generate a prompt summary.
@@ -47,6 +47,7 @@ Variable index:
 - _WORKSPACE_MAX_EVIDENCE_ITEMS: Maximum of 12 sources displayed to the model.
 - _WORKSPACE_MAX_PROMPT_CHARACTERS: Total source-body character budget.
 - _WORKSPACE_MAX_SEARCH_PAGE_SIZE: Model pagination read limit of 20.
+- _WORKSPACE_PAGINATED_TOOLS: Existing tool names subject to the shared pagination validation and schema projection.
 - _WORKSPACE_MAX_TOOL_READS: At most six tool selections per answer.
 - _WORKSPACE_OTHER_EXCERPT_CHARACTERS: Per-source excerpt budget for other sources.
 - __all__: Public workspace parsing and execution symbols.
@@ -76,6 +77,7 @@ _WORKSPACE_CHAT_SKILL = load_skill("workspace-chat")
 WORKSPACE_CHAT_PROMPT_VERSION = _WORKSPACE_CHAT_SKILL.version
 _WORKSPACE_MAX_TOOL_READS = 6
 _WORKSPACE_MAX_SEARCH_PAGE_SIZE = 20
+_WORKSPACE_PAGINATED_TOOLS = frozenset({"customers.search", "experiments.rows", "orders.list", "connections.list"})
 _WORKSPACE_MAX_EVIDENCE_ITEMS = 12
 _WORKSPACE_MAX_PROMPT_CHARACTERS = 18_000
 _WORKSPACE_DETAIL_EXCERPT_CHARACTERS = 5_000
@@ -438,7 +440,7 @@ def _workspace_arguments(name: object, value: object) -> tuple[str, dict[str, An
             validate_action_arguments(name, arguments)
         except ValueError as error:
             raise ChatValidationError(str(error)) from error
-    if name in {"customers.search", "experiments.rows", "orders.list", "connections.list"}:
+    if name in _WORKSPACE_PAGINATED_TOOLS:
         size = arguments.get("page_size", _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
         if type(size) is not int or not 1 <= size <= _WORKSPACE_MAX_SEARCH_PAGE_SIZE:
             raise ChatValidationError("Invalid search page size.")
@@ -462,11 +464,11 @@ def _workspace_uuid(value: object) -> None:
         raise ChatValidationError("Company ID must be a UUID.") from None
 
 
-# Function: Parse the data tool catalog actually published for the request.
+# Function: Parse the complete tool catalog and disclose existing Agent pagination constraints.
 # Inputs: `raw`: backend catalog response; `request_id`: currently claimed request identifier.
-# Outputs: Validate protocol, request, unique names and closed schemas, returning all published tools indexed by name.
-# Logic: Accept read/write/confirm modes from the live registry; independent proposals additionally require their exact mode and confirmation contract.
-# Constraints: No static name filter; unpublished or malformed tools cannot execute, and generic write/confirm modes use checkpoints.
+# Outputs: All valid published tools indexed by name, with copied page-size schemas reflecting the effective maximum.
+# Logic: Validate protocol, modes and proposal contracts; intersect backend page-size maxima with the existing Agent bound for the same tools validated by _workspace_arguments.
+# Constraints: Does not mutate backend schemas, remove tools, increase limits, coerce model arguments, or retry invalid output; generic writes still use checkpoints.
 def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]]:
     """Use every valid tool published for this processing request."""
     if not isinstance(raw, Mapping) or (
@@ -493,10 +495,17 @@ def _workspace_catalog(raw: object, request_id: str) -> dict[str, dict[str, Any]
             or schema.get("additionalProperties") is not False
         ):
             raise ChatValidationError("Workspace tool declaration does not match the execution-mode contract.")
+        effective_schema = dict(schema)
+        if name in _WORKSPACE_PAGINATED_TOOLS and "page_size" in schema["properties"]:
+            # Publish the constraint enforced below selection so a valid backend-sized
+            # request is not misleadingly advertised as valid for this Agent workflow.
+            page_schema = dict(schema["properties"]["page_size"])
+            page_schema["maximum"] = min(page_schema.get("maximum", _WORKSPACE_MAX_SEARCH_PAGE_SIZE), _WORKSPACE_MAX_SEARCH_PAGE_SIZE)
+            effective_schema["properties"] = {**schema["properties"], "page_size": page_schema}
         catalog[name] = {
             "name": name,
             "description": entry.get("description", ""),
-            "inputSchema": dict(schema),
+            "inputSchema": effective_schema,
             "executionMode": entry["executionMode"],
         }
     return catalog
