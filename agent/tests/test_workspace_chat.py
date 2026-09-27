@@ -246,22 +246,22 @@ class WorkspaceChatTests(unittest.TestCase):
         backend = ToolBackend(
             request=conversation_request(question="请帮我发送邮件给客户"), replies=[]
         )
-        provider = QueueProvider()
+        provider = QueueProvider({"action": "answer", "assistant_text": "Please specify the recipient and email content. No action was taken.", "citations": []})
         result = process_chat_once(backend=backend, chat_provider=provider)
         self.assertEqual(result["status"], "completed")
         self.assertIn("No action was taken", result["assistant_text"])
-        self.assertEqual(provider.calls, [])
+        self.assertEqual(len(provider.calls), 1)
         self.assertEqual(backend.tool_calls, [])
 
     def test_english_direct_write_request_is_not_executed(self):
         backend = ToolBackend(
             request=conversation_request(question="Please send an email to the customer"), replies=[]
         )
-        provider = QueueProvider()
+        provider = QueueProvider({"action": "answer", "assistant_text": "Please specify the recipient and email content. No action was taken.", "citations": []})
         result = process_chat_once(backend=backend, chat_provider=provider)
         self.assertEqual(result["status"], "completed")
         self.assertIn("No action was taken", result["assistant_text"])
-        self.assertEqual(provider.calls, [])
+        self.assertEqual(len(provider.calls), 1)
         self.assertEqual(backend.tool_calls, [])
 
     def test_unused_citation_is_removed_and_markers_are_reordered(self):

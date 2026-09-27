@@ -20,7 +20,7 @@ Directory:
 - BackendClient.save_sync_state: Conditionally update the mailbox cursor.
 - BackendClient.claim_answer_request: Claim one workspace chat answer request.
 - BackendClient.get_answer_context: Read customer and knowledge context bound to a request.
-- BackendClient.get_chat_tools: Discover this request's read and experiment maintenance tools.
+- BackendClient.get_chat_tools: Discover this request's read and confirmation proposal tools.
 - BackendClient.get_chat_request_status: Read the current employee's request status.
 - BackendClient.read_chat_tool: Execute reads or propose checkpointed writes awaiting browser approval.
 - BackendClient.report_answer: Report a chat result with its prompt version.
@@ -50,9 +50,9 @@ Directory:
 - DjangoBackendClient.save_sync_state: Conditionally update the mailbox cursor.
 - DjangoBackendClient.claim_answer_request: Map workspace chat claims and remove the transitional null company field.
 - DjangoBackendClient.get_answer_context: Map the chat context endpoint.
-- DjangoBackendClient.get_chat_tools: Discover this request's read and experiment maintenance tools.
+- DjangoBackendClient.get_chat_tools: Discover this request's read and confirmation proposal tools.
 - DjangoBackendClient.get_chat_request_status: Read the current employee's request status.
-- DjangoBackendClient.read_chat_tool: Execute a customer or shared experiment query and validate the response.
+- DjangoBackendClient.read_chat_tool: Execute a read or confirmation proposal and validate the response.
 - DjangoBackendClient.report_answer: Map the chat answer persistence endpoint.
 - DjangoBackendClient._required_string: Read and validate a nonempty string.
 - DjangoBackendClient._object_list: Validate an array of objects.
@@ -88,18 +88,18 @@ from urllib.parse import quote, urlencode
 import requests
 
 from agent.skills import load_skill
-from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS
+from agent.clients.chat_actions import ACTION_TOOLS, EXPERIMENT_WRITE_TOOLS, WORKSPACE_TOOLS, validate_action_arguments
 
 JsonObject = Mapping[str, Any]
 _DEFAULT_ANALYSIS_PROMPT_VERSION = load_skill("customer-analysis").version
 logger = logging.getLogger("salesmate.agent.backend_api")
 
 
-# Function: Minimal real backend interface for L1-L4 and read-only chat workflows.
+# Function: Minimal real backend interface for L1-L4 and read and confirmation-proposal chat workflows.
 # Logic: Declare workflow methods; concrete clients provide transport.
 # Constraints: Do not log credentials; the backend ultimately validates identity and permissions.
 class BackendClient(Protocol):
-    """Minimal real backend interface for L1-L4 and read-only chat workflows."""
+    """Minimal real backend interface for L1-L4 and read and confirmation-proposal chat workflows."""
 
     # Function: Declare the standard L1 email submission interface.
     # Inputs: `submissions`: email extraction payloads.
@@ -224,18 +224,18 @@ class BackendClient(Protocol):
     # Constraints: Declarations and exception construction do not issue HTTP requests.
     def get_answer_context(self, request_id: str, scope: str) -> JsonObject: ...
 
-    # Function: Discover the read and experiment maintenance tools actually authorized for the request.
+    # Function: Discover the read and confirmation proposal tools actually authorized for the request.
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Declare the protocol only; concrete clients implement transport.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_tools(self, request_id: str) -> JsonObject: ...
 
     # Function: Read the authoritative status of the current employee's request.
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Declare the protocol only; concrete clients implement transport.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> JsonObject: ...
 
     # Function: Execute customer reads or shared experiment maintenance and obtain registered evidence.
@@ -834,11 +834,11 @@ class DjangoBackendClient:
             )
         return document
 
-    # Function: Discover the read and experiment maintenance tools actually authorized for the request.
+    # Function: Discover the read and confirmation proposal tools actually authorized for the request.
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Issue one GET and validate protocol version, request, page, and count.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_tools(self, request_id: str) -> dict[str, Any]:
         """Read tools available to this processing request; do not infer permissions from the global registry."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tools request")
@@ -866,7 +866,7 @@ class DjangoBackendClient:
     # Inputs: `request_id`: current employee's request UUID; concrete implementations read instance authentication settings.
     # Outputs: JSON object; concrete implementations raise request or contract errors on failure.
     # Logic: Issue one GET and verify request ID and valid status.
-    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, write tools, and implicit retries.
+    # Constraints: Allow only requests authorized for the current employee; reject identity overrides, direct business execution, approval, and implicit retries.
     def get_chat_request_status(self, request_id: str) -> dict[str, Any]:
         """Query only the current employee's saved chat request state without reclaiming or generating an answer."""
         self._required_string({"request_id": request_id}, "request_id", "Chat status request")
@@ -889,12 +889,21 @@ class DjangoBackendClient:
     def read_chat_tool(
         self, request_id: str, name: str, arguments: Mapping[str, Any], *, continuation: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Invoke request-bound read and experiment maintenance tools; the backend confirms both tool results and evidence."""
+        """Invoke request-bound read and confirmation proposal tools; the backend confirms both tool results and evidence."""
         self._required_string({"request_id": request_id}, "request_id", "Chat tool request")
         if name not in WORKSPACE_TOOLS:
-            raise BackendContractError("Chat tool supports only registered customer reads and experiment maintenance.")
+            raise BackendContractError("Chat tools allow registered reads and confirmation proposals, never direct writes or approval.")
         if not isinstance(arguments, Mapping):
             raise BackendContractError("Chat tool arguments must be an object.")
+        if name in EXPERIMENT_WRITE_TOOLS and not isinstance(continuation, Mapping):
+            raise BackendContractError("A chat write requires a continuation checkpoint and browser approval.")
+        if name not in EXPERIMENT_WRITE_TOOLS and continuation is not None:
+            raise BackendContractError("Only browser-approved experiment writes accept a continuation checkpoint.")
+        if name in ACTION_TOOLS:
+            try:
+                validate_action_arguments(name, dict(arguments))
+            except ValueError as error:
+                raise BackendContractError(str(error)) from error
         response, _ = self._request(
             "POST",
             "chat/tool-reads/",
@@ -905,10 +914,14 @@ class DjangoBackendClient:
         if document.get("request_id") != request_id or document.get("tool") != name:
             raise BackendContractError("Chat tool response does not match this request or tool.")
         if document.get("status") == "approval_required":
+            if name not in EXPERIMENT_WRITE_TOOLS:
+                raise BackendContractError("This tool does not use the suspended-write approval contract.")
             proposal = self._object(document.get("approval"), "Chat approval")
             if proposal.get("request_id") != request_id or proposal.get("tool") != name or proposal.get("status") != "pending" or not proposal.get("id"):
                 raise BackendContractError("Chat approval does not match the pending operation.")
             return document
+        if name in EXPERIMENT_WRITE_TOOLS:
+            raise BackendContractError("A chat write cannot return immediate execution; browser approval is required.")
         if document.get("status") != "completed":
             raise BackendContractError("Chat tool did not confirm completion.")
         if not isinstance(document.get("data"), Mapping):

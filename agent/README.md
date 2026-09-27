@@ -29,7 +29,7 @@ The service runs at 03:00 and 15:00 UTC daily by default, with a randomized dela
 
 Updated: 2026-09-20<br>
 Version: v2.5<br>
-Status: Employee web Gmail authorization, one-shot synchronization requests, and the existing L1-L4 pipeline have completed integration checks. Workspace chat is connected to backend request-bound read-only customer tools; joint acceptance with the real model and web UI remains pending.
+Status: Employee web Gmail authorization, one-shot synchronization requests, and the existing L1-L4 pipeline have completed integration checks. Workspace chat supports request-bound customer reads. Agent-side order/email proposal preparation is implemented; backend confirmation APIs and frontend integration remain pending.
 
 ## 1. Current scope
 
@@ -55,17 +55,17 @@ The agent provides neither an HTTP service nor a database. Django owns employee 
 
 Each Agent service credential belongs to one backend employee. The shared `crm_worker` creates a temporary employee credential per work unit and revokes it afterward; the CLI retains its configured single-employee credential. The agent claims mailbox synchronization requested by that employee in the UI. Backend grouping and page queries remain employee-isolated, so the frontend represents the current employee's Gmail inbox, not a company-wide shared inbox.
 
-This directory contains workspace-chat skills, model adapters, workflows, a one-shot CLI, and offline tests, but no chat HTTP server, database, authoritative conversation store, or polling loop. Chat uses backend-authorized customer search/detail tools bound to employees and requests; it does not send email, schedule calendar actions, or write CRM/files. The backend and frontend own UI entry points, conversation storage, permissions, and persistence.
+This directory contains workspace-chat skills, model adapters, workflows, a one-shot CLI, and offline tests, but no chat HTTP server, database, authoritative conversation store, or polling loop. Chat uses employee/request-bound tools to query records and prepare order edits or email for explicit employee confirmation. The Agent never approves or executes business changes itself; the backend and employee UI own confirmation and execution. The backend and frontend own UI entry points, conversation storage, permissions, and persistence.
 
 ### 1.1 Workspace chat (the only chat flow)
 
 Chat writes now use [durable browser approval](../backend/docs/chat-approvals.md). The Agent supplies its loop checkpoint, releases the Worker on `approval_required`, and resumes the same request after approval using the canonical mutation receipt. No prompt approval or Agent credential can substitute for the browser decision; rejection cancels the request without changing earlier history. Tool/model budgets and scheduled workflows remain unchanged.
 
-`workflows/chat.py` runs only `skills/workspace-chat/SKILL.md` (`workspace-chat-v3`), without selecting modes by customer binding or environment variables. Employees ask workspace questions with no preselected `company_id` in internal Agent requests. The current backend omits that field; the HTTP adapter still removes transitional `company_id: null` and rejects non-null values. Ordinary questions may be answered directly. For customer data, the model selects `customers.search` and `customers.context`; the latter's `company_id` applies only to that query. The agent validates arguments against the request's published catalog and performs at most 6 tool calls. Shared experiment questions may use `experiments.catalog`, `experiments.rows`, and `experiments.file_read`, retaining synthetic markers, batches, and original ownership, with evidence registered by the backend. Explicit fictional-data maintenance may also use `experiments.create/update/delete`, taking arguments from the actual catalog and supplying current fingerprints for updates/deletes; backend-persisted receipts are citable. The backend checks employee/request permissions and registers each read's evidence. The agent cites only authorized sources actually displayed in this round; long customer details enter the model as marked excerpts while the backend retains complete sources.
+`workflows/chat.py` runs only `skills/workspace-chat/SKILL.md` (`workspace-chat-v4`), without selecting modes by customer binding or environment variables. Employees ask workspace questions with no preselected `company_id` in internal Agent requests. The current backend omits that field; the HTTP adapter still removes transitional `company_id: null` and rejects non-null values. Ordinary questions may be answered directly. For customer data, the model selects `customers.search` and `customers.context`; the latter's `company_id` applies only to that query. The agent validates arguments against the request's published catalog and performs at most 6 tool calls. Shared experiment questions may use `experiments.catalog`, `experiments.rows`, and `experiments.file_read`, retaining synthetic markers, batches, and original ownership, with evidence registered by the backend. Explicit fictional-data maintenance may propose `experiments.create/update/delete` using the actual catalog and current fingerprints. The request suspends for browser approval; only its resumed canonical receipt confirms a write, and the Agent never replays the approved operation. The backend checks employee/request permissions and registers each read's evidence. The agent cites only authorized sources actually displayed in this round; long customer details enter the model as marked excerpts while the backend retains complete sources.
 
-`generate_chat_json()` in `llm/bailian.py` requests a JSON object. Model output selects another read-only query or the final answer; citations must match this round's authorized sources and body numbers must agree with the citation list. Without evidence, ordinary conversation, clarification, or an explicit insufficient-information answer is permitted. Direct requests to send email, schedule calendar actions, or write business data receive a non-execution explanation. Tool-level argument errors or unavailable details may be corrected or answered within the same request; request-level errors end the round.
+`generate_chat_json()` in `llm/bailian.py` requests a JSON object. Model output selects another authorized query, prepares a frozen confirmation proposal, or supplies the final answer; citations must match this round's authorized sources and body numbers must agree with the citation list. Without evidence, ordinary conversation, clarification, or an explicit insufficient-information answer is permitted. Order edits and Gmail sends can prepare a proposal only when the backend publishes the new confirmation contract. Unpublished capabilities receive an explicit unavailable response. Calendar actions and other direct writes remain unavailable. Tool-level argument errors or unavailable details may be corrected or answered within the same request; request-level errors end the round.
 
-`process_chat_once()` claims at most one request and attempts one report, returning `None` when idle. If the report response is lost, it queries authoritative backend state once and treats the result as successful only when persistence is confirmed. Workspace chat is enabled by default with no feature flag or legacy fallback. See the [backend workspace-chat contract](../backend/docs/workspace-chat-tools.md) for interfaces and permission boundaries.
+`process_chat_once()` claims at most one request, returning `None` when idle. Browser-approval waits release the worker without a final answer report; ordinary final results attempt one report. If the report response is lost, it queries authoritative backend state once and treats the result as successful only when persistence is confirmed. Workspace chat is enabled by default with no feature flag or legacy fallback. See the [backend workspace-chat contract](../backend/docs/workspace-chat-tools.md) for interfaces and permission boundaries.
 
 ### 1.2 One-shot chat CLI
 
@@ -85,18 +85,32 @@ The command reuses `.env` loading and `DjangoBackendClient`: claim zero or one r
 |---|---|---|
 | `claim_answer_request()` | `POST chat/requests/claim/` | Send `{}`; normalize `{"request": null}` to no work; omitted or null `company_id` means no preselected company; reject non-null values |
 | `get_answer_context(request_id, scope)` | `POST chat/context/` | Allow only `internal|external`; independently validate customer context, knowledge state, retrieval gaps, and external availability |
-| `get_chat_tools(request_id)` | `GET chat/tools/` | Retrieve the read-only tools and argument schemas actually published for this request; unnecessary for ordinary questions |
+| `get_chat_tools(request_id)` | `GET chat/tools/` | Retrieve request-authorized read/proposal tools and argument schemas; proposal tools must declare the confirmation contract |
 | `get_chat_request_status(request_id)` | `GET chat/requests/<request_id>/` | Check authoritative terminal state only when reporting cannot be confirmed, without rerunning models or tools |
 | `report_answer(result)` | `POST chat/answers/` | Report `chat_prompt_version`, `completed|failed`, answer, citations, and safe errors; accept first-save or idempotent duplicate responses |
-| `read_chat_tool(request_id, name, arguments)` | `POST chat/tool-reads/` | Allow only catalog-published customer search/detail and shared experiment reads; validate request, tool, read ID, and registered evidence, preserving tool/request error scope |
+| `read_chat_tool(request_id, name, arguments)` | `POST chat/tool-reads/` | Allow fixed catalog-published reads and unexecuted proposals; reject direct writes/approval, validate request and receipt identity, and preserve tool/request error scope |
 
 `backend/apps/chat/` provides employee binding, evidence snapshots, idempotent results, and one unique assistant message. The independent `chat_worker` invokes `process_chat_once()`. The agent neither overrides employee identity/backend visibility nor connects directly to knowledge stores. Only employee-visible customers and explicit internal knowledge are currently used; external knowledge remains disabled.
+
+### Employee-confirmed order changes and email
+
+The Agent-side adapter is implemented; **backend proposal endpoints and frontend confirmation cards are still required before these actions can work in the product**. Existing backend tools do not automatically enable them. `clients/chat_actions.py` declares the Agent-only extension without changing the shared backend registry.
+
+- New reads: `orders.list/get`, `connections.list/get`. Order searches require an explicit company ID; the Agent reads current order/line revisions before preparing an edit and reads customer context plus an active employee Gmail connection before preparing email.
+- New proposal tools: `chat_actions.prepare_order_update` and `chat_actions.prepare_email`, published with `executionMode=confirm` and `confirmationContract=chat-actions-v1`. They save only pending proposals; no order update, business draft creation, or send occurs before employee approval. An ordinary email written as chat text does not create a saved draft.
+- Order proposals cover number/currency/notes and existing-line description/quantity/unit_price/discount. Decimal inputs are strings. Order creation/deletion, new/deleted lines, status transitions, attachments, and reply-thread binding are outside this contract.
+- The employee reviews frozen before/after values or the full sender/to/cc/bcc/subject/body in the chat confirmation card. The backend binds confirmation to the proposal and version, then performs the transaction or queues sending. The model has no approve/execute tool; a conversational ?yes? alone never grants backend authorization.
+- `chat_actions.get` reads a proposal by ID in a later conversation turn. Preparing a proposal and reading its status return deterministic Agent text, distinguishing pending, approved, running, succeeded, failed, uncertain, cancelled, expired, and conflicted. Gmail success means provider acceptance, not recipient delivery.
+- Preparation requires exact receipt arguments and matching previews; stale or unread order revisions cannot be proposed. Missing backend tools return a clear unavailable response. Preparation timeouts do not retry; employees should recover pending proposals through the backend conversation view. Logs include request/proposal IDs and statuses without email bodies.
+- Order/email proposal calls retain the existing request-bound Agent identity, three-field tool envelope, and six-field final answer report. Existing experiment writes additionally supply the backend continuation checkpoint and suspend until browser approval. External source text and employee-supplied email content keep their original language. No L1?L4 or global-insights scheduling behavior changes.
+
+Validate locally with `python -m unittest agent.tests.test_chat_actions agent.tests.test_workspace_chat agent.tests.test_http_backend`. These are offline mocks, not evidence of real sending or backend execution.
 
 ### 1.4 Agent delivery and web demo delivery
 
 Unit tests here continue using fake sessions/backends and do not constitute real-model or production-web acceptance. New backend integration tests run the original Agent HTTP client/workflow against real PostgreSQL and a temporary Django HTTP service with mocked model output; browser tests use real pages and mocked APIs.
 
-The web demo still requires corresponding backend migrations, model/backend configuration, `python backend/manage.py chat_worker`, and joint acceptance with the real model and web UI. The agent produces only `workspace-chat-v3` results. The frontend has removed customer-specific chat entry points; the new worker explicitly terminates old active company jobs at startup while retaining history, without converting or reassigning old questions. Failed requests cannot be reset and reused with their original `request_id`.
+The web demo still requires corresponding backend migrations, model/backend configuration, `python backend/manage.py chat_worker`, and joint acceptance with the real model and web UI. The agent produces only `workspace-chat-v4` results. The frontend has removed customer-specific chat entry points; the new worker explicitly terminates old active company jobs at startup while retaining history, without converting or reassigning old questions. Failed requests cannot be reset and reused with their original `request_id`.
 
 ### 1.5 Offline chat tests
 
@@ -138,7 +152,7 @@ agent/
 │   ├── customer-analysis/
 │   │   └── SKILL.md                # L3 profile instructions, version, and output limit
 │   └── workspace-chat/
-│       └── SKILL.md                # workspace-chat-v3 read-only customer tool selection and answers
+│       └── SKILL.md                # workspace-chat-v4 reads, confirmation proposals, and answers
 ├── workflows/
 │   ├── l1_email.py                 # L1 single-email fact extraction
 │   ├── gmail_sync.py               # Frontend Gmail synchronization service function
@@ -147,7 +161,7 @@ agent/
 │   ├── customer_analysis.py        # L3 customer profiles and analysis
 │   ├── lead_score.py               # L4 deterministic priority scoring
 │   ├── orchestration.py            # L2-L4 and one-shot job processing
-│   └── chat.py                     # Workspace read-only queries, answers, and one-shot orchestration
+│   └── chat.py                     # Workspace queries, confirmation proposals, and one-shot orchestration
 └── tests/
     ├── __init__.py                 # Test package marker
     ├── email_submission_exploration.py  # Shared L1 fixtures and data-contract boundary tests
@@ -169,9 +183,9 @@ Available workflow skills:
 |---|---|---|---|
 | `email-fact-extraction` | L1 | One parsed email subject and current body | Email facts with original evidence |
 | `customer-analysis` | L3 | One company-level `AnalysisInput` | Customer profiles, analysis, signals, and scoring features |
-| `workspace-chat` (`workspace-chat-v3`) | Workspace chat | Current question, recent history, internal knowledge, and backend request-bound read-only tool results | Customer search/detail selection and sourced answers |
+| `workspace-chat` (`workspace-chat-v4`) | Workspace chat | Question, history, knowledge, and request-bound query/proposal receipts | Customer/order lookup, employee-confirmed proposals, and sourced answers |
 
-`agent.skills.list_skills()` returns routable skill names, descriptions, versions, instructions, and output limits. Increment `metadata.version` whenever instruction changes affect model behavior. Future email sending, meeting scheduling, or other writes require separate authorization and confirmation designs; current `workspace-chat` does not perform them.
+`agent.skills.list_skills()` returns routable skill names, descriptions, versions, instructions, and output limits. Increment `metadata.version` whenever instruction changes affect model behavior. Order changes and email preparation use the employee-confirmation contract below. Meeting scheduling and other writes are not exposed. The backend executes confirmed operations; the Agent cannot approve them.
 
 QQ mail is an additional independent IMAP source, preserving Gmail integration. `tools/qq_mail.py` provides a read-only adapter for the fixed QQ TLS service; backend `qq_sync` persists synchronization and reuses L1-L4 without a Google callback domain. See [QQ mailbox trial](../backend/docs/qq-mailbox.md) for configuration and compatibility boundaries. QQ runs through `crm_worker`; the legacy Gmail CLI does not claim QQ jobs.
 
