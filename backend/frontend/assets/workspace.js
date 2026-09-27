@@ -1,6 +1,6 @@
 /**
  * Responsibility: Provide shared navigation, bottom Profile settings, customer context, real task summaries, and bottom chat across mail, business, world insights, and settings.
- * Implementation: URLs retain customer identity/shared experiment context; summaries use authorized GETs. Profile offers account-data reset and CSRF-protected logout, returning to /login/ only after server confirmation.
+ * Implementation: URLs retain customer identity/shared experiment context; summaries use authorized GETs. Profile links to receiving mailboxes and external sending/calendar connections, and offers account-data reset and CSRF-protected logout.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: Header versions reflect removal of experiment navigation; chat Markdown, 0919 interface, and language/API resources use coordinated versions. Workspace chat upgrades avoid cached company-specific entry points. app.js, business.js, world-news.js, and company-settings.js call this module; workspace.css/product-header.js share the shell; review and transactions retain existing APIs.
  * Directory: businessHref, renderWorkspaceNav, logoutSession, mountWorkspace, setWorkspaceContext, refreshWorkspace.
@@ -26,14 +26,14 @@ export function businessHref(resource, company = context?.id, extra = {}) {
 }
 
 /** Function: Rebuild shared navigation. Inputs: Module activePage/context. Outputs: None.
- * Logic: Show workspace, global insights, Channels, and customers. Profile exposes reset and logout with a live error region. Constraints: Shared experiment customers never enter private mail routes; other customer identities pass only to relevant business links. */
+ * Logic: Show workspace, global insights, Channels, and customers. Profile exposes mailbox and external-service connections, reset and logout with a live error region. Constraints: Account connection links omit customer filters; shared experiment customers never enter private mail routes. */
 function renderWorkspaceNav() {
   const nav = document.getElementById('workspace-nav');
   const link = (key, title, href) => `<a href="${e(href)}" ${activePage === key ? 'aria-current="page"' : ''}>${e(title)}</a>`;
   nav.innerHTML = h`<p class="workspace-nav-label">我的工作空间</p>${link('home', t('工作台'), '/#home')}${link('world', 'Global Insights', '/world/')}${link('inbox', 'Channels', context && !context.experiment ? '/#company/' + encodeURIComponent(context.id) : '/#inbox')}${link('directory', t('客户'), businessHref('directory'))}<div class="workspace-customer-nav" role="group" aria-label="${e(t('客户'))}">${customerResources.map(([key, name]) => link(key, name, businessHref(key))).join('')}</div>`;
   const profile = document.getElementById('workspace-profile');
   if (profile) {
-    profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button><button type="button" class="text-btn" id="logout">${t('退出登录')}</button><p id="logout-error" role="alert" hidden></p>`;
+    profile.innerHTML = `<p class="workspace-profile-label">Profile</p>${link('company-settings', 'Company Setting', '/settings/company/')}${link('gmail', 'Emails Connections', '/#gmail')}${link('connections', t('外部连接'), businessHref('connections', null))}<button type="button" class="text-btn" id="reset-account-data">${language === 'en' ? 'Clear account data' : '清空账号数据'}</button><button type="button" class="text-btn" id="logout">${t('退出登录')}</button><p id="logout-error" role="alert" hidden></p>`;
     profile.querySelector('#reset-account-data').onclick = event => resetAccountData(event.currentTarget);
     profile.querySelector('#logout').onclick = event => logoutSession(event.currentTarget);
   }
