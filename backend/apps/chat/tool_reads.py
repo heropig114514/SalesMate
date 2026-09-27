@@ -1,9 +1,10 @@
 """Responsibility: Expose the complete MCP business catalog through request-bound chat with canonical evidence.
-Implementation: Employee/request locks protect processing; all generic writes and native confirmations suspend for Session review, while independent order/email proposals retain their existing contract.
+Implementation: Employee/request locks protect processing; customer and connection receipts distinguish discovery from email ownership. Generic writes suspend for Session review; independent proposals preserve actionable business error codes.
 Relationships: ``tool_views`` exposes Agent HTTP; ``services.save_answer`` attaches citation content only from this request context and ``ToolRead``.
 Directory:
 - processing_request: Authorize and lock a request being processed.
 - catalog_for: Publish the authorized MCP catalog and eligible independent proposals, with pagination.
+- email_ownership: Annotate already-visible customers and connections with actual employee ownership for email preparation.
 - evidence_for: Project actual business response into complete four-field sources.
 - read_tool: Execute one data operation and register returned evidence.
 - read_action_tool: Register independent order/email proposal receipts.
@@ -29,6 +30,7 @@ from apps.agent_tools.dispatch import execute
 from apps.agent_tools.registry import build_registry
 from apps.agent_tools.schemas import PAGE, UUID, object_schema, validate
 from apps.crm.access import InvalidState, plain
+from apps.crm.models import Company
 
 from integrations.salesmate_tools.read_contract import EXPERIMENT_WRITE_TOOLS, CUSTOMER_WRITE_TOOLS
 
@@ -158,10 +160,29 @@ def evidence_for(read_id, name, data):
     ]
 
 
+# Function: Explain the ownership prerequisite without filtering discovered records.
+# Inputs: Credential employee ``owner``, executed tool ``name``, and its successful JSON ``data``.
+# Outputs: Original data for unrelated tools, otherwise copied data with email_preparation_owned booleans.
+# Logic: Query ownership only for customer IDs already returned by the handler; connection responses already contain owner IDs. Annotate each list row or the detail object before evidence is frozen.
+# Constraints: Ownership is only one prerequisite, not a send authorization; scopes and confirmation are checked later. Never read credentials, change visibility, or alter records.
+def email_ownership(owner, name, data):
+    if name not in {"customers.search", "customers.context", "connections.list", "connections.get"}:
+        return data
+    listed = name in {"customers.search", "connections.list"}
+    rows = data["results"] if listed else [data]
+    if name.startswith("customers."):
+        ids = [row.get("company_id", row.get("id")) for row in rows]
+        owned = {str(pk) for pk in Company.objects.filter(pk__in=ids, owner=owner).values_list("pk", flat=True)}
+        annotated = [dict(row, email_preparation_owned=str(row.get("company_id", row.get("id"))) in owned) for row in rows]
+    else:
+        annotated = [dict(row, email_preparation_owned=row.get("owner") == owner.pk) for row in rows]
+    return {**data, "results": annotated} if listed else annotated[0]
+
+
 # Function: Execute data-tool invocation authorized for this request and register stable evidence.
 # Inputs: ``owner`` is the employee determined by the Agent credential and ``payload`` matches the call schema.
 # Outputs: Reads return evidence; independent proposals return 201; any generic write/confirm returns 202 approval_required without mutation; errors retain HTTP status.
-# Logic: Resolve generic tools from the live registry and dispatch reads or suspend writes according to executionMode; retain private identity for customer creation and independent proposals.
+# Logic: Resolve tools from the live registry and dispatch reads or suspend writes by executionMode; annotate email ownership before freezing successful evidence, preserving private identity for creation and proposals.
 # Constraints: Request errors propagate; business API errors and native missing-object errors return scope=tool with the original business status without ending chat; unknown exceptions roll back and propagate without retry or fabricated empty information.
 def read_tool(owner, payload):
     validate(payload, CALL_SCHEMA)
@@ -215,6 +236,7 @@ def read_tool(owner, payload):
                 business = {"tool": name, **tool_services.response_data(response)}
                 if business["status"] != "completed":
                     raise APIException("业务读取工具没有完成查询。")
+                business["data"] = email_ownership(owner, name, business["data"])
                 read_id = uuid.uuid4()
                 stage = "evidence"
                 evidence = evidence_for(read_id, name, business["data"])
@@ -260,7 +282,7 @@ def read_tool(owner, payload):
 # Function: Prepare or inspect independent proposals with canonical evidence.
 # Inputs: Employee `owner`, locked processing `request`, authorized `name`, and submitted `arguments`.
 # Outputs: Existing chat receipt envelope with 200/201, or a scoped business error.
-# Logic: An inner savepoint makes proposal, audit and ToolRead atomic; preparation replay reuses its original read UUID instead of creating another operation.
+# Logic: An inner savepoint makes proposal and ToolRead atomic; replays reuse the original receipt. Preserve scalar business error codes and log only the code/status and request identity, never email text or credentials.
 # Constraints: This branch never invokes generic Tool confirmation or business execution; request authentication occurs before entering it.
 def read_action_tool(owner, request, name, arguments):
     started = perf_counter()
@@ -282,8 +304,9 @@ def read_action_tool(owner, request, name, arguments):
             read.save()
             result = {**result, "request_id": str(request.pk), "read_id": str(read.pk), "evidence_items": read.evidence_items}
     except APIException as error:
+        code = error.get_codes()
         result = {"request_id": str(request.pk), "tool": name, "status": "failed", "http_status": error.status_code,
-            "error": {"scope": "tool", "code": error.default_code, "detail": plain(error.detail)}}
-    logger.info("chat_business_tool_finished request_id=%s conversation_id=%s owner_id=%s tool=%s status=%s http_status=%s duration_ms=%s",
-        request.pk, request.conversation_id, owner.pk, name, result["status"], result["http_status"], round((perf_counter() - started) * 1000))
+            "error": {"scope": "tool", "code": code if isinstance(code, str) else error.default_code, "detail": plain(error.detail)}}
+    logger.info("chat_business_tool_finished request_id=%s conversation_id=%s owner_id=%s tool=%s status=%s http_status=%s error_code=%s duration_ms=%s",
+        request.pk, request.conversation_id, owner.pk, name, result["status"], result["http_status"], result.get("error", {}).get("code"), round((perf_counter() - started) * 1000))
     return result

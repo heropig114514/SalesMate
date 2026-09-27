@@ -1,5 +1,5 @@
 """Responsibility: Prepare and execute employee-confirmed chat order and email proposals; generic reads use MCP dispatch.
-Implementation: Freeze validated content without business writes; Session decisions revalidate under locks and commit once. External sends remain the existing worker's responsibility.
+Implementation: Freeze validated content without business writes; distinguish customer and Gmail authorization failures with actionable codes. Session decisions revalidate and commit once; existing workers alone send.
 Relationships: action_contract publishes inputs; tool_reads persists evidence in the preparation transaction; sales services own business validation, audits and dependency invalidation.
 Directory:
 - strict_company_ids: Resolve genuine business grants independently of laboratory bypass.
@@ -172,14 +172,18 @@ def order_plan(actor, args, lock=False):
 
 # Function: Validate frozen plaintext email and a genuine employee Gmail connection.
 # Inputs: Employee `actor` and schema-validated message `args`.
-# Outputs: Customer, connection and closed sender preview.
-# Logic: Require existing send-service customer ownership, validate individual addresses, and inspect encrypted granted scopes without refreshing credentials.
+# Outputs: Customer, connection and closed sender preview, or a specific customer/connection/authorization error.
+# Logic: Check customer and Gmail ownership separately, validate individual addresses, and inspect encrypted scopes without refreshing credentials. Rejections log only employee/target IDs and stable reason codes.
 # Constraints: No Draft, ToolAction, token refresh or provider call is allowed during preparation; credentials never enter previews or logs.
 def email_plan(actor, args):
     company = Company.objects.filter(pk=args["company_id"], owner=actor).first()
+    if company is None:
+        logger.info("chat_email_preparation_rejected owner_id=%s company_id=%s reason=email_customer_unavailable", actor.pk, args["company_id"])
+        raise NotFound("所选客户不存在或不属于当前发信员工。目录可见不代表可以用于发信；请选择当前账号的客户记录。", code="email_customer_unavailable")
     connection = sales.Connection.objects.filter(pk=args["connection_id"], owner=actor, provider="gmail", archived=False).first()
-    if company is None or connection is None:
-        raise NotFound("客户或 Gmail 连接不存在或未授权。")
+    if connection is None:
+        logger.info("chat_email_preparation_rejected owner_id=%s connection_id=%s reason=email_connection_unavailable", actor.pk, args["connection_id"])
+        raise NotFound("所选 Gmail 连接不存在、已归档或不属于当前发信员工。请在当前账号连接 Gmail，或登录该连接所属账号并新建聊天会话。邮件提案功能本身可用。", code="email_connection_unavailable")
     if sales.CompanySettings.objects.filter(company=company, archived=True).exists():
         raise InvalidState("客户已归档。")
     for address in [connection.account, *args["to"], *args["cc"], *args["bcc"]]:
@@ -197,7 +201,7 @@ def email_plan(actor, args):
             raise ValueError("missing_scope")
     except Exception as error:
         logger.warning("chat_email_authorization_failed owner_id=%s connection_id=%s error_type=%s", actor.pk, connection.pk, type(error).__name__)
-        raise InvalidState("Gmail 授权无效或缺少发信权限，请重新授权。") from None
+        raise InvalidState("Gmail 授权无效或缺少发信权限，请重新授权。", code="email_authorization_invalid") from None
     return company, connection, {"company_name": company.name, "from_address": connection.account}
 
 

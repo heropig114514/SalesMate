@@ -17,6 +17,7 @@ Directory:
 - ChatActionTests.test_email_confirmation_worker_and_exact_mime: Send exact approved content through mocked provider transport once.
 - ChatActionTests.test_email_uncertain_never_resends: Preserve uncertain outcome without duplicate sends.
 - ChatActionTests.test_email_requires_sender_and_scope: Reject foreign, readonly and changed sender connections.
+- ChatActionTests.test_email_ownership_and_actionable_errors_in_laboratory: Preserve visible records while distinguishing customer and connection email eligibility and error codes.
 - ChatActionTests.test_decision_identity_csrf_and_version: Enforce genuine Session identity and displayed revision.
 - ChatActionTests.test_cross_conversation_and_refresh_recovery: Recover proposals through browser and later-turn Agent reads.
 - ChatActionTests.test_expiry_cancel_and_superseded_proposals: Refuse expired, cancelled and replaced approvals.
@@ -305,17 +306,21 @@ class ChatActionTests(TestCase):
     # Function: Reject credentials that do not authorize the reviewed sender and action.
     # Inputs: Foreign mailbox, readonly scope and an account changed after preparation.
     # Outputs: Preparation errors or confirmation conflict with no Draft/send task.
-    # Logic: Mutate only synthetic fixture ownership/scopes/account at each boundary.
+    # Logic: Mutate synthetic ownership/scopes/account; assert precise scoped errors before checking the unchanged confirmation conflict.
     # Constraints: Genuine OAuth tokens are never loaded or printed.
     def test_email_requires_sender_and_scope(self):
         self.assertEqual(self.call(PREPARE_EMAIL, {**self.email_args, "subject": "Header\n"}).status_code, 400)
         self.connection.owner = self.other
         self.connection.save()
-        self.assertEqual(self.call(PREPARE_EMAIL, self.email_args).status_code, 404)
+        response = self.call(PREPARE_EMAIL, self.email_args)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.data["error"]["code"], "email_connection_unavailable")
         self.connection.owner = self.user
         self.connection.encrypted_credentials = integrations.encrypt_credentials({"scopes": [integrations.SCOPES["gmail"][1]]})
         self.connection.save()
-        self.assertEqual(self.call(PREPARE_EMAIL, self.email_args).status_code, 409)
+        response = self.call(PREPARE_EMAIL, self.email_args)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["error"]["code"], "email_authorization_invalid")
         self.connection.encrypted_credentials = integrations.encrypt_credentials({"scopes": integrations.SCOPES["gmail"]})
         self.connection.save()
         proposal_id = self.prepare(PREPARE_EMAIL, self.email_args)
@@ -323,6 +328,39 @@ class ChatActionTests(TestCase):
         self.connection.save()
         self.assertEqual(self.decision(proposal_id).status_code, 409)
         self.assertFalse(models.Draft.objects.exists())
+
+    # Function: Distinguish laboratory discovery from actual email ownership before and during preparation.
+    # Inputs: Real owned fixtures plus a second employee's customer and Gmail metadata in laboratory mode.
+    # Outputs: Both records remain discoverable, ownership annotations persist in evidence, and rejected preparation creates no proposal or send.
+    # Logic: Exercise actual HTTP list/detail reads and customer/connection rejection paths, including a nonexistent UUID with the same non-leaking error.
+    # Constraints: Only synthetic encrypted credentials are used; no provider or model call occurs.
+    @override_settings(LAB_OPEN_ACCESS=True)
+    def test_email_ownership_and_actionable_errors_in_laboratory(self):
+        foreign = models.Connection.objects.create(owner=self.other, provider="gmail", account="foreign@example.com")
+        customer = grouping.create_company(self.other, "Other email customer")
+        page = self.call("connections.list", {"page_size": 20}).data["data"]
+        ownership = {row["id"]: row["email_preparation_owned"] for row in page["results"]}
+        self.assertEqual(ownership, {str(self.connection.pk): True, str(foreign.pk): False})
+        detail = self.call("connections.get", {"id": str(foreign.pk)})
+        self.assertFalse(detail.data["data"]["email_preparation_owned"])
+        self.assertIn('"email_preparation_owned": false', detail.data["evidence_items"][0]["content"])
+        page = self.call("customers.search", {"page_size": 20}).data["data"]
+        ownership = {row["id"]: row["email_preparation_owned"] for row in page["results"]}
+        self.assertTrue(ownership[str(self.company.pk)])
+        self.assertFalse(ownership[str(customer.pk)])
+        for row, expected in ((self.company, True), (customer, False)):
+            self.assertEqual(self.call("customers.context", {"company_id": str(row.pk)}).data["data"]["email_preparation_owned"], expected)
+        for target in (foreign.pk, uuid.uuid4()):
+            response = self.call(PREPARE_EMAIL, {**self.email_args, "connection_id": str(target)})
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.data["error"]["code"], "email_connection_unavailable")
+            self.assertEqual(response.data["error"]["scope"], "tool")
+            self.assertIn("新建聊天会话", response.data["error"]["detail"])
+        response = self.call(PREPARE_EMAIL, {**self.email_args, "company_id": str(customer.pk)})
+        self.assertEqual(response.data["error"]["code"], "email_customer_unavailable")
+        self.assertFalse(ActionProposal.objects.exists())
+        self.assertFalse(models.Draft.objects.exists())
+        self.assertFalse(models.ToolAction.objects.exists())
 
     # Function: Bind approval to a real employee Session, CSRF token and proposal version.
     # Inputs: Agent-only, foreign Session, missing-CSRF and stale-revision submissions.

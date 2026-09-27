@@ -1,5 +1,5 @@
 """Responsibility: Verify the complete backend path for workspace chat read-only interfaces, stable evidence, and original business permissions.
-Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the complete MCP catalog, checkpointed writes and live registry modes; simulate failures and concurrent waits only at explicit boundaries.
+Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify complete catalog, checkpointed writes and unchanged generic receipts plus chat-only email ownership annotations; simulate failures and concurrent waits at explicit boundaries.
 Relationships: chat.tool_reads/tool_views, the agent_tools registry, and chat.services; no external model or mailbox calls.
 Directory:
 - ChatToolTests: Integration tests for request-bound tool services.
@@ -152,19 +152,16 @@ class ChatToolTests(TestCase):
 
     # Function: Verify original context, tool sources from two companies, and final browser citations work together.
     # Inputs: Original snapshot, customer search, and two detail reads.
-    # Outputs: Business data matches original tools, sources are distinguishable, and browsers receive only actually cited content.
-    # Logic: Report the new prompt version entirely through HTTP, then query Agent status after saving.
+    # Outputs: Business data matches original tools except verified chat email-ownership annotations; sources remain distinct and browsers receive only cited content.
+    # Logic: Compare complete search payloads after explicitly adding expected ownership for owned fixtures, then report through HTTP and read persisted status/citations.
     # Constraints: Do not interpret synthetic test answers as real-model tool orchestration.
     def test_search_context_answer_round_trip(self):
         context = services.context_for(self.owner, self.request.pk, "internal")
         search = self.read("customers.search", {"q": "客户"})
         self.assertEqual(search.status_code, 200, search.data)
-        self.assertEqual(
-            search.data["data"],
-            tool_services.invoke(self.owner, None, "customers.search", {"q": "客户"})[
-                "data"
-            ],
-        )
+        expected = tool_services.invoke(self.owner, None, "customers.search", {"q": "客户"})["data"]
+        expected["results"] = [{**row, "email_preparation_owned": True} for row in expected["results"]]
+        self.assertEqual(search.data["data"], expected)
         items = []
         for company in (self.company, self.second):
             detail = self.read("customers.context", {"company_id": str(company.pk)})

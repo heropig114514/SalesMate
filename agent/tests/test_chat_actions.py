@@ -13,6 +13,7 @@ Directory:
 - ActionBackend.get_chat_tools: Publish the fixture customer and proposal capabilities.
 - ChatActionTests: Group isolated fixture and contract checks.
 - ChatActionTests.test_missing_connection_get_reports_required_read_before_preparation: Verify missing connection get reports required read before preparation.
+- ChatActionTests.test_email_error_details_and_ownership_reach_model: Preserve scoped business diagnostics and ownership hints across the model boundary without retrying preparation.
 - ChatActionTests.backend: Build an isolated queued backend for a specified question.
 - ChatActionTests.test_order_preparation_displays_frozen_changes_and_stops_before_execution: Verify order preparation displays frozen changes and stops before execution.
 - ChatActionTests.test_email_preview_preserves_body_and_exposes_all_recipients_without_sending: Verify email preview preserves body and exposes all recipients without sending.
@@ -176,6 +177,29 @@ class ActionBackend(ToolBackend):
 # Logic: Use queued data or mocks while exercising real client and validation code.
 # Constraints: No deployed backend, model, employee decisions or external providers are contacted.
 class ChatActionTests(unittest.TestCase):
+    # Function: Preserve actionable backend failure information instead of inventing missing capabilities.
+    # Inputs: Queued synthetic customer/connection receipts, a scoped 404, and deterministic model decisions.
+    # Outputs: The next model prompt contains exact safe code/detail and the original ownership flags; one prepare call occurs.
+    # Logic: Run the actual loop with mocked model and transport boundaries, then inspect the prompt after rejection.
+    # Constraints: This verifies information delivery, not natural-language model behavior or live Gmail availability.
+    def test_email_error_details_and_ownership_reach_model(self):
+        customer = detail_result(COMPANY_ID, "Recipient company", detail_evidence(COMPANY_ID, "Recipient company", "Customer"))
+        customer["data"]["email_preparation_owned"] = True
+        connection = connection_read()
+        connection["data"]["email_preparation_owned"] = False
+        message = "Connect Gmail in the current account or use the owning account and a new conversation."
+        backend = self.backend([customer, connection, BackendRequestError(404, "email_connection_unavailable", message, scope="tool")])
+        provider = QueueProvider(tool("customers.context", company_id=COMPANY_ID),
+            tool("connections.get", id=CONNECTION_ID), tool(PREPARE_EMAIL, **email_arguments()),
+            {"action": "answer", "assistant_text": message, "citations": []})
+        result = process_chat_once(backend=backend, chat_provider=provider)
+        self.assertEqual(result["status"], "completed")
+        observations = json.loads(provider.calls[-1][0][-1]["content"])["tool_results"]
+        self.assertTrue(observations[0]["data"]["email_preparation_owned"])
+        self.assertFalse(observations[1]["data"]["email_preparation_owned"])
+        self.assertEqual(observations[-1]["error"], {"code": "email_connection_unavailable", "detail": message})
+        self.assertEqual([row[1] for row in backend.tool_calls].count(PREPARE_EMAIL), 1)
+
     # Function: Verify missing connection get reports required read before preparation.
     # Inputs: Instance fixture state and queued synthetic responses.
     # Outputs: None; unittest assertions raise on contract violations.

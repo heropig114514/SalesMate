@@ -1,5 +1,5 @@
 """Responsibility: Orchestrate the complete request-scoped business tool catalog, validating model answer citations.
-Implementation: Read all published tools eagerly and derive write checkpoints from live execution modes; preserve arbitrary business receipts and specialized customer/experiment evidence. Constrain model calls with live catalogs and unchanged budgets; writes save a checkpoint and release the Worker while awaiting browser approval. Resumed claims consume canonical receipts without repeating the write or earlier model calls.
+Implementation: Read all published tools eagerly and derive write checkpoints from live modes; preserve ownership annotations and scoped business error diagnostics in model observations. Keep budgets unchanged; writes suspend for browser review and resume from canonical receipts.
 Relationships: DjangoBackendClient provides request-bound HTTP; the workspace-chat skill defines selection rules and the backend persists evidence.
 Directory:
 - ChatValidationError: Represent workspace contract validation failure.
@@ -542,7 +542,7 @@ def _workspace_decision(raw: object, evidence: list[dict[str, str]], request_id:
 # Inputs: `raw`: backend read receipt; `request_id`: current request identifier; `name`: expected executed tool name.
 # Outputs: Validate request, tool, and source UUIDs; project customer, experiment catalog, row, or file results into summaries and complete evidence.
 # Logic: Validate request/tool/source bindings and 2xx receipt status; specialize known evidence and preserve arbitrary JSON results and queued/pending states for generic tools.
-# Constraints: Summaries do not expand attachment bodies; apply shared budgets to source bodies.
+# Constraints: Summaries retain email ownership hints without granting send authorization or expanding attachments; source budgets remain unchanged.
 def _workspace_tool_result(raw: object, request_id: str, name: str):
     if not isinstance(raw, Mapping):
         raise ChatValidationError("Tool response must be an object.")
@@ -580,7 +580,7 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
         for result in data["results"][:_WORKSPACE_MAX_SEARCH_PAGE_SIZE]:
             if not isinstance(result, Mapping):
                 raise ChatValidationError("Customer search result must be an object.")
-            rows.append({key: result[key] for key in ("id", "name", "domains") if key in result})
+            rows.append({key: result[key] for key in ("id", "name", "domains", "email_preparation_owned") if key in result})
         summary = {
             "count": data["count"], "page": data["page"],
             "page_size": data["page_size"], "results": rows,
@@ -609,7 +609,7 @@ def _workspace_tool_result(raw: object, request_id: str, name: str):
     elif name == "experiments.file_read":
         summary = {key: value for key, value in data.items() if key != "content"}
     elif name == "customers.context":
-        summary = {key: data[key] for key in ("company_id", "company_name", "id", "name") if key in data}
+        summary = {key: data[key] for key in ("company_id", "company_name", "id", "name", "email_preparation_owned") if key in data}
     else:
         summary = {"status": raw["status"], "http_status": raw["http_status"], "data": data}
     return summary, evidence
@@ -708,7 +708,7 @@ def _workspace_prompt_evidence(
 # Function: Process a workspace question and the read/confirmation proposal tool loop.
 # Inputs: `request`: backend claim object; `backend`: request-bound client; `chat_provider`: one-call model function.
 # Outputs: Final answer, stage failure, or awaiting_approval suspension; the complete request still has at most six tool turns.
-# Logic: Load all catalog pages before the first model call; derive checkpoints from executionMode and resume canonical receipts without replay, preserving loop budgets and independent email prerequisites.
+# Logic: Load the complete catalog, derive checkpoints, and resume receipts without replay. Preserve scoped business error codes and curated details for the model instead of reducing authorization failures to a status number; budgets stay unchanged.
 # Constraints: backend is the real service boundary and chat_provider the model boundary; the backend persists evidence, with parameters and budgets unchanged.
 def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_provider: Any) -> dict[str, Any]:
     """At most six data tool calls, each selected by the model; the final answer cites only backend-registered evidence."""
@@ -853,10 +853,11 @@ def answer_workspace_request(request: Mapping[str, Any], *, backend: Any, chat_p
                     "tool": name, "arguments": arguments,
                     "status": "invalid_arguments" if error.status_code in {400, 422} else "conflict" if error.status_code == 409 else "unavailable",
                     "http_status": error.status_code,
+                    "error": {"code": error.code, "detail": error.detail},
                 })
                 logger.info(
-                    "workspace_chat_tool_unavailable request_id=%s tool=%s status=%s",
-                    request_id, name, error.status_code,
+                    "workspace_chat_tool_unavailable request_id=%s tool=%s status=%s code=%s",
+                    request_id, name, error.status_code, error.code,
                 )
                 continue
             if raw_result.get("status") == "approval_required":
