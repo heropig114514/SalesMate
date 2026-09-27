@@ -1,6 +1,6 @@
 /**
  * Responsibility: Provide workspace chat, Markdown answers, source citations, persisted conversations, and editable drafts.
- * Implementation: Render persisted answers and poll requests; awaiting_approval opens an escaped operation dialog. Explicit decisions resume or cancel the backend request; account/conversation changes discard stale dialogs and responses.
+ * Implementation: Render persisted answers and independent order/email proposal cards for Session-owned conversations; laboratory browsing retains ordinary chat without private proposal requests. Poll answer and send status. Experiment approval retains its existing dialog. Account/conversation changes discard stale responses.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: The 0919 interface and shared language/API resources use coordinated cache versions; assistant-widget.js mounts the single workspace entry and provides history, draft, and save controls; sales-api.js handles communication.
  * Directory: AssistantPanel, AssistantPanel.constructor, AssistantPanel.initializeView, AssistantPanel.open,
@@ -8,11 +8,13 @@
  * AssistantPanel.load, AssistantPanel.ensureConversation, AssistantPanel.save, AssistantPanel.draw, AssistantPanel.run,
  * AssistantPanel.stopPolling, AssistantPanel.watch, AssistantPanel.poll, AssistantPanel.refreshAnswers, AssistantPanel.pausePolling, AssistantPanel.retryAnswer.
  * AssistantPanel.showApproval, AssistantPanel.dismissApproval, AssistantPanel.decideApproval.
+ * AssistantPanel.proposalCard, AssistantPanel.decideProposal, AssistantPanel.pollProposals.
  * Variable index: No module variables; nodes holds DOM references; drafts stores unsent page text; background records prior inert state on narrow screens.
  * conversations holds workspace conversations; conversation/draft holds the selected record and version; epoch prevents stale request updates.
  * busy controls submission; needsLoad defers new open requests during an operation; messageKey is the message idempotency key; narrow/isOpen controls layout; opener records the focus target after closing.
  * answers holds current conversation requests; pollTimer/pollController/pollEpoch manages cancellation; pollCount limits each round to 120 polls at two-second intervals.
  * approvalDialog holds the pending operation modal; questions maps displayed question IDs to text for restoring an editable rejected question.
+ * proposals holds server-frozen business cards; messages holds the currently rendered immutable message snapshot for send-status refresh.
  */
 import { t, h, locale } from './i18n.js?v=20260921-product';
 
@@ -21,7 +23,7 @@ import { salesRequest, allRows } from "./sales-api.js?v=20260921-product";
 import { renderAssistantMarkdown } from './assistant-markdown.js?v=20260921-markdown';
 
 /** Function: Manage workspace assistant conversations and drafts.
- * Logic: Explicit questions enter the queue; status, answers, and citations come from the backend. External tools require separate review/confirmation in business management.
+ * Logic: Explicit questions enter the queue; answers, citations and frozen action cards come from the backend. Only card buttons authorize business execution.
  * Constraints: Never infer or fabricate replies in the browser; only explicit retries are allowed after failure. */
 export class AssistantPanel {
   /** Function: Connect the shared widget and bind actions. Inputs: None; reads the DOM.
@@ -57,6 +59,8 @@ export class AssistantPanel {
     this.needsLoad = false;
     this.messageKey = crypto.randomUUID();
     this.answers = [];
+    this.proposals = [];
+    this.messages = [];
     this.approvalDialog = null;
     this.questions = new Map();
     this.pollTimer = null;
@@ -105,6 +109,9 @@ export class AssistantPanel {
       }),
     );
     this.nodes.history.addEventListener("click", (event) => {
+      const decision = event.target.closest("[data-proposal-decision]");
+      if (decision) this.run(() => this.decideProposal(decision.dataset.proposalId, decision.dataset.proposalDecision));
+      if (event.target.closest("[data-proposal-refresh]")) this.run(() => this.refreshAnswers());
       const retry = event.target.closest("[data-chat-retry]");
       if (retry) this.run(() => this.retryAnswer(retry.dataset.chatRetry));
     });
@@ -234,6 +241,8 @@ export class AssistantPanel {
     this.draft = null;
     this.conversations = [];
     this.answers = [];
+    this.proposals = [];
+    this.messages = [];
     this.nodes.input.value = "";
     this.nodes.history.textContent = "";
     this.nodes.sessions.innerHTML = h('<option value="">尚未选择会话</option>');
@@ -242,11 +251,12 @@ export class AssistantPanel {
 
   /** Function: Load a specified or most recent workspace conversation. Inputs: selected is an optional conversation identifier.
    * Outputs: None. Logic: Read all conversation/draft pages; read answer status before messages so completed answers are visible. Responses from an old epoch never update the view.
-   * Constraints: Prefer unsaved current-page text and explicitly mark it unsaved. */
+   * Constraints: Prefer unsaved current-page text and explicitly mark it unsaved. Read private proposals only when the server declares Session-owned review capability; laboratory browsing retains ordinary chat. */
   async load(selected) {
     this.dismissApproval();
     this.stopPolling();
     this.answers = [];
+    this.proposals = [];
     const epoch = ++this.epoch;
     const conversations = (
       await allRows(
@@ -269,15 +279,17 @@ export class AssistantPanel {
       draft = null;
     if (this.conversation) {
       const conversationId = this.conversation.id;
-      const [drafts, answers] = await Promise.all([
+      const [drafts, answers, proposals] = await Promise.all([
         allRows(`records/drafts/?conversation=${conversationId}`),
         allRows(`chat/requests/?conversation=${conversationId}`),
+        this.conversation.can_review_chat_actions ? allRows(`chat/action-proposals/?conversation_id=${conversationId}`) : [],
       ]);
       if (epoch !== this.epoch) return;
       // Completion and assistant messages commit in one transaction; read messages afterward so terminal-state polling does not miss the answer.
       messages = await allRows(`records/messages/?conversation=${conversationId}`);
       if (epoch !== this.epoch) return;
       this.answers = answers;
+      this.proposals = proposals;
       draft =
         drafts
           .filter((d) => d.kind === "chat")
@@ -362,6 +374,7 @@ export class AssistantPanel {
    * Outputs: None. Logic: Render only assistant content through assistant-markdown.js; user content and sources remain escaped plain text. Associate messages with status, citations, and failure retries.
    * Constraints: Markdown disables raw HTML and dangerous links; evidence starts collapsed and never executes HTML. Preserve stored source text and generation flow. */
   draw(messages) {
+    this.messages = messages;
     this.questions = new Map(messages.filter((message) => message.role === "user").map((message) => [message.id, message.content]));
     const byMessage = new Map(this.answers.filter((row) => row.assistant_message_id).map((row) => [row.assistant_message_id, row]));
     const byQuestion = new Map(this.answers.map((row) => [row.user_message_id, row]));
@@ -381,7 +394,8 @@ export class AssistantPanel {
             const body = message.role === 'assistant'
               ? `<div class="assistant-markdown">${renderAssistantMarkdown(message.content)}</div>`
               : `<p>${esc(message.content)}</p>`;
-            return `<article class="assistant-message"><small>${message.role === "user" ? t("我") : t("助手")} · ${esc(new Date(message.created_at).toLocaleString(locale))}</small>${body}${citations}${state}</article>`;
+            const cards = this.proposals.filter((proposal) => proposal.user_message_id === message.id).map((proposal) => this.proposalCard(proposal)).join("");
+            return `<article class="assistant-message"><small>${message.role === "user" ? t("我") : t("助手")} · ${esc(new Date(message.created_at).toLocaleString(locale))}</small>${body}${citations}${state}${cards}</article>`;
           })
           .join("")
       : h('<p class="fine">尚无消息。可以先保存草稿，或直接发送问题。</p>');
@@ -404,7 +418,15 @@ export class AssistantPanel {
     this.stopPolling();
     const active = this.answers.find((row) => ["pending", "processing", "awaiting_approval"].includes(row.status));
     this.nodes.submit.disabled = this.busy || Boolean(active);
-    if (!active || !this.isOpen) return;
+    if (!this.isOpen) return;
+    if (!active) {
+      if (this.proposals.some((proposal) => ["approved", "running"].includes(proposal.status))) {
+        this.pollCount = 0;
+        const epoch = this.pollEpoch;
+        this.pollTimer = setTimeout(() => this.pollProposals(epoch), 2000);
+      }
+      return;
+    }
     if (active.status === "awaiting_approval") {
       this.nodes["draft-note"].textContent = t("操作尚未执行，请审阅后批准或拒绝。");
       this.showApproval(active);
@@ -442,14 +464,15 @@ export class AssistantPanel {
 
   /** Function: Refresh answers while preserving text being edited. Inputs: Current customer, conversation, and epoch.
    * Outputs: None. Logic: Read request status before messages to avoid mixing terminal states with old message snapshots; check bindings and observation generation, and offer explicit recovery if either read fails.
-   * Constraints: Preserve drafts and scroll position; an explicit pending approval may move focus into its review dialog. */
+   * Constraints: Preserve drafts and scroll position; read proposals only with server-declared Session ownership. An explicit pending experiment approval may move focus into its review dialog. */
   async refreshAnswers() {
     this.stopPolling();
     const conversation = this.conversation?.id, epoch = this.epoch, observation = this.pollEpoch;
     if (!conversation) return;
-    let messages, answers;
+    let messages, answers, proposals;
     try {
       answers = await allRows(`chat/requests/?conversation=${conversation}`);
+      proposals = this.conversation.can_review_chat_actions ? await allRows(`chat/action-proposals/?conversation_id=${conversation}`) : [];
       if (epoch !== this.epoch || observation !== this.pollEpoch || !this.isOpen) return;
       messages = await allRows(`records/messages/?conversation=${conversation}`);
     } catch (error) {
@@ -459,11 +482,71 @@ export class AssistantPanel {
     }
     if (epoch !== this.epoch || observation !== this.pollEpoch || conversation !== this.conversation?.id || !this.isOpen) return;
     this.answers = answers;
+    this.proposals = proposals;
     const scrollContainer = this.nodes.history.parentElement, position = scrollContainer.scrollTop;
     this.draw(messages);
     scrollContainer.scrollTop = position;
     this.nodes["draft-note"].textContent = t("回答状态已更新；输入中的未保存内容已保留。");
     this.watch();
+  }
+
+  /** Function: Render one complete server-frozen proposal. Inputs: proposal is browser list data bound to a user message.
+   * Outputs: Escaped HTML review card. Logic: Show every changed field or all message recipients/content, and only allow pending decisions.
+   * Constraints: Model Markdown and proposal content never create executable markup; approved does not mean sent. */
+  proposalCard(proposal) {
+    const args = proposal.arguments, preview = proposal.preview;
+    const labels = { pending_confirmation: "待确认，尚未执行", approved: "已确认，等待执行", running: "正在执行", succeeded: proposal.kind === "email_send" ? "邮件服务已接受发送，未确认送达" : "订单已更新", failed: "执行失败", uncertain: "结果不确定，请核对，勿重复发送", cancelled: "已取消或被新提案替代", expired: "已过期", conflicted: "数据已变化，请重新准备" };
+    let content;
+    if (proposal.kind === "email_send") {
+      content = `<p>From: ${esc(preview.from_address)}<br>To: ${esc(args.to.join(", "))}<br>Cc: ${esc(args.cc.join(", "))}<br>Bcc: ${esc(args.bcc.join(", "))}</p><strong>${esc(args.subject)}</strong><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(args.body_text)}</pre>`;
+    } else {
+      content = `<p>${esc(preview.order_number)}</p><ul>${preview.changes.map((change) => `<li>${esc(change.field)}: ${esc(String(change.before ?? ""))} → ${esc(String(change.after))}</li>`).join("")}</ul>`;
+      if ("total_after" in preview) {
+        const oldCurrency = preview.changes.find((change) => change.field === "currency")?.before || preview.currency;
+        content += `<p>${esc(preview.total_before ?? "unknown")} ${esc(oldCurrency)} → ${esc(preview.total_after ?? "unknown")} ${esc(preview.currency)}</p>`;
+      }
+    }
+    const buttons = proposal.status === "pending_confirmation" ? `<button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="approve">${esc(t("确认执行"))}</button><button type="button" data-proposal-id="${esc(proposal.id)}" data-proposal-decision="cancel">${esc(t("取消"))}</button>` : "";
+    return `<section class="assistant-action-proposal" data-proposal-card="${esc(proposal.id)}"><h4>${esc(preview.company_name)} · ${esc(t(labels[proposal.status] || "状态未知"))}</h4>${content}<p>${esc(t("确认截止时间"))}: ${esc(proposal.expires_at)}</p><div class="actions">${buttons}<button type="button" data-proposal-refresh>${esc(t("刷新状态"))}</button></div></section>`;
+  }
+
+  /** Function: Submit a concrete reviewed decision. Inputs: proposalId and decision come from a server-backed card button.
+   * Outputs: None; refresh server cards and notify an open order page on successful mutation.
+   * Logic: Bind the displayed revision, disable duplicate buttons, and ignore stale responses after a conversation/account switch.
+   * Constraints: No content overrides, inferred approval, automatic retry or direct sending. */
+  async decideProposal(proposalId, decision) {
+    const proposal = this.proposals.find((row) => row.id === proposalId), epoch = this.epoch;
+    if (!proposal || proposal.status !== "pending_confirmation") return;
+    const buttons = [...this.nodes.history.querySelectorAll("[data-proposal-decision]")];
+    buttons.forEach((button) => { button.disabled = true; });
+    try {
+      const result = await salesRequest(`chat/action-proposals/${proposal.id}/decision/`, { method: "POST", data: { decision, revision: proposal.revision } });
+      if (epoch !== this.epoch) return;
+      await this.refreshAnswers();
+      if (result.kind === "order_update" && result.status === "succeeded") window.dispatchEvent(new CustomEvent("salesmate:orders-changed"));
+    } finally {
+      buttons.forEach((button) => { button.disabled = false; });
+    }
+  }
+
+  /** Function: Observe approved/running send tasks independently of finished chat answers. Inputs: epoch identifies this observation generation.
+   * Outputs: Updated cards or an explicit paused-status message. Logic: Read server proposals at most 120 times, preserving editor text and scroll.
+   * Constraints: Failures stop observation without resending; closed panels and obsolete conversation responses are ignored. */
+  async pollProposals(epoch) {
+    if (epoch !== this.pollEpoch || !this.isOpen) return;
+    try {
+      const proposals = await allRows(`chat/action-proposals/?conversation_id=${this.conversation.id}`);
+      if (epoch !== this.pollEpoch || !this.isOpen) return;
+      this.proposals = proposals;
+      const container = this.nodes.history.parentElement, position = container.scrollTop;
+      this.draw(this.messages);
+      container.scrollTop = position;
+      if (!proposals.some((proposal) => ["approved", "running"].includes(proposal.status))) return;
+      if (++this.pollCount >= 120) throw new Error(t("等待时间较长，自动查询已暂停。"));
+      this.pollTimer = setTimeout(() => this.pollProposals(epoch), 2000);
+    } catch (error) {
+      if (epoch === this.pollEpoch) this.pausePolling(error.message);
+    }
   }
 
   /** Function: Show the observation pause reason and an explicit recovery action. Inputs: message is safe display text.

@@ -1,5 +1,5 @@
 """Responsibility: Clear the current account's internal data while retaining account, password, and authenticated identity.
-Implementation: Explicit ownership rules include chat approvals through their request owner, graph evidence, and dependent joins; deferred constraints protect cross-account references, and files/sessions are cleaned after commit.
+Implementation: Explicit ownership rules include chat approvals and independent action proposals through their request owner, graph evidence, and dependent joins; deferred constraints protect cross-account references, and files/sessions are cleaned after commit.
 Relationships: ``AccountReset``, ``ResetView``, and the account exclusive lock; covers accounts, crm, sales, chat, agent_tools, vectors, and knowledge_graph.
 Directory:
 - reset_error: Construct a standard error response with a request ID.
@@ -49,6 +49,7 @@ INDIRECT_OWNERS = {
     "crm.SnapshotInvalidation": "snapshot__company__owner",
     "crm.ExtractionRepair": "email__mailbox__owner",
     "chat.Citation": "request__owner", "chat.ToolRead": "request__owner", "chat.ChatApproval": "request__owner",
+    "chat.ActionProposal": "request__owner",
     "knowledge_graph.Support": "fact__owner", "knowledge_graph.Change": "owner_id",
 }
 AUTH_KEYS = {SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY}

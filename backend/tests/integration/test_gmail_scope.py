@@ -1,5 +1,5 @@
 """Responsibility: Validate bounded Gmail synchronization, limiting before deduplication, and prohibition of implicit full synchronization.
-Implementation: Mock the Gmail SDK to validate the default limit of 50 messages and explicit approval for excess; persistent tests use an isolated database and the real batch service.
+Implementation: Mock the Gmail SDK to validate the default limit of 50 messages and explicit approval for excess; persistent tests use an isolated database and the real batch service. Agent exceptions retain their current English diagnostics.
 Relationships: gmail_scope selects messages, sync_scope freezes conditions, and durable_sync/processing perform persistent synchronization.
 Directory:
 - GmailScopeLogicTests: Scope, pagination, and CLI-boundary tests that require no database.
@@ -111,7 +111,7 @@ class GmailScopeLogicTests(SimpleTestCase):
 
     # Function: Validate explicit failure for invalid responses and pagination loops.
     # Inputs: No external inputs; invalid list structure, empty ID, invalid token, and cyclic pages.
-    # Outputs: RuntimeError; a cyclic page does not produce a second duplicate message batch.
+    # Outputs: RuntimeError with the Agent's pagination-loop diagnostic; a cyclic page does not produce a second duplicate message batch.
     # Logic: Validate the response before yielding; pagination tokens must make progress.
     # Constraints: Do not silently treat it as completed synchronization.
     def test_invalid_response_and_page_cycles_fail(self):
@@ -120,7 +120,7 @@ class GmailScopeLogicTests(SimpleTestCase):
             with self.subTest(response=response), self.assertRaises(RuntimeError):
                 list(scoped_message_pages(self.service, self.options))
         self.execute.side_effect = [{"messages": [{"id": "a"}], "nextPageToken": "p2"}, {"messages": [{"id": "b"}], "nextPageToken": "p2"}]
-        with self.assertRaisesRegex(RuntimeError, "分页循环"):
+        with self.assertRaisesRegex(RuntimeError, "pagination loop"):
             list(scoped_message_pages(self.service, self.options))
 
     # Function: Validate that Google network exceptions do not implicitly retry or fall back to full synchronization.
@@ -198,12 +198,12 @@ class GmailScopeLogicTests(SimpleTestCase):
 
     # Function: Validate that approval permits only the selected explicit excess message count.
     # Inputs: No external inputs; 75 messages under unapproved, explicitly rejected, and approved conditions.
-    # Outputs: No list request when unapproved; after approval select at most 75 messages.
+    # Outputs: Explicit approval-required diagnostic and no list request when unapproved; after approval select at most 75 messages.
     # Logic: Use real validation and pagination; approval cannot make scope unlimited.
     # Constraints: Google response mocks do not prove a real network latency limit.
     def test_large_sync_requires_specific_approval(self):
         for approval in ({}, {"allow_large_sync": False}):
-            with self.assertRaisesRegex(ValueError, "明确批准"):
+            with self.assertRaisesRegex(ValueError, "approve the exact count"):
                 list(scoped_message_pages(self.service, {**self.options, "max_messages": 75, **approval}))
         self.listing.assert_not_called()
         self.execute.side_effect = [{"messages": [{"id": str(i)} for i in range(start, start + 20)], "nextPageToken": f"p{start}"} for start in (0, 20, 40, 60)]

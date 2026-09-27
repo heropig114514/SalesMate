@@ -1,6 +1,6 @@
 """Responsibility: Validate sales APIs and relation references and declare explicit OpenAPI fields.
 Implementation: Public news validates one set of sales leads, source amounts, and evidence without generating/linking CRM. Generic resources register opportunity signals/scores without executing algorithms. Events/news validate date precision, sources, and authorized links, filtering private opportunity IDs at all read entry points. Use explicit field allowlists, read-only state protection, and authorized relation queries; opportunities accept canonical product names and amounts use Decimal.
-Relationships: views selects concrete serializers; services additionally validates transactions, cross-entity relationships, and state.
+Relationships: views selects concrete serializers; services additionally validates transactions, cross-entity relationships, and state. Conversation capability metadata separates Session-owned proposal review from laboratory browsing.
 Directory:
 - ZonedDateTimeField: Event/news time and field validation.
 - ZonedDateTimeField.to_internal_value: Event/news time and field validation.
@@ -48,6 +48,7 @@ Directory:
 - FollowUpSerializer: Authorized field contract for customer follow-ups and due reminders.
 - FollowUpSerializer.Meta: Declare entity fields and states not directly writable.
 - ConversationSerializer: Authorized field contract for employees' own general/company assistant conversations.
+- ConversationSerializer.get_can_review_chat_actions: Declare genuine Session ownership without granting laboratory identities approval.
 - ConversationSerializer.Meta: Declare entity fields and states not directly writable.
 - MessageSerializer: Authorized field contract for immutable conversation messages.
 - MessageSerializer.Meta: Declare entity fields and states not directly writable.
@@ -60,6 +61,7 @@ Directory:
 - NotificationSerializer: Authorized field contract for in-app due reminders.
 - NotificationSerializer.Meta: Declare entity fields and states not directly writable.
 Variable index:
+- ConversationSerializer.can_review_chat_actions: Read-only private-proposal capability for this browser Session and conversation.
 - WorldEventSerializer.starts_on: Inclusive start date of date-only events, read-only.
 - WorldEventSerializer.ends_on: Inclusive end date of date-only events, read-only.
 - WorldEventSerializer.source_url: Source-format validation; insights and the database handle conditional deduplication, avoiding uniqueness constraints on manual sources.
@@ -752,12 +754,27 @@ class FollowUpSerializer(StrictModelSerializer):
 
 
 # Function: Declare fields for employees' own general/company assistant conversations.
-# Logic: Filter relations by current user; dedicated business actions maintain state.
-# Constraints: Reject client-supplied owner/revision or fabricated execution results.
+# Logic: Filter relations by current user and publish actual Session-owned proposal-review capability; dedicated business actions maintain state.
+# Constraints: Reject client-supplied owner/revision, capability overrides or fabricated execution results; laboratory visibility does not grant private proposal review.
 class ConversationSerializer(StrictModelSerializer):
-    # Function: Bind model and API fields.
-    # Logic: Explicit field lists prevent newly added model fields from being exposed automatically.
-    # Constraints: Transactional services additionally validate cross-field rules.
+    can_review_chat_actions = s.SerializerMethodField()
+
+    # Function: Publish whether private proposal review is available to this Session.
+    # Inputs: Serialized `obj` conversation and the optional HTTP request in serializer context.
+    # Outputs: Boolean; false for anonymous, machine, shared laboratory or company conversations.
+    # Logic: Reauthenticate the Django Session independently of laboratory request.user overrides and compare actual ownership.
+    # Constraints: A display capability never authorizes decisions; proposal endpoints still enforce Session and CSRF themselves.
+    def get_can_review_chat_actions(self, obj) -> bool:
+        from django.contrib.auth import get_user
+        request = self.context.get("request")
+        if request is None or not hasattr(request, "session"):
+            return False
+        user = get_user(request)
+        return bool(user.is_authenticated and user.is_active and user.pk == obj.owner_id and obj.company_id is None and not obj.archived)
+
+    # Function: Bind conversation fields and the read-only proposal-review capability.
+    # Logic: Explicit fields retain existing conversation writes while SerializerMethodField computes Session ownership.
+    # Constraints: Capability cannot be supplied by a caller; transactional services additionally validate cross-field rules.
     class Meta:
         model = models.Conversation
         fields = [
@@ -769,6 +786,7 @@ class ConversationSerializer(StrictModelSerializer):
             "updated_at",
             "company",
             "title",
+            "can_review_chat_actions",
         ]
         read_only_fields = [
             "id",

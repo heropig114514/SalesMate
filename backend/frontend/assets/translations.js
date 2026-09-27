@@ -1,11 +1,22 @@
 /**
  * Responsibility: Store the English catalog for Simplified Chinese interface source text.
- * Implementation: Includes chat write approval, Channel previews, onboarding, and password guidance. Exact source keys and placeholders contain no runtime customer data.
+ * Implementation: Includes independent chat action review/status, experiment approval, Channel previews, onboarding, and password guidance. Exact source keys contain no runtime customer data.
  * Relationships: Shared language/API resources follow the interface cache version; i18n.js t/h reads this catalog for static data-i18n markers and explicitly marked JavaScript literals.
  * Directory: No functions or classes.
  * Variable index: EN is the read-only map from Chinese source text to English translations.
  */
 export const EN = Object.freeze({
+  "确认执行": "Confirm execution",
+  "确认截止时间": "Confirmation deadline",
+  "待确认，尚未执行": "Awaiting confirmation; not executed",
+  "已确认，等待执行": "Confirmed; awaiting execution",
+  "正在执行": "Running",
+  "邮件服务已接受发送，未确认送达": "Email provider accepted the message; delivery not confirmed",
+  "订单已更新": "Order updated",
+  "结果不确定，请核对，勿重复发送": "Outcome uncertain; verify before sending again",
+  "已取消或被新提案替代": "Cancelled or replaced by a new proposal",
+  "已过期": "Expired",
+  "数据已变化，请重新准备": "Data changed; prepare a new proposal",
   "等待你批准操作": "Waiting for your approval",
   "已取消待执行操作": "Pending operation cancelled",
   "操作尚未执行，请审阅后批准或拒绝。": "The operation has not run. Review it and approve or reject.",

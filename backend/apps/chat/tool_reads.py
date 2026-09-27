@@ -1,11 +1,12 @@
 """Responsibility: Provide chat requests with read and experiment-maintenance tool discovery, execution, and stable evidence registration.
-Implementation: Employee and request locks protect workspace processing; read handlers register evidence, while every allowed write creates a durable approval before execution, including in laboratory mode.
+Implementation: Employee and request locks protect workspace processing; order/email tools prepare independent proposals, while experiment writes retain checkpointed browser approval, including in laboratory mode.
 Relationships: ``tool_views`` exposes Agent HTTP; ``services.save_answer`` attaches citation content only from this request context and ``ToolRead``.
 Directory:
 - processing_request: Authorize and lock a request being processed.
 - catalog_for: Return the request's available read and experiment-maintenance tool catalog.
 - evidence_for: Project actual business response into complete four-field sources.
 - read_tool: Execute one data operation and register returned evidence.
+- read_business_tool: Register strict business reads and independent proposal receipts.
 Variable index:
 - ALLOWED_TOOLS: Fixed tool set for customer reads and shared experiment reads and maintenance.
 - CONTRACT_VERSION: Tool-integration contract identifier that does not limit answer prompt version.
@@ -33,6 +34,7 @@ from integrations.salesmate_tools.read_contract import WORKSPACE_TOOLS, EXPERIME
 from .models import ToolRead
 from .services import lock_owner, request_for, require_workspace
 from .approvals import CONTINUATION_SCHEMA, propose
+from . import action_contract, action_services
 
 ALLOWED_TOOLS = WORKSPACE_TOOLS
 CONTRACT_VERSION = "chat-tools-v1"
@@ -67,7 +69,7 @@ def processing_request(owner, request_id):
 # Inputs: Authenticated employee ``owner`` and ``query`` containing request_id and optional integer page and page_size.
 # Outputs: Version, request ID, tools, count, page, and page_size without business data.
 # Logic: Validate request, reuse original catalog, filter twice by fixed allowlist and per-tool expected execution mode, then paginate.
-# Constraints: Publishes only experiment-maintenance writes and does not publish confirm or otherwise unauthorized read or maintenance tools or implicitly expand permissions.
+# Constraints: New confirm tools create only independent proposals; ordinary business writes remain unpublished and experiment approvals remain unchanged.
 @transaction.atomic
 def catalog_for(owner, query):
     validate(query, CATALOG_SCHEMA)
@@ -77,6 +79,10 @@ def catalog_for(owner, query):
         for entry in tool_services.catalog(owner)
         if entry["name"] in ALLOWED_TOOLS and entry["executionMode"] == ("write" if entry["name"] in EXPERIMENT_WRITE_TOOLS else "read")
     ]
+    if (request.owner_id == owner.pk and request.requested_by_id in (None, owner.pk)
+            and request.conversation.owner_id == owner.pk):
+        action_services.require_request(owner, request)
+        entries.extend(action_contract.catalog().values())
     entries.sort(key=lambda entry: entry["name"])
     page, size = query.get("page", 1), query.get("page_size", 30)
     return {
@@ -92,11 +98,15 @@ def catalog_for(owner, query):
 # Function: Create sources from actual returned query data without conflicts with other reads.
 # Inputs: New-read UUID ``read_id``, allowed tool name ``name``, and JSON business result ``data``.
 # Outputs: Evidence array containing source_id, source_type, title_or_label, and content.
-# Logic: Customer search and experiment tables split row and pagination evidence; experiment-maintenance receipts register an ``experiment_mutation`` source and other reads serialize completely.
-# Constraints: Sources differ by read UUID and record identifier and content may be long; Agent selects evidence within budget and cannot call an excerpt complete.
+# Logic: Customer search and experiment tables split row/page evidence; business reads register credential-free snapshots, proposals register complete frozen JSON under proposal IDs, and experiment writes register mutation receipts.
+# Constraints: Sources differ by read UUID and record identifier; proposal evidence records preparation rather than execution, and later status reads never overwrite earlier evidence.
 def evidence_for(read_id, name, data):
     prefix = f"chat-tool:{read_id}"
-    if name == "customers.search":
+    if name in action_contract.ACTION_TOOLS:
+        parts = [(f"{prefix}:proposal:{data['id']}", "chat_action_proposal", "Employee-confirmed action proposal", data)]
+    elif name in action_contract.BUSINESS_READ_TOOLS:
+        parts = [(f"{prefix}:business", "chat_business_read", name, data)]
+    elif name == "customers.search":
         parts = [
             (
                 f"{prefix}:company:{row['id']}",
@@ -150,8 +160,8 @@ def evidence_for(read_id, name, data):
 
 # Function: Execute data-tool invocation authorized for this request and register stable evidence.
 # Inputs: ``owner`` is the employee determined by the Agent credential and ``payload`` matches the call schema.
-# Outputs: Reads return data/evidence; writes return 202 approval_required without mutation; tool errors retain HTTP status.
-# Logic: Validate live registration and arguments under request lock; non-read operations freeze continuation for independent browser approval and reads execute with stable evidence.
+# Outputs: Reads return data/evidence; business preparation returns 201 pending proposals; experiment writes return 202 approval_required without mutation; tool errors retain HTTP status.
+# Logic: Strict business tools lock genuine owners and use independent proposals; legacy tools retain registry validation and checkpointed approvals under the request lock.
 # Constraints: Request errors propagate; business ``APIException`` returns scope=tool without ending chat; unknown exceptions roll back and propagate without retry or fabricated empty information.
 def read_tool(owner, payload):
     validate(payload, CALL_SCHEMA)
@@ -160,7 +170,15 @@ def read_tool(owner, payload):
     stage = "request"
     try:
         with transaction.atomic():
+            if name in action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS:
+                action_services.require_request(owner, request_for(owner, request_id))
+                action_services.lock_operation_owners(owner, name, payload["arguments"])
             request = processing_request(owner, request_id)
+            if name in action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS:
+                action_services.require_request(owner, request)
+                if "continuation" in payload:
+                    raise PermissionDenied("业务提案不接受实验操作检查点。")
+                return read_business_tool(owner, request, name, payload["arguments"])
             stage = "authorization"
             spec = build_registry().get(name)
             if (
@@ -237,3 +255,37 @@ def read_tool(owner, payload):
             round((perf_counter() - started) * 1000),
         )
         raise
+
+
+# Function: Execute strict reads or persist independent proposals with canonical evidence.
+# Inputs: Employee `owner`, locked processing `request`, authorized `name`, and submitted `arguments`.
+# Outputs: Existing chat receipt envelope with 200/201, or a scoped business error.
+# Logic: An inner savepoint makes proposal, audit and ToolRead atomic; preparation replay reuses its original read UUID instead of creating another operation.
+# Constraints: This branch never invokes generic Tool confirmation or business execution; request authentication occurs before entering it.
+def read_business_tool(owner, request, name, arguments):
+    started = perf_counter()
+    try:
+        with transaction.atomic():
+            validate(arguments, action_contract.catalog()[name]["inputSchema"])
+            status = 200
+            if name == action_contract.GET_ACTION:
+                data = action_services.proposal_data(action_services.proposal_for(owner, arguments["proposal_id"], request.conversation_id))
+            elif name in action_contract.ACTION_TOOLS:
+                proposal, created = action_services.prepare(owner, request, name, arguments)
+                if not created:
+                    previous = ToolRead.objects.get(request=request, tool=name, arguments=arguments)
+                    return {**previous.result, "request_id": str(request.pk), "read_id": str(previous.pk), "evidence_items": previous.evidence_items}
+                data, status = action_services.proposal_data(proposal), 201
+            else:
+                data = plain(action_services.business_read(owner, name, arguments))
+            result = {"tool": name, "status": "completed", "http_status": status, "data": data}
+            read = ToolRead(request=request, tool=name, arguments=arguments, result=result)
+            read.evidence_items = evidence_for(read.pk, name, data)
+            read.save()
+            result = {**result, "request_id": str(request.pk), "read_id": str(read.pk), "evidence_items": read.evidence_items}
+    except APIException as error:
+        result = {"request_id": str(request.pk), "tool": name, "status": "failed", "http_status": error.status_code,
+            "error": {"scope": "tool", "code": error.default_code, "detail": plain(error.detail)}}
+    logger.info("chat_business_tool_finished request_id=%s conversation_id=%s owner_id=%s tool=%s status=%s http_status=%s duration_ms=%s",
+        request.pk, request.conversation_id, owner.pk, name, result["status"], result["http_status"], round((perf_counter() - started) * 1000))
+    return result

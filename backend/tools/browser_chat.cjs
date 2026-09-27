@@ -132,6 +132,7 @@ async function main() {
       if (endpoint === 'records/conversations/') return route.fulfill({ json: list(url.searchParams.get('conversation_scope') === 'general' ? [conversation] : []) });
       if (endpoint === 'records/messages/') return route.fulfill({ json: list(messages) });
       if (endpoint === 'records/drafts/') return route.fulfill({ json: list([]) });
+      if (endpoint === 'chat/action-proposals/') return route.fulfill({ json: list([]) });
       if (endpoint === 'chat/requests/') {
         if (completeOnRead) {
           const answer = answers.at(-1);

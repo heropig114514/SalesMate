@@ -1,5 +1,5 @@
 """Responsibility: Persist reviewable external actions, explicit approval, and Google/QQ tool execution.
-Implementation: Allow workspace drafts for reviewable actions with an explicit customer; freeze action/connection versions and claim atomically. Hold the shared account lock during execution to isolate resets; disabling QQ blocks preparation, approval, execution, and reconciliation without implicit retries.
+Implementation: Allow workspace drafts for reviewable actions with an explicit customer; freeze action/connection versions and claim atomically. Gmail MIME includes frozen Cc/Bcc from approved chat proposals. Hold the shared account lock during execution to isolate resets; disabling QQ blocks preparation, approval, execution, and reconciliation without implicit retries.
 Relationships: integrations supplies authorized credentials; background commands execute approved actions and synchronize quotations to the agent only after actual sending.
 Directory:
 - validate_parameters: Build a confirmable action snapshot containing complete content.
@@ -304,7 +304,7 @@ def decide_action(action, actor, expected, decision):
 # Function: Perform one real Google request or QQ SMTP submission.
 # Inputs: `action`: running action; `credentials`: validated credentials.
 # Outputs: Result dictionary with external identifiers, optional links, and QQ submission state.
-# Logic: QQ uses frozen content and qq_smtp, Gmail uses MIME Base64URL, and calendar uses stable event IDs.
+# Logic: QQ uses frozen content and qq_smtp; Gmail uses MIME Base64URL including explicitly frozen Cc/Bcc when present; calendar uses stable event IDs.
 # Constraints: Google uses only execute(num_retries=0) and QQ submits DATA once; no retries, content generation, or recipient expansion.
 def execute_provider(action, credentials):
     data = action.parameters
@@ -314,6 +314,9 @@ def execute_provider(action, credentials):
         message = EmailMessage()
         message["From"] = data["account"]
         message["To"] = ", ".join(data["to"])
+        for header, field in (("Cc", "cc"), ("Bcc", "bcc")):
+            if data.get(field):
+                message[header] = ", ".join(data[field])
         message["Subject"] = data["subject"]
         message["Message-ID"] = f"<{action.pk}@salesmate.local>"
         message.set_content(data["body"])

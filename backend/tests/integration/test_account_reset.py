@@ -1,5 +1,5 @@
 """Responsibility: Verify internal account-data clearing, retained login, account isolation, and concurrency and failure boundaries.
-Implementation: Use real PostgreSQL and Session HTTP with synthetic data including pending chat approvals and temporary attachments; mock only file-deletion failure.
+Implementation: Use real PostgreSQL and Session HTTP with synthetic data including pending chat approvals, independent proposals linked to drafts/actions, and temporary attachments; mock only file-deletion failure.
 Relationships: Covers `accounts.reset`, `reset_locks`, `reset_middleware`, and foreign keys across modules.
 Directory:
 - AccountResetTests: Account-reset integration acceptance tests.
@@ -35,7 +35,7 @@ from apps.accounts.reset import scoped_records
 from apps.accounts.reset_locks import account_lock
 from apps.accounts.reset_models import AccountReset
 from apps.agent_tools.models import ToolCredential, ToolCall, ToolProposal
-from apps.chat.models import AnswerRequest, ChatApproval, Citation, ToolRead, KnowledgeEntry
+from apps.chat.models import AnswerRequest, ChatApproval, Citation, ToolRead, KnowledgeEntry, ActionProposal
 from apps.crm import models as crm
 from apps.sales import models as sales
 from apps.vectors.models import VectorDocument
@@ -69,7 +69,7 @@ class AccountResetTests(TransactionTestCase):
     # Function: Create cross-module dependencies and actual attachments.
     # Inputs: `owner` is the test account owning the data.
     # Outputs: A company object; the database stores analysis, chat, sales, tool, and reference records.
-    # Logic: Include PROTECT foreign keys, chat approvals and retry self-references, vectors, and binary documents to validate actual deletion dependencies.
+    # Logic: Include PROTECT foreign keys, chat approvals, independent proposals with linked drafts/actions, retry self-references, vectors, and binary documents to validate actual deletion dependencies.
     # Constraints: Credentials are synthetic digests and no external calls occur.
     def seed(self, owner):
         now = timezone.now()
@@ -112,6 +112,12 @@ class AccountResetTests(TransactionTestCase):
         ChatApproval.objects.create(request=request, tool="experiments.create", arguments={}, schema={}, continuation={}, expires_at=now + timezone.timedelta(hours=1))
         KnowledgeEntry.objects.create(owner=owner, source_key="test", version="1", title="test", content="test")
         sales.Draft.objects.create(owner=owner, conversation=conversation, kind="chat", content="test")
+        email_draft = sales.Draft.objects.create(owner=owner, conversation=conversation, kind="email", content="synthetic")
+        action = sales.ToolAction.objects.create(owner=owner, company=company, conversation=conversation,
+            tool="gmail.send", parameters={}, status="cancelled", idempotency_key=uuid.uuid4())
+        ActionProposal.objects.create(request=request, tool="chat_actions.prepare_email", arguments={}, preview={},
+            target_id=company.pk, key=hashlib.sha256(f"proposal{owner.pk}".encode()).hexdigest(), status="cancelled",
+            expires_at=now, draft=email_draft, action=action)
         credential = ToolCredential.objects.create(owner=owner, name="test", digest=hashlib.sha256(f"tool{owner.pk}".encode()).hexdigest(), allowed_tools=[], expires_at=now + timezone.timedelta(hours=1))
         ToolProposal.objects.create(owner=owner, credential=credential, tool="test", arguments={}, expires_at=credential.expires_at)
         ToolCall.objects.create(owner=owner, key=uuid.uuid4(), tool="test", input_hash="test", result={})

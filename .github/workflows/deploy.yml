@@ -1,5 +1,5 @@
 # Responsibility: Deploy main-branch commits to Lightsail directly while isolated tests report diagnostics independently.
-# Implementation: verify and deploy run in parallel without dependencies. Chat-approval and account-reset browser diagnostics do not block or cancel deployment; PRs run diagnostics only, while main pushes or manual runs deploy.
+# Implementation: verify and deploy run in parallel without dependencies. Chat proposal/approval, account-reset, and isolated world-map browser diagnostics do not block or cancel deployment; PRs run diagnostics only, while main pushes or manual runs deploy.
 # Relationships: Restricted server SSH entry point and root deployment script; the read-only Git deploy key remains on the server.
 # Directory:
 # - verify: Runs non-blocking diagnostics.
@@ -126,10 +126,11 @@ jobs:
           # QQ-specific browser checking remains disabled; chat and mail processing validate the current page contract with mocked interfaces.
           node backend/tools/browser_chat.cjs
           node backend/tools/browser_chat_approvals.cjs
+          node backend/tools/browser_chat_actions.cjs
           node backend/tools/browser_processing.cjs
           node backend/tools/browser_workspace.cjs
           node backend/tools/browser_account_reset.cjs
-          node backend/tools/browser_world_news.cjs
+          node backend/tools/browser_world_map.cjs
           node backend/tools/browser_i18n.cjs
           python backend/manage.py test tools.chat_browser_e2e --noinput
 

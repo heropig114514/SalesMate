@@ -11,6 +11,9 @@ Directory:
 - ChatApproval.Meta: Approval state and single-pending-operation constraints.
 - KnowledgeEntry: Internal knowledge with explicit version.
 - KnowledgeEntry.Meta: Employee knowledge-version uniqueness constraint.
+- ActionProposal: Independent employee-confirmed order or email operation.
+- ActionProposal.Meta: Unique preparation identity and legal execution states.
+- ActionProposal.owner_id: Expose request ownership to the existing audit service.
 Variable index:
 - AnswerRequest.id: Agent idempotency key.
 - AnswerRequest.owner: Submitting employee.
@@ -67,6 +70,23 @@ Variable index:
 - KnowledgeEntry.active: Whether it participates in new-request retrieval.
 - KnowledgeEntry.created_at: Version-import time.
 - KnowledgeEntry.Meta.constraints: Unique per employee, identifier, and version.
+- ActionProposal.id: Stable execution idempotency identity.
+- ActionProposal.request: Originating request, employee, conversation, and user message binding.
+- ActionProposal.tool: Preparation capability used.
+- ActionProposal.arguments: Immutable exact proposed parameters.
+- ActionProposal.preview: Backend-generated frozen review content.
+- ActionProposal.target_id: Business target for diagnostics.
+- ActionProposal.key: Unique canonical preparation hash.
+- ActionProposal.status: Pending, terminal, or approved execution state.
+- ActionProposal.revision: Optimistic decision version.
+- ActionProposal.expires_at: Approval deadline.
+- ActionProposal.created_at: Preparation time.
+- ActionProposal.decided_at: Explicit employee decision time.
+- ActionProposal.decided_by: Actual Session-authenticated approver.
+- ActionProposal.decision: Approved or cancelled decision for idempotent replay.
+- ActionProposal.draft: Business draft created only on email approval.
+- ActionProposal.action: External action whose state is authoritative after approval.
+- ActionProposal.Meta.constraints: Stable preparation key and status constraints.
 """
 
 import uuid
@@ -216,3 +236,42 @@ class KnowledgeEntry(models.Model):
                 fields=["owner", "source_key", "version"], name="chat_knowledge_version"
             )
         ]
+
+
+# Function: Persist a frozen proposal independently from the answer lifecycle.
+# Logic: The request fixes employee, conversation and message; unique key deduplicates preparation, and action/draft link approved email execution.
+# Constraints: Only action_services changes decisions; no business write occurs merely by creating this row.
+class ActionProposal(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(AnswerRequest, on_delete=models.PROTECT, related_name="action_proposals")
+    tool = models.CharField(max_length=120)
+    arguments = models.JSONField()
+    preview = models.JSONField()
+    target_id = models.UUIDField()
+    key = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=24, default="pending_confirmation")
+    revision = models.PositiveIntegerField(default=1)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True)
+    decision = models.CharField(max_length=10, blank=True)
+    draft = models.OneToOneField("sales.Draft", on_delete=models.PROTECT, null=True)
+    action = models.OneToOneField("sales.ToolAction", on_delete=models.PROTECT, null=True)
+
+    # Function: Resolve immutable proposal ownership for business audit records.
+    # Inputs: Instance request foreign key and its employee owner.
+    # Outputs: Employee primary key.
+    # Logic: Derive identity from the persisted request instead of duplicating ownership fields.
+    # Constraints: Read-only; callers cannot transfer ownership through proposal arguments.
+    @property
+    def owner_id(self):
+        return self.request.owner_id
+
+    # Function: Enforce the proposal execution vocabulary.
+    # Logic: Email execution status comes from its linked action; stored states track pending decisions and atomic order execution.
+    # Constraints: Application authorization and frozen argument checks remain mandatory.
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(status__in=[
+            "pending_confirmation", "approved", "running", "succeeded", "failed", "uncertain",
+            "cancelled", "expired", "conflicted"]), name="chat_action_proposal_status")]

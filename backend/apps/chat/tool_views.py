@@ -1,5 +1,5 @@
 """Responsibility: Publish Agent chat tool catalog, request-bound reads and experiment maintenance, and answer-status query.
-Implementation: Accept Agent authentication, distinguish tool/request errors, return 202 for approval suspension, and prohibit response caching.
+Implementation: Accept Agent authentication, distinguish tool/request errors, return 201 for independent proposals or 202 for experiment approval suspension, and prohibit response caching.
 Relationships: tool_reads executes reads or creates approval checkpoints; services owns request state and canonical evidence, and approvals alone accepts browser write decisions.
 Directory:
 - AgentChatView: Authentication, error, and cache policy.
@@ -96,19 +96,20 @@ class ToolCatalogView(AgentChatView):
         return Response(tool_reads.catalog_for(request.user, query))
 
 
-# Function: Execute a read or suspend a proposed chat write for browser approval.
-# Logic: Derive identity from Agent authentication and pass exact arguments plus the optional continuation checkpoint to the request service.
+# Function: Execute a read, prepare an independent business proposal, or suspend an experiment write.
+# Logic: Derive identity from Agent authentication; only experiment writes accept the optional continuation checkpoint.
 # Constraints: No write executes through this view; the independent decision transaction uses the frozen approval UUID for idempotency.
 class ToolReadView(AgentChatView):
     # Function: Execute an authorized data tool.
     # Inputs: ``request`` data is request_id, name, and arguments object.
-    # Outputs: Read data/evidence, 202 approval_required for writes, or explicit failure with scope=tool.
-    # Logic: Return the committed service receipt; an approval response is suspension, never business completion.
+    # Outputs: Read data/evidence, 201 pending business proposal, 202 experiment approval_required, or explicit failure with scope=tool.
+    # Logic: Return the committed service receipt; proposal/approval creation never means business execution completed.
     # Constraints: Query does not require a chat-bound company; ``customers.context`` location parameters still follow original Schema.
     @extend_schema(
         request={"application/json": tool_reads.CALL_SCHEMA},
         responses={
             200: OpenApiTypes.OBJECT,
+            201: OpenApiTypes.OBJECT,
             202: OpenApiTypes.OBJECT,
             400: OpenApiTypes.OBJECT,
             403: OpenApiTypes.OBJECT,

@@ -1,12 +1,12 @@
 /**
  * Responsibility: Mount one floating chat entry and panel in the shared workspace.
- * Implementation: A static template reuses AssistantPanel; buttons expand/collapse it, and legacy chat links open the widget without taking over the page.
+ * Implementation: A static template loads the action-proposal-aware AssistantPanel; buttons expand/collapse it, and legacy chat links open the widget without taking over the page.
  * Relationships: Chat Markdown, 0919 interface, and shared language/API resources use coordinated cache versions. workspace.js enables the widget on mounting, with business permissions enforced by the API; app.js handles logout and legacy links; assistant-widget.css supplies cross-page styles.
  * Directory: getAssistant, enableAssistant, openAssistantLink.
  * Variable index: panel is the singleton for the current page.
  */
 import { h } from './i18n.js?v=20260921-product';
-import { AssistantPanel } from './assistant.js?v=20260921-markdown';
+import { AssistantPanel } from './assistant.js?v=20260927-actions';
 
 let panel = null;
 

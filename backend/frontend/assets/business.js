@@ -1,6 +1,6 @@
 /**
  * Responsibility: Provide business management for customers, transactions, follow-ups, collaboration, and external actions.
- * Implementation: Browse authorized business data together with permitted experiment rows; mark original ownership in experiment details and link to shared maintenance. Ordinary writes retain their original permissions.
+ * Implementation: Browse authorized business data together with permitted experiment rows; refresh visible order tables after confirmed chat updates. Ordinary writes retain their original permissions.
  * Internationalization: i18n.js translates explicitly marked static text only; dynamic business content and API values remain unchanged.
  * Relationships: Navigation cache versions reflect removal of sidebar priority/experiment entries and support for opportunity priorities. Chat Markdown, 0919 interface, account-reset navigation, and shared language/API resources use coordinated versions. Workspace chat uses a shared upgrade version to avoid cached company-specific entry points. workspace.js provides navigation, bottom Profile, collapsible bottom chat, and the Nocturne navigation/task/URL customer context. sales-api.js handles same-origin calls without automatically approving tools.
  * Directory: nameOf, label, display, notice, perform, showDialog, optionRows, relationOptions, fieldControl,
@@ -1005,7 +1005,7 @@ function renderStats(overview) {
 }
 
 /** Function: Initialize authentication, metadata, and page interactions. Inputs: None; reads the current route.
- * Outputs: None. Logic: Load capabilities and both directories; URLs can identify shared experiment customers, whose read-only status prevents automatic create forms.
+ * Outputs: None. Logic: Load capabilities and directories, bind chat order-change refresh events, and retain read-only shared experiment customer forms.
  * Constraints: Initialization performs reads only; never save user data in browser local storage. */
 async function boot() {
   const session = await request("session/");
@@ -1048,6 +1048,10 @@ async function boot() {
     page = 1;
     $("editor").close();
     perform(loadPage);
+  });
+  // A successful chat transaction invalidates only the currently visible order listing; unsaved editor forms stay intact.
+  window.addEventListener("salesmate:orders-changed", () => {
+    if (["orders", "order-lines"].includes(current)) perform(loadPage);
   });
   $("create-business").onclick = (event) =>
     perform(async () => {

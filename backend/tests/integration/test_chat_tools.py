@@ -1,5 +1,5 @@
 """Responsibility: Verify the complete backend path for workspace chat read-only interfaces, stable evidence, and original business permissions.
-Implementation: Use real PostgreSQL, authenticated HTTP, and business handlers; simulate failures and concurrent waits only at explicit boundaries.
+Implementation: Use real PostgreSQL, authenticated HTTP and business handlers; verify the expanded fifteen-tool catalog without changing legacy registry-mode enforcement; simulate failures and concurrent waits only at explicit boundaries.
 Relationships: chat.tool_reads/tool_views, the agent_tools registry, and chat.services; no external model or mailbox calls.
 Directory:
 - ChatToolTests: Integration tests for request-bound tool services.
@@ -33,7 +33,7 @@ from unittest.mock import patch
 from apps.agent_tools import services as tool_services
 from apps.agent_tools.dispatch import execute
 from apps.agent_tools.registry import build_registry
-from apps.chat import services, tool_reads
+from apps.chat import services, tool_reads, action_contract
 from apps.chat.models import AnswerRequest, ToolRead
 from apps.crm.models import Company, Extraction
 from apps.sales.models import CompanyGrant, Conversation, Membership, Team
@@ -111,29 +111,29 @@ class ChatToolTests(TestCase):
 
     # Function: Verify the catalog reflects the current allowlist and original argument contracts accurately.
     # Inputs: Processing request, pagination parameters, and invalid query variants.
-    # Outputs: Eight explicitly permitted tools with correct execution modes, identical original schemas, and 400 for invalid arguments.
-    # Logic: Traverse pages and compare against the real business registry.
-    # Constraints: Only three experimental-maintenance operations permit writes, without requiring a preselected company.
+    # Outputs: Fifteen permitted tools with exact modes, original or independent-proposal schemas, and 400 for invalid query arguments.
+    # Logic: Traverse pages and compare against the business registry plus the seven strict chat capabilities.
+    # Constraints: Only three experiment tools use checkpointed writes; the two confirm tools prepare without executing.
     def test_catalog_and_schema(self):
         response = self.client.get(
             BASE + "tools/", {"request_id": str(self.request.pk)}
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response["Cache-Control"], "no-store")
-        self.assertEqual(response.data["count"], 8)
+        self.assertEqual(response.data["count"], 15)
         self.assertEqual(
             {row["name"] for row in response.data["tools"]},
-            tool_reads.ALLOWED_TOOLS,
+            tool_reads.ALLOWED_TOOLS | action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS,
         )
-        registry = build_registry()
+        registry = {**build_registry(), **action_contract.catalog()}
         for row in response.data["tools"]:
             self.assertEqual(row["inputSchema"], registry[row["name"]]["inputSchema"])
-            self.assertEqual(row["executionMode"], "write" if row["name"] in {"experiments.create", "experiments.update", "experiments.delete"} else "read")
+            self.assertEqual(row["executionMode"], registry[row["name"]]["executionMode"])
         page = self.client.get(
             BASE + "tools/",
             {"request_id": str(self.request.pk), "page": 2, "page_size": 1},
         )
-        self.assertEqual((page.data["count"], len(page.data["tools"])), (8, 1))
+        self.assertEqual((page.data["count"], len(page.data["tools"])), (15, 1))
         for query in (
             {},
             {"page": "x"},
@@ -403,7 +403,7 @@ class ChatToolTests(TestCase):
     # Function: Verify an allowlisted tool is no longer exposed after changing to write mode.
     # Inputs: Replace registry customers.search executionMode only within the test.
     # Outputs: The catalog removes the tool; calls return 403 without executing the handler.
-    # Logic: Discovery retains four other read tools and three experimental write tools; execution rechecks the live read mode of customers.search.
+    # Logic: Discovery retains the other original tools and seven independent business capabilities; execution rechecks the live read mode of customers.search.
     # Constraints: Only the registry is mocked; real business code and database are unchanged.
     def test_registry_mode_is_rechecked(self):
         registry = copy.deepcopy(build_registry())
@@ -417,7 +417,7 @@ class ChatToolTests(TestCase):
                 BASE + "tools/", {"request_id": str(self.request.pk)}
             )
             self.assertEqual(
-                [item["name"] for item in catalog.data["tools"]], sorted(tool_reads.ALLOWED_TOOLS - {"customers.search"})
+                [item["name"] for item in catalog.data["tools"]], sorted((tool_reads.ALLOWED_TOOLS - {"customers.search"}) | action_contract.ACTION_TOOLS | action_contract.BUSINESS_READ_TOOLS)
             )
             self.assertEqual(self.read("customers.search", {}).status_code, 403)
             handler.assert_not_called()

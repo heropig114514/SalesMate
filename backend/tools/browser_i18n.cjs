@@ -1,6 +1,6 @@
 /**
  * Responsibility: Cover bilingual mail settings, absence of automatic authorization, and shared Global Insights navigation; verify English UI, browser negotiation, preference persistence, and content isolation.
- * Implementation: The world page uses event-map/type-filter contracts; isolated static serving and GET fixtures drive three entries in real Chrome. Reject all business writes.
+ * Implementation: Current shared-browse and world APIs use isolated GET fixtures; real Chrome checks three page entries. The event fixture is relative to the test date so retention rules remain unchanged. Reject all business writes.
  * Relationships: The 0919 interface/language resources use coordinated versions; i18n.js/translations.js, language controls, business forms, simplified navigation, and cross-page bottom chat. test_i18n.py independently verifies backend language behavior.
  * Directory: main runs browser acceptance; main.serve provides restricted static resources.
  * Variable index: FRONTEND is the page root; OUTPUT is the ignored screenshot directory; other state is local to main.
@@ -61,8 +61,11 @@ async function main() {
       else if (endpoint === 'companies/') data = { results: [row], count: 1, stats: { companies: 1, unregistered: 0, new_emails_today: 1 } };
       else if (endpoint === 'sales/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, unread_notifications: 2, confirmed_order_net: {}, open_opportunity_amount: {} };
       else if (endpoint === 'sales/catalog/') data = { resources };
-      else if (endpoint === 'sales/directory/') data = { results: [company], count: 1 };
-      else if (endpoint.startsWith('sales/records/') || endpoint === 'sales/chat/requests/') data = { results: [], count: 0 };
+      else if (endpoint === 'sales/directory/' || endpoint === 'sales/browse/directory/') data = { results: [company], count: 1 };
+      else if (endpoint === 'sales/browse/overview/') data = { customers: 1, open_tickets: 2, open_follow_ups: 7, shared_counts: {}, confirmed_order_net: {}, open_opportunity_amount: {} };
+      else if (endpoint === 'sales/world/') data = { count: 1, countries: [], unmapped_customer_count: 0, results: [{ id: 'language-event', title: 'Synthetic event', city: 'Singapore', country: 'SG', latitude: 1.3, longitude: 103.8, event_type: 'exhibition', starts_at: new Date(Date.now() + 86400000).toISOString(), ends_at: new Date(Date.now() + 172800000).toISOString(), data_source: 'synthetic', amount: null, currency: '', onsite: [], suggested_actions: [] }] };
+      else if (endpoint === 'sales/seller-context/') data = { sales_setup: { personal: {} } };
+      else if (endpoint.startsWith('sales/records/') || endpoint.startsWith('sales/browse/') || endpoint === 'sales/chat/requests/' || endpoint === 'sales/chat/action-proposals/') data = { results: [], count: 0 };
       else throw new Error('Unexpected API: ' + endpoint);
       await route.fulfill({ json: data });
     });

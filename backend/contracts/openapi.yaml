@@ -764,6 +764,13 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
         '202':
           content:
             application/json:
@@ -2215,6 +2222,97 @@ paths:
       - v1
       security:
       - laboratoryIdentity: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/chat/action-proposals/:
+    get:
+      operationId: chat_action_proposals_list
+      parameters:
+      - in: query
+        name: conversation_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/chat/action-proposals/{proposal_id}/:
+    get:
+      operationId: chat_action_proposals_detail
+      parameters:
+      - in: path
+        name: proposal_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      security:
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/sales/chat/action-proposals/{proposal_id}/decision/:
+    post:
+      operationId: chat_action_proposals_decide
+      parameters:
+      - in: path
+        name: proposal_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decision:
+                  enum:
+                  - approve
+                  - cancel
+                revision:
+                  type: integer
+                  minimum: 0
+              required:
+              - decision
+              - revision
+              additionalProperties: false
+      security:
       - cookieAuth: []
       responses:
         '200':

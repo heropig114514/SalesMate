@@ -59,6 +59,7 @@ async function main() {
       if (endpoint === 'records/conversations/') return route.fulfill({ json: list([{ id: 'conversation-1', company: null, title: '审批测试' }]) });
       if (endpoint === 'records/messages/') return route.fulfill({ json: list(messages) });
       if (endpoint === 'records/drafts/') return route.fulfill({ json: list([]) });
+      if (endpoint === 'chat/action-proposals/') return route.fulfill({ json: list([]) });
       if (endpoint === 'chat/requests/') return route.fulfill({ json: list([answer]) });
       if (endpoint === 'chat/requests/request-1/') {
         if (answer.status === 'pending') {
