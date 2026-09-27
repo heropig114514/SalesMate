@@ -74,7 +74,8 @@ JSON format:
     {
       "from": "客户姓名 <customer@example.com>",
       "subject": "采购咨询",
-      "body": "我们希望采购 10 台检测设备，请提供报价和交付周期。"
+      "body": "我们希望采购 10 台检测设备，请提供报价和交付周期。",
+      "date": "2026-09-21T09:30:00+08:00"
     }
   ]
 }
@@ -87,8 +88,13 @@ JSON format:
 | messages[].from | Plain email or Name <email>; same company domains test grouping |
 | messages[].subject | Nonempty string without line breaks |
 | messages[].body | Nonempty body, the primary L1 fact-extraction input |
+| messages[].date | Optional ISO 8601 datetime with an explicit timezone, e.g. `2026-09-21T09:30:00+08:00` or `2026-09-21T01:30:00Z` |
 
 The recipient is always top-level mailbox_address. Individual messages cannot set to, preventing a batch from being inserted into different accounts.
+
+Use `date` to simulate a conversation spanning several days. The tool writes the timestamp to the email Date header and uses Gmail's `internalDateSource=dateHeader`, so the imported mailbox timestamp reflects the simulated date. This does not schedule delivery: running insertion imports all messages immediately. Existing Gmail messages are not edited.
+
+If `date` is omitted, that message uses the current time plus its array index in seconds, preserving the original behavior. Invalid dates and dates without a timezone are rejected before Gmail authorization. Messages are inserted in JSON array order; arrange them chronologically for a demo. Keep dates consistent with deadlines in the bodies and ensure the SalesMate synchronization date range includes them.
 
 ## 4. Preview test mail
 
@@ -106,7 +112,7 @@ python .\gmail_test_injector.py `
   --dry-run
 ```
 
---dry-run validates the complete JSON and prints the inbox, sender, and subject without accessing Gmail or opening authorization.
+--dry-run validates the complete JSON and prints the inbox, sender, subject, and generated Date header without accessing Gmail or opening authorization.
 
 ## 5. Insert test mail
 

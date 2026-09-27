@@ -9,6 +9,7 @@ Directory:
 - connect_injector: Load or obtain the dedicated Gmail OAuth credentials and build a service.
 - load_test_plan: Read and validate the mailbox and message scenarios from JSON.
 - build_test_messages: Construct RFC 2822 messages for a test run.
+- _message_date: Parse an explicit ISO 8601 message date with a timezone.
 - _sender: Validate a scenario sender representation.
 - _required_text: Validate required nonempty template text.
 - insert_message: Insert one encoded RFC 2822 message through Gmail.
@@ -203,7 +204,7 @@ def connect_injector(credentials_path: Path, token_path: Path):
 # Function: Read and strictly validate the mailbox and synthetic message scenarios from a JSON plan.
 # Inputs: `path` is the JSON file containing mailbox_address and a nonempty messages array.
 # Outputs: Returns the normalized mailbox address and validated sender, subject, and body scenarios; raises `RuntimeError` or `ValueError` for invalid input.
-# Logic: Parses JSON, validates the top-level schema and exact message fields, rejects newline-bearing subjects, and normalizes each sender and required text value.
+# Logic: Validates required fields and an optional timezone-aware date, rejects newline-bearing subjects, and normalizes scenario text.
 # Constraints: Does not read Gmail or construct OAuth credentials; every scenario must contain only the declared fields.
 def load_test_plan(path: Path) -> tuple[str, list[dict[str, str]]]:
     """Read and validate the mailbox and mail-scenario JSON written for testing."""
@@ -229,14 +230,15 @@ def load_test_plan(path: Path) -> tuple[str, list[dict[str, str]]]:
         raise ValueError("测试邮件 JSON 的 messages 必须是非空数组。")
 
     required_fields = {"from", "subject", "body"}
+    allowed_fields = required_fields | {"date"}
     scenarios: list[dict[str, str]] = []
     for index, item in enumerate(raw_messages):
         location = f"messages[{index}]"
         if not isinstance(item, dict):
             raise ValueError(f"{location} 必须是对象。")
-        if set(item) != required_fields:
+        if not required_fields <= set(item) or set(item) - allowed_fields:
             missing = sorted(required_fields - set(item))
-            extra = sorted(set(item) - required_fields)
+            extra = sorted(set(item) - allowed_fields)
             details = []
             if missing:
                 details.append(f"缺少 {missing}")
@@ -249,14 +251,17 @@ def load_test_plan(path: Path) -> tuple[str, list[dict[str, str]]]:
         if "\r" in subject or "\n" in subject:
             raise ValueError(f"{location}.subject 不能包含换行。")
         body = _required_text(item["body"], f"{location}.body")
-        scenarios.append({"from": sender, "subject": subject, "body": body})
+        scenario = {"from": sender, "subject": subject, "body": body}
+        if "date" in item:
+            scenario["date"] = _message_date(item["date"], f"{location}.date").isoformat()
+        scenarios.append(scenario)
     return mailbox_address, scenarios
 
 
 # Function: Construct RFC 2822 messages from validated synthetic scenarios for one run.
 # Inputs: `mailbox_address` is the destination inbox; `run_id` identifies the test run; `scenarios` supplies validated sender, subject, and body values.
-# Outputs: Returns one `EmailMessage` per scenario with deterministic run headers and incrementing date offsets.
-# Logic: Assigns From, To, run-tagged Subject, Date, Message-ID, X-SalesMate-Test-Run, and plaintext body for each scenario.
+# Outputs: Returns one `EmailMessage` per scenario in input order with explicit dates or incrementing current-time offsets.
+# Logic: Uses each optional date for the Date header, otherwise current time plus the message index in seconds; assigns sender, recipient, subject, IDs, and body.
 # Constraints: Uses the developer mailbox as the only recipient and leaves insertion to `insert_message`.
 def build_test_messages(
     mailbox_address: str,
@@ -272,7 +277,12 @@ def build_test_messages(
         message["From"] = scenario["from"]
         message["To"] = mailbox_address
         message["Subject"] = f"[SalesMate测试:{run_id}] {scenario['subject']}"
-        message["Date"] = format_datetime(now + timedelta(seconds=index))
+        message_date = (
+            _message_date(scenario["date"], f"messages[{index}].date")
+            if "date" in scenario
+            else now + timedelta(seconds=index)
+        )
+        message["Date"] = format_datetime(message_date)
         sender_address = parseaddr(scenario["from"])[1]
         sender_domain = sender_address.rsplit("@", 1)[1]
         message["Message-ID"] = make_msgid(
@@ -282,6 +292,28 @@ def build_test_messages(
         message.set_content(scenario["body"])
         result.append(message)
     return result
+
+
+# Function: Parse a synthetic mail timestamp without guessing its timezone.
+# Inputs: `value` is an ISO 8601 datetime string; `location` identifies the JSON field.
+# Outputs: Returns an aware datetime or raises ValueError for missing, invalid, or timezone-free dates.
+# Logic: Accepts explicit UTC offsets or a trailing Z, including on Python 3.10.
+# Constraints: Does not change the clock, schedule delivery, or connect to Gmail.
+def _message_date(value: object, location: str) -> datetime:
+    """Parse a message date with an explicit timezone."""
+    text = _required_text(value, location)
+    try:
+        if len(text) < 11 or text[10] != "T":
+            raise ValueError
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError
+    except ValueError:
+        raise ValueError(
+            f"{location} must be an ISO 8601 datetime with a timezone, "
+            "for example 2026-09-21T09:30:00+08:00."
+        ) from None
+    return parsed
 
 
 # Function: Validate a template sender expressed as a bare address or `Name <address>` form.
@@ -359,7 +391,7 @@ def _mailbox(value: object) -> str:
 
 # Function: Build a body-free summary for dry-run output.
 # Inputs: `message` is a generated EmailMessage.
-# Outputs: Returns its From, To, and Subject headers as strings.
+# Outputs: Returns its From, To, Subject, and Date headers as strings.
 # Logic: Reads only display headers needed to preview planned insertion.
 # Constraints: Deliberately excludes the body and does not mutate the message.
 def _summary(message: EmailMessage) -> dict[str, str]:
@@ -368,6 +400,7 @@ def _summary(message: EmailMessage) -> dict[str, str]:
         "from": str(message["From"]),
         "to": str(message["To"]),
         "subject": str(message["Subject"]),
+        "date": str(message["Date"]),
     }
 
 
